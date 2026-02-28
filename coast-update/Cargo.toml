@@ -1,0 +1,22 @@
+[package]
+name = "coast-update"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+semver = "1"
+thiserror = { workspace = true }
+tracing = { workspace = true }
+dirs = { workspace = true }
+chrono = { workspace = true }
+tokio = { workspace = true }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+tempfile = { workspace = true }

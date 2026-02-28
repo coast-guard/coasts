@@ -1,0 +1,261 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-macos:
+    name: Build macOS (${{ matrix.target }})
+    runs-on: macos-14
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            asset_name: darwin-arm64
+          - target: x86_64-apple-darwin
+            asset_name: darwin-amd64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build coast-guard UI
+        run: |
+          cd coast-guard
+          npm ci
+          npm run generate:types
+          npm run build
+
+      - name: Build release binaries
+        run: cargo build --release --target ${{ matrix.target }} --workspace --exclude coast-integration-tests
+
+      - name: Strip binaries
+        run: |
+          strip target/${{ matrix.target }}/release/coast
+          strip target/${{ matrix.target }}/release/coastd
+
+      - name: Package tarball
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          TARBALL="coast-v${VERSION}-${{ matrix.asset_name }}.tar.gz"
+          tar czf "${TARBALL}" \
+            -C target/${{ matrix.target }}/release \
+            coast coastd
+          shasum -a 256 "${TARBALL}" > "${TARBALL}.sha256"
+          echo "TARBALL=${TARBALL}" >> $GITHUB_ENV
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: |
+            coast-v*.tar.gz
+            coast-v*.tar.gz.sha256
+
+  build-linux:
+    name: Build Linux (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            asset_name: linux-amd64
+            use_cross: false
+          - target: aarch64-unknown-linux-gnu
+            asset_name: linux-arm64
+            use_cross: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build coast-guard UI
+        run: |
+          cd coast-guard
+          npm ci
+          npm run generate:types
+          npm run build
+
+      - name: Install cross
+        if: matrix.use_cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Build release binaries (native)
+        if: "!matrix.use_cross"
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Build release binaries (cross)
+        if: matrix.use_cross
+        run: cross build --release --target ${{ matrix.target }} --workspace --exclude coast-integration-tests
+
+      - name: Strip binaries
+        run: |
+          if [ "${{ matrix.use_cross }}" = "true" ]; then
+            # cross-compiled — use the cross toolchain's strip
+            docker run --rm -v "$(pwd)/target/${{ matrix.target }}/release:/work" \
+              ghcr.io/cross-rs/${{ matrix.target }}:main \
+              bash -c "strip /work/coast /work/coastd" || true
+          else
+            strip target/${{ matrix.target }}/release/coast
+            strip target/${{ matrix.target }}/release/coastd
+          fi
+
+      - name: Package tarball
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          TARBALL="coast-v${VERSION}-${{ matrix.asset_name }}.tar.gz"
+          tar czf "${TARBALL}" \
+            -C target/${{ matrix.target }}/release \
+            coast coastd
+          sha256sum "${TARBALL}" > "${TARBALL}.sha256"
+          echo "TARBALL=${TARBALL}" >> $GITHUB_ENV
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: |
+            coast-v*.tar.gz
+            coast-v*.tar.gz.sha256
+
+  release:
+    name: Create GitHub Release
+    needs: [build-macos, build-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/coast-v*.tar.gz
+            dist/coast-v*.tar.gz.sha256
+          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') }}
+
+  update-homebrew:
+    name: Update Homebrew tap
+    needs: [release]
+    runs-on: ubuntu-latest
+    # Only update tap for non-prerelease tags
+    if: "!contains(github.ref_name, '-rc') && !contains(github.ref_name, '-beta') && !contains(github.ref_name, '-alpha')"
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Compute checksums
+        id: checksums
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
+          for platform in darwin-arm64 darwin-amd64 linux-arm64 linux-amd64; do
+            SHA=$(cat "dist/coast-v${VERSION}-${platform}.tar.gz.sha256" | awk '{print $1}')
+            KEY=$(echo "${platform}" | tr '-' '_')
+            echo "sha_${KEY}=${SHA}" >> $GITHUB_OUTPUT
+          done
+
+      - name: Update Homebrew formula
+        uses: actions/checkout@v4
+        with:
+          repository: coast-guard/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          path: homebrew-tap
+
+      - name: Generate formula
+        run: |
+          VERSION=${{ steps.checksums.outputs.version }}
+          mkdir -p homebrew-tap/Formula
+          cat > homebrew-tap/Formula/coast.rb << 'FORMULA'
+          class Coast < Formula
+            desc "Containerized Host — isolated dev environments on a single machine"
+            homepage "https://github.com/coast-guard/coasts"
+            version "${{ steps.checksums.outputs.version }}"
+            license "MIT"
+
+            depends_on "socat"
+
+            on_macos do
+              on_arm do
+                url "https://github.com/coast-guard/coasts/releases/download/v${{ steps.checksums.outputs.version }}/coast-v${{ steps.checksums.outputs.version }}-darwin-arm64.tar.gz"
+                sha256 "${{ steps.checksums.outputs.sha_darwin_arm64 }}"
+              end
+              on_intel do
+                url "https://github.com/coast-guard/coasts/releases/download/v${{ steps.checksums.outputs.version }}/coast-v${{ steps.checksums.outputs.version }}-darwin-amd64.tar.gz"
+                sha256 "${{ steps.checksums.outputs.sha_darwin_amd64 }}"
+              end
+            end
+
+            on_linux do
+              on_arm do
+                url "https://github.com/coast-guard/coasts/releases/download/v${{ steps.checksums.outputs.version }}/coast-v${{ steps.checksums.outputs.version }}-linux-arm64.tar.gz"
+                sha256 "${{ steps.checksums.outputs.sha_linux_arm64 }}"
+              end
+              on_intel do
+                url "https://github.com/coast-guard/coasts/releases/download/v${{ steps.checksums.outputs.version }}/coast-v${{ steps.checksums.outputs.version }}-linux-amd64.tar.gz"
+                sha256 "${{ steps.checksums.outputs.sha_linux_amd64 }}"
+              end
+            end
+
+            def install
+              bin.install "coast"
+              bin.install "coastd"
+            end
+
+            service do
+              run [opt_bin/"coastd", "--foreground"]
+              keep_alive true
+              log_path var/"log/coastd.log"
+              error_log_path var/"log/coastd.error.log"
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{bin}/coast --version")
+            end
+          end
+          FORMULA
+
+      - name: Push formula update
+        run: |
+          cd homebrew-tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/coast.rb
+          git commit -m "coast ${{ steps.checksums.outputs.version }}"
+          git push

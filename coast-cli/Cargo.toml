@@ -1,0 +1,35 @@
+[package]
+name = "coast-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "coast"
+path = "src/main.rs"
+
+[dependencies]
+coast-core = { path = "../coast-core" }
+coast-i18n = { path = "../coast-i18n" }
+coast-update = { path = "../coast-update" }
+rust-i18n = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+clap = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tokio = { workspace = true }
+colored = { workspace = true }
+dirs = { workspace = true }
+chrono = { workspace = true }
+rusqlite = { workspace = true }
+bollard = { workspace = true }
+nix = { workspace = true }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+tempfile = { workspace = true }

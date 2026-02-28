@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+#
+# coast-extractor-keychain — Common coast extractor for macOS Keychain.
+#
+# Reads a generic password from macOS Keychain using the `security` CLI.
+#
+# Protocol:
+#   - Receives JSON on stdin with params: { "service": "...", "account": "..." }
+#   - Outputs the password value to stdout (no trailing newline)
+#
+# The "account" param is optional — if omitted, defaults to the current macOS
+# username ($USER).
+#
+# Usage in a Coastfile:
+#
+#   [secrets.my_api_key]
+#   extractor = "keychain"
+#   service = "My Service Name"
+#   account = "foobar"            # optional, defaults to $USER
+#   inject = "env:MY_API_KEY"
+#
+# Installation:
+#   Copy this file somewhere on your PATH, or symlink it:
+#     ln -s /path/to/common-extractors/coast-extractor-keychain /usr/local/bin/
+#
+#   Or add the common-extractors directory to your PATH:
+#     export PATH="/path/to/common-extractors:$PATH"
+
+set -euo pipefail
+
+# Read JSON params from stdin
+INPUT=$(cat)
+
+# Parse service and account from JSON using built-in tools
+# (avoids requiring jq as a dependency)
+SERVICE=$(echo "$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('service',''))" 2>/dev/null)
+ACCOUNT=$(echo "$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('account','$USER'))" 2>/dev/null)
+
+if [ -z "$SERVICE" ]; then
+    echo "Error: 'service' parameter is required for keychain extractor" >&2
+    echo "Provide it in your Coastfile: service = \"My Service Name\"" >&2
+    exit 1
+fi
+
+# Default account to current user if empty
+if [ -z "$ACCOUNT" ]; then
+    ACCOUNT="$USER"
+fi
+
+# Read from macOS Keychain
+# -s = service name, -a = account, -w = output password only
+VALUE=$(security find-generic-password -s "$SERVICE" -a "$ACCOUNT" -w 2>/dev/null) || {
+    echo "Error: Could not find keychain entry for service='$SERVICE', account='$ACCOUNT'" >&2
+    echo "Add it with: security add-generic-password -s '$SERVICE' -a '$ACCOUNT' -w 'your-secret'" >&2
+    exit 1
+}
+
+# Output the value (no trailing newline — coast reads the raw stdout)
+printf '%s' "$VALUE"

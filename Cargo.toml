@@ -1,0 +1,118 @@
+[workspace]
+members = [
+    "coast-core",
+    "coast-i18n",
+    "coast-secrets",
+    "coast-docker",
+    "coast-daemon",
+    "coast-cli",
+    "coast-update",
+    "integration-tests",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# CLI
+clap = { version = "4", features = ["derive", "env"] }
+
+# Docker
+bollard = "0.18"
+
+# Database
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# Git
+git2 = "0.19"
+
+# Crypto
+orion = "0.17"
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Unix / process
+nix = { version = "0.29", features = ["signal", "process", "fs", "term"] }
+libc = "0.2"
+
+# macOS keychain
+security-framework = "3"
+
+# Async trait
+async-trait = "0.1"
+
+# Testing
+tempfile = "3"
+
+# CLI output
+colored = "2"
+
+# I18n
+rust-i18n = "3"
+
+# Misc
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4"] }
+dirs = "6"
+sha2 = "0.10"
+hex = "0.4"
+semver = "1"
+shellexpand = "3"
+futures-util = "0.3"
+serde_yaml = "0.9"
+
+# HTTP client (analytics)
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+# HTTP API
+axum = { version = "0.8", features = ["ws", "multipart"] }
+tower-http = { version = "0.6", features = ["cors", "fs"] }
+async-stream = "0.3"
+
+# Bytes
+bytes = "1"
+
+# Embedded assets
+rust-embed = { version = "8", features = ["mime-guess"] }
+
+# TypeScript type generation
+ts-rs = { version = "12", features = ["chrono-impl", "serde-json-impl"] }
+
+[workspace.lints.clippy]
+# Correctness / suspicious — deny in all crates
+await_holding_lock = "deny"
+dbg_macro = "deny"
+
+# Complexity — warn so they show up but don't block builds
+too_many_arguments = "warn"
+cognitive_complexity = "warn"
+too_many_lines = "warn"
+large_enum_variant = "warn"
+
+# Style — opt-in useful pedantic lints
+needless_pass_by_value = "warn"
+cloned_instead_of_copied = "warn"
+redundant_closure_for_method_calls = "warn"
+manual_let_else = "warn"
+implicit_clone = "warn"
+
+[workspace.lints.rust]
+unused_imports = "warn"
+dead_code = "warn"

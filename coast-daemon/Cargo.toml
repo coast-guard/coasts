@@ -1,0 +1,52 @@
+[package]
+name = "coast-daemon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "coastd"
+path = "src/main.rs"
+
+[dependencies]
+coast-core = { path = "../coast-core" }
+coast-i18n = { path = "../coast-i18n" }
+rust-i18n = { workspace = true }
+coast-secrets = { path = "../coast-secrets" }
+coast-docker = { path = "../coast-docker" }
+bollard = { workspace = true }
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tokio = { workspace = true }
+rusqlite = { workspace = true }
+nix = { workspace = true }
+libc = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+dirs = { workspace = true }
+shellexpand = { workspace = true }
+futures-util = { workspace = true }
+serde_yaml = { workspace = true }
+tempfile = { workspace = true }
+axum = { workspace = true }
+tower-http = { workspace = true }
+async-stream = { workspace = true }
+bytes = { workspace = true }
+sha2 = { workspace = true }
+hickory-proto = "0.25"
+rust-embed = { workspace = true }
+mime_guess = "2"
+ts-rs = { workspace = true }
+reqwest = { workspace = true }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+tokio-tungstenite = "0.28"

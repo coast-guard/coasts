@@ -1,0 +1,226 @@
+このプロジェクトに Coasts をインストールしています。Coast（containerized host）は、Docker-in-Docker コンテナを使用して 1 台のマシン上で複数の分離された開発環境を実行する CLI ツールです。各環境は独自のポート、ボリューム、ランタイムを持ち、並行 worktree ワークフローに最適です。
+
+あなたの仕事: このプロジェクトを分析し、Coastfile（プロジェクトルートに置く "Coastfile" という名前の TOML ファイル）を生成してください。
+
+=== DOCUMENTATION ===
+
+Coast には CLI からアクセスできる組み込みドキュメントがあります。Coastfile の完全なスキーマ、ボリューム戦略、assign の挙動、その他の設定オプションを Coastfile を生成する前に理解するために、これらを使用してください。
+
+ドキュメントツリーを閲覧:
+
+  coast docs
+
+これによりドキュメントツリー全体が表示されます。まず README ファイルを読むことから始めてください — 各トピックに適したドキュメントを見つけるための索引が提供されています:
+
+  coast docs --path README.md
+  coast docs --path coastfiles/README.md
+  coast docs --path concepts_and_terminology/README.md
+
+特定のドキュメントを読む:
+
+  coast docs --path coastfiles/PROJECT.md
+  coast docs --path coastfiles/VOLUMES.md
+
+ドキュメントを検索（セマンティック検索 — 探している内容を自然言語で説明）:
+
+  coast search-docs "how do volume strategies work"
+  coast search-docs "shared postgres across instances"
+  coast search-docs "secret injection from environment variables"
+
+ドキュメントを使って、このプロジェクトの Coastfile 設定について情報に基づいた判断をしてください。coastfiles/ セクションには、すべての Coastfile ディレクティブが詳細に解説されています。
+
+=== COASTFILE SCHEMA (quick reference) ===
+
+[coast] — 必須。プロジェクトのメタデータ。
+
+  name        (string, required)  コンテナ/ボリューム命名に使用されるプロジェクト識別子。
+  compose     (string, optional)  Coastfile からの相対パスで指定する docker-compose.yml のパス。
+  runtime     (string, optional)  "dind"（デフォルト）、"sysbox"、または "podman"。
+  root        (string, optional)  プロジェクトルートの上書き（相対または絶対）。
+
+[coast.setup] — 任意。DinD コンテナ自体をカスタマイズします。
+
+  packages    (array of strings)  インストールする Alpine パッケージ（例: ["nodejs", "npm", "git"]）。
+  run         (array of strings)  セットアップ中に実行する任意のコマンド。
+
+[ports] — 必須（少なくとも 1 つ）。論理名からポート番号へのマップ。
+  これらのポートは coast がチェックアウトされたときにホストへフォワードされます。
+
+  例:
+  [ports]
+  web = 3000
+  api = 8080
+  postgres = 5432
+
+[volumes.*] — 任意。ボリュームごとの設定。
+
+  strategy        "isolated"（デフォルト）または "shared"
+  service         このボリュームを所有する Compose サービス名。
+  mount           サービスコンテナ内のマウントパス。
+  snapshot_source (isolated のみ) 既存のボリューム名からシードします。
+
+  例:
+  [volumes.postgres_data]
+  strategy = "isolated"
+  service = "db"
+  mount = "/var/lib/postgresql/data"
+
+[secrets.*] — 任意。シークレットの抽出と注入。
+
+  extractor   "file"、"env"、"command"、または "macos-keychain"
+  inject      "env:VAR_NAME" または "file:/path/in/container"
+  ttl         任意の有効期限（例: "1h", "30m"）。
+
+  Extractor 固有パラメータ:
+    file:            path = "./path/to/secret"
+    env:             var = "HOST_ENV_VAR"
+    command:         run = "echo secret-value"
+    macos-keychain:  item = "keychain-item-name"
+
+  例:
+  [secrets.db_password]
+  extractor = "env"
+  var = "DB_PASSWORD"
+  inject = "env:DATABASE_PASSWORD"
+
+[inject] — 任意。シークレットではないホストのファイル/環境変数の注入。
+
+  env     フォワードするホスト環境変数名の配列。
+  files   マウントするホストファイルパスの配列。
+
+  例:
+  [inject]
+  env = ["NODE_ENV", "DEBUG"]
+  files = ["~/.ssh/id_ed25519", "~/.gitconfig"]
+
+[shared_services.*] — 任意。ホストの Docker デーモン上で動作し、インスタンス間で共有されるサービス。
+
+  image           Docker イメージ。
+  ports           ポート番号の配列。
+  volumes         ボリュームマウントの配列。
+  env             環境変数のインラインテーブル。
+  auto_create_db  (bool) インスタンスごとのデータベースを自動作成します。
+  inject          接続文字列を coast コンテナへ注入します。
+
+  例:
+  [shared_services.postgres]
+  image = "postgres:16-alpine"
+  ports = [5432]
+  volumes = ["postgres_data:/var/lib/postgresql/data"]
+  env = { POSTGRES_USER = "dev", POSTGRES_PASSWORD = "dev", POSTGRES_DB = "app" }
+  auto_create_db = true
+  inject = "env:DATABASE_URL"
+
+[assign] — 任意。ブランチ切り替え（coast assign）時に何が起きるかを制御します。
+
+  default                 "none"、"restart"、または "rebuild"
+  [assign.services]       サービスごとの上書き。
+  [assign.rebuild_triggers]  再ビルドをトリガーするサービスごとのファイル glob。
+
+  例:
+  [assign]
+  default = "none"
+  [assign.services]
+  api = "restart"
+  worker = "rebuild"
+  [assign.rebuild_triggers]
+  worker = ["Dockerfile", "package.json"]
+
+[services.*] — 任意。素のプロセスサービス（docker-compose 不要）。
+
+  command   実行するシェルコマンド。
+  port      ポート番号。
+  restart   "on-failure" または "always"。
+
+  例:
+  [services.web]
+  command = "node server.js"
+  port = 3000
+  restart = "on-failure"
+
+=== EXAMPLE: Minimal (no compose) ===
+
+[coast]
+name = "my-app"
+runtime = "dind"
+
+[coast.setup]
+packages = ["nodejs", "npm"]
+
+[ports]
+app = 3000
+
+=== EXAMPLE: With docker-compose ===
+
+[coast]
+name = "my-app"
+compose = "./docker-compose.yml"
+runtime = "dind"
+
+[ports]
+app = 3000
+postgres = 5432
+redis = 6379
+
+[volumes.postgres_data]
+strategy = "shared"
+service = "db"
+mount = "/var/lib/postgresql/data"
+
+[volumes.redis_data]
+strategy = "isolated"
+service = "cache"
+mount = "/data"
+
+[assign]
+default = "none"
+
+[assign.services]
+app = "rebuild"
+
+=== EXAMPLE: With secrets ===
+
+[coast]
+name = "my-app"
+compose = "./docker-compose.yml"
+runtime = "dind"
+
+[ports]
+app = 3000
+
+[secrets.api_key]
+extractor = "env"
+var = "API_KEY"
+inject = "env:API_KEY"
+
+[secrets.ssh_key]
+extractor = "file"
+path = "~/.ssh/id_ed25519"
+inject = "file:/run/secrets/ssh_key"
+
+=== KEY TRADEOFFS TO DISCUSS WITH THE USER ===
+
+Coastfile を生成する前に、曖昧な設定選択についてユーザーに確認してください。主なものは次のとおりです:
+
+データベースおよびインフラ戦略 — postgres や redis のようなサービスには 3 つの選択肢があります:
+  - 分離ボリューム（デフォルト）: 各 Coast インスタンスは DinD コンテナ内に独自のデータコピーを持ちます。インスタンス同士は干渉できません。ブランチごとの DB 状態が欲しい場合に最適です。
+  - 共有ボリューム: すべてのインスタンスが DinD コンテナ内の同一ボリュームを読み書きします。ディスク容量を節約できますが、複数インスタンスからの同時書き込みによりデータが破損する可能性があります。
+  - 共有サービス: 各 Coast 内ではなくホストの Docker デーモン上でデータベースを実行します。すべてのインスタンスが 1 つの共有サーバーへ接続します。メモリ使用量が最小で、単一の postgres 上でインスタンスごとの DB を作る auto_create_db をサポートし、データはインスタンス削除後も残ります。大規模チームやメモリ制約のあるマシンに最適です。
+  - プロジェクトにデータベースがある場合、どのアプローチにしたいかユーザーに確認してください。トレードオフを説明してください — 分離が最も安全で、共有サービスが最もメモリ効率が良いです。
+
+Assign 戦略 — Coast を worktree 間で切り替える際に何が起きるか:
+  - "none": 何もしない（ブランチ間で変化しない postgres/redis のようなサービス向け）。
+  - "restart": コンテナを再起動する（プロセス再起動だけでよいインタプリタ系サービス向け）。
+  - "rebuild": Docker イメージを再ビルドして再起動する（ブランチ変更が Dockerfile やビルド依存に影響するサービス向け）。
+  - プロジェクトに複数サービスがある場合、ブランチ切り替え時に再ビルドが必要なものと再起動でよいものをどれか、ユーザーに確認してください。
+
+=== INSTRUCTIONS ===
+
+1. このプロジェクトの構造を確認してください。docker-compose.yml がある場合は、それを読んでサービス、ポート、ボリュームを特定してください。
+2. 関連する Coast ドキュメントを読んで（`coast docs` と `coast search-docs` を使用）、ボリューム戦略、assign の挙動、このプロジェクトのスタックに適用される設定オプションを理解してください。
+3. 曖昧な設定選択についてユーザーに確認してください（上記のトレードオフを参照）。推測しないでください — 選択肢を説明し、ユーザーに決めてもらってください。
+4. プロジェクト分析とユーザー入力に基づいて、プロジェクトルートに Coastfile を生成してください。
+5. プロジェクトに docker-compose.yml がない場合は、素のプロセス定義に [services.*] を使用するか、依存関係のインストールに [coast.setup] を使用してください。
+6. `coast build` を実行してください。失敗した場合はエラーを確認し、ドキュメント（`coast search-docs "<error description>"`）を参照してトラブルシュートしてください。
+7. `coast run dev-1` を実行してください。失敗した場合はエラーを確認し、ドキュメントを参照してください。
+8. `coast ui` を実行して Coastguard ダッシュボードを開いてください（これは完了時にユーザー向けに行うものです）。
