@@ -20,14 +20,13 @@ on:
         required: false
         default: ""
 
-permissions:
-  contents: write
-
 jobs:
   update-policy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.POLICY_PUSH_TOKEN }}
 
       - name: Update policy file
         run: |
