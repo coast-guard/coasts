@@ -170,8 +170,8 @@ jobs:
     name: Update Homebrew tap
     needs: [release]
     runs-on: ubuntu-latest
-    # Only update tap for non-prerelease tags
-    if: "!contains(github.ref_name, '-rc') && !contains(github.ref_name, '-beta') && !contains(github.ref_name, '-alpha')"
+    # TODO: restore prerelease guard before v0.1.0
+    # if: "!contains(github.ref_name, '-rc') && !contains(github.ref_name, '-beta') && !contains(github.ref_name, '-alpha')"
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
