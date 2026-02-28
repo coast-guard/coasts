@@ -1,0 +1,24 @@
+[package]
+name = "coast-integration-tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# This crate exists solely for integration tests.
+# It has no library code of its own.
+
+[lints]
+workspace = true
+
+[dependencies]
+coast-core = { path = "../coast-core" }
+coast-secrets = { path = "../coast-secrets" }
+coast-docker = { path = "../coast-docker" }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+chrono = { workspace = true }
+tempfile = { workspace = true }
+git2 = { workspace = true }

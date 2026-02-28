@@ -1,0 +1,208 @@
+# Coastfiles
+
+Coastfile은 프로젝트 루트에 위치하는 TOML 구성 파일입니다. 이 파일은 Coast가 해당 프로젝트를 위한 격리된 개발 환경을 빌드하고 실행하는 데 필요한 모든 것을 알려줍니다 — 어떤 서비스를 실행할지, 어떤 포트를 포워딩할지, 데이터를 어떻게 처리할지, 시크릿을 어떻게 관리할지 등입니다.
+
+모든 Coast 프로젝트에는 최소 한 개의 Coastfile이 필요합니다. 파일 이름은 항상 `Coastfile`입니다(대문자 C, 확장자 없음). 서로 다른 워크플로를 위한 변형이 필요하다면 `Coastfile.light` 또는 `Coastfile.snap` 같은 typed Coastfile을 만들고, 이것들이 [기본 Coastfile을 상속](INHERITANCE.md)하도록 합니다.
+
+Coastfile이 Coast의 다른 부분과 어떻게 연관되는지 더 깊이 이해하려면 [Coasts](../concepts_and_terminology/COASTS.md) 및 [Builds](../concepts_and_terminology/BUILDS.md)를 참고하세요.
+
+## Quickstart
+
+가장 작은 Coastfile:
+
+```toml
+[coast]
+name = "my-app"
+```
+
+이 설정은 `coast exec`로 들어갈 수 있는 DinD 컨테이너를 제공합니다. 대부분의 프로젝트는 `compose` 참조 또는 [bare services](SERVICES.md) 중 하나를 원할 것입니다:
+
+```toml
+[coast]
+name = "my-app"
+compose = "./docker-compose.yml"
+
+[ports]
+web = 3000
+api = 8080
+```
+
+또는 compose 없이, bare services를 사용:
+
+```toml
+[coast]
+name = "my-app"
+
+[coast.setup]
+packages = ["nodejs", "npm"]
+
+[services.web]
+install = "npm install"
+command = "npx next dev --port 3000 --hostname 0.0.0.0"
+port = 3000
+restart = "on-failure"
+
+[ports]
+web = 3000
+```
+
+`coast build`를 실행한 다음 `coast run dev-1`을 실행하면 격리된 환경이 준비됩니다.
+
+## Example Coastfiles
+
+### Simple bare-service project
+
+compose 파일이 없는 Next.js 앱입니다. Coast가 Node를 설치하고 `npm install`을 실행한 다음, dev 서버를 직접 시작합니다.
+
+```toml
+[coast]
+name = "my-crm"
+runtime = "dind"
+
+[coast.setup]
+packages = ["nodejs", "npm"]
+
+[services.web]
+install = "npm install"
+command = "npx next dev --turbopack --port 3002 --hostname 0.0.0.0"
+port = 3002
+restart = "on-failure"
+
+[ports]
+web = 3002
+```
+
+### Full-stack compose project
+
+공유 데이터베이스, 시크릿, 볼륨 전략, 커스텀 설정을 포함한 멀티 서비스 프로젝트입니다.
+
+```toml
+[coast]
+name = "my-app"
+compose = "./infra/docker-compose.yml"
+worktree_dir = ".worktrees"
+primary_port = "web"
+
+[coast.setup]
+packages = ["nodejs", "npm", "python3", "curl", "git", "bash", "ca-certificates", "wget"]
+run = [
+    "ARCH=$(uname -m | sed 's/aarch64/arm64/' | sed 's/x86_64/amd64/') && wget -qO /tmp/go.tar.gz https://go.dev/dl/go1.24.1.linux-${ARCH}.tar.gz && tar -C /usr/local -xzf /tmp/go.tar.gz && rm /tmp/go.tar.gz",
+    "GOBIN=/usr/local/bin go install github.com/air-verse/air@v1.61.7",
+]
+
+[ports]
+web = 3000
+backend = 8080
+postgres = 5432
+redis = 6379
+
+[shared_services.postgres]
+image = "postgres:15"
+ports = [5432]
+volumes = ["infra_postgres_data:/var/lib/postgresql/data"]
+env = { POSTGRES_USER = "myapp", POSTGRES_PASSWORD = "myapp_pass" }
+
+[shared_services.redis]
+image = "redis:7"
+ports = [6379]
+
+[volumes.go_modules_cache]
+strategy = "shared"
+service = "backend"
+mount = "/go/pkg/mod"
+
+[secrets.db_password]
+extractor = "env"
+var = "DB_PASSWORD"
+inject = "env:DB_PASSWORD"
+
+[omit]
+services = ["monitoring", "admin-panel", "nginx-proxy"]
+
+[assign]
+default = "none"
+[assign.services]
+backend = "hot"
+web = "hot"
+```
+
+### Lightweight test variant (inheritance)
+
+기본 Coastfile을 확장하되, 백엔드 테스트 실행에 필요한 것만 남기도록 간소화합니다. 포트 없음, 공유 서비스 없음, 격리된 데이터베이스.
+
+```toml
+[coast]
+extends = "Coastfile"
+autostart = false
+
+[unset]
+ports = ["web", "backend", "postgres", "redis"]
+shared_services = ["postgres", "redis"]
+
+[omit]
+services = ["redis", "backend", "web"]
+
+[volumes.postgres_data]
+strategy = "isolated"
+service = "postgres"
+mount = "/var/lib/postgresql/data"
+
+[assign]
+default = "none"
+[assign.services]
+backend-test = "rebuild"
+```
+
+### Snapshot-seeded variant
+
+각 coast 인스턴스는 호스트의 기존 데이터베이스 볼륨을 복사한 상태로 시작한 다음, 독립적으로 분기됩니다.
+
+```toml
+[coast]
+extends = "Coastfile"
+
+[unset]
+shared_services = ["postgres", "redis", "mongodb"]
+
+[volumes.postgres_data]
+strategy = "isolated"
+snapshot_source = "infra_postgres_data"
+service = "postgres"
+mount = "/var/lib/postgresql/data"
+
+[volumes.redis_data]
+strategy = "isolated"
+snapshot_source = "infra_redis_data"
+service = "redis"
+mount = "/data"
+
+[volumes.mongodb_data]
+strategy = "isolated"
+snapshot_source = "infra_mongodb_data"
+service = "mongodb"
+mount = "/data/db"
+```
+
+## Conventions
+
+- 파일 이름은 `Coastfile`(대문자 C, 확장자 없음)이어야 하며 프로젝트 루트에 있어야 합니다.
+- Typed 변형은 `Coastfile.{type}` 패턴을 사용합니다 — 예: `Coastfile.light`, `Coastfile.snap`. [Inheritance and Types](INHERITANCE.md)를 참고하세요.
+- 예약된 이름 `Coastfile.default`는 허용되지 않습니다.
+- 전반적으로 TOML 문법을 사용합니다. 모든 섹션 헤더는 `[brackets]`를 사용하고, 이름이 있는 엔트리는 `[section.name]`을 사용합니다(배열-오브-테이블이 아님).
+- 같은 Coastfile에서 `compose`와 `[services]`를 둘 다 사용할 수는 없습니다 — 하나를 선택하세요.
+- 상대 경로(`compose`, `root` 등)는 Coastfile의 상위 디렉터리를 기준으로 해석됩니다.
+
+## Reference
+
+| Page | Sections | What it covers |
+|------|----------|----------------|
+| [Project and Setup](PROJECT.md) | `[coast]`, `[coast.setup]` | 이름, compose 경로, 런타임, worktree 디렉터리, 컨테이너 설정 |
+| [Ports](PORTS.md) | `[ports]`, `[egress]` | 포트 포워딩, egress 선언, primary port |
+| [Volumes](VOLUMES.md) | `[volumes.*]` | 격리, 공유, 스냅샷 시드 볼륨 전략 |
+| [Shared Services](SHARED_SERVICES.md) | `[shared_services.*]` | 호스트 수준 데이터베이스 및 인프라 서비스 |
+| [Secrets](SECRETS.md) | `[secrets.*]`, `[inject]` | 시크릿 추출, 주입, 호스트 env/파일 포워딩 |
+| [Bare Services](SERVICES.md) | `[services.*]` | Docker Compose 없이 프로세스를 직접 실행 |
+| [Agent Shell](AGENT_SHELL.md) | `[agent_shell]` | 컨테이너화된 에이전트 TUI 런타임 |
+| [MCP Servers](MCP.md) | `[mcp.*]`, `[mcp_clients.*]` | 내부 및 호스트 프록시 MCP 서버, 클라이언트 커넥터 |
+| [Assign](ASSIGN.md) | `[assign]` | 서비스별 브랜치 전환 동작 |
+| [Inheritance and Types](INHERITANCE.md) | `extends`, `includes`, `[unset]`, `[omit]` | Typed Coastfile, 합성, 오버라이드 |

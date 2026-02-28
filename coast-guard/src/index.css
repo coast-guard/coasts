@@ -1,0 +1,310 @@
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@100..900&family=JetBrains+Mono:wght@100..800&display=swap');
+@import "highlight.js/styles/github.css" layer(hljs-light);
+@import "highlight.js/styles/github-dark.css" layer(hljs-dark);
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: "Geist", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", "Cascadia Code", "Fira Code", Menlo, Monaco, "Courier New", monospace;
+  
+  --radius-sm: 0.6rem;
+  --radius-md: 0.9rem;
+  --radius-lg: 1.25rem;
+  
+  --spacing-shell: 2rem;
+  
+  --shadow-glass: 
+    0 4px 30px rgba(0, 0, 0, 0.1),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.4);
+    
+  --shadow-glass-dark: 
+    0 4px 30px rgba(0, 0, 0, 0.4),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+@layer base {
+  :root,
+  [data-theme="light"] {
+    --bg: #f2f5f9;
+    --bg-grad-start: #eef2f6;
+    --bg-grad-end: #dfe4ea;
+    
+    --surface: rgba(255, 255, 255, 0.65);
+    --surface-solid: #ffffff;
+    --surface-muted: rgba(241, 245, 249, 0.6);
+    
+    --text: #1e293b;
+    --text-muted: #64748b;
+    --text-subtle: #94a3b8;
+    
+    --border: rgba(203, 213, 225, 0.4);
+    --border-strong: rgba(148, 163, 184, 0.4);
+    
+    --primary: #3b82f6;
+    --primary-strong: #2563eb;
+    
+    --danger: #ef4444;
+    --danger-strong: #dc2626;
+    
+    --focus-ring: rgba(59, 130, 246, 0.5);
+  }
+
+  [data-theme="dark"] {
+    --bg: #09090b;
+    --bg-grad-start: #0f172a;
+    --bg-grad-end: #020617;
+    
+    --surface: rgba(30, 41, 59, 0.4);
+    --surface-solid: #1e293b;
+    --surface-muted: rgba(15, 23, 42, 0.4);
+    
+    --text: #f8fafc;
+    --text-muted: #cbd5e1;
+    --text-subtle: #64748b;
+    
+    --border: rgba(71, 85, 105, 0.4);
+    --border-strong: rgba(71, 85, 105, 0.6);
+    
+    --primary: #4f7cf7;
+    --primary-strong: #436de0;
+    
+    --danger: #f87171;
+    --danger-strong: #ef4444;
+    
+    --focus-ring: rgba(79, 124, 247, 0.45);
+  }
+
+  html, body, #root {
+    min-height: 100%;
+  }
+
+  body {
+    margin: 0;
+    font-family: var(--font-sans);
+    color: var(--text);
+    background: linear-gradient(135deg, var(--bg-grad-start), var(--bg-grad-end));
+    background-attachment: fixed;
+  }
+
+  *:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  .page-shell {
+    width: min(1280px, 100%);
+    margin-inline: auto;
+    padding: var(--spacing-shell);
+  }
+
+  /* 
+   * Glass Panel - Apple-like Liquid Glass
+   * Uses backdrop-filter for blur and box-shadow for the "thick glass" edge effect 
+   */
+  .glass-panel {
+    background: var(--surface);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-glass);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }
+  
+  :where(.dark) .glass-panel {
+    box-shadow: var(--shadow-glass-dark);
+  }
+
+  /* Subpanel (flatter/nested glass) */
+  .glass-subpanel {
+    background: var(--surface-muted);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+  }
+
+  /* Header Bar */
+  .app-header {
+    background:
+      linear-gradient(
+        180deg,
+        rgba(20, 82, 204, 0.82) 0%,
+        rgba(16, 70, 184, 0.76) 52%,
+        rgba(12, 58, 160, 0.7) 100%
+      );
+    backdrop-filter: blur(16px) saturate(150%);
+    -webkit-backdrop-filter: blur(16px) saturate(150%);
+    border-bottom: 1px solid rgba(172, 206, 255, 0.3);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.3),
+      0 8px 16px rgba(14, 49, 124, 0.16);
+  }
+
+  .app-header .text-main {
+    color: rgba(245, 250, 255, 0.96) !important;
+  }
+
+  .app-header .text-subtle-ui {
+    color: rgba(216, 232, 255, 0.9) !important;
+  }
+
+  .app-header button:hover {
+    background: rgba(196, 222, 255, 0.24);
+  }
+
+  :where(.dark) .app-header {
+    background:
+      linear-gradient(
+        180deg,
+        rgba(8, 42, 130, 0.56) 0%,
+        rgba(7, 34, 113, 0.44) 50%,
+        rgba(5, 26, 90, 0.36) 100%
+      );
+    border-bottom-color: rgba(129, 170, 245, 0.24);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.12),
+      0 10px 22px rgba(2, 10, 38, 0.32);
+  }
+
+  :where(.dark) .app-header::before {
+    background:
+      linear-gradient(
+        180deg,
+        rgba(8, 42, 130, 0.97) 0%,
+        rgba(7, 34, 113, 0.95) 50%,
+        rgba(5, 26, 90, 0.93) 100%
+      );
+  }
+
+  .panel-header {
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.75rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    font-weight: 700;
+    color: var(--text-subtle);
+    background: rgba(255, 255, 255, 0.03);
+  }
+
+  /* Buttons */
+  .btn {
+    border-radius: var(--radius-sm);
+    padding: 0.5rem 0.85rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    line-height: 1.2;
+    transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+    border: 1px solid transparent;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+  }
+
+  .btn:active {
+    transform: scale(0.98);
+  }
+
+  .btn-primary {
+    background: var(--primary);
+    color: white;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1), inset 0 1px 0 rgba(255,255,255,0.2);
+  }
+  
+  .btn-primary:hover {
+    background: var(--primary-strong);
+    box-shadow: 0 4px 6px rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.2);
+  }
+
+  :where(.dark) .btn-primary {
+    background: linear-gradient(180deg, color-mix(in srgb, var(--primary) 92%, white 8%), var(--primary));
+    border-color: color-mix(in srgb, var(--primary) 72%, white 28%);
+    box-shadow: 0 6px 18px rgba(15, 23, 42, 0.45), inset 0 1px 0 rgba(255,255,255,0.18);
+  }
+
+  :where(.dark) .btn-primary:hover {
+    background: linear-gradient(180deg, color-mix(in srgb, var(--primary-strong) 90%, white 10%), var(--primary-strong));
+    border-color: color-mix(in srgb, var(--primary-strong) 72%, white 28%);
+  }
+
+  .btn-outline {
+    background: transparent;
+    border: 1px solid var(--border-strong);
+    color: var(--text-muted);
+  }
+  
+  .btn-outline:hover {
+    background: var(--surface-strong);
+    color: var(--text);
+    border-color: var(--text-subtle);
+  }
+
+  .btn-danger {
+    background: var(--danger);
+    color: white;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1), inset 0 1px 0 rgba(255,255,255,0.2);
+  }
+  
+  .btn-danger:hover {
+    background: var(--danger-strong);
+  }
+
+  /* Typography */
+  .text-main { color: var(--text); }
+  .text-muted-ui { color: var(--text-muted); }
+  .text-subtle-ui { color: var(--text-subtle); }
+}
+
+/* 
+ * Terminal Overrides 
+ * Forcefully removing xterm's internal borders/backgrounds to let our container style it 
+ */
+.xterm-container {
+  width: 100%;
+  min-height: 300px;
+  height: calc(100vh - 350px);
+}
+
+.xterm-container .xterm {
+  padding: 0.75rem;
+  height: 100%;
+}
+
+.xterm-container .xterm-viewport,
+.xterm-container .xterm-screen,
+.xterm-container .xterm-screen canvas {
+  background-color: var(--term-bg) !important;
+  border: 0 !important;
+  outline: none !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+}
+
+.xterm-container .xterm-scrollable-element > .shadow {
+  display: none !important;
+}
+
+svg[class*="ph-"] {
+  display: block;
+}
+
+@keyframes dotPulse {
+  0%, 80%, 100% { opacity: 0.2; transform: scale(0.8); }
+  40% { opacity: 1; transform: scale(1); }
+}
+
+@layer hljs-light {
+  [data-theme="dark"] .hljs { all: revert-layer; }
+}
+@layer hljs-dark {
+  :root:not([data-theme="dark"]) .hljs,
+  [data-theme="light"] .hljs { all: revert-layer; }
+}
+
+.hljs { background: transparent !important; }

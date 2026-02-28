@@ -1,0 +1,226 @@
+You are installing Coasts into this project. Coast (containerized host) is a CLI tool that runs multiple isolated development environments on a single machine using Docker-in-Docker containers. Each environment gets its own ports, volumes, and runtime — ideal for parallel worktree workflows.
+
+Your job: analyze this project and generate a Coastfile (a TOML file named "Coastfile" at the project root).
+
+=== DOCUMENTATION ===
+
+Coast has built-in docs accessible from the CLI. Use these to understand the full Coastfile schema, volume strategies, assign behavior, and other configuration options before generating a Coastfile.
+
+Browse the docs tree:
+
+  coast docs
+
+This prints the full docs tree. Start by reading the README files — they provide indexes to help you find the right documentation for each topic:
+
+  coast docs --path README.md
+  coast docs --path coastfiles/README.md
+  coast docs --path concepts_and_terminology/README.md
+
+Read a specific doc:
+
+  coast docs --path coastfiles/PROJECT.md
+  coast docs --path coastfiles/VOLUMES.md
+
+Search the docs (semantic search — describe what you're looking for in natural language):
+
+  coast search-docs "how do volume strategies work"
+  coast search-docs "shared postgres across instances"
+  coast search-docs "secret injection from environment variables"
+
+Use the docs to make informed decisions about this project's Coastfile configuration. The coastfiles/ section covers every Coastfile directive in detail.
+
+=== COASTFILE SCHEMA (quick reference) ===
+
+[coast] — Required. Project metadata.
+
+  name        (string, required)  Project identifier used in container/volume naming.
+  compose     (string, optional)  Path to docker-compose.yml relative to the Coastfile.
+  runtime     (string, optional)  "dind" (default), "sysbox", or "podman".
+  root        (string, optional)  Project root override (relative or absolute).
+
+[coast.setup] — Optional. Customize the DinD container itself.
+
+  packages    (array of strings)  Alpine packages to install (e.g. ["nodejs", "npm", "git"]).
+  run         (array of strings)  Arbitrary commands to run during setup.
+
+[ports] — Required (at least one). Map of logical name to port number.
+  These ports are forwarded to the host when the coast is checked out.
+
+  Example:
+  [ports]
+  web = 3000
+  api = 8080
+  postgres = 5432
+
+[volumes.*] — Optional. Per-volume configuration.
+
+  strategy        "isolated" (default) or "shared"
+  service         Compose service name that owns this volume.
+  mount           Mount path inside the service container.
+  snapshot_source (isolated only) Seed from an existing volume name.
+
+  Example:
+  [volumes.postgres_data]
+  strategy = "isolated"
+  service = "db"
+  mount = "/var/lib/postgresql/data"
+
+[secrets.*] — Optional. Secret extraction and injection.
+
+  extractor   "file", "env", "command", or "macos-keychain"
+  inject      "env:VAR_NAME" or "file:/path/in/container"
+  ttl         Optional expiry (e.g. "1h", "30m").
+
+  Extractor-specific params:
+    file:            path = "./path/to/secret"
+    env:             var = "HOST_ENV_VAR"
+    command:         run = "echo secret-value"
+    macos-keychain:  item = "keychain-item-name"
+
+  Example:
+  [secrets.db_password]
+  extractor = "env"
+  var = "DB_PASSWORD"
+  inject = "env:DATABASE_PASSWORD"
+
+[inject] — Optional. Non-secret host file/env injection.
+
+  env     Array of host env var names to forward.
+  files   Array of host file paths to mount.
+
+  Example:
+  [inject]
+  env = ["NODE_ENV", "DEBUG"]
+  files = ["~/.ssh/id_ed25519", "~/.gitconfig"]
+
+[shared_services.*] — Optional. Services on the host Docker daemon shared across instances.
+
+  image           Docker image.
+  ports           Array of port numbers.
+  volumes         Array of volume mounts.
+  env             Inline table of environment variables.
+  auto_create_db  (bool) Create a per-instance database automatically.
+  inject          Inject connection string into coast containers.
+
+  Example:
+  [shared_services.postgres]
+  image = "postgres:16-alpine"
+  ports = [5432]
+  volumes = ["postgres_data:/var/lib/postgresql/data"]
+  env = { POSTGRES_USER = "dev", POSTGRES_PASSWORD = "dev", POSTGRES_DB = "app" }
+  auto_create_db = true
+  inject = "env:DATABASE_URL"
+
+[assign] — Optional. Controls what happens on branch switch (coast assign).
+
+  default                 "none", "restart", or "rebuild"
+  [assign.services]       Per-service overrides.
+  [assign.rebuild_triggers]  Per-service file globs that trigger rebuild.
+
+  Example:
+  [assign]
+  default = "none"
+  [assign.services]
+  api = "restart"
+  worker = "rebuild"
+  [assign.rebuild_triggers]
+  worker = ["Dockerfile", "package.json"]
+
+[services.*] — Optional. Bare process services (no docker-compose needed).
+
+  command   Shell command to run.
+  port      Port number.
+  restart   "on-failure" or "always".
+
+  Example:
+  [services.web]
+  command = "node server.js"
+  port = 3000
+  restart = "on-failure"
+
+=== EXAMPLE: Minimal (no compose) ===
+
+[coast]
+name = "my-app"
+runtime = "dind"
+
+[coast.setup]
+packages = ["nodejs", "npm"]
+
+[ports]
+app = 3000
+
+=== EXAMPLE: With docker-compose ===
+
+[coast]
+name = "my-app"
+compose = "./docker-compose.yml"
+runtime = "dind"
+
+[ports]
+app = 3000
+postgres = 5432
+redis = 6379
+
+[volumes.postgres_data]
+strategy = "shared"
+service = "db"
+mount = "/var/lib/postgresql/data"
+
+[volumes.redis_data]
+strategy = "isolated"
+service = "cache"
+mount = "/data"
+
+[assign]
+default = "none"
+
+[assign.services]
+app = "rebuild"
+
+=== EXAMPLE: With secrets ===
+
+[coast]
+name = "my-app"
+compose = "./docker-compose.yml"
+runtime = "dind"
+
+[ports]
+app = 3000
+
+[secrets.api_key]
+extractor = "env"
+var = "API_KEY"
+inject = "env:API_KEY"
+
+[secrets.ssh_key]
+extractor = "file"
+path = "~/.ssh/id_ed25519"
+inject = "file:/run/secrets/ssh_key"
+
+=== KEY TRADEOFFS TO DISCUSS WITH THE USER ===
+
+Before generating the Coastfile, ask the user about any ambiguous configuration choices. Here are the main ones:
+
+Database and infrastructure strategy — there are three options for services like postgres and redis:
+  - Isolated volumes (default): each Coast instance gets its own copy of the data inside its DinD container. Instances cannot interfere with each other. Best when you want per-branch database state.
+  - Shared volumes: all instances read and write the same volume inside their DinD containers. Saves disk space but concurrent writes from multiple instances can corrupt data.
+  - Shared services: run the database on the host Docker daemon instead of inside each Coast. All instances connect to one shared server. Uses the least memory, supports auto_create_db for per-instance databases on a single postgres, and data outlives instance deletion. Best for large teams or memory-constrained machines.
+  - If the project has a database, ask the user which approach they want. Explain the tradeoffs — isolated is safest, shared services is most memory-efficient.
+
+Assign strategy — what happens when switching a Coast between worktrees:
+  - "none": do nothing (for services like postgres/redis that don't change between branches).
+  - "restart": restart the container (for interpreted services that just need a process restart).
+  - "rebuild": rebuild the Docker image and restart (for services where the branch change affects the Dockerfile or build dependencies).
+  - If the project has multiple services, ask which ones need rebuilding vs restarting on branch switch.
+
+=== INSTRUCTIONS ===
+
+1. Look at this project's structure. If there is a docker-compose.yml, read it to identify services, ports, and volumes.
+2. Read the relevant Coast docs (use `coast docs` and `coast search-docs`) to understand volume strategies, assign behavior, and any configuration options that apply to this project's stack.
+3. Ask the user about any ambiguous configuration choices (see tradeoffs above). Do not guess — explain the options and let them decide.
+4. Generate a Coastfile at the project root based on the project analysis and user input.
+5. If the project has no docker-compose.yml, use [services.*] for bare process definitions or [coast.setup] to install dependencies.
+6. Run `coast build`. If it fails, check the error and consult the docs (`coast search-docs "<error description>"`) to troubleshoot.
+7. Run `coast run dev-1`. If it fails, check the error and consult the docs.
+8. Run `coast ui` to open the Coastguard dashboard (this is for the user when you are done).

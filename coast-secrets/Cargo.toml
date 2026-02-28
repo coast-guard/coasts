@@ -1,0 +1,26 @@
+[package]
+name = "coast-secrets"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+coast-core = { path = "../coast-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+rusqlite = { workspace = true }
+orion = { workspace = true }
+chrono = { workspace = true }
+dirs = { workspace = true }
+shellexpand = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = { workspace = true }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+tempfile = { workspace = true }
