@@ -336,6 +336,60 @@ async fn main() -> Result<()> {
         std::process::exit(1);
     }
 
+    // Auto-update: download and replace binaries before running the command
+    if let Some(coast_update::policy::PolicyAction::AutoUpdate {
+        current,
+        latest,
+        message,
+    }) = &policy_action
+    {
+        if coast_update::updater::is_homebrew_install() {
+            // Can't self-update a Homebrew install — fall through to nudge-like behavior
+            eprintln!(
+                "\n{}",
+                colored::Colorize::dimmed(
+                    coast_update::format_nudge_message(current, latest, message).as_str()
+                )
+            );
+        } else if let Ok(latest_ver) = coast_update::version::parse_version(latest) {
+            eprintln!(
+                "{} Updating coast {} -> {} ...",
+                colored::Colorize::bold(colored::Colorize::cyan("auto-update:")),
+                current,
+                latest
+            );
+            match coast_update::updater::download_release(
+                &latest_ver,
+                coast_update::DOWNLOAD_TIMEOUT,
+            )
+            .await
+            {
+                Ok(tarball) => match coast_update::updater::apply_update(&tarball) {
+                    Ok(()) => {
+                        eprintln!(
+                            "{} coast updated to {}. Re-run your command.",
+                            colored::Colorize::green("done:"),
+                            latest
+                        );
+                        std::process::exit(0);
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "{} Auto-update failed: {e}. Continuing with current version.",
+                            colored::Colorize::yellow("warning:")
+                        );
+                    }
+                },
+                Err(e) => {
+                    eprintln!(
+                        "{} Auto-update failed: {e}. Continuing with current version.",
+                        colored::Colorize::yellow("warning:")
+                    );
+                }
+            }
+        }
+    }
+
     let result = dispatch(cli).await;
 
     // Post-command nudge message (only on success, only for nudge policy)
