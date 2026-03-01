@@ -9,7 +9,7 @@ import ru from './locales/ru.json';
 import pt from './locales/pt.json';
 import es from './locales/es.json';
 
-export const SUPPORTED_LANGUAGES = ['en', 'zh', 'ja', 'ko', 'ru', 'pt', 'es'] as const;
+export const SUPPORTED_LANGUAGES = ['en', 'es', 'ja', 'ko', 'pt', 'ru', 'zh'] as const;
 export type SupportedLanguage = (typeof SUPPORTED_LANGUAGES)[number];
 
 export const LANGUAGE_NAMES: Readonly<Record<SupportedLanguage, string>> = {

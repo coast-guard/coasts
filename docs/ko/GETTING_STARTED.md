@@ -4,7 +4,7 @@
 
 ## Installing
 
-- `brew install coast`
+- `curl -fsSL https://coasts.dev/install | sh`
 - `coast daemon install`
 
 *`coast daemon install`을 실행하지 않기로 결정했다면, 매번 `coast daemon start`로 데몬을 수동으로 시작할 책임은 사용자에게 있습니다.*
@@ -15,7 +15,7 @@
 - Docker Desktop
 - Git을 사용하는 프로젝트
 - Node.js
-- `socat` *(Homebrew `depends_on` 의존성으로 `brew install coast`와 함께 설치됨)*
+- `socat` *(Homebrew `depends_on` 의존성으로 `curl -fsSL https://coasts.dev/install | sh`와 함께 설치됨)*
 
 ```text
 Linux note: We have not tested Coasts on Linux yet, but Linux support is planned.

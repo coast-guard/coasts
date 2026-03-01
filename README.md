@@ -8,7 +8,7 @@ Coasts (Containerized Hosts) is a CLI tool for running multiple isolated instanc
 
 Build once, run N instances, check out one at a time to seamlessly bind its ports to your host.
 
-For the full user-facing documentation, see the [Coasts docs](docs/README.md).
+For the full user-facing documentation, see the [Coasts docs](https://coasts.dev/docs).
 
 To contribute, read the [contributing guide](CONTRIBUTING.md).
 
@@ -30,7 +30,7 @@ Binaries are placed in `target/release/`:
 - `coast` -- the CLI client
 - `coastd` -- the background daemon
 
-## Quick Start
+## Quick Start (building from source)
 
 ```bash
 # Start the daemon

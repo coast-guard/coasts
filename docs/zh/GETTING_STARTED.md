@@ -4,7 +4,7 @@
 
 ## 安装
 
-- `brew install coast`
+- `curl -fsSL https://coasts.dev/install | sh`
 - `coast daemon install`
 
 *如果您决定不运行 `coast daemon install`，那么您需要负责在每一次都手动使用 `coast daemon start` 启动守护进程。*
@@ -15,7 +15,7 @@
 - Docker Desktop
 - 使用 Git 的项目
 - Node.js
-- `socat` *(通过 `brew install coast` 安装时，作为 Homebrew 的 `depends_on` 依赖一并安装)*
+- `socat` *(通过 `curl -fsSL https://coasts.dev/install | sh` 安装时，作为 Homebrew 的 `depends_on` 依赖一并安装)*
 
 ```text
 Linux 注意:我们尚未在 Linux 上测试过 Coasts，但计划支持 Linux。

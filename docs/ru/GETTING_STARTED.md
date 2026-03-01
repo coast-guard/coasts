@@ -4,7 +4,7 @@
 
 ## Installing
 
-- `brew install coast`
+- `curl -fsSL https://coasts.dev/install | sh`
 - `coast daemon install`
 
 *Если вы решите не запускать `coast daemon install`, вы несёте ответственность за ручной запуск демона командой `coast daemon start` каждый раз.*
@@ -15,7 +15,7 @@
 - Docker Desktop
 - Проект, использующий Git
 - Node.js
-- `socat` *(устанавливается вместе с `brew install coast` как Homebrew-зависимость `depends_on`)*
+- `socat` *(устанавливается вместе с `curl -fsSL https://coasts.dev/install | sh` как Homebrew-зависимость `depends_on`)*
 
 ```text
 Linux note: We have not tested Coasts on Linux yet, but Linux support is planned.

@@ -8,7 +8,7 @@ import { useDockerInfo, useOpenDockerSettingsMutation } from '../hooks/useDocker
 import { formatBytes } from '../lib/formatBytes';
 import LanguagePicker from './LanguagePicker';
 import DockerIcon from './DockerIcon';
-import logoUrl from '../../assets/coastguard_logo_with_name.svg';
+import logoUrl from '../../assets/coastguard_logo.svg';
 
 export default function Layout() {
   useCoastEvents();
@@ -29,13 +29,14 @@ export default function Layout() {
             to="/"
             className="flex items-center gap-2 text-lg font-bold text-main no-underline hover:no-underline"
           >
-            <img src={logoUrl} alt={t('app.title')} className="h-8" />
+            <img src={logoUrl} alt="" className="h-7 w-auto" />
+            <span className="text-xl tracking-tight">Coastguard</span>
           </Link>
           <div className="flex items-center gap-1">
             {dockerInfo != null && dockerInfo.connected && (
               <button
                 onClick={handleOpenDockerSettings}
-                className="h-8 px-2.5 inline-flex items-center gap-2.5 rounded-lg text-xs text-subtle-ui hover:bg-[var(--surface-hover)] transition-colors cursor-pointer"
+                className="h-8 px-2.5 inline-flex items-center gap-2.5 rounded-lg text-xs text-subtle-ui hover:bg-[var(--header-control-hover)] transition-colors cursor-pointer"
                 title={t('docker.memoryTitle')}
               >
                 <DockerIcon size={18} />
@@ -56,14 +57,14 @@ export default function Layout() {
             <LanguagePicker />
             <button
               onClick={toggle}
-              className="h-8 w-8 inline-flex items-center justify-center rounded-lg text-subtle-ui hover:bg-[var(--surface-hover)] transition-colors"
+              className="h-8 w-8 inline-flex items-center justify-center rounded-lg text-subtle-ui hover:bg-[var(--header-control-hover)] transition-colors cursor-pointer"
               title={theme === 'dark' ? t('theme.switchToLight') : t('theme.switchToDark')}
             >
               {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
             </button>
             <Link
               to="/docs"
-              className="h-8 w-8 inline-flex items-center justify-center rounded-lg text-subtle-ui hover:bg-[var(--surface-hover)] transition-colors"
+              className="h-8 w-8 inline-flex items-center justify-center rounded-lg text-subtle-ui hover:bg-[var(--header-control-hover)] transition-colors cursor-pointer"
               title={t('docs.title')}
             >
               <BookOpenText size={18} />

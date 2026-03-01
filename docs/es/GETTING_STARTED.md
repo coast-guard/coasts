@@ -4,7 +4,7 @@ Si aún no lo has hecho, completa primero la instalación y los requisitos que s
 
 ## Installing
 
-- `brew install coast`
+- `curl -fsSL https://coasts.dev/install | sh`
 - `coast daemon install`
 
 *Si decides no ejecutar `coast daemon install`, eres responsable de iniciar el daemon manualmente con `coast daemon start` todas y cada una de las veces.*
@@ -15,7 +15,7 @@ Si aún no lo has hecho, completa primero la instalación y los requisitos que s
 - Docker Desktop
 - Un proyecto que use Git
 - Node.js
-- `socat` *(se instala con `brew install coast` como una dependencia Homebrew `depends_on`)*
+- `socat` *(se instala con `curl -fsSL https://coasts.dev/install | sh` como una dependencia Homebrew `depends_on`)*
 
 ```text
 Linux note: We have not tested Coasts on Linux yet, but Linux support is planned.

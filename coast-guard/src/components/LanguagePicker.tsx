@@ -23,7 +23,7 @@ export default function LanguagePicker() {
     <div ref={ref} className="relative">
       <button
         onClick={() => setOpen((prev) => !prev)}
-        className="h-8 inline-flex items-center gap-1.5 px-2 rounded-lg text-subtle-ui hover:bg-white/30 dark:hover:bg-white/10 transition-colors text-xs font-semibold uppercase"
+        className="h-8 inline-flex items-center gap-1.5 px-2 rounded-lg text-subtle-ui hover:bg-[var(--header-control-hover)] transition-colors text-xs font-semibold uppercase"
         title={LANGUAGE_NAMES[locale]}
       >
         <Globe size={18} />
@@ -31,7 +31,7 @@ export default function LanguagePicker() {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-2 glass-panel py-1 min-w-[160px] z-50">
+        <div className="absolute right-0 top-full mt-2 glass-panel p-1 min-w-[160px] z-50 overflow-hidden">
           {SUPPORTED_LANGUAGES.map((lang) => (
             <button
               key={lang}
@@ -39,10 +39,10 @@ export default function LanguagePicker() {
                 setLocale(lang);
                 setOpen(false);
               }}
-              className={`w-full text-left px-4 py-2 text-sm transition-colors ${
+              className={`w-full rounded-md text-left px-4 py-2 text-sm transition-colors ${
                 lang === locale
-                  ? 'text-main font-semibold bg-white/20 dark:bg-white/10'
-                  : 'text-muted-ui hover:text-main hover:bg-white/15 dark:hover:bg-white/8'
+                  ? 'font-semibold text-[var(--text)] bg-[var(--surface-strong)]'
+                  : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface-muted-hover)]'
               }`}
             >
               {LANGUAGE_NAMES[lang]}

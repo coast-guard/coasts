@@ -344,8 +344,8 @@ export default function DocsViewer({ content, basePath, files }: DocsViewerProps
       const isCopyable = childClass.includes('-copy');
 
       const preClassName = isEmphasis
-        ? 'mb-4 p-4 rounded-lg overflow-x-auto font-mono text-sm leading-relaxed bg-[var(--surface-muted)] border-2 border-[var(--primary)] ring-1 ring-[var(--primary)]/20'
-        : 'mb-4 p-4 rounded-lg overflow-x-auto font-mono text-sm leading-relaxed bg-[var(--surface-muted)] border border-[var(--border)]';
+        ? 'mb-4 p-4 rounded-lg overflow-x-auto font-mono text-sm leading-relaxed bg-[var(--docs-code-surface)] border-2 border-[var(--primary)] ring-1 ring-[var(--primary)]/20'
+        : 'mb-4 p-4 rounded-lg overflow-x-auto font-mono text-sm leading-relaxed bg-[var(--docs-code-surface)] border border-[var(--border)]';
 
       if (isCopyable) {
         const textContent = typeof childProps?.['children'] === 'string'
