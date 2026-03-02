@@ -82,7 +82,7 @@ inject = "env:DATABASE_URL"
 
 Shared services start automatically when the first Coast instance that references them runs. They keep running across `coast stop` and `coast rm` — removing an instance does not affect shared service data. Only `coast shared rm` stops and removes a shared service.
 
-Per-instance databases created by `auto_create_db` also survive instance deletion. Use `coast shared db drop` to remove them explicitly.
+Per-instance databases created by `auto_create_db` also survive instance deletion. Use `coast shared-services rm` to remove the service and its data entirely.
 
 ## When to use shared services vs volumes
 

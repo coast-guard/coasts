@@ -1,8 +1,8 @@
-# Servicios Compartidos
+# Servicios compartidos
 
 Las secciones `[shared_services.*]` definen servicios de infraestructura — bases de datos, cachés, brokers de mensajes — que se ejecutan en el daemon de Docker del host en lugar de dentro de contenedores individuales de Coast. Varias instancias de Coast se conectan al mismo servicio compartido a través de una red bridge.
 
-Para saber cómo funcionan los servicios compartidos en tiempo de ejecución, la gestión del ciclo de vida y la resolución de problemas, consulta [Shared Services](../concepts_and_terminology/SHARED_SERVICES.md).
+Para saber cómo funcionan los servicios compartidos en tiempo de ejecución, la gestión del ciclo de vida y la resolución de problemas, consulta [Servicios compartidos](../concepts_and_terminology/SHARED_SERVICES.md).
 
 ## Definir un servicio compartido
 
@@ -17,11 +17,11 @@ env = { POSTGRES_PASSWORD = "dev" }
 
 ### `image` (obligatorio)
 
-La imagen de Docker que se ejecuta en el daemon del host.
+La imagen de Docker que se ejecutará en el daemon del host.
 
 ### `ports`
 
-Lista de puertos que expone el servicio. Se usa para el enrutamiento de la red bridge entre el servicio compartido y las instancias de Coast.
+Lista de puertos que el servicio expone. Se usa para el enrutamiento de la red bridge entre el servicio compartido y las instancias de Coast.
 
 ```toml
 [shared_services.redis]
@@ -33,7 +33,7 @@ Los valores de los puertos deben ser distintos de cero.
 
 ### `volumes`
 
-Cadenas de bind de volúmenes de Docker para persistir datos. Estos son volúmenes de Docker a nivel de host, no volúmenes gestionados por Coast.
+Cadenas de montaje (bind) de volúmenes de Docker para persistir datos. Estos son volúmenes de Docker a nivel del host, no volúmenes gestionados por Coast.
 
 ```toml
 [shared_services.postgres]
@@ -68,7 +68,7 @@ auto_create_db = true
 
 ### `inject`
 
-Inyecta la información de conexión del servicio compartido en instancias de Coast como una variable de entorno o un archivo. Usa el mismo formato `env:NAME` o `file:/path` que [secrets](SECRETS.md).
+Inyecta la información de conexión del servicio compartido en las instancias de Coast como una variable de entorno o un archivo. Usa el mismo formato `env:NAME` o `file:/path` que los [secrets](SECRETS.md).
 
 ```toml
 [shared_services.postgres]
@@ -82,11 +82,11 @@ inject = "env:DATABASE_URL"
 
 Los servicios compartidos se inician automáticamente cuando se ejecuta la primera instancia de Coast que los referencia. Siguen ejecutándose a través de `coast stop` y `coast rm` — eliminar una instancia no afecta a los datos del servicio compartido. Solo `coast shared rm` detiene y elimina un servicio compartido.
 
-Las bases de datos por instancia creadas por `auto_create_db` también sobreviven a la eliminación de la instancia. Usa `coast shared db drop` para eliminarlas explícitamente.
+Las bases de datos por instancia creadas por `auto_create_db` también sobreviven a la eliminación de la instancia. Usa `coast shared-services rm` para eliminar el servicio y sus datos por completo.
 
 ## Cuándo usar servicios compartidos vs volúmenes
 
-Usa servicios compartidos cuando varias instancias de Coast necesiten comunicarse con el mismo servidor de base de datos (p. ej., un Postgres compartido donde cada instancia obtiene su propia base de datos). Usa [volume strategies](VOLUMES.md) cuando quieras controlar cómo se comparten o aíslan los datos de un servicio interno de compose.
+Usa servicios compartidos cuando varias instancias de Coast necesiten hablar con el mismo servidor de base de datos (p. ej., un Postgres compartido donde cada instancia obtiene su propia base de datos). Usa [estrategias de volúmenes](VOLUMES.md) cuando quieras controlar cómo se comparten o aíslan los datos de un servicio interno de compose.
 
 ## Ejemplos
 

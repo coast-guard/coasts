@@ -45,6 +45,7 @@ const DOC_TITLE_KEYS: Record<string, string> = {
   'concepts_and_terminology/MCP_SERVERS.md': 'docs.nav.mcpServers',
   'concepts_and_terminology/FILESYSTEM.md': 'docs.nav.filesystem',
   'concepts_and_terminology/BARE_SERVICES.md': 'docs.nav.bareServices',
+  'concepts_and_terminology/TROUBLESHOOTING.md': 'docs.nav.troubleshooting',
   'coastfiles/README.md': 'docs.nav.coastfiles',
   'coastfiles/PROJECT.md': 'docs.nav.coastfileProject',
   'coastfiles/PORTS.md': 'docs.nav.coastfilePorts',

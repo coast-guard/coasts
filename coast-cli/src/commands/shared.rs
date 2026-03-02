@@ -1,8 +1,8 @@
 /// `coast shared-services` command -- manage shared services.
 ///
-/// Provides subcommands to list status, start, stop, restart, remove,
-/// and manage databases for shared services that run on the host Docker
-/// daemon and are shared across coast instances.
+/// Provides subcommands to list status, start, stop, restart, and remove
+/// shared services that run on the host Docker daemon and are shared
+/// across coast instances.
 use anyhow::{bail, Result};
 use clap::{Args, Subcommand};
 use colored::Colorize;
@@ -58,22 +58,6 @@ pub enum SharedAction {
     Rm {
         /// Name of the shared service to remove.
         service: String,
-    },
-    /// Database management subcommands.
-    Db {
-        /// Database subcommand.
-        #[command(subcommand)]
-        action: DbAction,
-    },
-}
-
-/// Database subcommands for `coast shared-services db`.
-#[derive(Debug, Subcommand)]
-pub enum DbAction {
-    /// Drop a database from a shared postgres service.
-    Drop {
-        /// Name of the database to drop.
-        db_name: String,
     },
 }
 
@@ -138,12 +122,6 @@ pub async fn execute(args: &SharedArgs, project: &str) -> Result<()> {
         SharedAction::Rm { service } => Request::Shared(SharedRequest::Rm {
             project: project.to_string(),
             service: service.clone(),
-        }),
-        SharedAction::Db {
-            action: DbAction::Drop { db_name },
-        } => Request::Shared(SharedRequest::DbDrop {
-            project: project.to_string(),
-            db_name: db_name.clone(),
         }),
     };
 
@@ -342,27 +320,8 @@ mod tests {
     }
 
     #[test]
-    fn test_shared_db_drop_args() {
-        let cli = TestCli::try_parse_from(["test", "db", "drop", "feature_oauth_db"]).unwrap();
-        match cli.args.action {
-            SharedAction::Db {
-                action: DbAction::Drop { db_name },
-            } => {
-                assert_eq!(db_name, "feature_oauth_db");
-            }
-            _ => panic!("Expected Db Drop action"),
-        }
-    }
-
-    #[test]
     fn test_shared_rm_missing_service() {
         let result = TestCli::try_parse_from(["test", "rm"]);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_shared_db_drop_missing_name() {
-        let result = TestCli::try_parse_from(["test", "db", "drop"]);
         assert!(result.is_err());
     }
 

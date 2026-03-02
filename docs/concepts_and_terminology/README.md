@@ -23,3 +23,4 @@ This section covers the core concepts and vocabulary used throughout Coasts. If 
 - [Exec & Docker](EXEC_AND_DOCKER.md) — running commands inside a Coast and talking to the inner Docker daemon.
 - [Agent Shells](AGENT_SHELLS.md) — containerized agent TUIs, the OAuth tradeoff, and why you should probably run agents on the host instead.
 - [MCP Servers](MCP_SERVERS.md) — configuring MCP tools inside a Coast for containerized agents, internal vs host-proxied servers.
+- [Troubleshooting](TROUBLESHOOTING.md) — doctor, daemon restart, project removal, and the factory-reset nuke option.

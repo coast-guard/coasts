@@ -20,6 +20,12 @@ To contribute, read the [contributing guide](CONTRIBUTING.md).
 
 > Note: Coasts is currently macOS-specific. General Linux support is coming shortly.
 
+## Installation
+
+```sh
+curl -fsSL https://coasts.dev/install | sh
+```
+
 ## Prerequisites
 
 - Rust (stable toolchain)

@@ -504,6 +504,7 @@
   "docs.nav.mcpServers": "MCP 서버",
   "docs.nav.filesystem": "파일 시스템",
   "docs.nav.bareServices": "베어 서비스",
+  "docs.nav.troubleshooting": "문제 해결",
   "docs.nav.coastfiles": "Coastfiles",
   "docs.nav.coastfileProject": "프로젝트 및 설정",
   "docs.nav.coastfilePorts": "포트",

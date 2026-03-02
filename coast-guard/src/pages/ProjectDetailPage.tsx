@@ -588,6 +588,7 @@ export default function ProjectDetailPage() {
         builds={buildsLsData?.builds ?? []}
         worktrees={gitInfo?.worktrees ?? []}
         occupiedWorktrees={occupiedWorktrees}
+        onError={setErrorMsg}
         onCreated={(name, worktree) => {
           setCreateOpen(false);
           if (worktree) {

@@ -1203,5 +1203,27 @@ LOOKUP_MAIN_EOF
 
 setup_coast_lookup
 
+# --- coast-dangling ---
+# A minimal project for testing dangling container detection.
+# Has a shared redis service so tests can cover both instance and shared-service danglers.
+
+setup_coast_dangling() {
+    local dir="$PROJECTS_DIR/coast-dangling"
+    echo "Setting up coast-dangling..."
+
+    rm -rf "$dir/.git"
+
+    cd "$dir"
+    git init -b main
+    git config user.name "Coast Dev"
+    git config user.email "dev@coasts.dev"
+    git add -A
+    git commit -m "initial commit: dangling container test project"
+
+    echo "  coast-dangling ready (branches: main)"
+}
+
+setup_coast_dangling
+
 echo ""
 echo "All examples initialized. Run 'coast build' inside any example to get started."

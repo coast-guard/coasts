@@ -119,10 +119,17 @@ pub(super) async fn start_shared_services(
                 .start_container::<String>(&container_name, None)
                 .await
                 .map_err(|e| {
-                    CoastError::docker(format!(
-                        "Failed to start shared service container '{}': {}",
-                        container_name, e
-                    ))
+                    let raw = e.to_string();
+                    if let Some(msg) =
+                        humanize_port_conflict(&raw, &svc_config.name, &svc_config.ports)
+                    {
+                        CoastError::docker(msg)
+                    } else {
+                        CoastError::docker(format!(
+                            "Failed to start shared service container '{}': {}",
+                            container_name, e
+                        ))
+                    }
                 })?;
 
             if let Err(e) = nm.connect_container(&network_name, &container_name).await {
@@ -160,4 +167,44 @@ pub(super) async fn start_shared_services(
         service_hosts,
         network_name: Some(network_name),
     })
+}
+
+/// Rewrite a raw Docker "port already allocated" error into a human-friendly message.
+///
+/// Docker errors look like:
+///   "...Bind for 0.0.0.0:6379 failed: port is already allocated"
+///
+/// We extract the port number and tell the user what's actually wrong.
+fn humanize_port_conflict(raw: &str, service_name: &str, declared_ports: &[u16]) -> Option<String> {
+    if !raw.contains("port is already allocated") {
+        return None;
+    }
+
+    let port = raw.find("Bind for ").and_then(|start| {
+        let after = &raw[start + "Bind for ".len()..];
+        let colon = after.find(':')?;
+        let port_str = &after[colon + 1..];
+        let end = port_str.find(' ')?;
+        port_str[..end].parse::<u16>().ok()
+    });
+
+    let port_display = port.map(|p| p.to_string()).unwrap_or_else(|| {
+        declared_ports
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", ")
+    });
+
+    Some(format!(
+        "Port {port_display} is already in use on the host.\n\n\
+         The shared service '{service_name}' needs this port but another process is already \
+         listening on it. This is usually caused by:\n\
+         \n\
+         - Another Docker container bound to the same port (check `docker ps`)\n\
+         - A local service running on the host (check `lsof -iTCP:{port_display} -sTCP:LISTEN`)\n\
+         - Another shared service in your Coastfile that declares the same port\n\
+         \n\
+         Stop the conflicting process and try again."
+    ))
 }

@@ -1,0 +1,95 @@
+このプロジェクトのために Coast ランタイムスキルを設定しています。Coast（コンテナ化ホスト）は Docker-in-Docker コンテナを使用して、分離された開発環境を実行します。このプロジェクトにはすでに Coastfile があります。あなたの仕事は、実行中の環境とやり取りできるように、Coast ランタイムスキルをエージェント設定に追加することです。
+
+=== やること ===
+
+1. 環境に応じて、使用するエージェント設定ファイルを決定します:
+   - Claude Code: プロジェクトルートの `CLAUDE.md` に追加（存在しない場合は作成）
+   - Codex: プロジェクトルートの `AGENTS.md` に追加（存在しない場合は作成）
+   - Cursor: プロジェクトルートの `.cursor/rules/coast.md` に追加（必要ならディレクトリを作成）
+   - その他のエージェント: 起動時にエージェントが読む、プロジェクトレベルのプロンプトまたはルールファイルに追加
+
+2. 以下のスキルテキストを、そのファイルの「Coast Runtime」セクションの下に追加します。ファイルがすでに存在する場合は、新しいセクションとして追記してください — 既存の内容を上書きしないでください。
+
+=== スキルテキスト（エージェント設定ファイルにこれを追加） ===
+
+# Coast Runtime
+
+このプロジェクトでは、分離された開発環境のために Coasts（コンテナ化ホスト）を使用します。
+あなたのコード編集は実行中の Coast 内に自動的に反映されます — ファイルシステムは
+ホストとコンテナの間で共有されています。
+
+## Orientation
+
+ランタイムコマンドを実行する前に、現在の作業ディレクトリに一致する Coast インスタンスを
+特定します:
+
+```
+coast lookup
+```
+
+これにより、インスタンス名、ポート、URL、サンプルコマンドが表示されます。以後のすべてのコマンドでは、
+出力にあるインスタンス名を使用してください。
+
+Coasts の仕組みについてより深いコンテキストが必要な場合は、これらのドキュメントを読んでください:
+
+```
+coast docs --path concepts_and_terminology/LOOKUP.md
+coast docs --path concepts_and_terminology/FILESYSTEM.md
+coast docs --path concepts_and_terminology/EXEC_AND_DOCKER.md
+coast docs --path concepts_and_terminology/LOGS.md
+```
+
+## Running Commands
+
+Coast 内でコマンドを実行するには `coast exec` を使用します。シェルはワークスペースの
+ルート（Coastfile がある場所）で開始します。まず対象ディレクトリに cd してください:
+
+```
+coast exec <instance> -- sh -c "cd <dir> && <command>"
+```
+
+例:
+
+```
+coast exec dev-1 -- sh -c "cd src && npm test"
+coast exec dev-1 -- sh -c "cd backend && go test ./..."
+coast exec dev-1 -- sh -c "cd apps/web && npx playwright test"
+```
+
+## Runtime Feedback
+
+サービスの状態を確認:
+
+```
+coast ps <instance>
+```
+
+サービスログを読む:
+
+```
+coast logs <instance> --service <service>
+coast logs <instance> --service <service> --tail 50
+```
+
+## Troubleshooting
+
+エラーや見慣れない挙動に遭遇した場合は、Coast ドキュメントを検索してください:
+
+```
+coast search-docs "error message or description"
+```
+
+これはセマンティック検索を使用します — 問題を自然言語で説明すると、
+関連するドキュメントを見つけます。
+
+## Rules
+
+- セッション内で最初のランタイムコマンドを実行する前に、必ず `coast lookup` を実行すること。
+- ホスト上で直接サービスを実行しないこと。すべてのランタイム作業には `coast exec` を使用すること。
+- ホスト上のファイル編集は Coast 内に即座に反映されます。編集後にファイルをコピーしたり再ビルドしたりする必要はありません。
+- `coast lookup` がインスタンスを返さない場合、Coast が動作していない可能性があります。`coast run dev-1` を提案するか、プロジェクトの状態を `coast ls` で確認してください。
+
+=== スキルテキストここまで ===
+
+3. ファイルを書き込んだら、`ls Coastfile` を実行して、このプロジェクトに Coastfile が存在することを確認します。
+4. すでに Coast が実行中の場合は、`coast lookup` を実行してスキルが機能することを確認します。Coast が実行されていない場合は、`coast run dev-1` で起動できることをユーザーに伝えてください。

@@ -39,6 +39,8 @@ pub enum Commands {
     Daemon(commands::daemon::DaemonArgs),
     /// Diagnose and repair orphaned state (missing containers).
     Doctor(commands::doctor::DoctorArgs),
+    /// Destroy all coast state, Docker resources, and data.
+    Nuke(commands::nuke::NukeArgs),
     /// Open the Coast dashboard in your browser.
     Ui(commands::ui::UiArgs),
     /// Manage the localcoast DNS resolver.
@@ -238,6 +240,7 @@ async fn dispatch(cli: Cli) -> Result<()> {
         // --- Global commands ---
         Commands::Daemon(args) => commands::daemon::execute(&args).await,
         Commands::Doctor(args) => commands::doctor::execute(&args).await,
+        Commands::Nuke(args) => commands::nuke::execute(&args).await,
         Commands::Ui(args) => commands::ui::execute(&args).await,
         Commands::Dns(args) => commands::dns::execute(&args).await,
         Commands::Config(args) => commands::config::execute(&args).await,

@@ -1,34 +1,36 @@
 # Primeros pasos con Coasts
 
-Si aún no lo has hecho, completa primero la instalación y los requisitos que se indican a continuación. Luego, esta guía explica cómo usar Coast en un proyecto.
+Si aún no lo has hecho, completa primero la instalación y los requisitos de abajo. Luego, esta guía explica cómo usar Coast en un proyecto.
 
 ## Installing
 
-- `curl -fsSL https://coasts.dev/install | sh`
-- `coast daemon install`
+```bash
+curl -fsSL https://coasts.dev/install | sh
+coast daemon install
+```
 
-*Si decides no ejecutar `coast daemon install`, eres responsable de iniciar el daemon manualmente con `coast daemon start` todas y cada una de las veces.*
+*Si decides no ejecutar `coast daemon install`, eres responsable de iniciar el daemon manualmente con `coast daemon start` cada vez.*
 
 ## Requirements
 
 - macOS
 - Docker Desktop
-- Un proyecto que use Git
+- Un proyecto usando Git
 - Node.js
-- `socat` *(se instala con `curl -fsSL https://coasts.dev/install | sh` como una dependencia Homebrew `depends_on`)*
+- `socat` (`brew install socat` en macOS)
 
 ```text
 Linux note: We have not tested Coasts on Linux yet, but Linux support is planned.
 You can try to run Coasts on Linux today, but we do not provide guarantees that it will work correctly.
 ```
 
-## Setting Up Coasts in a Project
+## Configurar Coasts en un proyecto
 
-Añade un Coastfile en la raíz de tu proyecto. Asegúrate de no estar en un worktree al instalar.
+Agrega un Coastfile en la raíz de tu proyecto. Asegúrate de no estar en un worktree al instalar.
 
 ```text
 my-project/
-├── Coastfile              <-- this is what Coast reads
+├── Coastfile              <-- esto es lo que lee Coast
 ├── docker-compose.yml
 ├── Dockerfile
 ├── src/
@@ -36,7 +38,7 @@ my-project/
 └── ...
 ```
 
-El `Coastfile` apunta a tus recursos existentes de desarrollo local y añade configuración específica de Coasts — consulta la [documentación de Coastfiles](coastfiles/README.md) para ver el esquema completo:
+El `Coastfile` apunta a tus recursos existentes de desarrollo local y añade configuración específica de Coasts — consulta la [documentación de Coastfiles](coastfiles/README.md) para el esquema completo:
 
 ```toml
 [coast]
@@ -48,11 +50,11 @@ web = 3000
 db = 5432
 ```
 
-Un Coastfile es un archivo TOML ligero que *normalmente* apunta a tu `docker-compose.yml` existente (también funciona con configuraciones de desarrollo local sin contenedores) y describe las modificaciones necesarias para ejecutar tu proyecto en paralelo — mapeos de puertos, estrategias de volúmenes y secretos. Colócalo en la raíz de tu proyecto.
+Un Coastfile es un archivo TOML ligero que *típicamente* apunta a tu `docker-compose.yml` existente (también funciona con configuraciones de desarrollo local sin contenedores) y describe las modificaciones necesarias para ejecutar tu proyecto en paralelo: asignaciones de puertos, estrategias de volúmenes y secretos. Colócalo en la raíz de tu proyecto.
 
-La forma más rápida de crear un Coastfile para tu proyecto es dejar que lo haga tu agente de codificación.
+La forma más rápida de crear un Coastfile para tu proyecto es dejar que tu agente de programación lo haga.
 
-El CLI de Coasts incluye un prompt integrado que enseña a cualquier agente de IA el esquema completo del Coastfile y el CLI. Puedes verlo aquí: [installation_prompt.txt](installation_prompt.txt)
+La CLI de Coasts incluye un prompt integrado que enseña a cualquier agente de IA el esquema completo del Coastfile y la CLI. Puedes verlo aquí: [installation_prompt.txt](installation_prompt.txt)
 
 Pásalo directamente a tu agente, o copia el [prompt de instalación](installation_prompt.txt) y pégalo en el chat de tu agente:
 
@@ -67,11 +69,11 @@ codex "$(coast installation-prompt)"
 cursor --chat "$(coast installation-prompt)"
 ```
 
-El prompt cubre el formato TOML del Coastfile, estrategias de volúmenes, inyección de secretos y todos los comandos relevantes del CLI. Tu agente analizará tu proyecto y generará un Coastfile.
+El prompt cubre el formato TOML del Coastfile, las estrategias de volúmenes, la inyección de secretos y todos los comandos relevantes de la CLI. Tu agente analizará tu proyecto y generará un Coastfile.
 
-## Your First Coast
+## Tu primer Coast
 
-Antes de iniciar tu primer Coast, detén cualquier entorno de desarrollo que esté ejecutándose. Si estás usando Docker Compose, ejecuta `docker-compose down`. Si tienes servidores de desarrollo local ejecutándose, deténlos. Coasts gestiona sus propios puertos y entrará en conflicto con cualquier cosa que ya esté escuchando.
+Antes de iniciar tu primer Coast, baja cualquier entorno de desarrollo en ejecución. Si estás usando Docker Compose, ejecuta `docker-compose down`. Si tienes servidores de desarrollo local ejecutándose, detenlos. Coasts gestiona sus propios puertos y entrará en conflicto con cualquier cosa que ya esté escuchando.
 
 Una vez que tu Coastfile esté listo:
 
@@ -80,7 +82,7 @@ coast build
 coast run dev-1
 ```
 
-Comprueba que tu instancia está en ejecución:
+Verifica que tu instancia esté en ejecución:
 
 ```bash
 coast ls
@@ -99,7 +101,7 @@ coast ports dev-1
 #   db       5432       55681
 ```
 
-Cada instancia obtiene su propio conjunto de puertos dinámicos para que múltiples instancias puedan ejecutarse en paralelo. Para mapear una instancia de vuelta a los puertos canónicos de tu proyecto, haz checkout:
+Cada instancia obtiene su propio conjunto de puertos dinámicos para que múltiples instancias puedan ejecutarse en paralelo. Para mapear una instancia de vuelta a los puertos canónicos de tu proyecto, haz checkout de ella:
 
 ```bash
 coast checkout dev-1
@@ -120,6 +122,6 @@ Para abrir la UI de observabilidad de Coastguard para tu proyecto:
 coast ui
 ```
 
-## What's Next?
+## ¿Qué sigue?
 
 - Configura una [skill para tu agente host](SKILLS_FOR_HOST_AGENTS.md) para que sepa cómo interactuar con Coasts

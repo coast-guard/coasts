@@ -1,22 +1,22 @@
-# 主机代理的技能
+# 面向主机代理的技能
 
-如果你在使用 Coasts 的项目中使用 AI 编码代理（Claude Code、Codex、Conductor、Cursor 或类似工具），你的代理需要一个技能来教它如何与 Coast 运行时交互。没有这个技能，代理会编辑文件，但不知道如何运行测试、查看日志，或验证它的更改在运行中的环境里是否生效。
+如果你在使用 Coasts 的项目中使用 AI 编码代理（Claude Code、Codex、Conductor、Cursor 或类似工具），你的代理需要一个技能来教它如何与 Coast 运行时交互。否则，代理会编辑文件，但不知道如何运行测试、查看日志，或验证其更改是否在运行中的环境里生效。
 
 本指南将带你完成该技能的设置。
 
 ## 为什么代理需要这个
 
-Coasts 在你的主机与 Coast 容器之间共享 [filesystem](concepts_and_terminology/FILESYSTEM.md)。你的代理在主机上编辑文件，Coast 内运行的服务会立刻看到这些更改。但代理仍然需要:
+Coasts 在你的主机与 Coast 容器之间共享[文件系统](concepts_and_terminology/FILESYSTEM.md)。你的代理在主机上编辑文件，而 Coast 内运行的服务会立刻看到这些更改。但代理仍然需要:
 
-1. **发现它正在使用的是哪个 Coast 实例** — `coast lookup` 会根据代理当前目录解析出来。
-2. **在 Coast 内运行命令** — 测试、构建以及其他运行时任务需要通过 `coast exec` 在容器内完成。
+1. **发现它正在使用哪个 Coast 实例** — `coast lookup` 会根据代理的当前目录解析出实例。
+2. **在 Coast 内运行命令** — 测试、构建以及其他运行时任务需要通过 `coast exec` 在容器内执行。
 3. **读取日志并检查服务状态** — `coast logs` 和 `coast ps` 为代理提供运行时反馈。
 
-下面的技能会同时教会代理这三点。
+下面的技能会教会代理这三点。
 
-## 这个技能
+## 该技能
 
-将以下内容添加到你的代理现有的技能、规则或提示文件中。如果你的代理已经有关于运行测试或与开发环境交互的说明，把它放在同一位置即可——它会教代理如何使用 Coasts 来执行运行时操作。
+将以下内容添加到你代理现有的技能、规则或提示文件中。如果你的代理已经有关于运行测试或与开发环境交互的说明，这段内容应与它们并列——它教代理如何使用 Coasts 来进行运行时操作。
 
 ```text-copy
 This project uses Coasts (containerized host) for isolated development environments.
@@ -85,27 +85,33 @@ find the relevant documentation.
 
 ## 将该技能添加到你的代理
 
-如何添加取决于你的代理:
+最快的方法是让代理自己完成设置。在你的项目目录中运行以下命令之一:
 
-### Claude Code
+```sh
+# Claude Code
+claude -p "$(coast skills-prompt)"
 
-将技能文本添加到你项目的 `CLAUDE.md` 文件中，或为其创建一个专门的章节。
+# Codex
+codex "$(coast skills-prompt)"
 
-### Codex
+# Cursor (from terminal)
+cursor --chat "$(coast skills-prompt)"
+```
 
-将技能文本添加到你项目的 `AGENTS.md` 文件中。
+这会向代理提供技能文本以及将其写入自身配置文件（`CLAUDE.md`、`AGENTS.md`、`.cursor/rules/coast.md` 等）的指令。
 
-### Cursor
+### 手动设置
 
-在项目根目录创建规则文件 `.cursor/rules/coast.mdc`（或 `.cursor/rules/coast.md`），并粘贴上面的技能文本。
+如果你更愿意自己添加该技能:
 
-### 其他代理
-
-大多数代理都支持某种形式的项目级提示或规则文件。将技能文本粘贴到你的代理在会话开始时读取的文件中即可。
+- **Claude Code:** 将技能文本添加到你项目的 `CLAUDE.md` 文件中。
+- **Codex:** 将技能文本添加到你项目的 `AGENTS.md` 文件中。
+- **Cursor:** 在项目根目录创建 `.cursor/rules/coast.md` 并粘贴技能文本。
+- **其他代理:** 将技能文本粘贴到你的代理在启动时读取的任意项目级提示或规则文件中。
 
 ## 进一步阅读
 
-- 阅读 [Coastfiles documentation](coastfiles/README.md) 以了解完整的配置架构
+- 阅读 [Coastfiles 文档](coastfiles/README.md)以了解完整的配置 schema
 - 学习用于管理实例的 [Coast CLI](concepts_and_terminology/CLI.md) 命令
-- 探索 [Coastguard](concepts_and_terminology/COASTGUARD.md)，用于观察与控制你的 Coasts 的 Web UI
-- 浏览 [Concepts & Terminology](concepts_and_terminology/README.md)，全面了解 Coasts 的工作方式
+- 探索用于观察与控制 Coasts 的 Web UI:[Coastguard](concepts_and_terminology/COASTGUARD.md)
+- 浏览 [概念与术语](concepts_and_terminology/README.md)，全面了解 Coasts 的工作方式

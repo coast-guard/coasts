@@ -59,8 +59,6 @@ pub enum SharedRequest {
     },
     /// Remove a shared service.
     Rm { project: String, service: String },
-    /// Drop a database from a shared postgres.
-    DbDrop { project: String, db_name: String },
 }
 
 /// Info about a shared service.

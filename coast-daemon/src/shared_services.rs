@@ -5,7 +5,7 @@
 /// a shared PostgreSQL database that multiple instances connect to.
 ///
 /// Shared service data outlives instance deletion -- `coast rm` never touches
-/// shared service data. Only `coast shared-services rm` or `coast shared-services db drop` does.
+/// shared service data. Only `coast shared-services rm` does.
 use std::collections::HashMap;
 
 use tracing::debug;
@@ -213,49 +213,6 @@ pub fn auto_create_db_names(instances: &[&str], base_db_name: &str) -> Vec<Strin
         .collect()
 }
 
-/// Generate the drop database command for a specific database.
-///
-/// # Arguments
-///
-/// * `db_type` - The database engine type.
-/// * `db_name` - The name of the database to drop.
-pub fn drop_db_command(db_type: &str, db_name: &str) -> Vec<String> {
-    match db_type.to_lowercase().as_str() {
-        "postgres" | "postgresql" => {
-            let sql = format!("DROP DATABASE IF EXISTS \"{db_name}\";");
-            vec![
-                "psql".to_string(),
-                "-U".to_string(),
-                "postgres".to_string(),
-                "-c".to_string(),
-                sql,
-            ]
-        }
-        "mysql" | "mariadb" => {
-            let sql = format!("DROP DATABASE IF EXISTS `{db_name}`;");
-            vec![
-                "mysql".to_string(),
-                "-u".to_string(),
-                "root".to_string(),
-                "-e".to_string(),
-                sql,
-            ]
-        }
-        other => {
-            debug!(
-                db_type = other,
-                db_name = db_name,
-                "Using generic DROP DATABASE command for unknown database type"
-            );
-            vec![
-                "sh".to_string(),
-                "-c".to_string(),
-                format!("echo 'Unsupported db_type: {other}. Cannot drop database.'"),
-            ]
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -437,35 +394,6 @@ mod tests {
     fn test_create_db_command_postgres_special_chars_in_name() {
         let cmd = create_db_command("postgres", "feature-oauth_dev");
         assert!(cmd[4].contains("feature-oauth_dev"));
-    }
-
-    // -----------------------------------------------------------
-    // drop_db_command tests
-    // -----------------------------------------------------------
-
-    #[test]
-    fn test_drop_db_command_postgres() {
-        let cmd = drop_db_command("postgres", "mydb");
-        assert_eq!(cmd[0], "psql");
-        assert_eq!(cmd[1], "-U");
-        assert_eq!(cmd[2], "postgres");
-        assert_eq!(cmd[3], "-c");
-        assert!(cmd[4].contains("DROP DATABASE IF EXISTS"));
-        assert!(cmd[4].contains("mydb"));
-    }
-
-    #[test]
-    fn test_drop_db_command_mysql() {
-        let cmd = drop_db_command("mysql", "mydb");
-        assert_eq!(cmd[0], "mysql");
-        assert!(cmd[4].contains("DROP DATABASE IF EXISTS"));
-    }
-
-    #[test]
-    fn test_drop_db_command_unknown_type() {
-        let cmd = drop_db_command("redis", "mydb");
-        assert_eq!(cmd[0], "sh");
-        assert!(cmd[2].contains("Unsupported"));
     }
 
     // -----------------------------------------------------------

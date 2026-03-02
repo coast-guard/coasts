@@ -315,8 +315,7 @@ pub fn request_context(req: &Request) -> (Option<&str>, Option<&str>) {
                 | SharedRequest::Stop { project, .. }
                 | SharedRequest::Start { project, .. }
                 | SharedRequest::Restart { project, .. }
-                | SharedRequest::Rm { project, .. }
-                | SharedRequest::DbDrop { project, .. } => (Some(project.as_str()), None),
+                | SharedRequest::Rm { project, .. } => (Some(project.as_str()), None),
             }
         }
         Request::Assign(r) => (Some(&r.project), Some(&r.name)),
@@ -454,7 +453,6 @@ pub fn request_command_name(req: &Request) -> String {
             SharedRequest::Start { .. } => "shared/start",
             SharedRequest::Restart { .. } => "shared/restart",
             SharedRequest::Rm { .. } => "shared/rm",
-            SharedRequest::DbDrop { .. } => "shared/db_drop",
         }
         .into(),
         Request::Builds(b) => match b {

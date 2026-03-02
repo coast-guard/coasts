@@ -1,22 +1,22 @@
 # ホストエージェント向けスキル
 
-Coasts を使用するプロジェクトで AI コーディングエージェント（Claude Code、Codex、Conductor、Cursor など）を使う場合、エージェントには Coast ランタイムとのやり取り方法を教えるスキルが必要です。これがないと、エージェントはファイルを編集できても、テストの実行、ログの確認、実行中の環境内で変更が機能しているかの検証方法が分かりません。
+Coasts を使用するプロジェクトで AI コーディングエージェント（Claude Code、Codex、Conductor、Cursor、または同様のもの）を使う場合、エージェントには Coast ランタイムとのやり取り方法を教えるスキルが必要です。これがないと、エージェントはファイルを編集できても、テストの実行、ログの確認、実行環境内で変更が動作しているかの検証方法がわかりません。
 
 このガイドでは、そのスキルのセットアップ手順を説明します。
 
 ## なぜエージェントにこれが必要なのか
 
-Coasts は、ホストマシンと Coast コンテナの間で [filesystem](concepts_and_terminology/FILESYSTEM.md) を共有します。エージェントはホスト上でファイルを編集し、Coast 内で稼働しているサービスはその変更を即座に反映します。しかし、エージェントには依然として次のことが必要です。
+Coasts はホストマシンと Coast コンテナ間で [filesystem](concepts_and_terminology/FILESYSTEM.md) を共有します。エージェントはホスト上のファイルを編集し、実行中の Coast 内のサービスは変更を即座に反映します。しかし、エージェントはそれでも次のことが必要です:
 
-1. **作業対象の Coast インスタンスを特定する** — `coast lookup` が、エージェントの現在のディレクトリからこれを解決します。
-2. **Coast 内でコマンドを実行する** — テスト、ビルド、その他のランタイムタスクは `coast exec` を介してコンテナ内で実行されます。
-3. **ログを読み、サービス状態を確認する** — `coast logs` と `coast ps` により、エージェントはランタイムのフィードバックを得られます。
+1. **作業対象の Coast インスタンスを特定する** — `coast lookup` がエージェントの現在のディレクトリからこれを解決します。
+2. **Coast 内でコマンドを実行する** — テスト、ビルド、その他のランタイムタスクは `coast exec` を介してコンテナ内で行われます。
+3. **ログを読み、サービス状態を確認する** — `coast logs` と `coast ps` がエージェントにランタイムのフィードバックを提供します。
 
-以下のスキルは、この3点すべてをエージェントに教えます。
+以下のスキルは、この3つすべてをエージェントに教えます。
 
 ## スキル
 
-以下を、エージェントの既存のスキル／ルール／プロンプトファイルに追加してください。エージェントにすでにテスト実行や開発環境との連携に関する指示がある場合は、それらと並べて配置してください。これは、ランタイム操作に Coasts を使う方法をエージェントに教えるものです。
+次の内容を、エージェントの既存のスキル／ルール／プロンプトファイルに追加してください。エージェントにすでにテスト実行や開発環境との連携に関する指示がある場合は、それらと並べて配置します — これは、ランタイム操作に Coasts を使う方法をエージェントに教えるものです。
 
 ```text-copy
 This project uses Coasts (containerized host) for isolated development environments.
@@ -83,29 +83,35 @@ find the relevant documentation.
   `coast run dev-1` or check `coast ls` for the project state.
 ```
 
-## エージェントにスキルを追加する
+## エージェントへのスキル追加
 
-追加方法は、エージェントによって異なります。
+最も速い方法は、エージェントに自己セットアップさせることです。プロジェクトディレクトリから次のいずれかを実行してください:
 
-### Claude Code
+```sh
+# Claude Code
+claude -p "$(coast skills-prompt)"
 
-スキル本文をプロジェクトの `CLAUDE.md` ファイルに追加するか、専用のセクションを作成して追加してください。
+# Codex
+codex "$(coast skills-prompt)"
 
-### Codex
+# Cursor (from terminal)
+cursor --chat "$(coast skills-prompt)"
+```
 
-スキル本文をプロジェクトの `AGENTS.md` ファイルに追加してください。
+これにより、エージェントはスキル本文と、それを自分自身の設定ファイル（`CLAUDE.md`、`AGENTS.md`、`.cursor/rules/coast.md` など）に書き込むための指示を受け取ります。
 
-### Cursor
+### 手動セットアップ
 
-プロジェクトルートに `.cursor/rules/coast.mdc`（または `.cursor/rules/coast.md`）としてルールファイルを作成し、上記のスキル本文を貼り付けてください。
+自分でスキルを追加したい場合:
 
-### その他のエージェント
-
-多くのエージェントは、プロジェクトレベルのプロンプトまたはルールファイルを何らかの形でサポートしています。セッション開始時にエージェントが読み込むものに、スキル本文を貼り付けてください。
+- **Claude Code:** プロジェクトの `CLAUDE.md` ファイルにスキル本文を追加します。
+- **Codex:** プロジェクトの `AGENTS.md` ファイルにスキル本文を追加します。
+- **Cursor:** プロジェクトルートに `.cursor/rules/coast.md` を作成し、スキル本文を貼り付けます。
+- **Other agents:** エージェントが起動時に読み取るプロジェクトレベルのプロンプト／ルールファイルにスキル本文を貼り付けます。
 
 ## さらに読む
 
 - 完全な設定スキーマを学ぶには [Coastfiles documentation](coastfiles/README.md) を読む
-- インスタンス管理のコマンドを学ぶには [Coast CLI](concepts_and_terminology/CLI.md) を参照する
-- Coasts を観測・制御するための Web UI である [Coastguard](concepts_and_terminology/COASTGUARD.md) を探る
-- Coasts の仕組みを全体像として理解するには [Concepts & Terminology](concepts_and_terminology/README.md) を参照する
+- インスタンス管理のための [Coast CLI](concepts_and_terminology/CLI.md) コマンドを学ぶ
+- Coasts の観測と制御を行う Web UI である [Coastguard](concepts_and_terminology/COASTGUARD.md) を探索する
+- Coasts の仕組み全体像については [Concepts & Terminology](concepts_and_terminology/README.md) を参照する

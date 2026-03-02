@@ -491,6 +491,7 @@
   "docs.nav.mcpServers": "MCP-серверы",
   "docs.nav.filesystem": "Файловая система",
   "docs.nav.bareServices": "Bare-сервисы",
+  "docs.nav.troubleshooting": "Устранение неполадок",
   "docs.nav.coastfiles": "Coastfiles",
   "docs.nav.coastfileProject": "Проект и настройка",
   "docs.nav.coastfilePorts": "Порты",

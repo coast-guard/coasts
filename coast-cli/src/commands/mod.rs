@@ -20,6 +20,7 @@ pub mod logs;
 pub mod lookup;
 pub mod ls;
 pub mod mcp;
+pub mod nuke;
 pub mod ports;
 pub mod ps;
 pub mod rebuild;

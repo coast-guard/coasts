@@ -41,10 +41,26 @@ pub async fn handle(
     let instance = {
         let db = state.db.lock().await;
         let inst = db.get_instance(&req.project, &req.name)?;
-        let inst = inst.ok_or_else(|| CoastError::InstanceNotFound {
-            name: req.name.clone(),
-            project: req.project.clone(),
-        })?;
+        let Some(inst) = inst else {
+            // Instance not in DB — check if a dangling Docker container exists.
+            // If so, treat stop as a silent no-op (use `coast rm` to clean up).
+            let expected = format!("{}-coasts-{}", req.project, req.name);
+            if let Some(ref docker) = state.docker {
+                if docker.inspect_container(&expected, None).await.is_ok() {
+                    warn!(
+                        name = %req.name,
+                        project = %req.project,
+                        container = %expected,
+                        "dangling container found during stop, treating as no-op"
+                    );
+                    return Ok(StopResponse { name: req.name });
+                }
+            }
+            return Err(CoastError::InstanceNotFound {
+                name: req.name.clone(),
+                project: req.project.clone(),
+            });
+        };
         if inst.status == InstanceStatus::Stopped {
             return Err(CoastError::state(format!(
                 "Instance '{}' is already stopped. Run `coast start {}` to start it.",
@@ -318,5 +334,22 @@ mod tests {
         let db = state.db.lock().await;
         let instance = db.get_instance("my-app", "checked-out").unwrap().unwrap();
         assert_eq!(instance.status, InstanceStatus::Stopped);
+    }
+
+    #[tokio::test]
+    async fn test_stop_nonexistent_no_docker_returns_not_found() {
+        // Without a Docker client the dangling check is skipped,
+        // so we still get InstanceNotFound.
+        let state = test_state();
+        assert!(state.docker.is_none());
+
+        let req = StopRequest {
+            name: "ghost".to_string(),
+            project: "my-app".to_string(),
+        };
+        let result = handle(req, &state, None).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("not found"));
     }
 }

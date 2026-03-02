@@ -147,7 +147,7 @@
 
   "cli.hint.dangling_container": "--force-remove-dangling を付けて再実行し、残存コンテナを削除して続行してください:\n  coast run %{name} --force-remove-dangling",
 
-  "cli.warn.shared_data_preserved": "共有サービスのデータは保持されています。削除するには `coast shared-services db drop` を使用してください。",
+  "cli.warn.shared_data_preserved": "共有サービスのデータは保持されています。削除するには `coast shared-services rm` を使用してください。",
 
   "clap.missing_required": "以下の必須引数が指定されていません：",
   "clap.usage": "使い方：",

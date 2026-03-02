@@ -23,8 +23,8 @@ use crate::server::AppState;
 /// 6. Deallocate ports from state DB.
 /// 7. Delete instance from state DB.
 ///
-/// IMPORTANT: `coast rm` does NOT delete shared service databases.
-/// Only `coast shared-services db drop` does that.
+/// IMPORTANT: `coast rm` does NOT delete shared service data.
+/// Use `coast shared-services rm` for that.
 #[allow(clippy::cognitive_complexity)]
 pub async fn handle(req: RmRequest, state: &AppState) -> Result<RmResponse> {
     info!(name = %req.name, project = %req.project, "handling rm request");
@@ -33,10 +33,45 @@ pub async fn handle(req: RmRequest, state: &AppState) -> Result<RmResponse> {
     let instance = {
         let db = state.db.lock().await;
         let inst = db.get_instance(&req.project, &req.name)?;
-        inst.ok_or_else(|| CoastError::InstanceNotFound {
-            name: req.name.clone(),
-            project: req.project.clone(),
-        })?
+        let Some(inst) = inst else {
+            // Instance not in DB — check for a dangling Docker container and
+            // clean it up so `rm` always leaves a clean state.
+            let expected = format!("{}-coasts-{}", req.project, req.name);
+            if let Some(ref docker) = state.docker {
+                if docker.inspect_container(&expected, None).await.is_ok() {
+                    warn!(
+                        name = %req.name,
+                        project = %req.project,
+                        container = %expected,
+                        "removing dangling container during rm"
+                    );
+                    let runtime = coast_docker::dind::DindRuntime::with_client(docker.clone());
+                    if let Err(e) = runtime.remove_coast_container(&expected).await {
+                        warn!(container = %expected, error = %e, "failed to remove dangling container");
+                    }
+                    let vol_prefix = format!("coast--{}--", req.name);
+                    if let Ok(volumes) = docker.list_volumes::<String>(None).await {
+                        if let Some(vols) = volumes.volumes {
+                            for vol in vols {
+                                if vol.name.starts_with(&vol_prefix) {
+                                    let _ = docker.remove_volume(&vol.name, None).await;
+                                    info!(volume = %vol.name, "removed dangling isolated volume");
+                                }
+                            }
+                        }
+                    }
+                    let cache_vol =
+                        coast_docker::dind::dind_cache_volume_name(&req.project, &req.name);
+                    let _ = docker.remove_volume(&cache_vol, None).await;
+                    return Ok(RmResponse { name: req.name });
+                }
+            }
+            return Err(CoastError::InstanceNotFound {
+                name: req.name.clone(),
+                project: req.project.clone(),
+            });
+        };
+        inst
     };
 
     // Set transitional status so the UI shows "stopping" pill during teardown
@@ -131,8 +166,8 @@ pub async fn handle(req: RmRequest, state: &AppState) -> Result<RmResponse> {
     info!(
         name = %req.name,
         project = %req.project,
-        "instance removed. Note: Shared service data (databases, volumes) has been preserved. \
-         Use `coast shared-services db drop <db_name>` to remove shared databases."
+        "instance removed. Note: Shared service data (volumes) has been preserved. \
+         Use `coast shared-services rm <service>` to remove shared services."
     );
 
     Ok(RmResponse { name: req.name })
@@ -259,5 +294,22 @@ mod tests {
         let db = state.db.lock().await;
         let ports = db.get_port_allocations("my-app", "with-ports").unwrap();
         assert!(ports.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_rm_nonexistent_no_docker_returns_not_found() {
+        // Without a Docker client the dangling check is skipped,
+        // so we still get InstanceNotFound.
+        let state = test_state();
+        assert!(state.docker.is_none());
+
+        let req = RmRequest {
+            name: "ghost".to_string(),
+            project: "my-app".to_string(),
+        };
+        let result = handle(req, &state).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("not found"));
     }
 }

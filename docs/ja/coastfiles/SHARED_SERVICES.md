@@ -1,12 +1,12 @@
 # 共有サービス
 
-`[shared_services.*]` セクションは、個々の Coast コンテナ内ではなくホストの Docker デーモン上で動作するインフラサービス（データベース、キャッシュ、メッセージブローカー）を定義します。複数の Coast インスタンスがブリッジネットワーク経由で同じ共有サービスに接続します。
+`[shared_services.*]` セクションは、個々の Coast コンテナ内部ではなくホストの Docker デーモン上で実行されるインフラサービス（データベース、キャッシュ、メッセージブローカー）を定義します。複数の Coast インスタンスは、ブリッジネットワーク経由で同じ共有サービスに接続します。
 
 共有サービスが実行時にどのように動作するか、ライフサイクル管理、トラブルシューティングについては、[Shared Services](../concepts_and_terminology/SHARED_SERVICES.md) を参照してください。
 
 ## 共有サービスの定義
 
-各共有サービスは `[shared_services]` 配下の名前付き TOML セクションです。`image` フィールドは必須で、それ以外はすべて任意です。
+各共有サービスは、`[shared_services]` 配下の名前付き TOML セクションです。`image` フィールドは必須で、それ以外はすべて任意です。
 
 ```toml
 [shared_services.postgres]
@@ -17,11 +17,11 @@ env = { POSTGRES_PASSWORD = "dev" }
 
 ### `image`（必須）
 
-ホストデーモン上で実行する Docker イメージ。
+ホストのデーモン上で実行する Docker イメージ。
 
 ### `ports`
 
-サービスが公開するポートのリスト。共有サービスと Coast インスタンス間のブリッジネットワークルーティングに使用されます。
+サービスが公開するポートの一覧。共有サービスと Coast インスタンス間のブリッジネットワークのルーティングに使用されます。
 
 ```toml
 [shared_services.redis]
@@ -33,7 +33,7 @@ ports = [6379]
 
 ### `volumes`
 
-データ永続化のための Docker ボリュームのバインド文字列。これらはホストレベルの Docker ボリュームであり、Coast 管理のボリュームではありません。
+データ永続化のための Docker ボリュームのバインド文字列。これらはホストレベルの Docker ボリュームであり、Coast が管理するボリュームではありません。
 
 ```toml
 [shared_services.postgres]
@@ -56,7 +56,7 @@ env = { POSTGRES_USER = "myapp", POSTGRES_PASSWORD = "myapp_pass", POSTGRES_DB =
 
 ### `auto_create_db`
 
-`true` の場合、Coast は各 Coast インスタンスごとに、共有サービス内にインスタンス専用データベースを自動作成します。デフォルトは `false` です。
+`true` の場合、Coast は各 Coast インスタンスごとに、共有サービス内にインスタンス単位のデータベースを自動作成します。デフォルトは `false` です。
 
 ```toml
 [shared_services.postgres]
@@ -68,7 +68,7 @@ auto_create_db = true
 
 ### `inject`
 
-共有サービスの接続情報を、環境変数またはファイルとして Coast インスタンスに注入します。[secrets](SECRETS.md) と同じ `env:NAME` または `file:/path` 形式を使用します。
+共有サービスの接続情報を、環境変数またはファイルとして Coast インスタンスへ注入します。[secrets](SECRETS.md) と同じ `env:NAME` または `file:/path` 形式を使用します。
 
 ```toml
 [shared_services.postgres]
@@ -80,13 +80,13 @@ inject = "env:DATABASE_URL"
 
 ## ライフサイクル
 
-共有サービスは、それらを参照する最初の Coast インスタンスが実行されたときに自動的に起動します。`coast stop` や `coast rm` をまたいで動作し続けます。インスタンスを削除しても共有サービスのデータには影響しません。`coast shared rm` のみが共有サービスを停止して削除します。
+共有サービスは、それらを参照する最初の Coast インスタンスが実行されたときに自動的に開始します。`coast stop` や `coast rm` を跨いでも稼働し続けます。インスタンスを削除しても共有サービスのデータには影響しません。共有サービスを停止して削除するのは `coast shared rm` のみです。
 
-`auto_create_db` によって作成されたインスタンスごとのデータベースも、インスタンス削除後に残ります。明示的に削除するには `coast shared db drop` を使用してください。
+`auto_create_db` によって作成されたインスタンス単位のデータベースも、インスタンス削除後に残ります。サービスとそのデータを完全に削除するには `coast shared-services rm` を使用してください。
 
-## 共有サービスとボリュームを使い分ける場合
+## 共有サービスとボリュームの使い分け
 
-複数の Coast インスタンスが同じデータベースサーバーに接続する必要がある場合（例:各インスタンスが独自のデータベースを持つ共有 Postgres）には共有サービスを使用してください。compose 内部サービスのデータを共有または分離する方法を制御したい場合は、[volume strategies](VOLUMES.md) を使用してください。
+複数の Coast インスタンスが同じデータベースサーバーに接続する必要がある場合（例:共有 Postgres を用意し、各インスタンスに専用データベースを割り当てる）は共有サービスを使用してください。compose 内部のサービスのデータを共有するか隔離するかを制御したい場合は、[ボリューム戦略](VOLUMES.md) を使用してください。
 
 ## 例
 
@@ -120,7 +120,7 @@ ports = [5432]
 env = { POSTGRES_USER = "coast", POSTGRES_PASSWORD = "coast", POSTGRES_DB = "coast_demo" }
 ```
 
-### 自動作成データベース付き共有サービス
+### データベースを自動作成する共有サービス
 
 ```toml
 [shared_services.db]

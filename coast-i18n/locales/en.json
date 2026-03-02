@@ -147,7 +147,7 @@
 
   "cli.hint.dangling_container": "Re-run with --force-remove-dangling to remove the dangling container and proceed:\n  coast run %{name} --force-remove-dangling",
 
-  "cli.warn.shared_data_preserved": "Shared service data is preserved. Use `coast shared-services db drop` to remove.",
+  "cli.warn.shared_data_preserved": "Shared service data is preserved. Use `coast shared-services rm` to remove.",
 
   "clap.missing_required": "The following required arguments were not provided:",
   "clap.usage": "Usage:",

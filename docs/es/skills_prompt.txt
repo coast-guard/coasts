@@ -1,0 +1,97 @@
+Estás configurando las habilidades de runtime de Coast para este proyecto. Coast (host contenerizado) ejecuta entornos de desarrollo aislados usando contenedores Docker-in-Docker. Este proyecto ya tiene un Coastfile — tu trabajo es añadir la habilidad de runtime de Coast a la configuración de tu agente para que puedas interactuar con el entorno en ejecución.
+
+=== QUÉ HACER ===
+
+1. Determina qué archivo de configuración del agente usar según tu entorno:
+   - Claude Code: añade a `CLAUDE.md` en la raíz del proyecto (créalo si no existe)
+   - Codex: añade a `AGENTS.md` en la raíz del proyecto (créalo si no existe)
+   - Cursor: añade a `.cursor/rules/coast.md` en la raíz del proyecto (crea los directorios si es necesario)
+   - Otros agentes: añade a cualquier archivo de prompt o reglas a nivel de proyecto que tu agente lea al iniciar
+
+2. Añade el siguiente texto de habilidad a ese archivo bajo una sección "Coast Runtime". Si el archivo ya existe, añade esto como una nueva sección — no sobrescribas el contenido existente.
+
+=== TEXTO DE LA HABILIDAD (añade esto al archivo de configuración del agente) ===
+
+# Coast Runtime
+
+Este proyecto usa Coasts (host contenerizado) para entornos de desarrollo aislados.
+Tus ediciones de código son visibles automáticamente dentro del Coast en ejecución — el sistema de archivos
+se comparte entre el host y el contenedor.
+
+## Orientación
+
+Antes de ejecutar cualquier comando de runtime, descubre qué instancia de Coast coincide con tu
+directorio de trabajo actual:
+
+```
+coast lookup
+```
+
+Esto imprime el nombre de la instancia, puertos, URLs y comandos de ejemplo. Usa el nombre de la instancia
+del output para todos los comandos posteriores.
+
+Si necesitas un contexto más profundo sobre cómo funcionan los Coasts, lee estos docs:
+
+```
+coast docs --path concepts_and_terminology/LOOKUP.md
+coast docs --path concepts_and_terminology/FILESYSTEM.md
+coast docs --path concepts_and_terminology/EXEC_AND_DOCKER.md
+coast docs --path concepts_and_terminology/LOGS.md
+```
+
+## Ejecución de comandos
+
+Usa `coast exec` para ejecutar comandos dentro del Coast. La shell inicia en la raíz del workspace
+(donde está el Coastfile). Haz cd a tu directorio objetivo primero:
+
+```
+coast exec <instance> -- sh -c "cd <dir> && <command>"
+```
+
+Ejemplos:
+
+```
+coast exec dev-1 -- sh -c "cd src && npm test"
+coast exec dev-1 -- sh -c "cd backend && go test ./..."
+coast exec dev-1 -- sh -c "cd apps/web && npx playwright test"
+```
+
+## Retroalimentación del runtime
+
+Comprueba el estado del servicio:
+
+```
+coast ps <instance>
+```
+
+Lee los logs del servicio:
+
+```
+coast logs <instance> --service <service>
+coast logs <instance> --service <service> --tail 50
+```
+
+## Solución de problemas
+
+Si encuentras errores o un comportamiento desconocido, busca en los docs de Coast:
+
+```
+coast search-docs "error message or description"
+```
+
+Esto usa búsqueda semántica — describe el problema en lenguaje natural y encontrará
+la documentación relevante.
+
+## Reglas
+
+- Ejecuta siempre `coast lookup` antes de tu primer comando de runtime en una sesión.
+- No ejecutes servicios directamente en el host. Usa `coast exec` para todas las tareas de runtime.
+- Las ediciones de archivos en el host son visibles instantáneamente dentro del Coast. No necesitas
+  copiar archivos ni reconstruir después de editar.
+- Si `coast lookup` no devuelve instancias, es posible que el Coast no esté ejecutándose. Sugiere
+  `coast run dev-1` o revisa `coast ls` para ver el estado del proyecto.
+
+=== FIN DEL TEXTO DE LA HABILIDAD ===
+
+3. Después de escribir el archivo, verifica que el Coastfile exista en este proyecto ejecutando `ls Coastfile`.
+4. Si un Coast ya está en ejecución, ejecuta `coast lookup` para confirmar que la habilidad funciona. Si no hay ningún Coast en ejecución, dile al usuario que puede iniciar uno con `coast run dev-1`.

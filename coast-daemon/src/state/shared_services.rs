@@ -247,7 +247,7 @@ impl StateDb {
     ///
     /// Returns an error if the shared service does not exist.
     /// Note: this only removes the database record -- it does NOT stop
-    /// the container or drop databases. Use `coast shared-services rm` for full cleanup.
+    /// the container. Use `coast shared-services rm` for full cleanup.
     #[instrument(skip(self))]
     pub fn delete_shared_service(&self, project: &str, service_name: &str) -> Result<()> {
         let rows = self

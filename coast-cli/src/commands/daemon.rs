@@ -57,11 +57,11 @@ struct DaemonStatus {
     socket_exists: bool,
 }
 
-fn pid_path() -> Result<PathBuf> {
+pub(crate) fn pid_path() -> Result<PathBuf> {
     Ok(coast_core::artifact::coast_home()?.join("coastd.pid"))
 }
 
-fn socket_path() -> Result<PathBuf> {
+pub(crate) fn socket_path() -> Result<PathBuf> {
     Ok(coast_core::artifact::coast_home()?.join("coastd.sock"))
 }
 
@@ -93,14 +93,14 @@ fn resolve_coastd_path() -> PathBuf {
 
 /// Read and parse the PID from `~/.coast/coastd.pid`.
 /// Returns `None` if the file doesn't exist or contains invalid content.
-fn read_pid(path: &PathBuf) -> Option<u32> {
+pub(crate) fn read_pid(path: &PathBuf) -> Option<u32> {
     std::fs::read_to_string(path)
         .ok()
         .and_then(|s| s.trim().parse::<u32>().ok())
 }
 
 /// Check whether a process with the given PID is alive using signal 0.
-fn is_running(pid: u32) -> bool {
+pub(crate) fn is_running(pid: u32) -> bool {
     signal::kill(Pid::from_raw(pid as i32), None).is_ok()
 }
 
@@ -165,7 +165,7 @@ async fn execute_status() -> Result<()> {
     Ok(())
 }
 
-async fn execute_kill(force: bool) -> Result<()> {
+pub(crate) async fn execute_kill(force: bool) -> Result<()> {
     let status = daemon_status()?;
 
     if !status.running {
@@ -227,7 +227,7 @@ async fn execute_kill(force: bool) -> Result<()> {
     }
 }
 
-async fn execute_start() -> Result<()> {
+pub(crate) async fn execute_start() -> Result<()> {
     let status = daemon_status()?;
 
     if status.running {
@@ -284,8 +284,12 @@ async fn execute_start() -> Result<()> {
     }
 }
 
-async fn execute_restart(_force: bool) -> Result<()> {
-    restart_daemon_if_running().await
+async fn execute_restart(force: bool) -> Result<()> {
+    let status = daemon_status()?;
+    if status.running {
+        execute_kill(force).await?;
+    }
+    execute_start().await
 }
 
 /// Restart the daemon if it's currently running. Used after updates
@@ -608,7 +612,7 @@ async fn execute_uninstall() -> Result<()> {
 }
 
 /// Remove stale PID and socket files left behind by a dead daemon.
-fn cleanup_stale_files() -> Result<()> {
+pub(crate) fn cleanup_stale_files() -> Result<()> {
     let pid_file = pid_path()?;
     if pid_file.exists() {
         let _ = std::fs::remove_file(&pid_file);

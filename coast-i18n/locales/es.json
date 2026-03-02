@@ -147,7 +147,7 @@
 
   "cli.hint.dangling_container": "Vuelva a ejecutar con --force-remove-dangling para eliminar el contenedor huérfano y continuar:\n  coast run %{name} --force-remove-dangling",
 
-  "cli.warn.shared_data_preserved": "Los datos de servicios compartidos se han preservado. Use `coast shared-services db drop` para eliminarlos.",
+  "cli.warn.shared_data_preserved": "Los datos de servicios compartidos se han preservado. Use `coast shared-services rm` para eliminarlos.",
 
   "clap.missing_required": "No se proporcionaron los siguientes argumentos requeridos:",
   "clap.usage": "Uso:",

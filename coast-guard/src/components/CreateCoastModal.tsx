@@ -12,6 +12,7 @@ interface CreateCoastModalProps {
   readonly worktrees: readonly string[];
   readonly occupiedWorktrees: ReadonlySet<string>;
   readonly onCreated: (name: string, worktree: string | null) => void;
+  readonly onError?: (msg: string) => void;
   readonly onClose: () => void;
 }
 
@@ -21,7 +22,7 @@ const inputClass =
   'w-full h-9 px-3 text-sm rounded-md border border-[var(--border)] bg-[var(--surface-solid)] dark:bg-transparent text-main outline-none focus:border-[var(--primary)] placeholder:text-subtle-ui';
 
 export default function CreateCoastModal({
-  open, project, existingNames, builds = [], worktrees, occupiedWorktrees, onCreated, onClose,
+  open, project, existingNames, builds = [], worktrees, occupiedWorktrees, onCreated, onError, onClose,
 }: CreateCoastModalProps) {
   const { t } = useTranslation();
   const [coastName, setCoastName] = useState('');
@@ -120,8 +121,11 @@ export default function CreateCoastModal({
       },
     ).then((result) => {
       if (result.error) {
-        if (closed) return;
         const msg = result.error.error ?? JSON.stringify(result.error);
+        if (closed) {
+          onError?.(msg);
+          return;
+        }
         setCreating(false);
         if (msg.includes('dangling Docker container')) {
           setDanglingDetected(true);
@@ -131,8 +135,11 @@ export default function CreateCoastModal({
         closeOnce();
       }
     }).catch((err: unknown) => {
-      if (closed) return;
       const msg = err instanceof Error ? err.message : String(err);
+      if (closed) {
+        onError?.(msg);
+        return;
+      }
       setCreating(false);
       if (msg.includes('dangling Docker container')) {
         setDanglingDetected(true);

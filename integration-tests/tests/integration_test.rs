@@ -458,10 +458,6 @@ fn test_protocol_roundtrip_all_request_variants() {
             project: "my-app".to_string(),
             service: "postgres".to_string(),
         }),
-        Request::Shared(SharedRequest::DbDrop {
-            project: "my-app".to_string(),
-            db_name: "feature_oauth_myapp".to_string(),
-        }),
     ];
 
     for req in &requests {

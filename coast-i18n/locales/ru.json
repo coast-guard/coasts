@@ -147,7 +147,7 @@
 
   "cli.hint.dangling_container": "Повторите команду с --force-remove-dangling для удаления висячего контейнера и продолжения:\n  coast run %{name} --force-remove-dangling",
 
-  "cli.warn.shared_data_preserved": "Данные общих сервисов сохранены. Используйте `coast shared-services db drop` для удаления.",
+  "cli.warn.shared_data_preserved": "Данные общих сервисов сохранены. Используйте `coast shared-services rm` для удаления.",
 
   "clap.missing_required": "Следующие обязательные аргументы не были указаны:",
   "clap.usage": "Использование:",

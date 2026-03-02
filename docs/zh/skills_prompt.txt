@@ -1,0 +1,96 @@
+你正在为这个项目设置 Coast 运行时技能。Coast（容器化主机）使用 Docker-in-Docker 容器运行隔离的开发环境。此项目已经有一个 Coastfile —— 你的任务是将 Coast 运行时技能添加到你的代理配置中，以便你可以与正在运行的环境交互。
+
+=== 要做什么 ===
+
+1. 根据你的环境确定要使用哪个代理配置文件:
+   - Claude Code:添加到项目根目录的 `CLAUDE.md`（如果不存在则创建）
+   - Codex:添加到项目根目录的 `AGENTS.md`（如果不存在则创建）
+   - Cursor:添加到项目根目录的 `.cursor/rules/coast.md`（如果需要则创建目录）
+   - 其他代理:添加到你的代理在启动时读取的任意项目级提示或规则文件中
+
+2. 将以下技能文本添加到该文件中一个名为 “Coast Runtime” 的章节下。如果文件已存在，将其作为新章节追加——不要覆盖现有内容。
+
+=== 技能文本（将此添加到代理配置文件中） ===
+
+# Coast Runtime
+
+此项目使用 Coasts（容器化主机）用于隔离的开发环境。
+你的代码编辑会自动在正在运行的 Coast 内可见——文件系统
+在主机与容器之间共享。
+
+## Orientation
+
+在运行任何运行时命令之前，先确认哪个 Coast 实例与你的
+当前工作目录匹配:
+
+```
+coast lookup
+```
+
+这会打印实例名称、端口、URL，以及示例命令。对所有后续命令都使用输出中的实例名称。
+
+如果你需要更深入地了解 Coasts 的工作方式，请阅读这些文档:
+
+```
+coast docs --path concepts_and_terminology/LOOKUP.md
+coast docs --path concepts_and_terminology/FILESYSTEM.md
+coast docs --path concepts_and_terminology/EXEC_AND_DOCKER.md
+coast docs --path concepts_and_terminology/LOGS.md
+```
+
+## Running Commands
+
+使用 `coast exec` 在 Coast 内运行命令。Shell 会从工作区
+根目录（Coastfile 所在位置）启动。请先 `cd` 到你的目标目录:
+
+```
+coast exec <instance> -- sh -c "cd <dir> && <command>"
+```
+
+示例:
+
+```
+coast exec dev-1 -- sh -c "cd src && npm test"
+coast exec dev-1 -- sh -c "cd backend && go test ./..."
+coast exec dev-1 -- sh -c "cd apps/web && npx playwright test"
+```
+
+## Runtime Feedback
+
+检查服务状态:
+
+```
+coast ps <instance>
+```
+
+读取服务日志:
+
+```
+coast logs <instance> --service <service>
+coast logs <instance> --service <service> --tail 50
+```
+
+## Troubleshooting
+
+如果你遇到错误或不熟悉的行为，请搜索 Coast 文档:
+
+```
+coast search-docs "error message or description"
+```
+
+这会使用语义搜索——用自然语言描述问题，它将
+找到相关文档。
+
+## Rules
+
+- 在一次会话中首次运行任何运行时命令之前，始终先运行 `coast lookup`。
+- 不要直接在主机上运行服务。所有运行时任务都使用 `coast exec`。
+- 主机上的文件编辑会立即在 Coast 内可见。你不需要
+  复制文件或在编辑后重新构建。
+- 如果 `coast lookup` 没有返回任何实例，Coast 可能未在运行。建议
+  `coast run dev-1` 或检查 `coast ls` 以了解项目状态。
+
+=== 技能文本结束 ===
+
+3. 写入文件后，通过运行 `ls Coastfile` 验证此项目中存在 Coastfile。
+4. 如果 Coast 已在运行，运行 `coast lookup` 以确认该技能可用。如果没有 Coast 在运行，告诉用户他们可以用 `coast run dev-1` 启动一个。

@@ -3,7 +3,7 @@
 /// Manages shared services that run on the host Docker daemon and are
 /// accessible to multiple coast instances via a bridge network.
 use tokio::time::Instant;
-use tracing::info;
+use tracing::{info, warn};
 
 use coast_core::error::{CoastError, Result};
 use coast_core::protocol::{CoastEvent, SharedRequest, SharedResponse, SharedServiceInfo};
@@ -15,7 +15,7 @@ const CACHE_FRESH_SECS: u64 = 5;
 
 /// Handle a shared service request.
 ///
-/// Dispatches to ps, stop, start, restart, rm, or db drop operations
+/// Dispatches to ps, stop, start, restart, or rm operations
 /// based on the request variant.
 pub async fn handle(req: SharedRequest, state: &AppState) -> Result<SharedResponse> {
     match req {
@@ -26,7 +26,6 @@ pub async fn handle(req: SharedRequest, state: &AppState) -> Result<SharedRespon
             handle_restart(project, service, state).await
         }
         SharedRequest::Rm { project, service } => handle_rm(project, service, state).await,
-        SharedRequest::DbDrop { project, db_name } => handle_db_drop(project, db_name, state).await,
     }
 }
 
@@ -162,16 +161,33 @@ async fn all_service_names(project: &str, state: &AppState) -> Result<Vec<String
 }
 
 /// Stop a single shared service container by name.
+///
+/// If the container no longer exists in Docker (dangling DB record), treats
+/// the stop as a no-op and updates the DB status to "stopped".
 async fn stop_one(project: &str, service: &str, state: &AppState) -> Result<SharedServiceInfo> {
     let (container_name, _) = resolve_shared_container(project, service, state).await?;
 
     if let Some(ref docker) = state.docker {
-        docker
-            .stop_container(&container_name, None)
-            .await
-            .map_err(|e| {
-                CoastError::docker(format!("Failed to stop shared service '{service}': {e}"))
-            })?;
+        if let Err(e) = docker.stop_container(&container_name, None).await {
+            let is_not_found = e.to_string().contains("404")
+                || e.to_string().contains("No such container")
+                || e.to_string().contains("not found");
+            let is_not_running = e.to_string().contains("304")
+                || e.to_string().contains("not running")
+                || e.to_string().contains("already stopped");
+            if is_not_found || is_not_running {
+                warn!(
+                    service = %service,
+                    container = %container_name,
+                    error = %e,
+                    "shared service container missing or already stopped, treating stop as no-op"
+                );
+            } else {
+                return Err(CoastError::docker(format!(
+                    "Failed to stop shared service '{service}': {e}"
+                )));
+            }
+        }
     }
 
     {
@@ -404,14 +420,64 @@ async fn handle_rm(project: String, service: String, state: &AppState) -> Result
     let container_id = {
         let db = state.db.lock().await;
         let svc = db.get_shared_service(&project, &service)?;
-        let svc = svc.ok_or_else(|| {
-            CoastError::state(format!(
-                "Shared service '{}' not found in project '{}'. \
-                 Run `coast shared-services ps` to see available services.",
-                service, project
-            ))
-        })?;
-        svc.container_id.clone()
+        match svc {
+            Some(s) => s.container_id.clone(),
+            None => {
+                // Service not in DB — check for a dangling Docker container and clean it up.
+                let container_name =
+                    crate::shared_services::shared_container_name(&project, &service);
+                if let Some(ref docker) = state.docker {
+                    if let Ok(inspect) = docker.inspect_container(&container_name, None).await {
+                        warn!(
+                            service = %service,
+                            project = %project,
+                            container = %container_name,
+                            "removing dangling shared service container during rm"
+                        );
+                        let mut volume_names: Vec<String> = Vec::new();
+                        if let Some(binds) =
+                            inspect.host_config.as_ref().and_then(|h| h.binds.as_ref())
+                        {
+                            for bind_str in binds {
+                                if let Some(vol_name) =
+                                    crate::shared_services::extract_named_volume(bind_str)
+                                {
+                                    volume_names.push(vol_name.to_string());
+                                }
+                            }
+                        }
+                        let runtime = coast_docker::dind::DindRuntime::with_client(docker.clone());
+                        let _ = runtime.stop_coast_container(&container_name).await;
+                        if let Err(e) = runtime.remove_coast_container(&container_name).await {
+                            warn!(container = %container_name, error = %e, "failed to remove dangling shared service container");
+                        }
+                        for vol_name in &volume_names {
+                            let _ = docker.remove_volume(vol_name, None).await;
+                        }
+                        let vol_msg = if volume_names.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" Removed {} volume(s).", volume_names.len())
+                        };
+                        state.emit_event(CoastEvent::SharedServiceRemoved {
+                            project: project.clone(),
+                            service: service.clone(),
+                        });
+                        return Ok(SharedResponse {
+                            message: format!(
+                                "Removed dangling shared service '{service}' from project '{project}'.{vol_msg}"
+                            ),
+                            services: Vec::new(),
+                        });
+                    }
+                }
+                return Err(CoastError::state(format!(
+                    "Shared service '{}' not found in project '{}'. \
+                     Run `coast shared-services ps` to see available services.",
+                    service, project
+                )));
+            }
+        }
     };
 
     let mut volume_names: Vec<String> = Vec::new();
@@ -485,81 +551,6 @@ async fn handle_rm(project: String, service: String, state: &AppState) -> Result
 
     Ok(SharedResponse {
         message: format!("Shared service '{service}' removed from project '{project}'.{vol_msg}",),
-        services: Vec::new(),
-    })
-}
-
-/// Drop a database from a shared postgres service.
-///
-/// Executes `DROP DATABASE` inside the shared postgres container.
-/// Use `coast shared-services rm` to remove the service container and
-/// its volumes entirely.
-async fn handle_db_drop(
-    project: String,
-    db_name: String,
-    state: &AppState,
-) -> Result<SharedResponse> {
-    info!(project = %project, db_name = %db_name, "handling shared db drop request");
-
-    let (container_id, pg_service_name) = {
-        let db = state.db.lock().await;
-        let services = db.list_shared_services(Some(&project))?;
-        let pg_service = services
-            .iter()
-            .find(|s| s.service_name.contains("postgres") || s.service_name.contains("pg"))
-            .ok_or_else(|| {
-                CoastError::state(format!(
-                    "No postgres shared service found in project '{}'. \
-                     Ensure a shared postgres service is configured and running.",
-                    project
-                ))
-            })?;
-
-        let cid = pg_service.container_id.clone().ok_or_else(|| {
-            CoastError::state(format!(
-                "Shared postgres service '{}' has no container ID. It may not be running. \
-                 Start it first with `coast shared-services start {}`.",
-                pg_service.service_name, pg_service.service_name
-            ))
-        })?;
-        (cid, pg_service.service_name.clone())
-    };
-
-    if let Some(ref docker) = state.docker {
-        let runtime = coast_docker::dind::DindRuntime::with_client(docker.clone());
-        let drop_cmd = crate::shared_services::drop_db_command("postgres", &db_name);
-        let cmd_refs: Vec<&str> = drop_cmd.iter().map(std::string::String::as_str).collect();
-        let result = runtime
-            .exec_in_coast(&container_id, &cmd_refs)
-            .await
-            .map_err(|e| {
-                CoastError::docker(format!(
-                    "Failed to drop database '{}' from shared postgres service '{}'. \
-                     Verify the service is running with `coast shared-services ps`. Error: {}",
-                    db_name, pg_service_name, e
-                ))
-            })?;
-        if !result.success() {
-            return Err(CoastError::state(format!(
-                "DROP DATABASE '{}' failed (exit code {}): {}. \
-                 Check that the database exists and the postgres service is healthy.",
-                db_name, result.exit_code, result.stderr
-            )));
-        }
-    }
-
-    info!(
-        project = %project,
-        db_name = %db_name,
-        "database dropped from shared postgres"
-    );
-
-    Ok(SharedResponse {
-        message: format!(
-            "Database '{}' dropped from shared postgres in project '{}'. \
-             This action is irreversible.",
-            db_name, project
-        ),
         services: Vec::new(),
     })
 }
@@ -677,58 +668,6 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("not found"));
-    }
-
-    #[tokio::test]
-    async fn test_shared_db_drop_no_postgres() {
-        let state = test_state();
-        let req = SharedRequest::DbDrop {
-            project: "my-app".to_string(),
-            db_name: "test_db".to_string(),
-        };
-        let result = handle(req, &state).await;
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("No postgres"));
-    }
-
-    #[tokio::test]
-    async fn test_shared_db_drop_postgres_no_container() {
-        let state = test_state();
-        {
-            let db = state.db.lock().await;
-            db.insert_shared_service("my-app", "postgres", None, "stopped")
-                .unwrap();
-        }
-
-        let req = SharedRequest::DbDrop {
-            project: "my-app".to_string(),
-            db_name: "test_db".to_string(),
-        };
-        let result = handle(req, &state).await;
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("no container ID"));
-    }
-
-    #[tokio::test]
-    async fn test_shared_db_drop_with_running_postgres() {
-        let state = test_state();
-        {
-            let db = state.db.lock().await;
-            db.insert_shared_service("my-app", "postgres", Some("pg-container-123"), "running")
-                .unwrap();
-        }
-
-        let req = SharedRequest::DbDrop {
-            project: "my-app".to_string(),
-            db_name: "feat_oauth_db".to_string(),
-        };
-        let result = handle(req, &state).await;
-        assert!(result.is_ok());
-        let resp = result.unwrap();
-        assert!(resp.message.contains("feat_oauth_db"));
-        assert!(resp.message.contains("dropped"));
     }
 
     #[tokio::test]

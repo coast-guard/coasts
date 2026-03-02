@@ -319,9 +319,44 @@ pub async fn handle_run_with_progress(
         }
         Err(e) => {
             error!("run failed for {name}: {e}");
+            cleanup_failed_provision(&name, &project, state).await;
             Err(e)
         }
     }
+}
+
+/// Remove a failed provisioning instance so it doesn't hang in the UI.
+///
+/// Best-effort: removes the Docker container, port allocations, and DB record,
+/// then emits `InstanceRemoved` so connected clients drop the row.
+async fn cleanup_failed_provision(name: &str, project: &str, state: &AppState) {
+    let container_name = format!("{project}-coasts-{name}");
+
+    if let Some(ref docker) = state.docker {
+        let rm_opts = bollard::container::RemoveContainerOptions {
+            force: true,
+            v: true,
+            ..Default::default()
+        };
+        let _ = docker
+            .remove_container(&container_name, Some(rm_opts))
+            .await;
+
+        let dind_vol = format!("coast-dind--{project}--{name}");
+        let _ = docker.remove_volume(&dind_vol, None).await;
+    }
+
+    {
+        let db = state.db.lock().await;
+        let _ = db.delete_port_allocations(project, name);
+        let _ = db.delete_instance(project, name);
+    }
+
+    state.emit_event(CoastEvent::InstanceRemoved {
+        name: name.to_string(),
+        project: project.to_string(),
+    });
+    tracing::info!(name, project, "cleaned up failed provisioning instance");
 }
 
 /// Handle a Stop request (non-streaming, e.g. from HTTP API).

@@ -372,14 +372,6 @@ fn test_shared_rm_request_roundtrip() {
 }
 
 #[test]
-fn test_shared_db_drop_request_roundtrip() {
-    roundtrip_request(Request::Shared(SharedRequest::DbDrop {
-        project: "my-app".to_string(),
-        db_name: "feature_oauth_myapp".to_string(),
-    }));
-}
-
-#[test]
 fn test_build_progress_roundtrip() {
     roundtrip_response(Response::BuildProgress(BuildProgressEvent::item(
         "Extracting secrets",

@@ -1,0 +1,41 @@
+# 최상위
+README.md
+GETTING_STARTED.md
+SKILLS_FOR_HOST_AGENTS.md
+
+# 개념 및 용어
+concepts_and_terminology/README.md
+concepts_and_terminology/COASTS.md
+concepts_and_terminology/FILESYSTEM.md
+concepts_and_terminology/DAEMON.md
+concepts_and_terminology/CLI.md
+concepts_and_terminology/COASTGUARD.md
+concepts_and_terminology/PORTS.md
+concepts_and_terminology/PRIMARY_PORT_AND_DNS.md
+concepts_and_terminology/ASSIGN.md
+concepts_and_terminology/CHECKOUT.md
+concepts_and_terminology/LOOKUP.md
+concepts_and_terminology/VOLUMES.md
+concepts_and_terminology/SHARED_SERVICES.md
+concepts_and_terminology/SECRETS.md
+concepts_and_terminology/BUILDS.md
+concepts_and_terminology/COASTFILE_TYPES.md
+concepts_and_terminology/RUNTIMES_AND_SERVICES.md
+concepts_and_terminology/BARE_SERVICES.md
+concepts_and_terminology/LOGS.md
+concepts_and_terminology/EXEC_AND_DOCKER.md
+concepts_and_terminology/AGENT_SHELLS.md
+concepts_and_terminology/MCP_SERVERS.md
+
+# Coastfile
+coastfiles/README.md
+coastfiles/PROJECT.md
+coastfiles/PORTS.md
+coastfiles/SHARED_SERVICES.md
+coastfiles/SERVICES.md
+coastfiles/SECRETS.md
+coastfiles/VOLUMES.md
+coastfiles/ASSIGN.md
+coastfiles/INHERITANCE.md
+coastfiles/AGENT_SHELL.md
+coastfiles/MCP.md

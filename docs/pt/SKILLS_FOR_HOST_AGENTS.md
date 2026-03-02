@@ -1,22 +1,22 @@
 # Habilidades para Agentes no Host
 
-Se você estiver usando agentes de codificação com IA (Claude Code, Codex, Conductor, Cursor ou similar) em um projeto que usa Coasts, seu agente precisa de uma habilidade que ensine como interagir com o runtime do Coast. Sem isso, o agente vai editar arquivos, mas não saberá como executar testes, verificar logs ou confirmar que suas mudanças funcionam dentro do ambiente em execução.
+Se você estiver usando agentes de codificação com IA (Claude Code, Codex, Conductor, Cursor ou similares) em um projeto que usa Coasts, seu agente precisa de uma habilidade que o ensine a interagir com o runtime do Coast. Sem isso, o agente vai editar arquivos, mas não saberá como executar testes, verificar logs ou confirmar que suas alterações funcionam dentro do ambiente em execução.
 
-Este guia apresenta a configuração dessa habilidade.
+Este guia mostra como configurar essa habilidade.
 
 ## Por que os Agentes Precisam Disso
 
-Os Coasts compartilham o [filesystem](concepts_and_terminology/FILESYSTEM.md) entre sua máquina host e o contêiner do Coast. Seu agente edita arquivos no host e os serviços em execução dentro do Coast veem as mudanças imediatamente. Mas o agente ainda precisa:
+Os Coasts compartilham o [filesystem](concepts_and_terminology/FILESYSTEM.md) entre sua máquina host e o container do Coast. Seu agente edita arquivos no host e os serviços em execução dentro do Coast veem as mudanças imediatamente. Mas o agente ainda precisa:
 
 1. **Descobrir com qual instância do Coast ele está trabalhando** — `coast lookup` resolve isso a partir do diretório atual do agente.
-2. **Executar comandos dentro do Coast** — testes, builds e outras tarefas de runtime acontecem dentro do contêiner via `coast exec`.
-3. **Ler logs e checar o status dos serviços** — `coast logs` e `coast ps` dão ao agente feedback do runtime.
+2. **Executar comandos dentro do Coast** — testes, builds e outras tarefas de runtime acontecem dentro do container via `coast exec`.
+3. **Ler logs e verificar o status dos serviços** — `coast logs` e `coast ps` dão ao agente feedback do runtime.
 
-A habilidade abaixo ensina as três coisas.
+A habilidade abaixo ensina ao agente as três coisas.
 
 ## A Habilidade
 
-Adicione o seguinte à habilidade, regras ou arquivo de prompt existente do seu agente. Se seu agente já tiver instruções para executar testes ou interagir com seu ambiente de desenvolvimento, isto deve ficar junto delas — ensina o agente a usar Coasts para operações de runtime.
+Adicione o seguinte à habilidade, regras ou arquivo de prompt existente do seu agente. Se o seu agente já tiver instruções para executar testes ou interagir com seu ambiente de dev, isto deve ficar junto dessas instruções — ele ensina o agente a usar Coasts para operações de runtime.
 
 ```text-copy
 This project uses Coasts (containerized host) for isolated development environments.
@@ -85,25 +85,31 @@ find the relevant documentation.
 
 ## Adicionando a Habilidade ao Seu Agente
 
-Como você adiciona isso depende do seu agente:
+A forma mais rápida é deixar o agente se configurar sozinho. Execute um destes a partir do diretório do seu projeto:
 
-### Claude Code
+```sh
+# Claude Code
+claude -p "$(coast skills-prompt)"
 
-Adicione o texto da habilidade ao arquivo `CLAUDE.md` do seu projeto, ou crie uma seção dedicada para isso.
+# Codex
+codex "$(coast skills-prompt)"
 
-### Codex
+# Cursor (from terminal)
+cursor --chat "$(coast skills-prompt)"
+```
 
-Adicione o texto da habilidade ao arquivo `AGENTS.md` do seu projeto.
+Isso fornece ao agente o texto da habilidade e instruções para gravá-lo no próprio arquivo de configuração (`CLAUDE.md`, `AGENTS.md`, `.cursor/rules/coast.md`, etc.).
 
-### Cursor
+### Configuração manual
 
-Crie um arquivo de regras em `.cursor/rules/coast.mdc` (ou `.cursor/rules/coast.md`) na raiz do seu projeto e cole o texto da habilidade acima.
+Se você preferir adicionar a habilidade por conta própria:
 
-### Outros agentes
+- **Claude Code:** Adicione o texto da habilidade ao arquivo `CLAUDE.md` do seu projeto.
+- **Codex:** Adicione o texto da habilidade ao arquivo `AGENTS.md` do seu projeto.
+- **Cursor:** Crie `.cursor/rules/coast.md` na raiz do seu projeto e cole o texto da habilidade.
+- **Outros agentes:** Cole o texto da habilidade em qualquer arquivo de prompt ou regras em nível de projeto que seu agente leia ao iniciar.
 
-A maioria dos agentes oferece algum tipo de prompt em nível de projeto ou arquivo de regras. Cole o texto da habilidade no que quer que seu agente leia no início da sessão.
-
-## Leitura Adicional
+## Leitura adicional
 
 - Leia a [documentação de Coastfiles](coastfiles/README.md) para aprender o esquema completo de configuração
 - Aprenda os comandos da [CLI do Coast](concepts_and_terminology/CLI.md) para gerenciar instâncias
