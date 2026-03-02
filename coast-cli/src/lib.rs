@@ -362,6 +362,8 @@ pub async fn run() -> Result<()> {
             {
                 Ok(tarball) => match coast_update::updater::apply_update(&tarball) {
                     Ok(()) => {
+                        // Restart daemon so it picks up the new binary
+                        let _ = commands::daemon::restart_daemon_if_running().await;
                         eprintln!(
                             "{} coast updated to {}. Re-run your command.",
                             colored::Colorize::green("done:"),

@@ -284,14 +284,21 @@ async fn execute_start() -> Result<()> {
     }
 }
 
-async fn execute_restart(force: bool) -> Result<()> {
+async fn execute_restart(_force: bool) -> Result<()> {
+    restart_daemon_if_running().await
+}
+
+/// Restart the daemon if it's currently running. Used after updates
+/// to pick up the new binary.
+pub async fn restart_daemon_if_running() -> Result<()> {
     let status = daemon_status()?;
 
     if status.running {
-        execute_kill(force).await?;
+        execute_kill(false).await?;
+        execute_start().await?;
     }
 
-    execute_start().await
+    Ok(())
 }
 
 const TAIL_LINES: usize = 20;

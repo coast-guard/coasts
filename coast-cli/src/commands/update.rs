@@ -91,6 +91,11 @@ async fn execute_apply() -> Result<()> {
         format!("Updated coast: {} -> {}", current, latest).green()
     );
 
+    // Restart the daemon so it picks up the new binary
+    if let Err(e) = super::daemon::restart_daemon_if_running().await {
+        eprintln!("{} Failed to restart daemon: {e}", "warning:".yellow());
+    }
+
     Ok(())
 }
 
