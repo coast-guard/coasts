@@ -8,6 +8,7 @@ use super::*;
 #[test]
 fn test_instance_status_roundtrip() {
     for status in &[
+        InstanceStatus::Enqueued,
         InstanceStatus::Provisioning,
         InstanceStatus::Starting,
         InstanceStatus::Stopping,
@@ -30,6 +31,7 @@ fn test_instance_status_invalid() {
 
 #[test]
 fn test_instance_status_display() {
+    assert_eq!(InstanceStatus::Enqueued.to_string(), "enqueued");
     assert_eq!(InstanceStatus::Provisioning.to_string(), "provisioning");
     assert_eq!(InstanceStatus::Running.to_string(), "running");
     assert_eq!(InstanceStatus::Stopped.to_string(), "stopped");
@@ -44,6 +46,15 @@ fn test_instance_status_can_assign() {
     assert!(InstanceStatus::CheckedOut.can_assign());
     assert!(!InstanceStatus::Stopped.can_assign());
     assert!(!InstanceStatus::Provisioning.can_assign());
+    assert!(!InstanceStatus::Enqueued.can_assign());
+}
+
+#[test]
+fn test_enqueued_status_serde_roundtrip() {
+    let json = serde_json::to_string(&InstanceStatus::Enqueued).unwrap();
+    assert_eq!(json, "\"enqueued\"");
+    let deserialized: InstanceStatus = serde_json::from_str(&json).unwrap();
+    assert_eq!(deserialized, InstanceStatus::Enqueued);
 }
 
 #[test]

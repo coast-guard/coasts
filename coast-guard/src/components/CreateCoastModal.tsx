@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import Modal from './Modal';
 import { api } from '../api/endpoints';
-import type { BuildSummary } from '../types/api';
+import type { BuildSummary, BuildProgressEvent } from '../types/api';
 
 interface CreateCoastModalProps {
   readonly open: boolean;
@@ -113,11 +113,9 @@ export default function CreateCoastModal({
         ? undefined
         : selectedCoastfileType,
       forceRemoveDangling,
-      () => {
+      (event: BuildProgressEvent) => {
         progressCount++;
-        // Close after the 3rd progress event — past the dangling-check
-        // window (dangling errors arrive after exactly 2 progress events).
-        if (progressCount >= 3) closeOnce();
+        if (event.step === 'Queued' || progressCount >= 3) closeOnce();
       },
     ).then((result) => {
       if (result.error) {

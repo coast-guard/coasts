@@ -183,6 +183,7 @@
   "create.creating": "Criando...",
   "action.clear": "Limpar",
   "action.clearing": "Limpando...",
+  "status.enqueued": "Na fila",
   "status.provisioning": "Provisionando",
   "status.assigning": "Atribuindo",
   "status.unassigning": "Desatribuindo",

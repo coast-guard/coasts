@@ -555,6 +555,7 @@ fn display_content(r: &BuildsContentResponse) {
 fn colorize_status(status: &coast_core::types::InstanceStatus) -> String {
     use coast_core::types::InstanceStatus;
     match status {
+        InstanceStatus::Enqueued => "enqueued".cyan().to_string(),
         InstanceStatus::Running => "running".green().to_string(),
         InstanceStatus::Stopped => "stopped".yellow().to_string(),
         InstanceStatus::CheckedOut => "checked_out".green().bold().to_string(),

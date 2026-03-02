@@ -190,6 +190,7 @@
   "action.clear": "清除",
   "action.clearing": "正在清除...",
 
+  "status.enqueued": "排队中",
   "status.provisioning": "配置中",
   "status.assigning": "分配中",
   "status.unassigning": "取消分配中",

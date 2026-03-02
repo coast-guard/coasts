@@ -97,7 +97,7 @@ export default function ProjectDetailPage() {
     for (const [name, op] of Object.entries(cur)) {
       const inst = instances.find((i) => (i.name as string) === name);
       if (op.type === 'provision-assign') {
-        if (inst && (inst.status === 'provisioning' || inst.status === 'assigning')) {
+        if (inst && (inst.status === 'enqueued' || inst.status === 'provisioning' || inst.status === 'assigning')) {
           next[name] = op;
         } else {
           changed = true;
@@ -255,7 +255,7 @@ export default function ProjectDetailPage() {
         render: (r) => {
           const pending = pendingOps[r.name as string];
           const isTransitioning = r.status === 'assigning' || r.status === 'unassigning';
-          const isProvisioningWithWorktree = r.status === 'provisioning' && pending?.type === 'provision-assign';
+          const isProvisioningWithWorktree = (r.status === 'enqueued' || r.status === 'provisioning') && pending?.type === 'provision-assign';
           if ((isTransitioning || isProvisioningWithWorktree) && pending) {
             return (
               <div className="flex items-center gap-1.5 font-mono text-xs">
@@ -285,7 +285,7 @@ export default function ProjectDetailPage() {
         render: (r) => {
           const pending = pendingOps[r.name as string];
           const isTransitioning = r.status === 'assigning' || r.status === 'unassigning';
-          const isProvisioningWithWorktree = r.status === 'provisioning' && pending?.type === 'provision-assign';
+          const isProvisioningWithWorktree = (r.status === 'enqueued' || r.status === 'provisioning') && pending?.type === 'provision-assign';
 
           if ((isTransitioning || isProvisioningWithWorktree) && pending) {
             return (

@@ -205,6 +205,7 @@ fn shorten_path(path: &str) -> String {
 /// Apply color to an instance status.
 fn colorize_instance_status(status: &InstanceStatus) -> String {
     match status {
+        InstanceStatus::Enqueued => "enqueued".cyan().to_string(),
         InstanceStatus::Provisioning => "provisioning".magenta().to_string(),
         InstanceStatus::Assigning => "assigning".magenta().to_string(),
         InstanceStatus::Unassigning => "unassigning".magenta().to_string(),
@@ -220,6 +221,7 @@ fn colorize_instance_status(status: &InstanceStatus) -> String {
 /// Get the plain-text (no ANSI) length of an instance status.
 fn status_plain_len(status: &InstanceStatus) -> usize {
     match status {
+        InstanceStatus::Enqueued => "enqueued".len(),
         InstanceStatus::Provisioning => "provisioning".len(),
         InstanceStatus::Assigning => "assigning".len(),
         InstanceStatus::Unassigning => "unassigning".len(),

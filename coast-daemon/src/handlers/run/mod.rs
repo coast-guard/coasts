@@ -614,11 +614,17 @@ pub async fn handle(
     {
         let db = state.db.lock().await;
         let existing = db.get_instance(&req.project, &req.name)?;
-        if existing.is_some() {
-            return Err(CoastError::InstanceAlreadyExists {
-                name: req.name.clone(),
-                project: req.project.clone(),
-            });
+        match existing {
+            Some(inst) if inst.status == InstanceStatus::Enqueued => {
+                db.delete_instance(&req.project, &req.name)?;
+            }
+            Some(_) => {
+                return Err(CoastError::InstanceAlreadyExists {
+                    name: req.name.clone(),
+                    project: req.project.clone(),
+                });
+            }
+            None => {}
         }
 
         let instance = CoastInstance {

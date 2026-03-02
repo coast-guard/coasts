@@ -9,9 +9,10 @@ use futures_util::stream::Stream;
 use tokio::sync::mpsc;
 
 use coast_core::protocol::{
-    AssignRequest, BuildProgressEvent, BuildRequest, RerunExtractorsRequest, RmBuildRequest,
-    RunRequest, UnassignRequest,
+    AssignRequest, BuildProgressEvent, BuildRequest, CoastEvent, RerunExtractorsRequest,
+    RmBuildRequest, RunRequest, UnassignRequest,
 };
+use coast_core::types::{CoastInstance, InstanceStatus, RuntimeType};
 
 use crate::handlers;
 use crate::server::AppState;
@@ -164,6 +165,32 @@ async fn run_sse(
     let (result_tx, result_rx) = tokio::sync::oneshot::channel();
 
     tokio::spawn(async move {
+        {
+            let db = state_clone.db.lock().await;
+            let enqueued_inst = CoastInstance {
+                name: req.name.clone(),
+                project: req.project.clone(),
+                status: InstanceStatus::Enqueued,
+                branch: req.branch.clone(),
+                commit_sha: req.commit_sha.clone(),
+                container_id: None,
+                runtime: RuntimeType::Dind,
+                created_at: chrono::Utc::now(),
+                worktree_name: None,
+                build_id: req.build_id.clone(),
+                coastfile_type: req.coastfile_type.clone(),
+            };
+            if let Err(e) = db.insert_instance(&enqueued_inst) {
+                let _ = result_tx.send(Err(e));
+                return;
+            }
+        }
+        state_clone.emit_event(CoastEvent::InstanceStatusChanged {
+            name: req.name.clone(),
+            project: req.project.clone(),
+            status: "enqueued".to_string(),
+        });
+
         let sem = state_clone.project_semaphore(&req.project).await;
         if sem.available_permits() == 0 {
             let _ = tx.try_send(BuildProgressEvent::item(
@@ -173,6 +200,15 @@ async fn run_sse(
             ));
         }
         let _permit = sem.acquire().await;
+
+        {
+            let db = state_clone.db.lock().await;
+            let still_exists = db.get_instance(&req.project, &req.name).ok().flatten();
+            if still_exists.is_none() {
+                return;
+            }
+        }
+
         let project = req.project.clone();
         let name = req.name.clone();
         let coastfile_type = req.coastfile_type.clone();

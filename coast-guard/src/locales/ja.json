@@ -190,6 +190,7 @@
   "action.clear": "クリア",
   "action.clearing": "クリア中...",
 
+  "status.enqueued": "キュー待ち",
   "status.provisioning": "プロビジョニング中",
   "status.assigning": "割り当て中",
   "status.unassigning": "割り当て解除中",

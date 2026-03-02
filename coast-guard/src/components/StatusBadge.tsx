@@ -2,6 +2,7 @@ import { useTranslation } from 'react-i18next';
 import type { InstanceStatus } from '../types/api';
 
 const STATUS_STYLES: Readonly<Record<InstanceStatus, { readonly dot: string; readonly bg: string; readonly text: string; readonly label: string }>> = {
+  enqueued: { dot: 'bg-sky-500 animate-pulse', bg: 'bg-sky-500/12 border border-sky-500/30', text: 'text-sky-700 dark:text-sky-300', label: 'status.enqueued' },
   provisioning: { dot: 'bg-violet-500 animate-pulse', bg: 'bg-violet-500/12 border border-violet-500/30', text: 'text-violet-700 dark:text-violet-300', label: 'status.provisioning' },
   assigning: { dot: 'bg-fuchsia-500 animate-pulse', bg: 'bg-fuchsia-500/12 border border-fuchsia-500/30', text: 'text-fuchsia-700 dark:text-fuchsia-300', label: 'status.assigning' },
   unassigning: { dot: 'bg-orange-500 animate-pulse', bg: 'bg-orange-500/12 border border-orange-500/30', text: 'text-orange-700 dark:text-orange-300', label: 'status.unassigning' },

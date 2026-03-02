@@ -74,6 +74,13 @@ pub async fn handle(req: RmRequest, state: &AppState) -> Result<RmResponse> {
         inst
     };
 
+    if instance.status == InstanceStatus::Enqueued {
+        let db = state.db.lock().await;
+        db.delete_port_allocations(&req.project, &req.name)?;
+        db.delete_instance(&req.project, &req.name)?;
+        return Ok(RmResponse { name: req.name });
+    }
+
     // Set transitional status so the UI shows "stopping" pill during teardown
     if instance.status == InstanceStatus::Running || instance.status == InstanceStatus::CheckedOut {
         let db = state.db.lock().await;
@@ -311,5 +318,31 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn test_rm_enqueued_instance() {
+        let state = test_state();
+        {
+            let db = state.db.lock().await;
+            db.insert_instance(&make_instance(
+                "queued-one",
+                "my-app",
+                InstanceStatus::Enqueued,
+            ))
+            .unwrap();
+        }
+
+        let req = RmRequest {
+            name: "queued-one".to_string(),
+            project: "my-app".to_string(),
+        };
+        let result = handle(req, &state).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().name, "queued-one");
+
+        let db = state.db.lock().await;
+        let instance = db.get_instance("my-app", "queued-one").unwrap();
+        assert!(instance.is_none());
     }
 }

@@ -144,6 +144,7 @@
 
   "instance.notFound": "Instance \"{{name}}\" not found.",
   "instance.notRunning": "Instance is not running.",
+  "instance.enqueued": "Instance is queued and waiting for another operation to finish\u2026",
   "instance.provisioning": "Instance is being provisioned\u2026 this may take a minute.",
   "instance.assigning": "Instance is being assigned a new worktree\u2026",
   "instance.noBranch": "(no branch)",
@@ -202,6 +203,7 @@
   "create.submit": "Create",
   "create.creating": "Creating...",
 
+  "status.enqueued": "Enqueued",
   "status.provisioning": "Provisioning",
   "status.assigning": "Assigning",
   "status.unassigning": "Unassigning",

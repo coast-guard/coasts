@@ -190,6 +190,7 @@
   "action.clear": "지우기",
   "action.clearing": "지우는 중...",
 
+  "status.enqueued": "대기 중",
   "status.provisioning": "프로비저닝 중",
   "status.assigning": "할당 중",
   "status.unassigning": "할당 해제 중",

@@ -100,7 +100,7 @@ export default function InstanceDetailPage() {
   }, [project, name, queryClient]);
 
   const isRunning = instance != null && (instance.status === 'running' || instance.status === 'checked_out');
-  const isProvisioning = instance != null && (instance.status === 'provisioning' || instance.status === 'assigning');
+  const isProvisioning = instance != null && (instance.status === 'enqueued' || instance.status === 'provisioning' || instance.status === 'assigning');
   const canAssign = instance != null && (instance.status === 'running' || instance.status === 'checked_out' || instance.status === 'idle');
   const isAssigned = instance?.worktree != null;
   const isTransitioning = instance != null && (instance.status === 'assigning' || instance.status === 'unassigning');
@@ -288,7 +288,7 @@ export default function InstanceDetailPage() {
 
           {!isRunning ? (
             <div className="glass-panel py-12 text-center text-subtle-ui">
-              <p>{isProvisioning ? t(instance?.status === 'assigning' ? 'instance.assigning' : 'instance.provisioning') : t('instance.notRunning')}</p>
+              <p>{isProvisioning ? t(instance?.status === 'assigning' ? 'instance.assigning' : instance?.status === 'enqueued' ? 'instance.enqueued' : 'instance.provisioning') : t('instance.notRunning')}</p>
             </div>
           ) : (
             <>

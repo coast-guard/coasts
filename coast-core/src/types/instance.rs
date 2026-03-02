@@ -30,6 +30,7 @@ pub struct CoastInstance {
 #[ts(export)]
 #[serde(rename_all = "snake_case")]
 pub enum InstanceStatus {
+    Enqueued,
     Provisioning,
     Assigning,
     Unassigning,
@@ -44,6 +45,7 @@ pub enum InstanceStatus {
 impl InstanceStatus {
     pub fn from_db_str(s: &str) -> Option<Self> {
         match s {
+            "enqueued" => Some(Self::Enqueued),
             "provisioning" => Some(Self::Provisioning),
             "assigning" => Some(Self::Assigning),
             "unassigning" => Some(Self::Unassigning),
@@ -59,6 +61,7 @@ impl InstanceStatus {
 
     pub fn as_db_str(&self) -> &'static str {
         match self {
+            Self::Enqueued => "enqueued",
             Self::Provisioning => "provisioning",
             Self::Assigning => "assigning",
             Self::Unassigning => "unassigning",

@@ -590,11 +590,42 @@ async fn handle_run_streaming(
     state: &Arc<AppState>,
     writer: &mut tokio::net::unix::OwnedWriteHalf,
 ) -> Result<()> {
+    {
+        let db = state.db.lock().await;
+        let enqueued_inst = coast_core::types::CoastInstance {
+            name: req.name.clone(),
+            project: req.project.clone(),
+            status: coast_core::types::InstanceStatus::Enqueued,
+            branch: req.branch.clone(),
+            commit_sha: req.commit_sha.clone(),
+            container_id: None,
+            runtime: coast_core::types::RuntimeType::Dind,
+            created_at: chrono::Utc::now(),
+            worktree_name: None,
+            build_id: req.build_id.clone(),
+            coastfile_type: req.coastfile_type.clone(),
+        };
+        db.insert_instance(&enqueued_inst)?;
+    }
+    state.emit_event(coast_core::protocol::CoastEvent::InstanceStatusChanged {
+        name: req.name.clone(),
+        project: req.project.clone(),
+        status: "enqueued".to_string(),
+    });
+
     let sem = state.project_semaphore(&req.project).await;
     let _permit = sem
         .acquire()
         .await
         .map_err(|_| CoastError::state("operation queue closed"))?;
+
+    {
+        let db = state.db.lock().await;
+        let still_exists = db.get_instance(&req.project, &req.name).ok().flatten();
+        if still_exists.is_none() {
+            return Ok(());
+        }
+    }
 
     let project = req.project.clone();
     let name = req.name.clone();

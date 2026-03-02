@@ -61,6 +61,15 @@ pub async fn handle(
                 project: req.project.clone(),
             });
         };
+        if inst.status == InstanceStatus::Enqueued {
+            db.delete_instance(&req.project, &req.name)?;
+            drop(db);
+            state.emit_event(CoastEvent::InstanceRemoved {
+                name: req.name.clone(),
+                project: req.project.clone(),
+            });
+            return Ok(StopResponse { name: req.name });
+        }
         if inst.status == InstanceStatus::Stopped {
             return Err(CoastError::state(format!(
                 "Instance '{}' is already stopped. Run `coast start {}` to start it.",
@@ -351,5 +360,31 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn test_stop_enqueued_instance_removes_it() {
+        let state = test_state();
+        {
+            let db = state.db.lock().await;
+            db.insert_instance(&make_instance(
+                "queued-inst",
+                "my-app",
+                InstanceStatus::Enqueued,
+            ))
+            .unwrap();
+        }
+
+        let req = StopRequest {
+            name: "queued-inst".to_string(),
+            project: "my-app".to_string(),
+        };
+        let result = handle(req, &state, None).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().name, "queued-inst");
+
+        let db = state.db.lock().await;
+        let instance = db.get_instance("my-app", "queued-inst").unwrap();
+        assert!(instance.is_none());
     }
 }

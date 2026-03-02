@@ -183,6 +183,7 @@
   "create.creating": "Создание...",
   "action.clear": "Очистить",
   "action.clearing": "Очистка...",
+  "status.enqueued": "В очереди",
   "status.provisioning": "Подготовка",
   "status.assigning": "Назначение",
   "status.unassigning": "Снятие назначения",
