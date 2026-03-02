@@ -97,6 +97,9 @@ pub enum Commands {
     Rm(commands::rm::RmArgs),
     /// Rebuild images and restart services inside a coast instance.
     Rebuild(commands::rebuild::RebuildArgs),
+    /// Restart all services inside a coast instance.
+    #[command(name = "restart-services")]
+    RestartServices(commands::restart_services::RestartServicesArgs),
     /// Re-run secret extractors using the cached build Coastfile.
     #[command(name = "rerun-extractors")]
     RerunExtractors(commands::rerun_extractors::RerunExtractorsArgs),
@@ -277,6 +280,9 @@ async fn dispatch_project_command(cmd: Commands, project_flag: &Option<String>) 
         Commands::Start(args) => commands::start::execute(&args, &project).await,
         Commands::Rm(args) => commands::rm::execute(&args, &project).await,
         Commands::Rebuild(args) => commands::rebuild::execute(&args, &project).await,
+        Commands::RestartServices(args) => {
+            commands::restart_services::execute(&args, &project).await
+        }
         Commands::RerunExtractors(args) => {
             commands::rerun_extractors::execute(&args, &project).await
         }

@@ -180,6 +180,17 @@ export function useStartMutation() {
   });
 }
 
+export function useRestartServicesMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ name, project }: MutationVars) => api.restartServices(name, project),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['instances'] });
+      void qc.invalidateQueries({ queryKey: ['services'] });
+    },
+  });
+}
+
 export function useRmMutation() {
   const qc = useQueryClient();
   return useMutation({

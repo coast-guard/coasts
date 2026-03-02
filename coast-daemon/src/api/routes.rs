@@ -33,6 +33,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/secret", post(secret))
         .route("/shared", post(shared))
         .route("/rebuild", post(rebuild))
+        .route("/restart-services", post(restart_services))
         .route("/upload", post(upload_to_container))
         .route("/upload/host", post(upload_to_host))
         .route("/service/stop", post(service_stop))
@@ -183,6 +184,15 @@ async fn rebuild(
     let sem = state.project_semaphore(&req.project).await;
     let _permit = sem.acquire().await;
     to_api_response(handlers::handle_rebuild(req, &state).await)
+}
+
+async fn restart_services(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<RestartServicesRequest>,
+) -> impl IntoResponse {
+    let sem = state.project_semaphore(&req.project).await;
+    let _permit = sem.acquire().await;
+    to_api_response(handlers::handle_restart_services(req, &state).await)
 }
 
 #[derive(serde::Deserialize)]

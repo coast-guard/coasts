@@ -58,6 +58,7 @@ export type {
   ProjectSharedSummary,
   PsResponse,
   RerunExtractorsResponse,
+  RestartServicesResponse,
   RevealSecretResponse,
   RmBuildRequest,
   RmBuildResponse,

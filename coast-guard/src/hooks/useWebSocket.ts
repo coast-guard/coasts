@@ -98,6 +98,10 @@ export function useCoastEvents(): void {
 
           void qc.invalidateQueries({ queryKey: ['instances'] });
 
+          if (evt.event === 'instance.services_restarted') {
+            void qc.invalidateQueries({ queryKey: ['services'] });
+          }
+
           if (
             evt.event === 'instance.status_changed' ||
             evt.event === 'instance.created' ||

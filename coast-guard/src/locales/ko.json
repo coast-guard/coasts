@@ -137,6 +137,8 @@
   "instance.noBranch": "(브랜치 없음)",
   "instance.checkedOut": "체크아웃됨",
   "instance.noPorts": "포트 없음",
+  "instance.restartServicesTitle": "서비스를 재시작하시겠습니까?",
+  "instance.restartServicesBody": "'{{name}}'의 모든 서비스를 중지하고 재시작합니다.",
 
   "col.name": "이름",
   "col.status": "상태",
@@ -154,6 +156,7 @@
 
   "worktree.default": "기본",
 
+  "action.restartServices": "서비스 재시작",
   "action.stop": "중지",
   "action.start": "시작",
   "action.remove": "제거",

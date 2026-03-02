@@ -137,6 +137,8 @@
   "instance.noBranch": "（无分支）",
   "instance.checkedOut": "已签出",
   "instance.noPorts": "无端口",
+  "instance.restartServicesTitle": "重启服务？",
+  "instance.restartServicesBody": "这将关闭并重启 '{{name}}' 中的所有服务。",
 
   "col.name": "名称",
   "col.status": "状态",
@@ -154,6 +156,7 @@
 
   "worktree.default": "默认",
 
+  "action.restartServices": "重启服务",
   "action.stop": "停止",
   "action.start": "启动",
   "action.remove": "移除",

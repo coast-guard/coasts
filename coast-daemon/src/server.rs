@@ -1055,6 +1055,7 @@ async fn dispatch_request(request: Request, state: &Arc<AppState>) -> Response {
             unreachable!("unassign requests handled by handle_unassign_streaming")
         }
         Request::Rebuild(req) => handlers::handle_rebuild(req, state).await,
+        Request::RestartServices(req) => handlers::handle_restart_services(req, state).await,
         Request::RmBuild(_) => {
             unreachable!("rm-build requests handled by handle_rm_build_streaming")
         }

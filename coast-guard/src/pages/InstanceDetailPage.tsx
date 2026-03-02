@@ -10,6 +10,7 @@ import {
   useProjectGit,
   useStopMutation,
   useStartMutation,
+  useRestartServicesMutation,
   useCheckoutMutation,
   usePorts,
   useServices,
@@ -24,6 +25,7 @@ import Breadcrumb from '../components/Breadcrumb';
 import StatusBadge from '../components/StatusBadge';
 import TabBar, { type TabDef } from '../components/TabBar';
 import Modal from '../components/Modal';
+import ConfirmModal from '../components/ConfirmModal';
 import AssignModal from '../components/AssignModal';
 import { ApiError } from '../api/client';
 
@@ -68,8 +70,10 @@ export default function InstanceDetailPage() {
 
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [assignOpen, setAssignOpen] = useState(false);
+  const [confirmRestart, setConfirmRestart] = useState(false);
   const stopMut = useStopMutation();
   const startMut = useStartMutation();
+  const restartServicesMut = useRestartServicesMutation();
   const checkoutMut = useCheckoutMutation();
 
   const act = useCallback(
@@ -156,12 +160,20 @@ export default function InstanceDetailPage() {
         {instance != null && (
           <div className="flex items-center gap-2">
             {isRunning ? (
-              <ActionBtn
-                label={t('action.stop')}
-                variant="outline"
-                className="!h-8 !px-3.5 !py-1.5 !text-[14px] !font-semibold"
-                onClick={() => void act(() => stopMut.mutateAsync({ name, project }))}
-              />
+              <>
+                <ActionBtn
+                  label={t('action.restartServices')}
+                  variant="outline"
+                  className="!h-8 !px-3.5 !py-1.5 !text-[14px] !font-semibold"
+                  onClick={() => setConfirmRestart(true)}
+                />
+                <ActionBtn
+                  label={t('action.stop')}
+                  variant="outline"
+                  className="!h-8 !px-3.5 !py-1.5 !text-[14px] !font-semibold"
+                  onClick={() => void act(() => stopMut.mutateAsync({ name, project }))}
+                />
+              </>
             ) : !isProvisioning ? (
               <ActionBtn
                 label={t('action.start')}
@@ -326,6 +338,19 @@ export default function InstanceDetailPage() {
           void handleAssign(wt).catch((err) => setErrorMsg(String(err)));
         }}
         onClose={() => setAssignOpen(false)}
+      />
+
+      <ConfirmModal
+        open={confirmRestart}
+        title={t('instance.restartServicesTitle')}
+        body={t('instance.restartServicesBody', { name })}
+        confirmLabel={t('action.restartServices')}
+        danger
+        onConfirm={() => {
+          setConfirmRestart(false);
+          void act(() => restartServicesMut.mutateAsync({ name, project }));
+        }}
+        onCancel={() => setConfirmRestart(false)}
       />
 
       <Modal open={errorMsg != null} title={t('error.title')} onClose={() => setErrorMsg(null)}>

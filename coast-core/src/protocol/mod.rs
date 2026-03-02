@@ -81,6 +81,8 @@ pub enum Request {
     Unassign(UnassignRequest),
     /// Rebuild images inside DinD from the bind-mounted workspace.
     Rebuild(RebuildRequest),
+    /// Restart all services inside a running coast instance.
+    RestartServices(RestartServicesRequest),
     /// Remove a project build artifact and associated Docker resources.
     RmBuild(RmBuildRequest),
     /// Archive a project (stop instances/services, hide from main list).
@@ -164,6 +166,8 @@ pub enum Response {
     Unassign(UnassignResponse),
     /// Rebuild completed.
     Rebuild(RebuildResponse),
+    /// Services restart completed.
+    RestartServices(RestartServicesResponse),
     /// Streaming rm-build progress event (sent before the final RmBuild response).
     RmBuildProgress(BuildProgressEvent),
     /// Build artifact removed.

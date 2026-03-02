@@ -14,7 +14,11 @@ Coasts is also offline-first with no hosted service dependency, so there is no v
 
 ![Coastguard overview showing multiple coasts](assets/coastguard-overview-live.png)
 
+## Documentation
+
 For the full user-facing documentation, see the [Coasts docs](https://coasts.dev/docs).
+
+## Contributing
 
 To contribute, read the [contributing guide](CONTRIBUTING.md).
 

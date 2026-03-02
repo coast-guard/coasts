@@ -117,6 +117,31 @@ pub struct RebuildResponse {
     pub services_rebuilt: Vec<String>,
 }
 
+/// Request to restart all services inside a running coast instance.
+///
+/// For compose projects: `docker compose down` + `docker compose up -d`.
+/// For bare services: `stop-all.sh` + `start-all.sh`.
+/// Respects `autostart = false` (tears down but skips restart).
+/// Does NOT affect shared services.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct RestartServicesRequest {
+    /// Instance name.
+    pub name: String,
+    /// Project name.
+    pub project: String,
+}
+
+/// Response after a successful services restart.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct RestartServicesResponse {
+    /// Instance name.
+    pub name: String,
+    /// Services that were restarted (empty if autostart=false).
+    pub services_restarted: Vec<String>,
+}
+
 /// Request to stop a running instance.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]

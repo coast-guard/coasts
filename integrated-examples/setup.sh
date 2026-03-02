@@ -1225,5 +1225,27 @@ setup_coast_dangling() {
 
 setup_coast_dangling
 
+# --- coast-noautostart ---
+# A minimal compose project with autostart = false.
+# Used by test_restart_services.sh to verify down-only behavior.
+
+setup_coast_noautostart() {
+    local dir="$PROJECTS_DIR/coast-noautostart"
+    echo "Setting up coast-noautostart..."
+
+    rm -rf "$dir/.git"
+
+    cd "$dir"
+    git init -b main
+    git config user.name "Coast Dev"
+    git config user.email "dev@coasts.dev"
+    git add -A
+    git commit -m "initial commit: noautostart test project"
+
+    echo "  coast-noautostart ready (branches: main)"
+}
+
+setup_coast_noautostart
+
 echo ""
 echo "All examples initialized. Run 'coast build' inside any example to get started."

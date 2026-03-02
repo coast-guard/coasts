@@ -34,6 +34,7 @@ import type {
   SecretInfo,
   RevealSecretResponse,
   RerunExtractorsResponse,
+  RestartServicesResponse,
   VolumeSummaryResponse,
   VolumeInspectResponse,
   ServiceInspectResponse,
@@ -95,6 +96,10 @@ export const api = {
 
   start(name: InstanceName, project: ProjectName): Promise<StartResponse> {
     return post<NameProjectRequest, StartResponse>('/start', { name, project });
+  },
+
+  restartServices(name: InstanceName, project: ProjectName): Promise<RestartServicesResponse> {
+    return post<NameProjectRequest, RestartServicesResponse>('/restart-services', { name, project });
   },
 
   rm(name: InstanceName, project: ProjectName): Promise<RmResponse> {

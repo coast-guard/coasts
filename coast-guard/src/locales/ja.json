@@ -137,6 +137,8 @@
   "instance.noBranch": "（ブランチなし）",
   "instance.checkedOut": "チェックアウト済み",
   "instance.noPorts": "ポートなし",
+  "instance.restartServicesTitle": "サービスを再起動しますか？",
+  "instance.restartServicesBody": "'{{name}}' のすべてのサービスを停止して再起動します。",
 
   "col.name": "名前",
   "col.status": "ステータス",
@@ -154,6 +156,7 @@
 
   "worktree.default": "デフォルト",
 
+  "action.restartServices": "サービス再起動",
   "action.stop": "停止",
   "action.start": "開始",
   "action.remove": "削除",

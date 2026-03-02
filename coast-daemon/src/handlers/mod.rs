@@ -155,6 +155,7 @@ pub mod ports;
 pub mod ps;
 pub mod rebuild;
 pub mod rerun_extractors;
+pub mod restart_services;
 pub mod rm;
 pub mod rm_build;
 pub mod run;
@@ -650,6 +651,19 @@ pub async fn handle_unassign_with_progress(
 pub async fn handle_rebuild(req: RebuildRequest, state: &AppState) -> Response {
     match rebuild::handle(req, state).await {
         Ok(resp) => Response::Rebuild(resp),
+        Err(e) => error_response(&e),
+    }
+}
+
+/// Handle a RestartServices request.
+pub async fn handle_restart_services(req: RestartServicesRequest, state: &AppState) -> Response {
+    let name = req.name.clone();
+    let project = req.project.clone();
+    match restart_services::handle(req, state).await {
+        Ok(resp) => {
+            state.emit_event(CoastEvent::ServicesRestarted { name, project });
+            Response::RestartServices(resp)
+        }
         Err(e) => error_response(&e),
     }
 }

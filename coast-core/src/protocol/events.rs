@@ -132,6 +132,8 @@ pub enum CoastEvent {
         service: String,
         error: String,
     },
+    #[serde(rename = "instance.services_restarted")]
+    ServicesRestarted { name: String, project: String },
     #[serde(rename = "instance.status_changed")]
     InstanceStatusChanged {
         name: String,

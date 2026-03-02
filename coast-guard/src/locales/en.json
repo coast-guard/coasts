@@ -150,6 +150,8 @@
   "instance.noBranch": "(no branch)",
   "instance.checkedOut": "checked out",
   "instance.noPorts": "No Ports",
+  "instance.restartServicesTitle": "Restart Services?",
+  "instance.restartServicesBody": "This will tear down and restart all services in '{{name}}'.",
 
   "col.name": "Name",
   "col.status": "Status",
@@ -167,6 +169,7 @@
 
   "worktree.default": "default",
 
+  "action.restartServices": "Restart Services",
   "action.stop": "Stop",
   "action.start": "Start",
   "action.remove": "Remove",
