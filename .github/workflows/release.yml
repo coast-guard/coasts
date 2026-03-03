@@ -192,8 +192,11 @@ jobs:
 
       - name: Update CLI policy minimum_version
         if: ${{ !contains(github.ref_name, '-rc') && !contains(github.ref_name, '-beta') && !contains(github.ref_name, '-alpha') }}
+        env:
+          GH_TOKEN: ${{ secrets.POLICY_PUSH_TOKEN }}
         run: |
           VERSION=${GITHUB_REF_NAME#v}
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
           git fetch origin main
           git checkout main
           jq --arg v "$VERSION" '.minimum_version = $v' cli-update-policy.json > tmp.json && mv tmp.json cli-update-policy.json
