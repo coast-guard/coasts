@@ -453,6 +453,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-tungstenite",
+ "toml",
  "tower",
  "tower-http",
  "tracing",

@@ -83,15 +83,22 @@ pub fn compose_context_for_build(project: &str, build_id: Option<&str>) -> Compo
         None => project_dir.join("latest").join("coastfile.toml"),
     };
 
+    // Read the raw compose path from the TOML text instead of the parsed
+    // Coastfile. Coastfile::from_file resolves relative paths against the
+    // coastfile's parent directory, which inside the artifact dir turns
+    // "./docker-compose.yml" into "<artifact_hash>/docker-compose.yml".
+    // Extracting the parent dir name from that resolved path produces the
+    // artifact hash as the compose project name, breaking `docker compose ps`.
     let compose_rel_dir = if coastfile_path.exists() {
-        coast_core::coastfile::Coastfile::from_file(&coastfile_path)
+        std::fs::read_to_string(&coastfile_path)
             .ok()
-            .and_then(|cf| {
-                cf.compose.as_ref().and_then(|p| {
-                    let parent = p.parent()?;
-                    let dir_name = parent.file_name()?.to_str()?;
-                    Some(dir_name.to_string())
-                })
+            .and_then(|text| {
+                let raw: toml::Value = text.parse().ok()?;
+                let compose_str = raw.get("coast")?.get("compose")?.as_str()?;
+                let compose_path = std::path::Path::new(compose_str);
+                let parent = compose_path.parent()?;
+                let dir_name = parent.file_name()?.to_str()?;
+                Some(dir_name.to_string())
             })
     } else {
         None
@@ -136,6 +143,69 @@ mod compose_context_tests {
         assert!(cmd[2].contains("-p coast-myapp"));
         assert!(cmd[2].contains("/workspace/docker-compose.yml"));
         assert!(cmd[2].contains("logs --tail 200"));
+    }
+
+    #[test]
+    fn test_compose_context_root_level_compose_uses_default_project_name() {
+        // Simulate a coastfile with compose = "./docker-compose.yml" at the project root.
+        // The raw path's parent is "." which has no meaningful dir name,
+        // so compose_rel_dir should be None and project_name should fall
+        // back to "coast-{project}".
+        let dir = tempfile::tempdir().unwrap();
+        let coastfile = dir.path().join("coastfile.toml");
+        std::fs::write(
+            &coastfile,
+            r#"
+[coast]
+name = "my-app"
+compose = "./docker-compose.yml"
+"#,
+        )
+        .unwrap();
+
+        let text = std::fs::read_to_string(&coastfile).unwrap();
+        let raw: toml::Value = text.parse().unwrap();
+        let compose_str = raw
+            .get("coast")
+            .and_then(|c| c.get("compose"))
+            .and_then(|v| v.as_str())
+            .unwrap();
+        let compose_path = std::path::Path::new(compose_str);
+        let parent = compose_path.parent().unwrap();
+        // "." has no file_name component, so this should be None
+        let dir_name = parent.file_name().and_then(|f| f.to_str());
+        assert!(
+            dir_name.is_none(),
+            "root-level compose should not produce a dir name, got: {:?}",
+            dir_name
+        );
+    }
+
+    #[test]
+    fn test_compose_context_subdir_compose_extracts_dir_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let coastfile = dir.path().join("coastfile.toml");
+        std::fs::write(
+            &coastfile,
+            r#"
+[coast]
+name = "my-app"
+compose = "./infra/docker-compose.yml"
+"#,
+        )
+        .unwrap();
+
+        let text = std::fs::read_to_string(&coastfile).unwrap();
+        let raw: toml::Value = text.parse().unwrap();
+        let compose_str = raw
+            .get("coast")
+            .and_then(|c| c.get("compose"))
+            .and_then(|v| v.as_str())
+            .unwrap();
+        let compose_path = std::path::Path::new(compose_str);
+        let parent = compose_path.parent().unwrap();
+        let dir_name = parent.file_name().and_then(|f| f.to_str());
+        assert_eq!(dir_name, Some("infra"));
     }
 }
 
