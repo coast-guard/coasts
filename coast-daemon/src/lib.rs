@@ -8,7 +8,7 @@ rust_i18n::i18n!("../coast-i18n/locales", fallback = "en");
 use std::sync::Arc;
 
 use clap::Parser;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
 
 use coast_core::error::Result;
@@ -94,7 +94,7 @@ fn ensure_host_tool_paths() {
             unsafe {
                 std::env::set_var("PATH", &path);
             }
-            debug!(path = %path.to_string_lossy(), "updated PATH with macOS host tool directories");
+            tracing::debug!(path = %path.to_string_lossy(), "updated PATH with macOS host tool directories");
         }
         Err(error) => {
             warn!(error = %error, "failed to join augmented PATH entries");
@@ -105,6 +105,7 @@ fn ensure_host_tool_paths() {
 #[cfg(not(target_os = "macos"))]
 fn ensure_host_tool_paths() {}
 
+#[cfg(any(target_os = "macos", test))]
 fn extend_path_entries<I>(
     mut existing_entries: Vec<std::path::PathBuf>,
     candidates: I,

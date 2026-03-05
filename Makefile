@@ -4,11 +4,11 @@ export
 .PHONY: lint fix test coverage coverage-text check fmt zip-projects unpack-projects watch \
        docs-version docs-status translate translate-all doc-search doc-search-all
 
-# Check formatting and run clippy. Deny-level lints (configured in Cargo.toml)
-# cause hard failures; warn-level lints are printed but don't block.
+# Check formatting and run clippy. Matches CI: -D warnings promotes all
+# warnings to errors so local lint catches what CI catches.
 lint:
 	cargo fmt --all -- --check
-	cargo clippy --workspace
+	cargo clippy --workspace -- -D warnings
 
 # Auto-format and auto-fix what clippy can.
 fix:

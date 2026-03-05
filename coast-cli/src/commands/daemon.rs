@@ -118,6 +118,7 @@ fn launchd_path_value() -> Option<String> {
     None
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn extend_path_entries<I>(mut existing_entries: Vec<PathBuf>, candidates: I) -> Vec<PathBuf>
 where
     I: IntoIterator<Item = PathBuf>,
