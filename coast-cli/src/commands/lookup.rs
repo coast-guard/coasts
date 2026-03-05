@@ -155,6 +155,11 @@ pub fn detect_worktree() -> Result<Option<String>> {
 }
 
 /// Detect the worktree name given explicit paths (for testability).
+///
+/// Handles branch names containing slashes (e.g. `testing/assign-speed`)
+/// which create nested directories under the worktree base. Walks into the
+/// relative path looking for a checkout root (`.git` or `Coastfile`), and
+/// falls back to the first path component if no marker is found.
 pub fn detect_worktree_from_paths(cwd: &Path, worktree_base: &Path) -> Result<Option<String>> {
     let Ok(canonical_cwd) = cwd.canonicalize() else {
         return Ok(None);
@@ -164,8 +169,24 @@ pub fn detect_worktree_from_paths(cwd: &Path, worktree_base: &Path) -> Result<Op
     };
 
     if let Ok(relative) = canonical_cwd.strip_prefix(&canonical_wt) {
-        let mut components = relative.components();
-        if let Some(first) = components.next() {
+        let components: Vec<_> = relative.components().collect();
+        if components.is_empty() {
+            return Ok(None);
+        }
+
+        let mut accumulated = std::path::PathBuf::new();
+        for component in &components {
+            accumulated.push(component);
+            let candidate = canonical_wt.join(&accumulated);
+            if candidate.join(".git").exists() || candidate.join("Coastfile").exists() {
+                let name = accumulated.to_string_lossy().to_string();
+                if !name.is_empty() {
+                    return Ok(Some(name));
+                }
+            }
+        }
+
+        if let Some(first) = components.first() {
             let name = first.as_os_str().to_string_lossy().to_string();
             if !name.is_empty() {
                 return Ok(Some(name));
@@ -302,5 +323,43 @@ mod tests {
 
         let result = detect_worktree_from_paths(&deep, &wt_base).unwrap();
         assert_eq!(result, Some("feat".to_string()));
+    }
+
+    #[test]
+    fn test_detect_worktree_from_paths_slash_branch_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let wt_base = tmp.path().join(".worktrees");
+        let wt_dir = wt_base.join("testing").join("assign-speed");
+        std::fs::create_dir_all(&wt_dir).unwrap();
+        // Simulate a git worktree root marker
+        std::fs::write(wt_dir.join(".git"), "gitdir: /fake/path").unwrap();
+
+        let result = detect_worktree_from_paths(&wt_dir, &wt_base).unwrap();
+        assert_eq!(result, Some("testing/assign-speed".to_string()));
+    }
+
+    #[test]
+    fn test_detect_worktree_from_paths_slash_branch_subdirectory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let wt_base = tmp.path().join(".worktrees");
+        let wt_dir = wt_base.join("testing").join("assign-speed");
+        let subdir = wt_dir.join("src").join("lib");
+        std::fs::create_dir_all(&subdir).unwrap();
+        std::fs::write(wt_dir.join(".git"), "gitdir: /fake/path").unwrap();
+
+        let result = detect_worktree_from_paths(&subdir, &wt_base).unwrap();
+        assert_eq!(result, Some("testing/assign-speed".to_string()));
+    }
+
+    #[test]
+    fn test_detect_worktree_from_paths_triple_slash_branch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let wt_base = tmp.path().join(".worktrees");
+        let wt_dir = wt_base.join("team").join("feature").join("oauth");
+        std::fs::create_dir_all(&wt_dir).unwrap();
+        std::fs::write(wt_dir.join(".git"), "gitdir: /fake/path").unwrap();
+
+        let result = detect_worktree_from_paths(&wt_dir, &wt_base).unwrap();
+        assert_eq!(result, Some("team/feature/oauth".to_string()));
     }
 }
