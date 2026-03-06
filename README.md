@@ -12,11 +12,17 @@ Coasts is agnostic to AI providers and agent harnesses. The only host requiremen
 
 Coasts is also offline-first with no hosted service dependency, so there is no vendor lock-in risk: even if we disappeared, your local workflow would keep running.
 
+[Visit coasts.dev](https://coasts.dev) for the website, docs, and installation instructions.
+
 ![Coastguard overview showing multiple coasts](assets/coastguard-overview-live.png)
 
 ## Documentation
 
 For the full user-facing documentation, see the [Coasts docs](https://coasts.dev/docs).
+
+## Demo Repo
+
+Want a concrete example to explore? Check out the [`coasts-demo` repository](https://github.com/coast-guard/coasts-demo) for a small demo project you can use to try Coasts end to end.
 
 ## Contributing
 

@@ -465,6 +465,7 @@
   "mcp.error": "加载 MCP 数据失败：{{error}}",
   "docker.label": "Docker",
   "docker.memoryTitle": "Docker 内存",
+  "docker.memoryTitleOrbstack": "打开 OrbStack — 在设置中调整资源",
   "docker.currentAllocation": "当前分配",
   "docker.newAllocation": "新分配",
   "docker.apply": "应用",

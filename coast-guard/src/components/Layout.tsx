@@ -38,11 +38,13 @@ export default function Layout() {
               <button
                 onClick={handleOpenDockerSettings}
                 className="h-8 px-2.5 inline-flex items-center gap-2.5 rounded-lg text-xs text-subtle-ui hover:bg-[var(--header-control-hover)] transition-colors cursor-pointer"
-                title={t('docker.memoryTitle')}
+                title={dockerInfo.provider === 'orbstack'
+                  ? t('docker.memoryTitleOrbstack')
+                  : t('docker.memoryTitle')}
               >
                 <DockerIcon size={18} />
                 <span className="font-medium">
-                  {t('docker.label')}: {formatBytes(dockerInfo.mem_total_bytes)}
+                  {dockerInfo.provider === 'orbstack' ? 'OrbStack' : t('docker.label')}: {formatBytes(dockerInfo.mem_total_bytes)}
                 </span>
               </button>
             )}

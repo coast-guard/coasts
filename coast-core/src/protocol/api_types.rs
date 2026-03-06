@@ -337,6 +337,7 @@ pub struct DockerInfoResponse {
     pub os: String,
     pub server_version: String,
     pub can_adjust: bool,
+    pub provider: String,
 }
 
 /// Response after requesting Docker Desktop settings to be opened.

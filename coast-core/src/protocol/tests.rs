@@ -1023,6 +1023,7 @@ fn test_docker_info_response_serialization() {
         os: "Docker Desktop".to_string(),
         server_version: "28.3.3".to_string(),
         can_adjust: true,
+        provider: "docker-desktop".to_string(),
     };
     let json = serde_json::to_value(&resp).unwrap();
     assert_eq!(json["mem_total_bytes"], 8_589_934_592u64);

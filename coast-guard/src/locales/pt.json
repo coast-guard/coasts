@@ -450,6 +450,7 @@
   "mcp.error": "Falha ao carregar dados MCP: {{error}}",
   "docker.label": "Docker",
   "docker.memoryTitle": "Memória do Docker",
+  "docker.memoryTitleOrbstack": "Abrir OrbStack — ajustar recursos nas Configurações",
   "docker.currentAllocation": "Alocação atual",
   "docker.newAllocation": "Nova alocação",
   "docker.apply": "Aplicar",

@@ -85,24 +85,13 @@ find the relevant documentation.
 
 ## 에이전트에 스킬 추가하기
 
-가장 빠른 방법은 에이전트가 스스로 설정하게 하는 것입니다. 프로젝트 디렉터리에서 다음 중 하나를 실행하세요:
+가장 빠른 방법은 에이전트가 스스로 설정하게 하는 것입니다. 아래 프롬프트를 에이전트의 채팅에 복사해 넣으세요 — 여기에는 스킬 텍스트와, 에이전트가 이를 자신의 설정 파일(`CLAUDE.md`, `AGENTS.md`, `.cursor/rules/coast.md` 등)에 작성하도록 하는 지침이 포함되어 있습니다.
 
-```bash-emphasis
-# Claude Code
-claude -p "$(coast skills-prompt)"
-
-# Codex
-codex "$(coast skills-prompt)"
-
-# Cursor (from terminal)
-cursor --chat "$(coast skills-prompt)"
-
-# Other agents (manual)
-coast skills-prompt
-# copy the output into your agent's system prompt
+```prompt-copy
+skills_prompt.txt
 ```
 
-이렇게 하면 에이전트에 스킬 텍스트와, 이를 자신의 설정 파일(`CLAUDE.md`, `AGENTS.md`, `.cursor/rules/coast.md` 등)에 작성하라는 지침이 제공됩니다.
+CLI에서 `coast skills-prompt`를 실행해도 동일한 출력을 얻을 수 있습니다.
 
 ### 수동 설정
 

@@ -63,3 +63,7 @@ Coasts are not dev containers, and they are not the same thing.
 
 Dev containers are generally designed for mounting an IDE into a single containerized development workspace. Coasts are headless and optimized as lightweight environments for parallel agent usage with worktrees — multiple isolated, worktree-aware runtime environments running side by side, with fast checkout switching and runtime isolation controls for each instance.
 
+## Demo Repo
+
+If you want a small example project to try with Coasts, start with the [`coasts-demo` repository](https://github.com/coast-guard/coasts-demo).
+

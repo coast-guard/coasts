@@ -1,19 +1,19 @@
 {
   "es": {
     "GETTING_STARTED.md": {
-      "commit": "d769707",
-      "source_sha256": "34daa0a26c7332b06ef922bea0520e6ac0cf59ee56c709b74bc7884cdf2cb8a2",
-      "translated_at": "2026-03-03T10:27:08Z"
+      "commit": "8de7870",
+      "source_sha256": "14e53441bfc337f9611fe25c7988cdd34e03d701e451fcb14c0ad4459942a32a",
+      "translated_at": "2026-03-06T22:13:59Z"
     },
     "README.md": {
-      "commit": "0f69cdc",
-      "source_sha256": "780919526b61ed6f0016f5d90dc71a6b2890734894d4f70eaec377af63d1dad5",
-      "translated_at": "2026-03-02T07:44:45Z"
+      "commit": "8de7870",
+      "source_sha256": "35bcdebe29b86d66fb415e9a63c423087ac7450afba34dc00fc191a798312bde",
+      "translated_at": "2026-03-06T22:13:59Z"
     },
     "SKILLS_FOR_HOST_AGENTS.md": {
-      "commit": "d769707",
-      "source_sha256": "7d8b1be5d672cac5cf4cf227eccb53f9f55ff8dff8c7784342b2a25d1712a304",
-      "translated_at": "2026-03-03T10:27:08Z"
+      "commit": "8de7870",
+      "source_sha256": "41edafb6689beb58a73c919a295a2d8ebae6b12511e361afe93de3110464be94",
+      "translated_at": "2026-03-06T22:13:59Z"
     },
     "coastfiles/AGENT_SHELL.md": {
       "commit": "3357381",
@@ -228,19 +228,19 @@
   },
   "ja": {
     "GETTING_STARTED.md": {
-      "commit": "d769707",
-      "source_sha256": "34daa0a26c7332b06ef922bea0520e6ac0cf59ee56c709b74bc7884cdf2cb8a2",
-      "translated_at": "2026-03-03T10:23:05Z"
+      "commit": "8de7870",
+      "source_sha256": "14e53441bfc337f9611fe25c7988cdd34e03d701e451fcb14c0ad4459942a32a",
+      "translated_at": "2026-03-06T22:11:47Z"
     },
     "README.md": {
-      "commit": "0f69cdc",
-      "source_sha256": "780919526b61ed6f0016f5d90dc71a6b2890734894d4f70eaec377af63d1dad5",
-      "translated_at": "2026-03-02T07:39:42Z"
+      "commit": "8de7870",
+      "source_sha256": "35bcdebe29b86d66fb415e9a63c423087ac7450afba34dc00fc191a798312bde",
+      "translated_at": "2026-03-06T22:11:47Z"
     },
     "SKILLS_FOR_HOST_AGENTS.md": {
-      "commit": "d769707",
-      "source_sha256": "7d8b1be5d672cac5cf4cf227eccb53f9f55ff8dff8c7784342b2a25d1712a304",
-      "translated_at": "2026-03-03T10:23:05Z"
+      "commit": "8de7870",
+      "source_sha256": "41edafb6689beb58a73c919a295a2d8ebae6b12511e361afe93de3110464be94",
+      "translated_at": "2026-03-06T22:11:47Z"
     },
     "coastfiles/AGENT_SHELL.md": {
       "commit": "3357381",
@@ -455,19 +455,19 @@
   },
   "ko": {
     "GETTING_STARTED.md": {
-      "commit": "d769707",
-      "source_sha256": "34daa0a26c7332b06ef922bea0520e6ac0cf59ee56c709b74bc7884cdf2cb8a2",
-      "translated_at": "2026-03-03T10:24:11Z"
+      "commit": "8de7870",
+      "source_sha256": "14e53441bfc337f9611fe25c7988cdd34e03d701e451fcb14c0ad4459942a32a",
+      "translated_at": "2026-03-06T22:12:24Z"
     },
     "README.md": {
-      "commit": "0f69cdc",
-      "source_sha256": "780919526b61ed6f0016f5d90dc71a6b2890734894d4f70eaec377af63d1dad5",
-      "translated_at": "2026-03-02T07:41:07Z"
+      "commit": "8de7870",
+      "source_sha256": "35bcdebe29b86d66fb415e9a63c423087ac7450afba34dc00fc191a798312bde",
+      "translated_at": "2026-03-06T22:12:24Z"
     },
     "SKILLS_FOR_HOST_AGENTS.md": {
-      "commit": "d769707",
-      "source_sha256": "7d8b1be5d672cac5cf4cf227eccb53f9f55ff8dff8c7784342b2a25d1712a304",
-      "translated_at": "2026-03-03T10:24:11Z"
+      "commit": "8de7870",
+      "source_sha256": "41edafb6689beb58a73c919a295a2d8ebae6b12511e361afe93de3110464be94",
+      "translated_at": "2026-03-06T22:12:24Z"
     },
     "coastfiles/AGENT_SHELL.md": {
       "commit": "3357381",
@@ -682,19 +682,19 @@
   },
   "pt": {
     "GETTING_STARTED.md": {
-      "commit": "d769707",
-      "source_sha256": "34daa0a26c7332b06ef922bea0520e6ac0cf59ee56c709b74bc7884cdf2cb8a2",
-      "translated_at": "2026-03-03T10:26:12Z"
+      "commit": "8de7870",
+      "source_sha256": "14e53441bfc337f9611fe25c7988cdd34e03d701e451fcb14c0ad4459942a32a",
+      "translated_at": "2026-03-06T22:13:32Z"
     },
     "README.md": {
-      "commit": "0f69cdc",
-      "source_sha256": "780919526b61ed6f0016f5d90dc71a6b2890734894d4f70eaec377af63d1dad5",
-      "translated_at": "2026-03-02T07:43:40Z"
+      "commit": "8de7870",
+      "source_sha256": "35bcdebe29b86d66fb415e9a63c423087ac7450afba34dc00fc191a798312bde",
+      "translated_at": "2026-03-06T22:13:32Z"
     },
     "SKILLS_FOR_HOST_AGENTS.md": {
-      "commit": "d769707",
-      "source_sha256": "7d8b1be5d672cac5cf4cf227eccb53f9f55ff8dff8c7784342b2a25d1712a304",
-      "translated_at": "2026-03-03T10:26:12Z"
+      "commit": "8de7870",
+      "source_sha256": "41edafb6689beb58a73c919a295a2d8ebae6b12511e361afe93de3110464be94",
+      "translated_at": "2026-03-06T22:13:32Z"
     },
     "coastfiles/AGENT_SHELL.md": {
       "commit": "3357381",
@@ -909,19 +909,19 @@
   },
   "ru": {
     "GETTING_STARTED.md": {
-      "commit": "d769707",
-      "source_sha256": "34daa0a26c7332b06ef922bea0520e6ac0cf59ee56c709b74bc7884cdf2cb8a2",
-      "translated_at": "2026-03-03T10:25:12Z"
+      "commit": "8de7870",
+      "source_sha256": "14e53441bfc337f9611fe25c7988cdd34e03d701e451fcb14c0ad4459942a32a",
+      "translated_at": "2026-03-06T22:13:00Z"
     },
     "README.md": {
-      "commit": "0f69cdc",
-      "source_sha256": "780919526b61ed6f0016f5d90dc71a6b2890734894d4f70eaec377af63d1dad5",
-      "translated_at": "2026-03-02T07:42:26Z"
+      "commit": "8de7870",
+      "source_sha256": "35bcdebe29b86d66fb415e9a63c423087ac7450afba34dc00fc191a798312bde",
+      "translated_at": "2026-03-06T22:13:00Z"
     },
     "SKILLS_FOR_HOST_AGENTS.md": {
-      "commit": "d769707",
-      "source_sha256": "7d8b1be5d672cac5cf4cf227eccb53f9f55ff8dff8c7784342b2a25d1712a304",
-      "translated_at": "2026-03-03T10:25:12Z"
+      "commit": "8de7870",
+      "source_sha256": "41edafb6689beb58a73c919a295a2d8ebae6b12511e361afe93de3110464be94",
+      "translated_at": "2026-03-06T22:13:00Z"
     },
     "coastfiles/AGENT_SHELL.md": {
       "commit": "3357381",
@@ -1136,19 +1136,19 @@
   },
   "zh": {
     "GETTING_STARTED.md": {
-      "commit": "d769707",
-      "source_sha256": "34daa0a26c7332b06ef922bea0520e6ac0cf59ee56c709b74bc7884cdf2cb8a2",
-      "translated_at": "2026-03-03T10:22:04Z"
+      "commit": "8de7870",
+      "source_sha256": "14e53441bfc337f9611fe25c7988cdd34e03d701e451fcb14c0ad4459942a32a",
+      "translated_at": "2026-03-06T22:11:16Z"
     },
     "README.md": {
-      "commit": "0f69cdc",
-      "source_sha256": "780919526b61ed6f0016f5d90dc71a6b2890734894d4f70eaec377af63d1dad5",
-      "translated_at": "2026-03-02T07:38:29Z"
+      "commit": "8de7870",
+      "source_sha256": "35bcdebe29b86d66fb415e9a63c423087ac7450afba34dc00fc191a798312bde",
+      "translated_at": "2026-03-06T22:11:16Z"
     },
     "SKILLS_FOR_HOST_AGENTS.md": {
-      "commit": "d769707",
-      "source_sha256": "7d8b1be5d672cac5cf4cf227eccb53f9f55ff8dff8c7784342b2a25d1712a304",
-      "translated_at": "2026-03-03T10:22:04Z"
+      "commit": "8de7870",
+      "source_sha256": "41edafb6689beb58a73c919a295a2d8ebae6b12511e361afe93de3110464be94",
+      "translated_at": "2026-03-06T22:11:16Z"
     },
     "coastfiles/AGENT_SHELL.md": {
       "commit": "3357381",

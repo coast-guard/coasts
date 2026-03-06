@@ -54,26 +54,13 @@ Coastfile は軽量な TOML ファイルで、*通常* は既存の `docker-comp
 
 プロジェクト用の Coastfile を作成する最速の方法は、コーディングエージェントに作ってもらうことです。
 
-Coasts CLI には、任意の AI エージェントに Coastfile の完全なスキーマと CLI を教えるための組み込みプロンプトが付属しています。ここで確認できます: [installation_prompt.txt](installation_prompt.txt)
+Coasts CLI には、任意の AI エージェントに Coastfile の完全なスキーマと CLI を教えるための組み込みプロンプトが付属しています。これをエージェントのチャットにコピーすると、プロジェクトを解析して Coastfile を生成します。
 
-エージェントに直接渡すか、[installation prompt](installation_prompt.txt) をコピーしてエージェントのチャットに貼り付けてください:
-
-```bash-emphasis
-# Claude Code
-claude -p "$(coast installation-prompt)"
-
-# Codex
-codex "$(coast installation-prompt)"
-
-# Cursor (from terminal)
-cursor --chat "$(coast installation-prompt)"
-
-# Other agents (manual)
-coast installation-prompt
-# copy the output into your agent's system prompt
+```prompt-copy
+installation_prompt.txt
 ```
 
-このプロンプトは、Coastfile の TOML 形式、ボリューム戦略、シークレット注入、関連するすべての CLI コマンドをカバーしています。エージェントがプロジェクトを解析し、Coastfile を生成します。
+また、`coast installation-prompt` を実行すると CLI から同じ出力を取得できます。
 
 ## 最初の Coast
 

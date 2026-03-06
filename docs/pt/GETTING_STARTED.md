@@ -54,26 +54,13 @@ Um Coastfile é um arquivo TOML leve que *tipicamente* aponta para o seu `docker
 
 A maneira mais rápida de criar um Coastfile para o seu projeto é deixar seu agente de codificação fazer isso.
 
-A CLI do Coasts inclui um prompt embutido que ensina a qualquer agente de IA o esquema completo do Coastfile e a CLI. Você pode visualizá-lo aqui: [installation_prompt.txt](installation_prompt.txt)
+A CLI do Coasts inclui um prompt embutido que ensina a qualquer agente de IA o esquema completo do Coastfile e a CLI. Copie-o no chat do seu agente e ele analisará seu projeto e gerará um Coastfile.
 
-Passe-o diretamente para o seu agente, ou copie o [prompt de instalação](installation_prompt.txt) e cole no chat do seu agente:
-
-```bash-emphasis
-# Claude Code
-claude -p "$(coast installation-prompt)"
-
-# Codex
-codex "$(coast installation-prompt)"
-
-# Cursor (from terminal)
-cursor --chat "$(coast installation-prompt)"
-
-# Outros agentes (manual)
-coast installation-prompt
-# copie a saída para o prompt do sistema do seu agente
+```prompt-copy
+installation_prompt.txt
 ```
 
-O prompt cobre o formato TOML do Coastfile, estratégias de volume, injeção de segredos e todos os comandos relevantes da CLI. Seu agente analisará seu projeto e gerará um Coastfile.
+Você também pode obter a mesma saída pela CLI executando `coast installation-prompt`.
 
 ## Seu Primeiro Coast
 

@@ -85,24 +85,13 @@ find the relevant documentation.
 
 ## Adicionando a Habilidade ao Seu Agente
 
-A forma mais rápida é deixar o agente se configurar sozinho. Execute um destes a partir do diretório do seu projeto:
+A forma mais rápida é deixar o agente se configurar sozinho. Copie o prompt abaixo para o chat do seu agente — ele inclui o texto da habilidade e instruções para o agente gravá-lo no próprio arquivo de configuração (`CLAUDE.md`, `AGENTS.md`, `.cursor/rules/coast.md`, etc.).
 
-```bash-emphasis
-# Claude Code
-claude -p "$(coast skills-prompt)"
-
-# Codex
-codex "$(coast skills-prompt)"
-
-# Cursor (from terminal)
-cursor --chat "$(coast skills-prompt)"
-
-# Other agents (manual)
-coast skills-prompt
-# copy the output into your agent's system prompt
+```prompt-copy
+skills_prompt.txt
 ```
 
-Isso fornece ao agente o texto da habilidade e instruções para gravá-lo no próprio arquivo de configuração (`CLAUDE.md`, `AGENTS.md`, `.cursor/rules/coast.md`, etc.).
+Você também pode obter a mesma saída pela CLI executando `coast skills-prompt`.
 
 ### Configuração manual
 

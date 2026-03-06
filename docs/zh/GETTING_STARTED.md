@@ -54,26 +54,13 @@ Coastfile 是一个轻量级的 TOML 文件，*通常*会指向你现有的 `doc
 
 为你的项目创建 Coastfile 的最快方式是让你的编码智能体来完成。
 
-Coasts CLI 内置了一个 prompt，可向任何 AI 智能体讲解完整的 Coastfile schema 和 CLI。你可以在这里查看: [installation_prompt.txt](installation_prompt.txt)
+Coasts CLI 内置了一个 prompt，可向任何 AI 智能体讲解完整的 Coastfile schema 和 CLI。把它复制到你智能体的聊天中，它会分析你的项目并生成一个 Coastfile。
 
-把它直接传给你的智能体，或者复制 [installation prompt](installation_prompt.txt) 并粘贴到智能体的聊天中:
-
-```bash-emphasis
-# Claude Code
-claude -p "$(coast installation-prompt)"
-
-# Codex
-codex "$(coast installation-prompt)"
-
-# Cursor (from terminal)
-cursor --chat "$(coast installation-prompt)"
-
-# Other agents (manual)
-coast installation-prompt
-# copy the output into your agent's system prompt
+```prompt-copy
+installation_prompt.txt
 ```
 
-该 prompt 覆盖 Coastfile TOML 格式、卷策略、密钥注入，以及所有相关 CLI 命令。你的智能体会分析你的项目并生成一个 Coastfile。
+你也可以通过运行 `coast installation-prompt` 从 CLI 获取相同的输出。
 
 ## 你的第一个 Coast
 

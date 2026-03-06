@@ -450,6 +450,7 @@
   "mcp.error": "Не удалось загрузить данные MCP: {{error}}",
   "docker.label": "Docker",
   "docker.memoryTitle": "Память Docker",
+  "docker.memoryTitleOrbstack": "Открыть OrbStack — настроить ресурсы",
   "docker.currentAllocation": "Текущее выделение",
   "docker.newAllocation": "Новое выделение",
   "docker.apply": "Применить",

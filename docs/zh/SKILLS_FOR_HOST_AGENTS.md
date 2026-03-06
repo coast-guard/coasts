@@ -85,24 +85,13 @@ find the relevant documentation.
 
 ## 将该技能添加到你的代理
 
-最快的方法是让代理自己完成设置。在你的项目目录中运行以下命令之一:
+最快的方法是让代理自己完成设置。将下面的提示复制到你的代理聊天中——其中包含技能文本，以及让代理将其写入自身配置文件（`CLAUDE.md`、`AGENTS.md`、`.cursor/rules/coast.md` 等）的说明。
 
-```bash-emphasis
-# Claude Code
-claude -p "$(coast skills-prompt)"
-
-# Codex
-codex "$(coast skills-prompt)"
-
-# Cursor (from terminal)
-cursor --chat "$(coast skills-prompt)"
-
-# Other agents (manual)
-coast skills-prompt
-# copy the output into your agent's system prompt
+```prompt-copy
+skills_prompt.txt
 ```
 
-这会向代理提供技能文本以及将其写入自身配置文件（`CLAUDE.md`、`AGENTS.md`、`.cursor/rules/coast.md` 等）的指令。
+你也可以通过运行 `coast skills-prompt` 从 CLI 获得相同的输出。
 
 ### 手动设置
 

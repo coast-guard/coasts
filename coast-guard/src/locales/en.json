@@ -493,6 +493,7 @@
 
   "docker.label": "Docker",
   "docker.memoryTitle": "Open Docker Desktop — go to Settings → Resources to adjust memory",
+  "docker.memoryTitleOrbstack": "Open OrbStack — adjust resources in Settings",
   "docker.currentAllocation": "Current allocation",
   "docker.newAllocation": "New allocation",
   "docker.apply": "Apply",

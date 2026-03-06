@@ -85,24 +85,13 @@ find the relevant documentation.
 
 ## Добавление навыка вашему агенту
 
-Самый быстрый способ — позволить агенту настроить себя самостоятельно. Запустите одну из этих команд из директории вашего проекта:
+Самый быстрый способ — позволить агенту настроить себя самостоятельно. Скопируйте промпт ниже в чат вашего агента — он включает текст навыка и инструкции для агента записать его в собственный конфигурационный файл (`CLAUDE.md`, `AGENTS.md`, `.cursor/rules/coast.md` и т. п.).
 
-```bash-emphasis
-# Claude Code
-claude -p "$(coast skills-prompt)"
-
-# Codex
-codex "$(coast skills-prompt)"
-
-# Cursor (from terminal)
-cursor --chat "$(coast skills-prompt)"
-
-# Other agents (manual)
-coast skills-prompt
-# copy the output into your agent's system prompt
+```prompt-copy
+skills_prompt.txt
 ```
 
-Это даст агенту текст навыка и инструкции записать его в собственный конфигурационный файл (`CLAUDE.md`, `AGENTS.md`, `.cursor/rules/coast.md` и т. п.).
+Вы также можете получить тот же вывод из CLI, запустив `coast skills-prompt`.
 
 ### Ручная настройка
 

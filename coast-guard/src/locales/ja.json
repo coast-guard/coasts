@@ -465,6 +465,7 @@
   "mcp.error": "MCPデータの読み込みに失敗: {{error}}",
   "docker.label": "Docker",
   "docker.memoryTitle": "Dockerメモリ",
+  "docker.memoryTitleOrbstack": "OrbStackを開く — 設定でリソースを調整",
   "docker.currentAllocation": "現在の割り当て",
   "docker.newAllocation": "新しい割り当て",
   "docker.apply": "適用",

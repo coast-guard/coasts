@@ -199,6 +199,8 @@ pub async fn execute(args: &DoctorArgs) -> Result<()> {
         }
     }
 
+    handle_stale_docker_port_bindings(args, &docker, &mut fixes).await;
+
     // Report
     if args.dry_run {
         if fixes.is_empty() {
@@ -222,6 +224,145 @@ pub async fn execute(args: &DoctorArgs) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Returns stale Docker Desktop port bindings as `(port, pid)` pairs.
+async fn find_stale_docker_ports(docker: &bollard::Docker) -> Vec<(u16, u32)> {
+    use std::collections::HashSet;
+
+    let mut container_ports: HashSet<u16> = HashSet::new();
+    if let Ok(containers) = docker
+        .list_containers(Some(bollard::container::ListContainersOptions::<String> {
+            all: false,
+            ..Default::default()
+        }))
+        .await
+    {
+        for c in &containers {
+            if let Some(ports) = &c.ports {
+                for p in ports {
+                    if let Some(public_port) = p.public_port {
+                        container_ports.insert(public_port);
+                    }
+                }
+            }
+        }
+    }
+
+    let output = match tokio::process::Command::new("lsof")
+        .args(["-iTCP", "-sTCP:LISTEN", "-nP", "-F", "pcn"])
+        .output()
+        .await
+    {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
+        _ => return Vec::new(),
+    };
+
+    parse_stale_ports_from_lsof(&output, &container_ports)
+}
+
+async fn handle_stale_docker_port_bindings(
+    args: &DoctorArgs,
+    docker: &bollard::Docker,
+    fixes: &mut Vec<String>,
+) {
+    let stale_ports = find_stale_docker_ports(docker).await;
+    for (port, pid) in &stale_ports {
+        if args.dry_run {
+            println!(
+                "  {} Docker Desktop (pid {}) is holding port {} with no matching container port mapping.\n\
+                     This stale binding blocks `coast checkout` from forwarding this port via socat.",
+                "!!".yellow().bold(),
+                pid,
+                port.to_string().bold(),
+            );
+            continue;
+        }
+
+        let restarted = restart_coast_containers(docker).await;
+        if restarted > 0 {
+            fixes.push(format!(
+                "Restarted {} Coast container(s) to clear stale Docker port binding on port {}",
+                restarted, port,
+            ));
+        } else {
+            println!(
+                "  {} Port {} is held by Docker Desktop but no Coast containers exist to restart.\n\
+                     Run {} to release the stale port binding.",
+                "!!".yellow().bold(),
+                port.to_string().bold(),
+                "killall com.docker.backend && open -a Docker".bold(),
+            );
+        }
+        break;
+    }
+}
+
+fn parse_stale_ports_from_lsof(
+    output: &str,
+    container_ports: &std::collections::HashSet<u16>,
+) -> Vec<(u16, u32)> {
+    let mut stale: Vec<(u16, u32)> = Vec::new();
+    let mut current_pid: u32 = 0;
+    let mut is_docker = false;
+
+    for line in output.lines() {
+        if let Some(pid_str) = line.strip_prefix('p') {
+            current_pid = pid_str.parse().unwrap_or(0);
+            is_docker = false;
+        } else if let Some(cmd) = line.strip_prefix('c') {
+            is_docker = cmd.contains("com.docker") || cmd.contains("vpnkit");
+        } else if let Some(name) = line.strip_prefix('n') {
+            if !is_docker {
+                continue;
+            }
+            if let Some(port_str) = name.rsplit(':').next() {
+                if let Ok(port) = port_str.parse::<u16>() {
+                    if !container_ports.contains(&port) && !stale.iter().any(|(p, _)| *p == port) {
+                        stale.push((port, current_pid));
+                    }
+                }
+            }
+        }
+    }
+
+    stale
+}
+
+/// Restart all running Coast-managed containers.
+async fn restart_coast_containers(docker: &bollard::Docker) -> usize {
+    use std::collections::HashMap;
+
+    let mut filters = HashMap::new();
+    filters.insert("label".to_string(), vec!["coast.managed=true".to_string()]);
+    filters.insert("status".to_string(), vec!["running".to_string()]);
+
+    let opts = bollard::container::ListContainersOptions {
+        all: false,
+        filters,
+        ..Default::default()
+    };
+
+    let Ok(containers) = docker.list_containers(Some(opts)).await else {
+        return 0;
+    };
+
+    let mut count = 0;
+    for container in &containers {
+        if let Some(ref id) = container.id {
+            if docker
+                .restart_container(
+                    id,
+                    Some(bollard::container::RestartContainerOptions { t: 10 }),
+                )
+                .await
+                .is_ok()
+            {
+                count += 1;
+            }
+        }
+    }
+    count
 }
 
 #[cfg(test)]
@@ -260,5 +401,22 @@ mod tests {
         let docker_name = "/my-app-coasts-dev-1";
         let trimmed = docker_name.trim_start_matches('/');
         assert_eq!(trimmed, "my-app-coasts-dev-1");
+    }
+
+    #[test]
+    fn test_parse_lsof_output_extracts_docker_ports() {
+        let output = "p1234\nccom.docker.backend\nn*:4000\nn[::]:4000\np5678\ncnode\nn*:3000\n";
+        let container_ports = std::collections::HashSet::new();
+        let stale = parse_stale_ports_from_lsof(output, &container_ports);
+        assert_eq!(stale, vec![(4000, 1234)]);
+    }
+
+    #[test]
+    fn test_parse_lsof_skips_container_published_ports() {
+        let output = "p1234\nccom.docker.backend\nn*:4000\nn*:5432\n";
+        let mut container_ports: std::collections::HashSet<u16> = std::collections::HashSet::new();
+        container_ports.insert(4000);
+        let stale = parse_stale_ports_from_lsof(output, &container_ports);
+        assert_eq!(stale, vec![(5432, 1234)]);
     }
 }

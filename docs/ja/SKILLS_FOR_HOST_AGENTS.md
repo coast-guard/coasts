@@ -85,24 +85,13 @@ find the relevant documentation.
 
 ## エージェントへのスキル追加
 
-最も速い方法は、エージェントに自己セットアップさせることです。プロジェクトディレクトリから次のいずれかを実行してください:
+最も速い方法は、エージェントに自己セットアップさせることです。以下のプロンプトをエージェントのチャットにコピーしてください。これにはスキル本文と、エージェントがそれを自分自身の設定ファイル（`CLAUDE.md`、`AGENTS.md`、`.cursor/rules/coast.md` など）へ書き込むための指示が含まれています。
 
-```bash-emphasis
-# Claude Code
-claude -p "$(coast skills-prompt)"
-
-# Codex
-codex "$(coast skills-prompt)"
-
-# Cursor (from terminal)
-cursor --chat "$(coast skills-prompt)"
-
-# Other agents (manual)
-coast skills-prompt
-# copy the output into your agent's system prompt
+```prompt-copy
+skills_prompt.txt
 ```
 
-これにより、エージェントはスキル本文と、それを自分自身の設定ファイル（`CLAUDE.md`、`AGENTS.md`、`.cursor/rules/coast.md` など）に書き込むための指示を受け取ります。
+CLI から同じ出力を得るには、`coast skills-prompt` を実行してください。
 
 ### 手動セットアップ
 

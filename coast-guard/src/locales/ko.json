@@ -465,6 +465,7 @@
   "mcp.error": "MCP 데이터 로드 실패: {{error}}",
   "docker.label": "Docker",
   "docker.memoryTitle": "Docker 메모리",
+  "docker.memoryTitleOrbstack": "OrbStack 열기 — 설정에서 리소스 조정",
   "docker.currentAllocation": "현재 할당",
   "docker.newAllocation": "새 할당",
   "docker.apply": "적용",
