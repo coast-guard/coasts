@@ -5,9 +5,10 @@
 /// a protocol `Response`.
 use coast_core::protocol::*;
 use std::sync::Arc;
-use tracing::error;
+use tracing::{error, warn};
 
 use coast_core::protocol::CoastEvent;
+use coast_core::types::InstanceStatus;
 
 use crate::server::AppState;
 
@@ -114,6 +115,46 @@ pub fn compose_context_for_build(project: &str, build_id: Option<&str>) -> Compo
     }
 }
 
+/// Clear checked-out ownership for an instance.
+///
+/// This kills any recorded canonical `socat` forwarders, clears their stored PIDs,
+/// and transitions the instance out of `CheckedOut`.
+pub fn clear_checked_out_state(
+    db: &crate::state::StateDb,
+    project: &str,
+    name: &str,
+    next_status: &InstanceStatus,
+) -> coast_core::error::Result<bool> {
+    let instance = db.get_instance(project, name)?.ok_or_else(|| {
+        coast_core::error::CoastError::InstanceNotFound {
+            name: name.to_string(),
+            project: project.to_string(),
+        }
+    })?;
+
+    if instance.status != InstanceStatus::CheckedOut {
+        return Ok(false);
+    }
+
+    let port_allocs = db.get_port_allocations(project, name)?;
+    for alloc in &port_allocs {
+        if let Some(pid) = alloc.socat_pid {
+            if let Err(err) = crate::port_manager::kill_socat(pid as u32) {
+                warn!(
+                    pid = pid,
+                    logical_name = %alloc.logical_name,
+                    error = %err,
+                    "failed to kill recorded socat pid during uncheckout; clearing stale state anyway"
+                );
+            }
+            db.update_socat_pid(project, name, &alloc.logical_name, None)?;
+        }
+    }
+
+    db.update_instance_status(project, name, next_status)?;
+    Ok(true)
+}
+
 #[cfg(test)]
 mod compose_context_tests {
     use super::*;
@@ -206,6 +247,115 @@ compose = "./infra/docker-compose.yml"
         let parent = compose_path.parent().unwrap();
         let dir_name = parent.file_name().and_then(|f| f.to_str());
         assert_eq!(dir_name, Some("infra"));
+    }
+
+    #[test]
+    fn test_clear_checked_out_state_clears_pids_and_updates_status() {
+        let db = crate::state::StateDb::open_in_memory().unwrap();
+        let instance = coast_core::types::CoastInstance {
+            name: "dev-1".to_string(),
+            project: "proj".to_string(),
+            status: InstanceStatus::CheckedOut,
+            branch: Some("main".to_string()),
+            commit_sha: None,
+            container_id: Some("cid-123".to_string()),
+            runtime: coast_core::types::RuntimeType::Dind,
+            created_at: chrono::Utc::now(),
+            worktree_name: None,
+            build_id: None,
+            coastfile_type: None,
+        };
+        db.insert_instance(&instance).unwrap();
+        db.insert_port_allocation(
+            "proj",
+            "dev-1",
+            &coast_core::types::PortMapping {
+                logical_name: "web".to_string(),
+                canonical_port: 3000,
+                dynamic_port: 50000,
+                is_primary: false,
+            },
+        )
+        .unwrap();
+        db.update_socat_pid("proj", "dev-1", "web", Some(4_194_304))
+            .unwrap();
+
+        let changed =
+            clear_checked_out_state(&db, "proj", "dev-1", &InstanceStatus::Stopping).unwrap();
+        assert!(changed);
+
+        let updated = db.get_instance("proj", "dev-1").unwrap().unwrap();
+        assert_eq!(updated.status, InstanceStatus::Stopping);
+
+        let allocs = db.get_port_allocations("proj", "dev-1").unwrap();
+        assert!(allocs[0].socat_pid.is_none());
+    }
+
+    #[test]
+    fn test_clear_checked_out_state_noops_for_running_instance() {
+        let db = crate::state::StateDb::open_in_memory().unwrap();
+        let instance = coast_core::types::CoastInstance {
+            name: "dev-1".to_string(),
+            project: "proj".to_string(),
+            status: InstanceStatus::Running,
+            branch: Some("main".to_string()),
+            commit_sha: None,
+            container_id: Some("cid-123".to_string()),
+            runtime: coast_core::types::RuntimeType::Dind,
+            created_at: chrono::Utc::now(),
+            worktree_name: None,
+            build_id: None,
+            coastfile_type: None,
+        };
+        db.insert_instance(&instance).unwrap();
+
+        let changed =
+            clear_checked_out_state(&db, "proj", "dev-1", &InstanceStatus::Stopping).unwrap();
+        assert!(!changed);
+
+        let updated = db.get_instance("proj", "dev-1").unwrap().unwrap();
+        assert_eq!(updated.status, InstanceStatus::Running);
+    }
+
+    #[test]
+    fn test_clear_checked_out_state_succeeds_with_stale_zombie_pid() {
+        let db = crate::state::StateDb::open_in_memory().unwrap();
+        let instance = coast_core::types::CoastInstance {
+            name: "dev-1".to_string(),
+            project: "proj".to_string(),
+            status: InstanceStatus::CheckedOut,
+            branch: Some("main".to_string()),
+            commit_sha: None,
+            container_id: Some("cid-123".to_string()),
+            runtime: coast_core::types::RuntimeType::Dind,
+            created_at: chrono::Utc::now(),
+            worktree_name: None,
+            build_id: None,
+            coastfile_type: None,
+        };
+        db.insert_instance(&instance).unwrap();
+        db.insert_port_allocation(
+            "proj",
+            "dev-1",
+            &coast_core::types::PortMapping {
+                logical_name: "web".to_string(),
+                canonical_port: 3000,
+                dynamic_port: 50000,
+                is_primary: false,
+            },
+        )
+        .unwrap();
+        db.update_socat_pid("proj", "dev-1", "web", Some(4_194_304))
+            .unwrap();
+
+        let changed =
+            clear_checked_out_state(&db, "proj", "dev-1", &InstanceStatus::Running).unwrap();
+        assert!(changed);
+
+        let updated = db.get_instance("proj", "dev-1").unwrap().unwrap();
+        assert_eq!(updated.status, InstanceStatus::Running);
+        let allocs = db.get_port_allocations("proj", "dev-1").unwrap();
+        assert!(allocs[0].socat_pid.is_none());
     }
 }
 

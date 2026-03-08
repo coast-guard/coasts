@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::net::TcpListener;
 use std::os::unix::process::CommandExt;
 use std::process::Command;
+use std::time::{Duration, Instant};
 
 use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
@@ -374,6 +375,69 @@ pub fn spawn_socat(cmd: &[String]) -> Result<u32> {
     Ok(pid)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProcessStatus {
+    state: char,
+    command: String,
+}
+
+fn parse_ps_process_status(output: &str) -> Option<ProcessStatus> {
+    let line = output.lines().find(|line| !line.trim().is_empty())?;
+    let trimmed = line.trim();
+    let mut parts = trimmed.split_whitespace();
+    let state = parts.next()?.chars().next()?;
+    let command = parts.collect::<Vec<_>>().join(" ");
+    Some(ProcessStatus { state, command })
+}
+
+fn inspect_process_status(pid: u32) -> Option<ProcessStatus> {
+    let output = Command::new("ps")
+        .args(["-o", "state=,comm=", "-p", &pid.to_string()])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    parse_ps_process_status(&String::from_utf8_lossy(&output.stdout))
+}
+
+fn process_looks_stale(pid: u32) -> bool {
+    match inspect_process_status(pid) {
+        None => true,
+        Some(status) => status.state == 'Z' || status.command != "socat",
+    }
+}
+
+pub fn spawn_socat_verified(cmd: &[String], listen_port: u16) -> Result<u32> {
+    let pid = spawn_socat(cmd)?;
+    let deadline = Instant::now() + Duration::from_millis(250);
+
+    loop {
+        let healthy = !process_looks_stale(pid);
+        let port_bound = !is_port_available(listen_port);
+
+        if healthy && port_bound {
+            return Ok(pid);
+        }
+
+        if !healthy {
+            return Err(CoastError::port(format!(
+                "Spawned socat process for port {listen_port} exited before binding the port."
+            )));
+        }
+
+        if Instant::now() >= deadline {
+            let _ = kill_socat(pid);
+            return Err(CoastError::port(format!(
+                "Spawned socat process for port {listen_port} did not bind the port in time."
+            )));
+        }
+
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
 /// Kill a socat process and all its forked children by process group.
 ///
 /// Socat runs with `fork` mode, creating a child process per connection.
@@ -404,6 +468,13 @@ pub fn kill_socat(pid: u32) -> Result<()> {
             warn!(
                 pid = pid,
                 "Socat process group already exited (not found), treating as success"
+            );
+            Ok(())
+        }
+        Err(nix::errno::Errno::EPERM) if process_looks_stale(pid) => {
+            warn!(
+                pid = pid,
+                "Recorded socat pid is stale or no longer a live socat process; treating as success"
             );
             Ok(())
         }
@@ -505,6 +576,12 @@ fn timestamp_nanos() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     #[test]
     fn test_allocate_dynamic_port() {
@@ -782,6 +859,55 @@ mod tests {
             err_msg.contains("Failed to spawn socat process"),
             "Error should mention spawn failure, got: {err_msg}"
         );
+    }
+
+    #[test]
+    fn test_parse_ps_process_status_parses_state_and_command() {
+        let parsed = parse_ps_process_status("S socat\n").unwrap();
+        assert_eq!(parsed.state, 'S');
+        assert_eq!(parsed.command, "socat");
+    }
+
+    #[test]
+    fn test_parse_ps_process_status_returns_none_for_empty_output() {
+        assert!(parse_ps_process_status("").is_none());
+    }
+
+    #[test]
+    fn test_spawn_socat_verified_detects_immediate_exit() {
+        let _guard = env_lock().lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let fake_socat = dir.path().join("socat");
+        std::fs::write(&fake_socat, "#!/bin/sh\nexit 1\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&fake_socat).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&fake_socat, perms).unwrap();
+        }
+
+        let old_path = std::env::var("PATH").unwrap_or_default();
+        unsafe {
+            std::env::set_var("PATH", format!("{}:{}", dir.path().display(), old_path));
+        }
+
+        let result = spawn_socat_verified(
+            &[
+                "socat".to_string(),
+                "TCP-LISTEN:65530,fork,reuseaddr".to_string(),
+                "TCP:127.0.0.1:65531".to_string(),
+            ],
+            65530,
+        );
+
+        unsafe {
+            std::env::set_var("PATH", old_path);
+        }
+
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("exited before binding") || err.contains("did not bind the port"));
     }
 
     #[test]

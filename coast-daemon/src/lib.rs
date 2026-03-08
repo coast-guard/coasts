@@ -1022,4 +1022,41 @@ mod tests {
             }
         }
     }
+
+    #[tokio::test]
+    async fn test_restore_ignores_stopped_instance_with_stale_checkout_pid() {
+        let db = state::StateDb::open_in_memory().unwrap();
+        let state = Arc::new(server::AppState::new_for_testing(db));
+
+        let inst = make_test_instance(
+            "stopped-co",
+            "proj-c",
+            coast_core::types::InstanceStatus::Stopped,
+        );
+        {
+            let db = state.db.lock().await;
+            db.insert_instance(&inst).unwrap();
+            db.insert_port_allocation(
+                "proj-c",
+                "stopped-co",
+                &coast_core::types::PortMapping {
+                    logical_name: "web".to_string(),
+                    canonical_port: 3000,
+                    dynamic_port: 50000,
+                    is_primary: false,
+                },
+            )
+            .unwrap();
+            db.update_socat_pid("proj-c", "stopped-co", "web", Some(4_194_304))
+                .unwrap();
+        }
+
+        restore_running_state(&state).await;
+
+        let db = state.db.lock().await;
+        let updated = db.get_instance("proj-c", "stopped-co").unwrap().unwrap();
+        assert_eq!(updated.status, coast_core::types::InstanceStatus::Stopped);
+        let allocs = db.get_port_allocations("proj-c", "stopped-co").unwrap();
+        assert_eq!(allocs[0].socat_pid, Some(4_194_304));
+    }
 }

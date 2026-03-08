@@ -3,6 +3,8 @@
 /// Swaps the canonical port bindings to a different coast instance.
 /// This is designed to be instant — it only kills and respawns socat
 /// processes, never restarts containers.
+use std::collections::{BTreeSet, HashSet};
+
 use tracing::info;
 
 use coast_core::error::{CoastError, Result};
@@ -40,12 +42,44 @@ fn check_canonical_ports_available(canonical_ports: &[u16], target_name: &str) -
     )))
 }
 
+/// Find checked-out instances in other projects that own canonical ports needed
+/// by the target checkout.
+fn conflicting_checked_out_instances(
+    db: &crate::state::StateDb,
+    target_project: &str,
+    target_canonical_ports: &[u16],
+) -> Result<Vec<(String, String)>> {
+    let target_canonical_ports: HashSet<u16> = target_canonical_ports.iter().copied().collect();
+    if target_canonical_ports.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut conflicts = BTreeSet::new();
+    for inst in db.list_instances()? {
+        if inst.project == target_project || inst.status != InstanceStatus::CheckedOut {
+            continue;
+        }
+
+        let allocs = db.get_port_allocations(&inst.project, &inst.name)?;
+        if allocs
+            .iter()
+            .any(|alloc| target_canonical_ports.contains(&alloc.canonical_port))
+        {
+            conflicts.insert((inst.project, inst.name));
+        }
+    }
+
+    Ok(conflicts.into_iter().collect())
+}
+
 /// Handle a checkout request.
 ///
 /// Steps:
 /// 1. If name is Some, verify the target instance exists and is running.
-/// 2. Find the currently checked-out instance (if any) and un-check it.
-/// 3. Kill all canonical socat processes for the old checked-out instance.
+/// 2. Find the currently checked-out instance in the same project (if any)
+///    and un-check it.
+/// 3. Release conflicting checked-out instances from other projects whose
+///    canonical ports overlap the target checkout.
 /// 4. If name is Some, resolve the new coast container IP and spawn
 ///    canonical socat forwarders.
 /// 5. Update instance statuses in state DB.
@@ -60,16 +94,12 @@ pub async fn handle(req: CheckoutRequest, state: &AppState) -> Result<CheckoutRe
     let instances = db.list_instances_for_project(&req.project)?;
     for inst in &instances {
         if inst.status == InstanceStatus::CheckedOut {
-            // Un-check: set back to "running"
-            db.update_instance_status(&req.project, &inst.name, &InstanceStatus::Running)?;
-
-            // Kill canonical socat processes for the old instance
-            let old_port_allocs = db.get_port_allocations(&req.project, &inst.name)?;
-            for alloc in &old_port_allocs {
-                if let Some(pid) = alloc.socat_pid {
-                    let _ = crate::port_manager::kill_socat(pid as u32);
-                }
-            }
+            super::clear_checked_out_state(
+                &db,
+                &req.project,
+                &inst.name,
+                &InstanceStatus::Running,
+            )?;
 
             info!(old_instance = %inst.name, "un-checked out previous instance");
         }
@@ -110,11 +140,24 @@ pub async fn handle(req: CheckoutRequest, state: &AppState) -> Result<CheckoutRe
     }
     let ports: Vec<PortMapping> = port_allocs.iter().map(PortMapping::from).collect();
 
+    let canonical_ports: Vec<u16> = port_allocs.iter().map(|a| a.canonical_port).collect();
+    let conflicting_instances =
+        conflicting_checked_out_instances(&db, &req.project, &canonical_ports)?;
+    for (project, name) in &conflicting_instances {
+        super::clear_checked_out_state(&db, project, name, &InstanceStatus::Running)?;
+        info!(
+            conflicting_project = %project,
+            conflicting_instance = %name,
+            target_project = %req.project,
+            target_instance = %target_name,
+            "auto-unchecked out conflicting instance from another project"
+        );
+    }
+
     // Pre-flight: verify all canonical ports are available before committing
     // to the checkout. This catches "address already in use" early with a
     // clear, actionable error message.
     if state.docker.is_some() {
-        let canonical_ports: Vec<u16> = port_allocs.iter().map(|a| a.canonical_port).collect();
         check_canonical_ports_available(&canonical_ports, &target_name)?;
     }
 
@@ -153,13 +196,11 @@ pub async fn handle(req: CheckoutRequest, state: &AppState) -> Result<CheckoutRe
         }
     }
 
-    // All pre-flight checks passed — commit the status change.
-    db.update_instance_status(&req.project, &target_name, &InstanceStatus::CheckedOut)?;
-
     // Spawn canonical socat forwarders: canonical_port → localhost:dynamic_port.
     // Collect errors and revert if any spawn fails.
     if state.docker.is_some() {
         let mut spawned_pids: Vec<u32> = Vec::new();
+        let mut spawned_logical_names: Vec<String> = Vec::new();
         let mut errors: Vec<String> = Vec::new();
 
         for alloc in &port_allocs {
@@ -177,6 +218,7 @@ pub async fn handle(req: CheckoutRequest, state: &AppState) -> Result<CheckoutRe
                         Some(pid as i32),
                     );
                     spawned_pids.push(pid);
+                    spawned_logical_names.push(alloc.logical_name.clone());
                 }
                 Err(e) => {
                     errors.push(format!("port {}: {e}", alloc.canonical_port));
@@ -189,8 +231,9 @@ pub async fn handle(req: CheckoutRequest, state: &AppState) -> Result<CheckoutRe
             for pid in &spawned_pids {
                 let _ = crate::port_manager::kill_socat(*pid);
             }
-            // Revert status — checkout did not complete.
-            let _ = db.update_instance_status(&req.project, &target_name, &InstanceStatus::Running);
+            for logical_name in &spawned_logical_names {
+                let _ = db.update_socat_pid(&req.project, &target_name, logical_name, None);
+            }
             return Err(CoastError::port(format!(
                 "Checkout of '{}' failed — could not start socat forwarder(s): {}. \
                  Ensure socat is installed (e.g., `brew install socat` on macOS, \
@@ -200,6 +243,8 @@ pub async fn handle(req: CheckoutRequest, state: &AppState) -> Result<CheckoutRe
             )));
         }
     }
+
+    db.update_instance_status(&req.project, &target_name, &InstanceStatus::CheckedOut)?;
 
     info!(
         checked_out = %target_name,
@@ -219,7 +264,6 @@ mod tests {
     use super::*;
     use crate::state::StateDb;
     use coast_core::types::{CoastInstance, RuntimeType};
-
     fn test_state() -> AppState {
         AppState::new_for_testing(StateDb::open_in_memory().unwrap())
     }
@@ -229,13 +273,24 @@ mod tests {
     }
 
     fn add_test_port(db: &StateDb, project: &str, instance: &str) {
+        add_test_port_named(db, project, instance, "web", 3000, 50000);
+    }
+
+    fn add_test_port_named(
+        db: &StateDb,
+        project: &str,
+        instance: &str,
+        logical_name: &str,
+        canonical: u16,
+        dynamic: u16,
+    ) {
         db.insert_port_allocation(
             project,
             instance,
             &PortMapping {
-                logical_name: "web".to_string(),
-                canonical_port: 3000,
-                dynamic_port: 50000,
+                logical_name: logical_name.to_string(),
+                canonical_port: canonical,
+                dynamic_port: dynamic,
                 is_primary: false,
             },
         )
@@ -243,17 +298,21 @@ mod tests {
     }
 
     fn add_test_port_on(db: &StateDb, project: &str, instance: &str, canonical: u16, dynamic: u16) {
-        db.insert_port_allocation(
+        add_test_port_named(
+            db,
             project,
             instance,
-            &PortMapping {
-                logical_name: format!("port-{canonical}"),
-                canonical_port: canonical,
-                dynamic_port: dynamic,
-                is_primary: false,
-            },
-        )
-        .unwrap();
+            &format!("port-{canonical}"),
+            canonical,
+            dynamic,
+        );
+    }
+
+    fn mark_checked_out(db: &StateDb, project: &str, instance: &str, logical_name: &str, pid: i32) {
+        db.update_instance_status(project, instance, &InstanceStatus::CheckedOut)
+            .unwrap();
+        db.update_socat_pid(project, instance, logical_name, Some(pid))
+            .unwrap();
     }
 
     fn make_instance(name: &str, project: &str, status: InstanceStatus) -> CoastInstance {
@@ -309,6 +368,8 @@ mod tests {
             ))
             .unwrap();
             add_test_port(&db, "my-app", "feat-a");
+            db.update_socat_pid("my-app", "feat-a", "web", Some(4_194_304))
+                .unwrap();
             db.insert_instance(&make_instance("feat-b", "my-app", InstanceStatus::Running))
                 .unwrap();
             add_test_port(&db, "my-app", "feat-b");
@@ -327,6 +388,8 @@ mod tests {
         let db = state.db.lock().await;
         let old = db.get_instance("my-app", "feat-a").unwrap().unwrap();
         assert_eq!(old.status, InstanceStatus::Running);
+        let old_allocs = db.get_port_allocations("my-app", "feat-a").unwrap();
+        assert!(old_allocs[0].socat_pid.is_none());
         let new = db.get_instance("my-app", "feat-b").unwrap().unwrap();
         assert_eq!(new.status, InstanceStatus::CheckedOut);
     }
@@ -342,6 +405,9 @@ mod tests {
                 InstanceStatus::CheckedOut,
             ))
             .unwrap();
+            add_test_port(&db, "my-app", "feat-a");
+            db.update_socat_pid("my-app", "feat-a", "web", Some(4_194_304))
+                .unwrap();
         }
 
         let req = CheckoutRequest {
@@ -358,6 +424,8 @@ mod tests {
         let db = state.db.lock().await;
         let inst = db.get_instance("my-app", "feat-a").unwrap().unwrap();
         assert_eq!(inst.status, InstanceStatus::Running);
+        let allocs = db.get_port_allocations("my-app", "feat-a").unwrap();
+        assert!(allocs[0].socat_pid.is_none());
     }
 
     #[tokio::test]
@@ -568,6 +636,330 @@ mod tests {
         );
         let resp = result.unwrap();
         assert_eq!(resp.checked_out, Some("free-ports".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_checkout_auto_unchecks_out_conflicting_instance_from_other_project() {
+        let state = test_state();
+        {
+            let db = state.db.lock().await;
+            db.insert_instance(&make_instance(
+                "project-a-main",
+                "project-a",
+                InstanceStatus::Running,
+            ))
+            .unwrap();
+            add_test_port(&db, "project-a", "project-a-main");
+            mark_checked_out(&db, "project-a", "project-a-main", "web", 4_194_304);
+
+            db.insert_instance(&make_instance(
+                "project-b-main",
+                "project-b",
+                InstanceStatus::Running,
+            ))
+            .unwrap();
+            add_test_port(&db, "project-b", "project-b-main");
+        }
+
+        let req = CheckoutRequest {
+            name: Some("project-b-main".to_string()),
+            project: "project-b".to_string(),
+        };
+        let result = handle(req, &state).await.unwrap();
+        assert_eq!(result.checked_out, Some("project-b-main".to_string()));
+
+        let db = state.db.lock().await;
+        let old = db
+            .get_instance("project-a", "project-a-main")
+            .unwrap()
+            .unwrap();
+        assert_eq!(old.status, InstanceStatus::Running);
+        let old_allocs = db
+            .get_port_allocations("project-a", "project-a-main")
+            .unwrap();
+        assert!(old_allocs[0].socat_pid.is_none());
+
+        let new = db
+            .get_instance("project-b", "project-b-main")
+            .unwrap()
+            .unwrap();
+        assert_eq!(new.status, InstanceStatus::CheckedOut);
+    }
+
+    #[tokio::test]
+    async fn test_checkout_auto_unchecks_multiple_conflicting_projects() {
+        let state = test_state();
+        {
+            let db = state.db.lock().await;
+            db.insert_instance(&make_instance(
+                "a-main",
+                "project-a",
+                InstanceStatus::Running,
+            ))
+            .unwrap();
+            add_test_port_named(&db, "project-a", "a-main", "web", 3000, 50000);
+            mark_checked_out(&db, "project-a", "a-main", "web", 4_194_304);
+
+            db.insert_instance(&make_instance(
+                "c-main",
+                "project-c",
+                InstanceStatus::Running,
+            ))
+            .unwrap();
+            add_test_port_named(&db, "project-c", "c-main", "api", 8080, 50001);
+            mark_checked_out(&db, "project-c", "c-main", "api", 4_194_305);
+
+            db.insert_instance(&make_instance(
+                "b-main",
+                "project-b",
+                InstanceStatus::Running,
+            ))
+            .unwrap();
+            add_test_port_named(&db, "project-b", "b-main", "web", 3000, 51000);
+            add_test_port_named(&db, "project-b", "b-main", "api", 8080, 51001);
+        }
+
+        let req = CheckoutRequest {
+            name: Some("b-main".to_string()),
+            project: "project-b".to_string(),
+        };
+        let result = handle(req, &state).await.unwrap();
+        assert_eq!(result.checked_out, Some("b-main".to_string()));
+
+        let db = state.db.lock().await;
+        for (project, instance) in [("project-a", "a-main"), ("project-c", "c-main")] {
+            let old = db.get_instance(project, instance).unwrap().unwrap();
+            assert_eq!(old.status, InstanceStatus::Running);
+            let allocs = db.get_port_allocations(project, instance).unwrap();
+            assert!(allocs.iter().all(|alloc| alloc.socat_pid.is_none()));
+        }
+        let new = db.get_instance("project-b", "b-main").unwrap().unwrap();
+        assert_eq!(new.status, InstanceStatus::CheckedOut);
+    }
+
+    #[tokio::test]
+    async fn test_checkout_leaves_non_conflicting_other_project_checked_out() {
+        let state = test_state();
+        {
+            let db = state.db.lock().await;
+            db.insert_instance(&make_instance(
+                "a-main",
+                "project-a",
+                InstanceStatus::Running,
+            ))
+            .unwrap();
+            add_test_port_named(&db, "project-a", "a-main", "web", 9000, 50000);
+            mark_checked_out(&db, "project-a", "a-main", "web", 4_194_304);
+
+            db.insert_instance(&make_instance(
+                "b-main",
+                "project-b",
+                InstanceStatus::Running,
+            ))
+            .unwrap();
+            add_test_port_named(&db, "project-b", "b-main", "web", 3000, 51000);
+        }
+
+        let req = CheckoutRequest {
+            name: Some("b-main".to_string()),
+            project: "project-b".to_string(),
+        };
+        let result = handle(req, &state).await.unwrap();
+        assert_eq!(result.checked_out, Some("b-main".to_string()));
+
+        let db = state.db.lock().await;
+        let other = db.get_instance("project-a", "a-main").unwrap().unwrap();
+        assert_eq!(other.status, InstanceStatus::CheckedOut);
+        let other_allocs = db.get_port_allocations("project-a", "a-main").unwrap();
+        assert_eq!(other_allocs[0].socat_pid, Some(4_194_304));
+    }
+
+    #[tokio::test]
+    async fn test_checkout_multi_port_partial_overlap_evicts_conflicting_instance() {
+        let state = test_state();
+        {
+            let db = state.db.lock().await;
+            db.insert_instance(&make_instance(
+                "a-main",
+                "project-a",
+                InstanceStatus::Running,
+            ))
+            .unwrap();
+            add_test_port_named(&db, "project-a", "a-main", "web", 3000, 50000);
+            add_test_port_named(&db, "project-a", "a-main", "db", 5432, 50001);
+            mark_checked_out(&db, "project-a", "a-main", "web", 4_194_304);
+            db.update_socat_pid("project-a", "a-main", "db", Some(4_194_305))
+                .unwrap();
+
+            db.insert_instance(&make_instance(
+                "b-main",
+                "project-b",
+                InstanceStatus::Running,
+            ))
+            .unwrap();
+            add_test_port_named(&db, "project-b", "b-main", "web", 3000, 51000);
+            add_test_port_named(&db, "project-b", "b-main", "api", 8080, 51001);
+        }
+
+        let req = CheckoutRequest {
+            name: Some("b-main".to_string()),
+            project: "project-b".to_string(),
+        };
+        let result = handle(req, &state).await.unwrap();
+        assert_eq!(result.checked_out, Some("b-main".to_string()));
+
+        let db = state.db.lock().await;
+        let old = db.get_instance("project-a", "a-main").unwrap().unwrap();
+        assert_eq!(old.status, InstanceStatus::Running);
+        let old_allocs = db.get_port_allocations("project-a", "a-main").unwrap();
+        assert!(old_allocs.iter().all(|alloc| alloc.socat_pid.is_none()));
+        let new = db.get_instance("project-b", "b-main").unwrap().unwrap();
+        assert_eq!(new.status, InstanceStatus::CheckedOut);
+    }
+
+    #[tokio::test]
+    async fn test_checkout_ignores_stopped_or_running_instances_in_other_projects() {
+        let state = test_state();
+        {
+            let db = state.db.lock().await;
+            db.insert_instance(&make_instance(
+                "a-stopped",
+                "project-a",
+                InstanceStatus::Stopped,
+            ))
+            .unwrap();
+            add_test_port_named(&db, "project-a", "a-stopped", "web", 3000, 50000);
+            db.update_socat_pid("project-a", "a-stopped", "web", Some(4_194_304))
+                .unwrap();
+
+            db.insert_instance(&make_instance(
+                "c-running",
+                "project-c",
+                InstanceStatus::Running,
+            ))
+            .unwrap();
+            add_test_port_named(&db, "project-c", "c-running", "web", 3000, 50001);
+            db.update_socat_pid("project-c", "c-running", "web", Some(4_194_305))
+                .unwrap();
+
+            db.insert_instance(&make_instance(
+                "b-main",
+                "project-b",
+                InstanceStatus::Running,
+            ))
+            .unwrap();
+            add_test_port_named(&db, "project-b", "b-main", "web", 3000, 51000);
+        }
+
+        let req = CheckoutRequest {
+            name: Some("b-main".to_string()),
+            project: "project-b".to_string(),
+        };
+        let result = handle(req, &state).await.unwrap();
+        assert_eq!(result.checked_out, Some("b-main".to_string()));
+
+        let db = state.db.lock().await;
+        let stopped = db.get_instance("project-a", "a-stopped").unwrap().unwrap();
+        assert_eq!(stopped.status, InstanceStatus::Stopped);
+        let stopped_allocs = db.get_port_allocations("project-a", "a-stopped").unwrap();
+        assert_eq!(stopped_allocs[0].socat_pid, Some(4_194_304));
+
+        let running = db.get_instance("project-c", "c-running").unwrap().unwrap();
+        assert_eq!(running.status, InstanceStatus::Running);
+        let running_allocs = db.get_port_allocations("project-c", "c-running").unwrap();
+        assert_eq!(running_allocs[0].socat_pid, Some(4_194_305));
+    }
+
+    #[tokio::test]
+    async fn test_checkout_clears_coast_conflict_but_still_fails_for_external_process() {
+        use std::net::TcpListener;
+
+        let state = test_state_with_docker();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let occupied_port = listener.local_addr().unwrap().port();
+
+        {
+            let db = state.db.lock().await;
+            db.insert_instance(&make_instance(
+                "a-main",
+                "project-a",
+                InstanceStatus::Running,
+            ))
+            .unwrap();
+            add_test_port_named(&db, "project-a", "a-main", "web", 3000, 50000);
+            mark_checked_out(&db, "project-a", "a-main", "web", 4_194_304);
+
+            let mut target = make_instance("b-main", "project-b", InstanceStatus::Running);
+            target.container_id = None;
+            db.insert_instance(&target).unwrap();
+            add_test_port_named(&db, "project-b", "b-main", "web", 3000, 51000);
+            add_test_port_named(&db, "project-b", "b-main", "api", occupied_port, 51001);
+        }
+
+        let req = CheckoutRequest {
+            name: Some("b-main".to_string()),
+            project: "project-b".to_string(),
+        };
+        let err = handle(req, &state).await.unwrap_err().to_string();
+        assert!(err.contains(&occupied_port.to_string()));
+
+        let db = state.db.lock().await;
+        let old = db.get_instance("project-a", "a-main").unwrap().unwrap();
+        assert_eq!(old.status, InstanceStatus::Running);
+        let old_allocs = db.get_port_allocations("project-a", "a-main").unwrap();
+        assert!(old_allocs[0].socat_pid.is_none());
+
+        let target = db.get_instance("project-b", "b-main").unwrap().unwrap();
+        assert_eq!(target.status, InstanceStatus::Running);
+
+        drop(listener);
+    }
+
+    #[tokio::test]
+    async fn test_checkout_cross_project_takeover_is_symmetric() {
+        for (source_project, target_project) in
+            [("project-a", "project-b"), ("project-b", "project-a")]
+        {
+            let state = test_state();
+            {
+                let db = state.db.lock().await;
+                db.insert_instance(&make_instance(
+                    "source-main",
+                    source_project,
+                    InstanceStatus::Running,
+                ))
+                .unwrap();
+                add_test_port_named(&db, source_project, "source-main", "web", 3000, 50000);
+                mark_checked_out(&db, source_project, "source-main", "web", 4_194_304);
+
+                db.insert_instance(&make_instance(
+                    "target-main",
+                    target_project,
+                    InstanceStatus::Running,
+                ))
+                .unwrap();
+                add_test_port_named(&db, target_project, "target-main", "web", 3000, 51000);
+            }
+
+            let req = CheckoutRequest {
+                name: Some("target-main".to_string()),
+                project: target_project.to_string(),
+            };
+            let result = handle(req, &state).await.unwrap();
+            assert_eq!(result.checked_out, Some("target-main".to_string()));
+
+            let db = state.db.lock().await;
+            let old = db
+                .get_instance(source_project, "source-main")
+                .unwrap()
+                .unwrap();
+            assert_eq!(old.status, InstanceStatus::Running);
+            let new = db
+                .get_instance(target_project, "target-main")
+                .unwrap()
+                .unwrap();
+            assert_eq!(new.status, InstanceStatus::CheckedOut);
+        }
     }
 
     /// Test that if socat spawning fails (e.g. socat not installed), the

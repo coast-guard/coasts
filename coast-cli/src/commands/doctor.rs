@@ -7,6 +7,18 @@
 use anyhow::{Context, Result};
 use clap::Args;
 use colored::Colorize;
+use nix::sys::signal::{self, Signal};
+use nix::unistd::Pid;
+use std::path::PathBuf;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StaleCheckoutRow {
+    project: String,
+    instance_name: String,
+    logical_name: String,
+    status: Option<String>,
+    socat_pid: i32,
+}
 
 #[derive(Debug, Args)]
 pub struct DoctorArgs {
@@ -15,15 +27,72 @@ pub struct DoctorArgs {
     pub dry_run: bool,
 }
 
-#[allow(clippy::too_many_lines)]
+fn active_coast_home() -> Result<PathBuf> {
+    coast_core::artifact::coast_home().context("Could not determine Coast home directory")
+}
+
+fn active_state_db_path() -> Result<PathBuf> {
+    Ok(active_coast_home()?.join("state.db"))
+}
+
+fn stale_docker_dry_run_message(pid: u32, port: u16) -> String {
+    format!(
+        "Docker Desktop (pid {pid}) is holding port {port} with no matching container port mapping.\n\
+         This stale binding blocks `coast checkout` from forwarding this port via socat."
+    )
+}
+
+fn stale_docker_manual_action_message(port: u16) -> String {
+    format!(
+        "Port {port} is held by Docker Desktop but no Coast containers exist to restart.\n\
+         Run killall com.docker.backend && open -a Docker to release the stale port binding."
+    )
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProcessStatus {
+    state: char,
+    command: String,
+}
+
+fn parse_ps_process_status(output: &str) -> Option<ProcessStatus> {
+    let line = output.lines().find(|line| !line.trim().is_empty())?;
+    let trimmed = line.trim();
+    let mut parts = trimmed.split_whitespace();
+    let state = parts.next()?.chars().next()?;
+    let command = parts.collect::<Vec<_>>().join(" ");
+    Some(ProcessStatus { state, command })
+}
+
+fn inspect_process_status(pid: u32) -> Option<ProcessStatus> {
+    let output = std::process::Command::new("ps")
+        .args(["-o", "state=,comm=", "-p", &pid.to_string()])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    parse_ps_process_status(&String::from_utf8_lossy(&output.stdout))
+}
+
+fn process_looks_stale(pid: u32) -> bool {
+    match inspect_process_status(pid) {
+        None => true,
+        Some(status) => status.state == 'Z' || status.command != "socat",
+    }
+}
+
+#[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 pub async fn execute(args: &DoctorArgs) -> Result<()> {
-    let home = dirs::home_dir().context("Could not determine home directory")?;
-    let db_path = home.join(".coast").join("state.db");
+    let coast_home = active_coast_home()?;
+    let db_path = active_state_db_path()?;
 
     if !db_path.exists() {
         println!(
-            "{} No state database found. Nothing to check.",
-            "ok".green().bold()
+            "{} No state database found in {}. Nothing to check.",
+            "ok".green().bold(),
+            coast_home.display()
         );
         return Ok(());
     }
@@ -34,6 +103,7 @@ pub async fn execute(args: &DoctorArgs) -> Result<()> {
         .context("Failed to connect to Docker. Is Docker running?")?;
 
     let mut fixes: Vec<String> = Vec::new();
+    let mut findings: Vec<String> = Vec::new();
 
     // Check instances
     {
@@ -53,6 +123,10 @@ pub async fn execute(args: &DoctorArgs) -> Result<()> {
                 if !exists {
                     let label = format!("{project}/{name}");
                     if args.dry_run {
+                        findings.push(format!(
+                            "Instance {label} has missing container ({}) with status {status}",
+                            &cid[..12.min(cid.len())]
+                        ));
                         println!(
                             "  {} Instance {} has missing container ({}), status: {}",
                             "!!".yellow().bold(),
@@ -61,6 +135,7 @@ pub async fn execute(args: &DoctorArgs) -> Result<()> {
                             status,
                         );
                     } else {
+                        clear_instance_socat_pids(&db, project, name, &mut fixes, kill_socat_pid)?;
                         db.execute(
                             "DELETE FROM port_allocations WHERE project = ?1 AND instance_name = ?2",
                             rusqlite::params![project, name],
@@ -75,6 +150,9 @@ pub async fn execute(args: &DoctorArgs) -> Result<()> {
             } else if status != "stopped" {
                 let label = format!("{project}/{name}");
                 if args.dry_run {
+                    findings.push(format!(
+                        "Instance {label} has no container ID but status is '{status}'"
+                    ));
                     println!(
                         "  {} Instance {} has no container ID but status is '{}'",
                         "!!".yellow().bold(),
@@ -82,6 +160,7 @@ pub async fn execute(args: &DoctorArgs) -> Result<()> {
                         status,
                     );
                 } else {
+                    clear_instance_socat_pids(&db, project, name, &mut fixes, kill_socat_pid)?;
                     db.execute(
                         "DELETE FROM port_allocations WHERE project = ?1 AND instance_name = ?2",
                         rusqlite::params![project, name],
@@ -95,6 +174,8 @@ pub async fn execute(args: &DoctorArgs) -> Result<()> {
             }
         }
     }
+
+    repair_stale_checkout_rows(&db, args.dry_run, &mut fixes, &mut findings, kill_socat_pid)?;
 
     // Check shared services
     {
@@ -119,6 +200,9 @@ pub async fn execute(args: &DoctorArgs) -> Result<()> {
                 if !exists {
                     let label = format!("{project}/{service_name}");
                     if args.dry_run {
+                        findings.push(format!(
+                            "Shared service {label} marked running but container is gone"
+                        ));
                         println!(
                             "  {} Shared service {} marked running but container is gone",
                             "!!".yellow().bold(),
@@ -171,6 +255,9 @@ pub async fn execute(args: &DoctorArgs) -> Result<()> {
                         let label = format!("{proj}/{inst}");
 
                         if args.dry_run {
+                            findings.push(format!(
+                                "Dangling container '{container_name}' for {label} has no state DB record"
+                            ));
                             println!(
                                 "  {} Dangling container '{}' for {} has no state DB record",
                                 "!!".yellow().bold(),
@@ -199,14 +286,21 @@ pub async fn execute(args: &DoctorArgs) -> Result<()> {
         }
     }
 
-    handle_stale_docker_port_bindings(args, &docker, &mut fixes).await;
+    handle_stale_docker_port_bindings(args, &docker, &mut fixes, &mut findings).await;
 
     // Report
     if args.dry_run {
-        if fixes.is_empty() {
+        if findings.is_empty() {
             println!("{} No issues found (dry run).", "ok".green().bold());
+        } else {
+            println!(
+                "\n{} Found {} issue{} (dry run).",
+                "ok".green().bold(),
+                findings.len(),
+                if findings.len() == 1 { "" } else { "s" },
+            );
         }
-    } else if fixes.is_empty() {
+    } else if fixes.is_empty() && findings.is_empty() {
         println!(
             "{} Everything looks good. No orphaned state found.",
             "ok".green().bold()
@@ -215,15 +309,175 @@ pub async fn execute(args: &DoctorArgs) -> Result<()> {
         for fix in &fixes {
             println!("  {} {}", "fix".green().bold(), fix);
         }
-        println!(
-            "\n{} Fixed {} issue{}.",
-            "ok".green().bold(),
-            fixes.len(),
-            if fixes.len() == 1 { "" } else { "s" },
-        );
+        if !fixes.is_empty() {
+            println!(
+                "\n{} Fixed {} issue{}.",
+                "ok".green().bold(),
+                fixes.len(),
+                if fixes.len() == 1 { "" } else { "s" },
+            );
+        }
+        if !findings.is_empty() {
+            println!(
+                "\n{} {} issue{} still require attention.",
+                "!!".yellow().bold(),
+                findings.len(),
+                if findings.len() == 1 { "" } else { "s" },
+            );
+        }
     }
 
     Ok(())
+}
+
+fn find_stale_checkout_rows_with(
+    db: &rusqlite::Connection,
+    is_stale_pid: impl Fn(u32) -> bool,
+) -> Result<Vec<StaleCheckoutRow>> {
+    let mut stmt = db.prepare(
+        "SELECT p.project, p.instance_name, p.logical_name, p.socat_pid, i.status
+         FROM port_allocations p
+         LEFT JOIN instances i
+           ON i.project = p.project AND i.name = p.instance_name
+         WHERE p.socat_pid IS NOT NULL
+         ORDER BY p.project, p.instance_name, p.logical_name",
+    )?;
+
+    let rows = stmt.query_map([], |row| {
+        Ok(StaleCheckoutRow {
+            project: row.get(0)?,
+            instance_name: row.get(1)?,
+            logical_name: row.get(2)?,
+            socat_pid: row.get(3)?,
+            status: row.get(4)?,
+        })
+    })?;
+
+    let mut stale = Vec::new();
+    for row in rows {
+        let row = row?;
+        let is_stale =
+            row.status.as_deref() != Some("checked_out") || is_stale_pid(row.socat_pid as u32);
+        if is_stale {
+            stale.push(row);
+        }
+    }
+
+    Ok(stale)
+}
+
+fn find_stale_checkout_rows(db: &rusqlite::Connection) -> Result<Vec<StaleCheckoutRow>> {
+    find_stale_checkout_rows_with(db, process_looks_stale)
+}
+
+fn repair_stale_checkout_rows(
+    db: &rusqlite::Connection,
+    dry_run: bool,
+    fixes: &mut Vec<String>,
+    findings: &mut Vec<String>,
+    killer: impl Fn(u32) -> Result<()>,
+) -> Result<()> {
+    let stale_rows = find_stale_checkout_rows(db)?;
+
+    for row in stale_rows {
+        let label = format!("{}/{}", row.project, row.instance_name);
+        let reason = match row.status.as_deref() {
+            Some(status) => format!("instance status is '{status}'"),
+            None => "instance record is missing".to_string(),
+        };
+
+        if dry_run {
+            findings.push(format!(
+                "Stale checkout pid {} for {} ({}, service '{}') would be cleared",
+                row.socat_pid, label, reason, row.logical_name
+            ));
+            println!(
+                "  {} Stale checkout pid {} for {} ({}, service '{}') would be cleared",
+                "!!".yellow().bold(),
+                row.socat_pid,
+                label.bold(),
+                reason,
+                row.logical_name,
+            );
+            continue;
+        }
+
+        let _ = killer(row.socat_pid as u32);
+        if row.status.is_some() {
+            db.execute(
+                "UPDATE port_allocations SET socat_pid = NULL
+                 WHERE project = ?1 AND instance_name = ?2 AND logical_name = ?3",
+                rusqlite::params![row.project, row.instance_name, row.logical_name],
+            )?;
+            if row.status.as_deref() == Some("checked_out") {
+                db.execute(
+                    "UPDATE instances SET status = 'running' WHERE project = ?1 AND name = ?2",
+                    rusqlite::params![row.project, row.instance_name],
+                )?;
+            }
+        } else {
+            db.execute(
+                "DELETE FROM port_allocations
+                 WHERE project = ?1 AND instance_name = ?2 AND logical_name = ?3",
+                rusqlite::params![row.project, row.instance_name, row.logical_name],
+            )?;
+        }
+        fixes.push(format!(
+            "Cleared stale checkout pid {} for {} ({})",
+            row.socat_pid, label, reason,
+        ));
+    }
+
+    Ok(())
+}
+
+fn clear_instance_socat_pids(
+    db: &rusqlite::Connection,
+    project: &str,
+    instance_name: &str,
+    fixes: &mut Vec<String>,
+    killer: impl Fn(u32) -> Result<()>,
+) -> Result<usize> {
+    let mut stmt = db.prepare(
+        "SELECT logical_name, socat_pid
+         FROM port_allocations
+         WHERE project = ?1 AND instance_name = ?2 AND socat_pid IS NOT NULL
+         ORDER BY logical_name",
+    )?;
+    let rows = stmt.query_map(rusqlite::params![project, instance_name], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1)?))
+    })?;
+
+    let mut cleared = 0usize;
+    for row in rows {
+        let (logical_name, pid) = row?;
+        let _ = killer(pid as u32);
+        db.execute(
+            "UPDATE port_allocations SET socat_pid = NULL
+             WHERE project = ?1 AND instance_name = ?2 AND logical_name = ?3",
+            rusqlite::params![project, instance_name, logical_name],
+        )?;
+        fixes.push(format!(
+            "Killed stale checkout pid {} for {}/{} ({})",
+            pid, project, instance_name, logical_name,
+        ));
+        cleared += 1;
+    }
+
+    Ok(cleared)
+}
+
+fn kill_socat_pid(pid: u32) -> Result<()> {
+    let nix_pid = Pid::from_raw(pid as i32);
+    match signal::killpg(nix_pid, Signal::SIGKILL) {
+        Ok(()) | Err(nix::errno::Errno::ESRCH) => Ok(()),
+        Err(nix::errno::Errno::EPERM) if process_looks_stale(pid) => Ok(()),
+        Err(err) => Err(anyhow::anyhow!(
+            "failed to kill socat process group (PGID {}): {}",
+            pid,
+            err
+        )),
+    }
 }
 
 /// Returns stale Docker Desktop port bindings as `(port, pid)` pairs.
@@ -265,16 +519,22 @@ async fn handle_stale_docker_port_bindings(
     args: &DoctorArgs,
     docker: &bollard::Docker,
     fixes: &mut Vec<String>,
+    findings: &mut Vec<String>,
 ) {
     let stale_ports = find_stale_docker_ports(docker).await;
     for (port, pid) in &stale_ports {
         if args.dry_run {
+            findings.push(format!(
+                "Docker Desktop (pid {}) is holding stale port {} with no matching container port mapping",
+                pid, port
+            ));
             println!(
-                "  {} Docker Desktop (pid {}) is holding port {} with no matching container port mapping.\n\
-                     This stale binding blocks `coast checkout` from forwarding this port via socat.",
+                "  {} {}",
                 "!!".yellow().bold(),
-                pid,
-                port.to_string().bold(),
+                stale_docker_dry_run_message(*pid, *port).replace(
+                    &format!("port {port}"),
+                    &format!("port {}", port.to_string().bold())
+                ),
             );
             continue;
         }
@@ -286,12 +546,24 @@ async fn handle_stale_docker_port_bindings(
                 restarted, port,
             ));
         } else {
+            findings.push(format!(
+                "Port {} is held by Docker Desktop but no Coast containers exist to restart",
+                port
+            ));
             println!(
-                "  {} Port {} is held by Docker Desktop but no Coast containers exist to restart.\n\
-                     Run {} to release the stale port binding.",
+                "  {} {}",
                 "!!".yellow().bold(),
-                port.to_string().bold(),
-                "killall com.docker.backend && open -a Docker".bold(),
+                stale_docker_manual_action_message(*port)
+                    .replace(
+                        &format!("Port {port}"),
+                        &format!("Port {}", port.to_string().bold())
+                    )
+                    .replace(
+                        "killall com.docker.backend && open -a Docker",
+                        &"killall com.docker.backend && open -a Docker"
+                            .bold()
+                            .to_string(),
+                    ),
             );
         }
         break;
@@ -369,6 +641,7 @@ async fn restart_coast_containers(docker: &bollard::Docker) -> usize {
 mod tests {
     use super::*;
     use clap::Parser;
+    use std::sync::{Arc, Mutex, OnceLock};
 
     #[derive(Debug, Parser)]
     struct TestCli {
@@ -418,5 +691,366 @@ mod tests {
         container_ports.insert(4000);
         let stale = parse_stale_ports_from_lsof(output, &container_ports);
         assert_eq!(stale, vec![(5432, 1234)]);
+    }
+
+    #[test]
+    fn test_parse_ps_process_status_parses_state_and_command() {
+        let parsed = parse_ps_process_status("Z socat\n").unwrap();
+        assert_eq!(parsed.state, 'Z');
+        assert_eq!(parsed.command, "socat");
+    }
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    #[test]
+    fn test_active_state_db_path_uses_coast_home_env() {
+        let _guard = env_lock().lock().unwrap();
+        let prev = std::env::var_os("COAST_HOME");
+        unsafe {
+            std::env::set_var("COAST_HOME", "/tmp/coast-dev-test-home");
+        }
+
+        let path = active_state_db_path().unwrap();
+        assert_eq!(path, PathBuf::from("/tmp/coast-dev-test-home/state.db"));
+
+        match prev {
+            Some(value) => unsafe { std::env::set_var("COAST_HOME", value) },
+            None => unsafe { std::env::remove_var("COAST_HOME") },
+        }
+    }
+
+    #[test]
+    fn test_stale_docker_dry_run_message_mentions_port_and_pid() {
+        let message = stale_docker_dry_run_message(1234, 3000);
+        assert!(message.contains("1234"));
+        assert!(message.contains("3000"));
+        assert!(message.contains("stale binding"));
+    }
+
+    #[test]
+    fn test_stale_docker_manual_action_message_mentions_restart_command() {
+        let message = stale_docker_manual_action_message(3000);
+        assert!(message.contains("3000"));
+        assert!(message.contains("killall com.docker.backend && open -a Docker"));
+    }
+
+    fn setup_test_db() -> rusqlite::Connection {
+        let db = rusqlite::Connection::open_in_memory().unwrap();
+        db.execute_batch(
+            "
+            CREATE TABLE instances (
+                name TEXT NOT NULL,
+                project TEXT NOT NULL,
+                status TEXT NOT NULL,
+                container_id TEXT,
+                PRIMARY KEY (project, name)
+            );
+            CREATE TABLE port_allocations (
+                project TEXT NOT NULL,
+                instance_name TEXT NOT NULL,
+                logical_name TEXT NOT NULL,
+                canonical_port INTEGER NOT NULL,
+                dynamic_port INTEGER NOT NULL,
+                socat_pid INTEGER,
+                PRIMARY KEY (project, instance_name, logical_name)
+            );
+            ",
+        )
+        .unwrap();
+        db
+    }
+
+    #[test]
+    fn test_find_stale_checkout_rows_includes_stopped_and_running_instances() {
+        let db = setup_test_db();
+        db.execute(
+            "INSERT INTO instances (name, project, status, container_id) VALUES (?1, ?2, ?3, NULL)",
+            rusqlite::params!["dev-1", "proj", "stopped"],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO instances (name, project, status, container_id) VALUES (?1, ?2, ?3, NULL)",
+            rusqlite::params!["dev-2", "proj", "running"],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO instances (name, project, status, container_id) VALUES (?1, ?2, ?3, NULL)",
+            rusqlite::params!["dev-3", "proj", "checked_out"],
+        )
+        .unwrap();
+        for (instance, logical_name, pid) in [
+            ("dev-1", "web", 1111),
+            ("dev-2", "api", 2222),
+            ("dev-3", "db", 3333),
+        ] {
+            db.execute(
+                "INSERT INTO port_allocations (project, instance_name, logical_name, canonical_port, dynamic_port, socat_pid)
+                 VALUES ('proj', ?1, ?2, 3000, 50000, ?3)",
+                rusqlite::params![instance, logical_name, pid],
+            )
+            .unwrap();
+        }
+
+        let stale = find_stale_checkout_rows_with(&db, |_| false).unwrap();
+        assert_eq!(stale.len(), 2);
+        assert!(stale.iter().any(|row| row.instance_name == "dev-1"));
+        assert!(stale.iter().any(|row| row.instance_name == "dev-2"));
+        assert!(!stale.iter().any(|row| row.instance_name == "dev-3"));
+    }
+
+    #[test]
+    fn test_find_stale_checkout_rows_includes_missing_instance_rows() {
+        let db = setup_test_db();
+        db.execute(
+            "INSERT INTO port_allocations (project, instance_name, logical_name, canonical_port, dynamic_port, socat_pid)
+             VALUES ('proj', 'ghost', 'web', 3000, 50000, 4444)",
+            [],
+        )
+        .unwrap();
+
+        let stale = find_stale_checkout_rows_with(&db, |_| false).unwrap();
+        assert_eq!(stale.len(), 1);
+        assert_eq!(stale[0].instance_name, "ghost");
+        assert!(stale[0].status.is_none());
+    }
+
+    #[test]
+    fn test_find_stale_checkout_rows_includes_checked_out_rows_with_stale_pid() {
+        let db = setup_test_db();
+        db.execute(
+            "INSERT INTO instances (name, project, status, container_id) VALUES ('dev-1', 'proj', 'checked_out', 'cid-1')",
+            [],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO port_allocations (project, instance_name, logical_name, canonical_port, dynamic_port, socat_pid)
+             VALUES ('proj', 'dev-1', 'web', 3000, 50000, 1234)",
+            [],
+        )
+        .unwrap();
+
+        let stale = find_stale_checkout_rows_with(&db, |pid| pid == 1234).unwrap();
+        assert_eq!(stale.len(), 1);
+        assert_eq!(stale[0].instance_name, "dev-1");
+        assert_eq!(stale[0].status.as_deref(), Some("checked_out"));
+    }
+
+    #[test]
+    fn test_repair_stale_checkout_rows_clears_pid_for_stopped_instance() {
+        let db = setup_test_db();
+        db.execute(
+            "INSERT INTO instances (name, project, status, container_id) VALUES ('dev-1', 'proj', 'stopped', NULL)",
+            [],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO port_allocations (project, instance_name, logical_name, canonical_port, dynamic_port, socat_pid)
+             VALUES ('proj', 'dev-1', 'web', 3000, 50000, 5555)",
+            [],
+        )
+        .unwrap();
+
+        let killed: Arc<Mutex<Vec<u32>>> = Arc::new(Mutex::new(Vec::new()));
+        let killed_clone = Arc::clone(&killed);
+        let mut fixes = Vec::new();
+        let mut findings = Vec::new();
+        repair_stale_checkout_rows(&db, false, &mut fixes, &mut findings, move |pid| {
+            killed_clone.lock().unwrap().push(pid);
+            Ok(())
+        })
+        .unwrap();
+
+        let pid: Option<i32> = db
+            .query_row(
+                "SELECT socat_pid FROM port_allocations WHERE project = 'proj' AND instance_name = 'dev-1' AND logical_name = 'web'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(pid.is_none());
+        assert_eq!(*killed.lock().unwrap(), vec![5555]);
+        assert_eq!(fixes.len(), 1);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn test_repair_stale_checkout_rows_deletes_orphaned_port_allocation() {
+        let db = setup_test_db();
+        db.execute(
+            "INSERT INTO port_allocations (project, instance_name, logical_name, canonical_port, dynamic_port, socat_pid)
+             VALUES ('proj', 'ghost', 'web', 3000, 50000, 6666)",
+            [],
+        )
+        .unwrap();
+
+        let mut fixes = Vec::new();
+        let mut findings = Vec::new();
+        repair_stale_checkout_rows(&db, false, &mut fixes, &mut findings, |_pid| Ok(())).unwrap();
+
+        let count: i64 = db
+            .query_row(
+                "SELECT COUNT(*) FROM port_allocations WHERE project = 'proj' AND instance_name = 'ghost'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0);
+        assert_eq!(fixes.len(), 1);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn test_repair_stale_checkout_rows_dry_run_records_findings_without_mutation() {
+        let db = setup_test_db();
+        db.execute(
+            "INSERT INTO instances (name, project, status, container_id) VALUES ('dev-1', 'proj', 'stopped', NULL)",
+            [],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO port_allocations (project, instance_name, logical_name, canonical_port, dynamic_port, socat_pid)
+             VALUES ('proj', 'dev-1', 'web', 3000, 50000, 5555)",
+            [],
+        )
+        .unwrap();
+
+        let mut fixes = Vec::new();
+        let mut findings = Vec::new();
+        repair_stale_checkout_rows(&db, true, &mut fixes, &mut findings, |_pid| {
+            panic!("dry-run should not kill pids")
+        })
+        .unwrap();
+
+        let pid: Option<i32> = db
+            .query_row(
+                "SELECT socat_pid FROM port_allocations WHERE project = 'proj' AND instance_name = 'dev-1' AND logical_name = 'web'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(pid, Some(5555));
+        assert!(fixes.is_empty());
+        assert_eq!(findings.len(), 1);
+    }
+
+    #[test]
+    fn test_repair_stale_checkout_rows_demotes_checked_out_instance_with_stale_pid() {
+        let db = setup_test_db();
+        db.execute(
+            "INSERT INTO instances (name, project, status, container_id) VALUES ('dev-1', 'proj', 'checked_out', 'cid-1')",
+            [],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO port_allocations (project, instance_name, logical_name, canonical_port, dynamic_port, socat_pid)
+             VALUES ('proj', 'dev-1', 'web', 3000, 50000, 5555)",
+            [],
+        )
+        .unwrap();
+
+        let mut fixes = Vec::new();
+        let mut findings = Vec::new();
+        repair_stale_checkout_rows(&db, false, &mut fixes, &mut findings, |_pid| {
+            Err(anyhow::anyhow!("stale pid"))
+        })
+        .unwrap();
+
+        let status: String = db
+            .query_row(
+                "SELECT status FROM instances WHERE project = 'proj' AND name = 'dev-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, "running");
+        let pid: Option<i32> = db
+            .query_row(
+                "SELECT socat_pid FROM port_allocations WHERE project = 'proj' AND instance_name = 'dev-1' AND logical_name = 'web'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(pid.is_none());
+    }
+
+    #[test]
+    fn test_clear_instance_socat_pids_clears_all_rows_for_instance() {
+        let db = setup_test_db();
+        db.execute(
+            "INSERT INTO instances (name, project, status, container_id) VALUES ('dev-1', 'proj', 'checked_out', 'cid-1')",
+            [],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO port_allocations (project, instance_name, logical_name, canonical_port, dynamic_port, socat_pid)
+             VALUES ('proj', 'dev-1', 'web', 3000, 50000, 7777)",
+            [],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO port_allocations (project, instance_name, logical_name, canonical_port, dynamic_port, socat_pid)
+             VALUES ('proj', 'dev-1', 'api', 8080, 50001, 8888)",
+            [],
+        )
+        .unwrap();
+
+        let killed: Arc<Mutex<Vec<u32>>> = Arc::new(Mutex::new(Vec::new()));
+        let killed_clone = Arc::clone(&killed);
+        let mut fixes = Vec::new();
+        let cleared = clear_instance_socat_pids(&db, "proj", "dev-1", &mut fixes, move |pid| {
+            killed_clone.lock().unwrap().push(pid);
+            Ok(())
+        })
+        .unwrap();
+
+        assert_eq!(cleared, 2);
+        let pids: Vec<Option<i32>> = db
+            .prepare(
+                "SELECT socat_pid FROM port_allocations
+                 WHERE project = 'proj' AND instance_name = 'dev-1'
+                 ORDER BY logical_name",
+            )
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .map(|row| row.unwrap())
+            .collect();
+        assert_eq!(pids, vec![None, None]);
+        assert_eq!(*killed.lock().unwrap(), vec![8888, 7777]);
+    }
+
+    #[test]
+    fn test_clear_instance_socat_pids_clears_rows_even_if_kill_fails() {
+        let db = setup_test_db();
+        db.execute(
+            "INSERT INTO instances (name, project, status, container_id) VALUES ('dev-1', 'proj', 'checked_out', 'cid-1')",
+            [],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO port_allocations (project, instance_name, logical_name, canonical_port, dynamic_port, socat_pid)
+             VALUES ('proj', 'dev-1', 'web', 3000, 50000, 7777)",
+            [],
+        )
+        .unwrap();
+
+        let mut fixes = Vec::new();
+        let cleared = clear_instance_socat_pids(&db, "proj", "dev-1", &mut fixes, |_pid| {
+            Err(anyhow::anyhow!("stale pid"))
+        })
+        .unwrap();
+
+        assert_eq!(cleared, 1);
+        let pid: Option<i32> = db
+            .query_row(
+                "SELECT socat_pid FROM port_allocations WHERE project = 'proj' AND instance_name = 'dev-1' AND logical_name = 'web'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(pid.is_none());
     }
 }

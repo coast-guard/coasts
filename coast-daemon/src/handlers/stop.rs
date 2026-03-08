@@ -86,7 +86,16 @@ pub async fn handle(
                 req.name, inst.status
             )));
         }
-        db.update_instance_status(&req.project, &req.name, &InstanceStatus::Stopping)?;
+        if inst.status == InstanceStatus::CheckedOut {
+            super::clear_checked_out_state(
+                &db,
+                &req.project,
+                &req.name,
+                &InstanceStatus::Stopping,
+            )?;
+        } else {
+            db.update_instance_status(&req.project, &req.name, &InstanceStatus::Stopping)?;
+        }
         inst
     };
 
@@ -194,6 +203,14 @@ pub async fn handle(
         if let Some(pid) = alloc.socat_pid {
             if let Err(e) = crate::port_manager::kill_socat(pid as u32) {
                 warn!(pid = pid, error = %e, "failed to kill socat process");
+            } else if let Err(e) =
+                db.update_socat_pid(&req.project, &req.name, &alloc.logical_name, None)
+            {
+                warn!(
+                    logical_name = %alloc.logical_name,
+                    error = %e,
+                    "failed to clear socat pid after killing process"
+                );
             }
         }
     }
@@ -331,6 +348,19 @@ mod tests {
                 InstanceStatus::CheckedOut,
             ))
             .unwrap();
+            db.insert_port_allocation(
+                "my-app",
+                "checked-out",
+                &coast_core::types::PortMapping {
+                    logical_name: "web".to_string(),
+                    canonical_port: 3000,
+                    dynamic_port: 50000,
+                    is_primary: false,
+                },
+            )
+            .unwrap();
+            db.update_socat_pid("my-app", "checked-out", "web", Some(4_194_304))
+                .unwrap();
         }
 
         let req = StopRequest {
@@ -343,6 +373,8 @@ mod tests {
         let db = state.db.lock().await;
         let instance = db.get_instance("my-app", "checked-out").unwrap().unwrap();
         assert_eq!(instance.status, InstanceStatus::Stopped);
+        let allocs = db.get_port_allocations("my-app", "checked-out").unwrap();
+        assert!(allocs[0].socat_pid.is_none());
     }
 
     #[tokio::test]

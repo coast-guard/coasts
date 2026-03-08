@@ -84,7 +84,16 @@ pub async fn handle(req: RmRequest, state: &AppState) -> Result<RmResponse> {
     // Set transitional status so the UI shows "stopping" pill during teardown
     if instance.status == InstanceStatus::Running || instance.status == InstanceStatus::CheckedOut {
         let db = state.db.lock().await;
-        let _ = db.update_instance_status(&req.project, &req.name, &InstanceStatus::Stopping);
+        if instance.status == InstanceStatus::CheckedOut {
+            let _ = super::clear_checked_out_state(
+                &db,
+                &req.project,
+                &req.name,
+                &InstanceStatus::Stopping,
+            );
+        } else {
+            let _ = db.update_instance_status(&req.project, &req.name, &InstanceStatus::Stopping);
+        }
         drop(db);
         state.emit_event(CoastEvent::InstanceStatusChanged {
             name: req.name.clone(),
@@ -140,6 +149,14 @@ pub async fn handle(req: RmRequest, state: &AppState) -> Result<RmResponse> {
         if let Some(pid) = alloc.socat_pid {
             if let Err(e) = crate::port_manager::kill_socat(pid as u32) {
                 warn!(pid = pid, error = %e, "failed to kill socat process");
+            } else if let Err(e) =
+                db.update_socat_pid(&req.project, &req.name, &alloc.logical_name, None)
+            {
+                warn!(
+                    logical_name = %alloc.logical_name,
+                    error = %e,
+                    "failed to clear socat pid after killing process"
+                );
             }
         }
     }
