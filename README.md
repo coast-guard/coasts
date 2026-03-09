@@ -221,3 +221,7 @@ coast/
   integrated-examples/  # Example projects and shell-based integration tests
 ```
 
+## Original History
+
+
+This project started in another repository and had some of its history squashed. Please see the [original repo here](https://github.com/jsx-tool/coasts) for the full commit history.
