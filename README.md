@@ -33,7 +33,7 @@ To contribute, read the [contributing guide](CONTRIBUTING.md).
 ## Installation
 
 ```sh
-curl -fsSL https://coasts.dev/install | sh
+eval "$(curl -fsSL https://coasts.dev/install)"
 ```
 
 ## Prerequisites
