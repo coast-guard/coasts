@@ -9,7 +9,7 @@ use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
 use rust_i18n::t;
 use std::io::{self, Read as _, Seek, SeekFrom, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Arguments for the `coast daemon` command.
 #[derive(Debug, Args)]
@@ -442,6 +442,126 @@ fn read_last_n_lines(file: &mut std::fs::File, n: usize) -> Result<Vec<String>> 
 const LAUNCHD_LABEL: &str = "com.coast.coastd";
 const SYSTEMD_SERVICE: &str = "coastd.service";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InstallPlatform {
+    MacOs,
+    Linux,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ServiceManagerCommand {
+    program: &'static str,
+    args: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct InstallPlan {
+    print_already_installed_note: bool,
+    write_registration: bool,
+    ensure_running: bool,
+}
+
+fn current_install_platform() -> Result<InstallPlatform> {
+    if cfg!(target_os = "macos") {
+        Ok(InstallPlatform::MacOs)
+    } else if cfg!(target_os = "linux") {
+        Ok(InstallPlatform::Linux)
+    } else {
+        bail!("Automatic daemon installation is only supported on macOS and Linux.");
+    }
+}
+
+fn build_install_plan(registration_exists: bool, daemon_running: bool) -> InstallPlan {
+    InstallPlan {
+        print_already_installed_note: registration_exists,
+        write_registration: !registration_exists,
+        ensure_running: !registration_exists || !daemon_running,
+    }
+}
+
+fn install_registration_path(platform: InstallPlatform) -> Result<PathBuf> {
+    match platform {
+        InstallPlatform::MacOs => launchd_plist_path(),
+        InstallPlatform::Linux => systemd_unit_path(),
+    }
+}
+
+fn already_registered_message(path: &Path) -> String {
+    format!("coastd is already registered at {}.", path.display())
+}
+
+fn write_install_registration(
+    platform: InstallPlatform,
+    registration_path: &Path,
+    coastd_path: &str,
+    log_dir: &str,
+) -> Result<()> {
+    if let Some(parent) = registration_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let content = match platform {
+        InstallPlatform::MacOs => generate_launchd_plist(coastd_path, log_dir),
+        InstallPlatform::Linux => generate_systemd_unit(coastd_path),
+    };
+
+    std::fs::write(registration_path, &content)
+        .with_context(|| format!("Failed to write {}", registration_path.display()))?;
+
+    Ok(())
+}
+
+fn ensure_registered_daemon_command(
+    platform: InstallPlatform,
+    registration_path: &Path,
+) -> ServiceManagerCommand {
+    match platform {
+        InstallPlatform::MacOs => ServiceManagerCommand {
+            program: "launchctl",
+            args: vec![
+                "load".to_string(),
+                registration_path.to_string_lossy().into_owned(),
+            ],
+        },
+        InstallPlatform::Linux => ServiceManagerCommand {
+            program: "systemctl",
+            args: vec![
+                "--user".to_string(),
+                "enable".to_string(),
+                "--now".to_string(),
+                "coastd".to_string(),
+            ],
+        },
+    }
+}
+
+fn run_ensure_registered_daemon(platform: InstallPlatform, registration_path: &Path) -> Result<()> {
+    let command = ensure_registered_daemon_command(platform, registration_path);
+    let status = std::process::Command::new(command.program)
+        .args(&command.args)
+        .status()
+        .with_context(|| match platform {
+            InstallPlatform::MacOs => "Failed to run launchctl load".to_string(),
+            InstallPlatform::Linux => {
+                "Failed to run systemctl --user enable --now coastd".to_string()
+            }
+        })?;
+
+    if !status.success() {
+        match platform {
+            InstallPlatform::MacOs => {
+                bail!("launchctl load failed (exit code {:?})", status.code())
+            }
+            InstallPlatform::Linux => bail!(
+                "systemctl --user enable --now coastd failed (exit code {:?})",
+                status.code()
+            ),
+        }
+    }
+
+    Ok(())
+}
+
 /// Path to the macOS Launch Agent plist.
 fn launchd_plist_path() -> Result<PathBuf> {
     let home = dirs::home_dir().context("Could not determine home directory")?;
@@ -488,7 +608,7 @@ pub fn generate_launchd_plist(coastd_path: &str, log_dir: &str) -> String {
     <true/>
     <key>KeepAlive</key>
     <true/>
-{env_block}\
+{env_block}
     <key>StandardOutPath</key>
     <string>{log_dir}/coastd.stdout.log</string>
     <key>StandardErrorPath</key>
@@ -515,6 +635,9 @@ pub fn generate_systemd_unit(coastd_path: &str) -> String {
 }
 
 async fn execute_install() -> Result<()> {
+    let platform = current_install_platform()?;
+    let registration_path = install_registration_path(platform)?;
+    let plan = build_install_plan(registration_path.exists(), daemon_status()?.running);
     let coastd = resolve_coastd_path();
     let coastd_str = coastd.to_string_lossy();
     let coast_dir = dirs::home_dir()
@@ -523,85 +646,31 @@ async fn execute_install() -> Result<()> {
     std::fs::create_dir_all(&coast_dir)?;
     let log_dir = coast_dir.to_string_lossy();
 
-    if cfg!(target_os = "macos") {
-        let plist_path = launchd_plist_path()?;
-        if plist_path.exists() {
-            println!(
-                "{} {}",
-                "note".cyan().bold(),
-                t!(
-                    "cli.info.daemon_already_installed",
-                    path = plist_path.display().to_string()
-                ),
-            );
-            return Ok(());
-        }
-        if let Some(parent) = plist_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let content = generate_launchd_plist(&coastd_str, &log_dir);
-        std::fs::write(&plist_path, &content)
-            .with_context(|| format!("Failed to write {}", plist_path.display()))?;
+    if plan.print_already_installed_note {
+        println!(
+            "{} {}",
+            "note".cyan().bold(),
+            already_registered_message(&registration_path)
+        );
+    }
 
-        let status = std::process::Command::new("launchctl")
-            .args(["load", &plist_path.to_string_lossy()])
-            .status()
-            .context("Failed to run launchctl load")?;
+    if plan.write_registration {
+        write_install_registration(platform, &registration_path, &coastd_str, &log_dir)?;
+    }
 
-        if !status.success() {
-            bail!("launchctl load failed (exit code {:?})", status.code());
-        }
+    if plan.ensure_running {
+        run_ensure_registered_daemon(platform, &registration_path)?;
+    }
 
+    if plan.write_registration {
         println!(
             "{} {}",
             "ok".green().bold(),
             t!(
                 "cli.ok.daemon_installed",
-                path = plist_path.display().to_string()
+                path = registration_path.display().to_string()
             ),
         );
-    } else if cfg!(target_os = "linux") {
-        let unit_path = systemd_unit_path()?;
-        if unit_path.exists() {
-            println!(
-                "{} {}",
-                "note".cyan().bold(),
-                t!(
-                    "cli.info.daemon_already_installed",
-                    path = unit_path.display().to_string()
-                ),
-            );
-            return Ok(());
-        }
-        if let Some(parent) = unit_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let content = generate_systemd_unit(&coastd_str);
-        std::fs::write(&unit_path, &content)
-            .with_context(|| format!("Failed to write {}", unit_path.display()))?;
-
-        let status = std::process::Command::new("systemctl")
-            .args(["--user", "enable", "--now", "coastd"])
-            .status()
-            .context("Failed to run systemctl --user enable --now coastd")?;
-
-        if !status.success() {
-            bail!(
-                "systemctl --user enable --now coastd failed (exit code {:?})",
-                status.code()
-            );
-        }
-
-        println!(
-            "{} {}",
-            "ok".green().bold(),
-            t!(
-                "cli.ok.daemon_installed",
-                path = unit_path.display().to_string()
-            ),
-        );
-    } else {
-        bail!("Automatic daemon installation is only supported on macOS and Linux.");
     }
 
     Ok(())
@@ -789,6 +858,12 @@ mod tests {
     #[test]
     fn test_generate_launchd_plist_content() {
         let plist = generate_launchd_plist("/usr/local/bin/coastd", "/Users/test/.coast");
+        let lines: Vec<&str> = plist.lines().collect();
+        let stdout_path_index = lines
+            .iter()
+            .position(|line| *line == "    <key>StandardOutPath</key>")
+            .unwrap();
+
         assert!(plist.contains("<string>/usr/local/bin/coastd</string>"));
         assert!(plist.contains("<string>--foreground</string>"));
         assert!(plist.contains("<key>RunAtLoad</key>"));
@@ -798,8 +873,14 @@ mod tests {
         assert!(plist.contains("/Users/test/.coast/coastd.stdout.log"));
         assert!(plist.contains("/Users/test/.coast/coastd.stderr.log"));
         assert!(plist.starts_with("<?xml"));
+        assert!(plist.contains("<key>StandardOutPath</key>"));
+        assert!(!plist.lines().any(|line| line == "\\"));
+        assert_ne!(lines[stdout_path_index - 1], "\\");
         #[cfg(target_os = "macos")]
-        assert!(plist.contains("<key>EnvironmentVariables</key>"));
+        {
+            assert!(plist.contains("<key>EnvironmentVariables</key>"));
+            assert_eq!(lines[stdout_path_index - 2], "    </dict>");
+        }
     }
 
     #[test]
@@ -832,6 +913,89 @@ mod tests {
         assert!(unit.contains("[Service]"));
         assert!(unit.contains("[Install]"));
         assert!(unit.contains("Description=Coast Daemon"));
+    }
+
+    #[test]
+    fn test_build_install_plan() {
+        let cases = [
+            (
+                "fresh install",
+                false,
+                false,
+                InstallPlan {
+                    print_already_installed_note: false,
+                    write_registration: true,
+                    ensure_running: true,
+                },
+            ),
+            (
+                "fresh install while daemon already running",
+                false,
+                true,
+                InstallPlan {
+                    print_already_installed_note: false,
+                    write_registration: true,
+                    ensure_running: true,
+                },
+            ),
+            (
+                "already installed and running",
+                true,
+                true,
+                InstallPlan {
+                    print_already_installed_note: true,
+                    write_registration: false,
+                    ensure_running: false,
+                },
+            ),
+            (
+                "already installed but stopped",
+                true,
+                false,
+                InstallPlan {
+                    print_already_installed_note: true,
+                    write_registration: false,
+                    ensure_running: true,
+                },
+            ),
+        ];
+
+        for (name, registration_exists, daemon_running, expected) in cases {
+            assert_eq!(
+                build_install_plan(registration_exists, daemon_running),
+                expected,
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_ensure_registered_daemon_command_selection() {
+        let plist_path = PathBuf::from("/Users/test/Library/LaunchAgents/com.coast.coastd.plist");
+        assert_eq!(
+            ensure_registered_daemon_command(InstallPlatform::MacOs, &plist_path),
+            ServiceManagerCommand {
+                program: "launchctl",
+                args: vec![
+                    "load".to_string(),
+                    "/Users/test/Library/LaunchAgents/com.coast.coastd.plist".to_string(),
+                ],
+            }
+        );
+
+        let unit_path = PathBuf::from("/Users/test/.config/systemd/user/coastd.service");
+        assert_eq!(
+            ensure_registered_daemon_command(InstallPlatform::Linux, &unit_path),
+            ServiceManagerCommand {
+                program: "systemctl",
+                args: vec![
+                    "--user".to_string(),
+                    "enable".to_string(),
+                    "--now".to_string(),
+                    "coastd".to_string(),
+                ],
+            }
+        );
     }
 
     #[test]
