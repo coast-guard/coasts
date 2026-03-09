@@ -1,4 +1,4 @@
-use tracing::info;
+use tracing::{info, warn};
 
 use coast_core::error::{CoastError, Result};
 use coast_core::protocol::{AssignRequest, BuildProgressEvent};
@@ -10,7 +10,10 @@ use crate::server::AppState;
 use super::classify::classify_services;
 use super::gitignored_sync::build_gitignored_sync_script;
 use super::util::{emit, health_poll_interval, CoastfileData, TOTAL_STEPS};
-use super::worktree::{create_worktree_fallback, detect_worktree_dir_from_git};
+use super::worktree::{
+    create_worktree_fallback, detect_worktree_dir_from_git, legacy_sync_marker_path,
+    resolve_internal_sync_marker_path,
+};
 
 /// Parameters for the Docker-dependent assign steps (steps 2-7).
 pub(super) struct DockerStepsParams<'a> {
@@ -507,7 +510,15 @@ async fn switch_worktree(
         progress,
     )
     .await?;
-    sync_gitignored_files(root, &worktree_path, &wt_dir, &req.worktree, assign_config).await;
+    sync_gitignored_files(
+        root,
+        &worktree_path,
+        &wt_dir,
+        &req.worktree,
+        assign_config,
+        req.force_sync,
+    )
+    .await;
     remount_workspace(rt, container_id, root, &wt_dir, &req.worktree).await;
 
     let _ = state
@@ -616,31 +627,139 @@ async fn sync_gitignored_files(
     wt_dir: &str,
     worktree_name: &str,
     assign_config: &AssignConfig,
+    force_sync: bool,
 ) {
-    let marker = worktree_path.join(".coast-synced");
-    if marker.exists() {
-        info!(worktree = %worktree_name, "worktree already synced, skipping gitignored copy");
+    let marker = prepare_sync_marker(worktree_path, worktree_name, force_sync);
+    if matches!(marker, SyncMarker::Skip) {
         return;
     }
-
     let step_t = std::time::Instant::now();
-    let wt_path_str = worktree_path.to_string_lossy().to_string();
-    let root_str = root.to_string_lossy().to_string();
-    let mut sync_excludes = assign_config.exclude_paths.clone();
-    if !sync_excludes.iter().any(|p| p == wt_dir) {
-        sync_excludes.push(wt_dir.to_string());
-    }
-    let copy_script = build_gitignored_sync_script(&root_str, &wt_path_str, &sync_excludes);
+    let copy_script = build_sync_copy_script(root, worktree_path, wt_dir, assign_config, &marker);
     let copy_result = tokio::process::Command::new("sh")
         .args(["-c", &copy_script])
         .output()
         .await;
-    if let Ok(output) = &copy_result {
-        if output.status.success() {
+    log_sync_result(&copy_result, step_t, worktree_name);
+}
+
+fn remove_legacy_sync_marker(worktree_path: &std::path::Path, worktree_name: &str) {
+    let legacy_marker = legacy_sync_marker_path(worktree_path);
+    if !legacy_marker.exists() {
+        return;
+    }
+
+    match std::fs::remove_file(&legacy_marker) {
+        Ok(()) => info!(
+            worktree = %worktree_name,
+            marker = %legacy_marker.display(),
+            "removed legacy root-level ignored-file marker"
+        ),
+        Err(error) => warn!(
+            worktree = %worktree_name,
+            marker = %legacy_marker.display(),
+            %error,
+            "failed to remove legacy root-level ignored-file marker"
+        ),
+    }
+}
+
+enum SyncMarker {
+    Skip,
+    Internal(std::path::PathBuf),
+    None,
+}
+
+fn prepare_sync_marker(
+    worktree_path: &std::path::Path,
+    worktree_name: &str,
+    force_sync: bool,
+) -> SyncMarker {
+    remove_legacy_sync_marker(worktree_path, worktree_name);
+
+    let Some(marker_path) = resolve_internal_sync_marker_path(worktree_path) else {
+        warn!(
+            worktree = %worktree_name,
+            path = %worktree_path.display(),
+            "could not resolve internal ignored-file cache marker path; proceeding without cache"
+        );
+        return SyncMarker::None;
+    };
+
+    if force_sync {
+        info!(worktree = %worktree_name, "forced ignored-file refresh requested");
+        clear_internal_sync_marker(&marker_path, worktree_name);
+        return SyncMarker::Internal(marker_path);
+    }
+
+    if marker_path.exists() {
+        info!(worktree = %worktree_name, "worktree already synced, skipping gitignored copy");
+        SyncMarker::Skip
+    } else {
+        SyncMarker::Internal(marker_path)
+    }
+}
+
+fn clear_internal_sync_marker(marker_path: &std::path::Path, worktree_name: &str) {
+    if !marker_path.exists() {
+        return;
+    }
+
+    match std::fs::remove_file(marker_path) {
+        Ok(()) => info!(
+            worktree = %worktree_name,
+            marker = %marker_path.display(),
+            "cleared ignored-file bootstrap cache before forced refresh"
+        ),
+        Err(error) => warn!(
+            worktree = %worktree_name,
+            marker = %marker_path.display(),
+            %error,
+            "failed to clear ignored-file bootstrap cache before forced refresh"
+        ),
+    }
+}
+
+fn build_sync_copy_script(
+    root: &std::path::Path,
+    worktree_path: &std::path::Path,
+    wt_dir: &str,
+    assign_config: &AssignConfig,
+    marker: &SyncMarker,
+) -> String {
+    let wt_path_str = worktree_path.to_string_lossy().to_string();
+    let root_str = root.to_string_lossy().to_string();
+    let marker_str = match marker {
+        SyncMarker::Internal(path) => Some(path.to_string_lossy().to_string()),
+        SyncMarker::Skip | SyncMarker::None => None,
+    };
+    let mut sync_excludes = assign_config.exclude_paths.clone();
+    if !sync_excludes.iter().any(|p| p == wt_dir) {
+        sync_excludes.push(wt_dir.to_string());
+    }
+
+    build_gitignored_sync_script(
+        &root_str,
+        &wt_path_str,
+        marker_str.as_deref(),
+        &sync_excludes,
+    )
+}
+
+fn log_sync_result(
+    copy_result: &std::result::Result<std::process::Output, std::io::Error>,
+    step_t: std::time::Instant,
+    worktree_name: &str,
+) {
+    match copy_result {
+        Ok(output) if output.status.success() => {
             info!(elapsed_ms = step_t.elapsed().as_millis() as u64, worktree = %worktree_name, "synced gitignored files to worktree (hardlinks)");
-        } else {
+        }
+        Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr);
             tracing::warn!(elapsed_ms = step_t.elapsed().as_millis() as u64, worktree = %worktree_name, %stderr, "gitignored sync had issues");
+        }
+        Err(error) => {
+            warn!(elapsed_ms = step_t.elapsed().as_millis() as u64, worktree = %worktree_name, %error, "failed to run gitignored sync script");
         }
     }
 }
@@ -1248,6 +1367,54 @@ pub(super) async fn emit_skip_all(progress: &tokio::sync::mpsc::Sender<BuildProg
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn git_in(root: &std::path::Path, args: &[&str]) {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .env("GIT_AUTHOR_NAME", "test")
+            .env("GIT_AUTHOR_EMAIL", "test@test.com")
+            .env("GIT_COMMITTER_NAME", "test")
+            .env("GIT_COMMITTER_EMAIL", "test@test.com")
+            .output()
+            .expect("git command failed to start");
+        assert!(
+            out.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    fn setup_sync_fixture() -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("repo");
+        std::fs::create_dir_all(&root).unwrap();
+
+        git_in(&root, &["init", "-b", "main"]);
+        std::fs::write(root.join(".gitignore"), "ignored*.txt\n").unwrap();
+        std::fs::write(root.join("tracked.txt"), "tracked\n").unwrap();
+        git_in(&root, &["add", ".gitignore", "tracked.txt"]);
+        git_in(&root, &["commit", "-m", "init"]);
+        git_in(&root, &["branch", "feature-sync"]);
+
+        let worktree_path = root.join(".worktrees").join("feature-sync");
+        std::fs::create_dir_all(worktree_path.parent().unwrap()).unwrap();
+        git_in(
+            &root,
+            &[
+                "worktree",
+                "add",
+                &worktree_path.to_string_lossy(),
+                "feature-sync",
+            ],
+        );
+
+        std::fs::write(root.join("ignored-one.txt"), "one\n").unwrap();
+
+        (dir, root, worktree_path)
+    }
 
     #[test]
     fn test_parse_compose_ps_healthy_all_running() {
@@ -1334,5 +1501,124 @@ mod tests {
         let artifact = std::path::PathBuf::from("/tmp/artifact/compose.yml");
         let result = resolve_compose_path(&None, &artifact);
         assert_eq!(result, artifact);
+    }
+
+    #[tokio::test]
+    async fn test_sync_gitignored_files_uses_internal_marker_and_removes_legacy_marker() {
+        let (_tmp, root, worktree_path) = setup_sync_fixture();
+        let legacy_marker = legacy_sync_marker_path(&worktree_path);
+        std::fs::write(&legacy_marker, "").unwrap();
+
+        sync_gitignored_files(
+            &root,
+            &worktree_path,
+            ".worktrees",
+            "feature-sync",
+            &AssignConfig::default(),
+            false,
+        )
+        .await;
+
+        assert!(!legacy_marker.exists(), "legacy marker should be removed");
+        assert!(
+            worktree_path.join("ignored-one.txt").exists(),
+            "ignored file should be bootstrapped into the worktree"
+        );
+
+        let internal_marker = resolve_internal_sync_marker_path(&worktree_path).unwrap();
+        assert!(
+            internal_marker.exists(),
+            "internal marker should be created after a successful bootstrap"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sync_gitignored_files_skips_when_internal_marker_exists() {
+        let (_tmp, root, worktree_path) = setup_sync_fixture();
+
+        sync_gitignored_files(
+            &root,
+            &worktree_path,
+            ".worktrees",
+            "feature-sync",
+            &AssignConfig::default(),
+            false,
+        )
+        .await;
+
+        std::fs::write(root.join("ignored-two.txt"), "two\n").unwrap();
+
+        sync_gitignored_files(
+            &root,
+            &worktree_path,
+            ".worktrees",
+            "feature-sync",
+            &AssignConfig::default(),
+            false,
+        )
+        .await;
+
+        assert!(
+            !worktree_path.join("ignored-two.txt").exists(),
+            "cached bootstrap should skip syncing newly ignored files"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sync_gitignored_files_force_sync_refreshes_cache() {
+        let (_tmp, root, worktree_path) = setup_sync_fixture();
+
+        sync_gitignored_files(
+            &root,
+            &worktree_path,
+            ".worktrees",
+            "feature-sync",
+            &AssignConfig::default(),
+            false,
+        )
+        .await;
+
+        std::fs::write(root.join("ignored-two.txt"), "two\n").unwrap();
+
+        sync_gitignored_files(
+            &root,
+            &worktree_path,
+            ".worktrees",
+            "feature-sync",
+            &AssignConfig::default(),
+            true,
+        )
+        .await;
+
+        assert!(
+            worktree_path.join("ignored-two.txt").exists(),
+            "force_sync should refresh ignored files even when the cache is warm"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sync_gitignored_files_failure_leaves_no_internal_marker() {
+        let (_tmp, root, worktree_path) = setup_sync_fixture();
+        let internal_marker = resolve_internal_sync_marker_path(&worktree_path).unwrap();
+
+        let original_permissions = std::fs::metadata(&worktree_path).unwrap().permissions();
+        std::fs::set_permissions(&worktree_path, std::fs::Permissions::from_mode(0o555)).unwrap();
+
+        sync_gitignored_files(
+            &root,
+            &worktree_path,
+            ".worktrees",
+            "feature-sync",
+            &AssignConfig::default(),
+            false,
+        )
+        .await;
+
+        std::fs::set_permissions(&worktree_path, original_permissions).unwrap();
+
+        assert!(
+            !internal_marker.exists(),
+            "failed syncs must not leave behind a success marker"
+        );
     }
 }

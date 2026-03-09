@@ -93,6 +93,7 @@ fn test_assign_request_roundtrip() {
         worktree: "feature/oauth".to_string(),
         commit_sha: Some("deadbeef".to_string()),
         explain: false,
+        force_sync: false,
     }));
 }
 
@@ -104,6 +105,7 @@ fn test_assign_request_without_commit_sha_roundtrip() {
         worktree: "feature/oauth".to_string(),
         commit_sha: None,
         explain: false,
+        force_sync: false,
     }));
 }
 
@@ -1323,6 +1325,19 @@ fn test_assign_request_explain_roundtrip() {
         worktree: "feature/test".to_string(),
         commit_sha: None,
         explain: true,
+        force_sync: false,
+    }));
+}
+
+#[test]
+fn test_assign_request_force_sync_roundtrip() {
+    roundtrip_request(Request::Assign(AssignRequest {
+        name: "dev-1".to_string(),
+        project: "my-app".to_string(),
+        worktree: "feature/test".to_string(),
+        commit_sha: None,
+        explain: false,
+        force_sync: true,
     }));
 }
 

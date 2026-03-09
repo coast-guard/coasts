@@ -38,6 +38,22 @@ coast rm-build my-project
 
 이는 프로젝트의 아티팩트 디렉터리, Docker 이미지, 볼륨, 컨테이너를 삭제합니다. 먼저 확인을 요청합니다. 프롬프트를 건너뛰려면 `--force`를 전달하세요.
 
+## Missing Shared Service Images
+
+`coast run`이 공유 서비스를 생성하는 중 `No such image: postgres:15` 같은 오류로 실패한다면, 해당 이미지는 호스트 Docker 데몬에 없습니다.
+
+이 문제는 보통 `Coastfile`에서 Postgres나 Redis 같은 `shared_services`를 정의했지만 Docker가 아직 해당 이미지를 pull하지 않았을 때 발생합니다.
+
+누락된 이미지를 pull한 다음, 인스턴스를 다시 실행하세요:
+
+```bash
+docker pull postgres:15
+docker pull redis:7
+coast run my-instance
+```
+
+어떤 이미지가 누락되었는지 확실하지 않다면, 실패한 `coast run` 출력의 Docker 오류에 이미지 이름이 포함됩니다. 프로비저닝에 실패한 뒤 Coasts는 부분적으로 생성된 인스턴스를 자동으로 정리하므로, 인스턴스가 다시 `stopped`로 돌아오는 것은 정상입니다.
+
 ## Factory Reset with Nuke
 
 다른 방법이 모두 실패했거나 — 또는 완전히 깨끗한 상태로 초기화하고 싶다면 — `coast nuke`가 전체 공장 초기화를 수행합니다:

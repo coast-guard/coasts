@@ -19,10 +19,11 @@ pub(super) const SYNC_EXCLUDE_DIRS: &[&str] = &[
 /// the files that need syncing, then either hardlinks them via rsync
 /// `--files-from` or copies them via the tar pipeline. This avoids traversing
 /// the entire project tree (which is extremely slow in large repos).
-/// Touches `.coast-synced` on success so subsequent assigns skip the copy.
+/// Touches the internal sync marker on success so subsequent assigns skip the copy.
 pub(super) fn build_gitignored_sync_script(
     root: &str,
     wt_path: &str,
+    marker_path: Option<&str>,
     extra_excludes: &[String],
 ) -> String {
     let mut grep_parts: Vec<String> = SYNC_EXCLUDE_DIRS
@@ -34,22 +35,28 @@ pub(super) fn build_gitignored_sync_script(
         grep_parts.push(path.replace('.', "\\."));
     }
     let grep_excludes = grep_parts.join("|");
+    let marker_cmd = marker_path
+        .map(|path| format!("touch '{path}'"))
+        .unwrap_or_else(|| "true".to_string());
 
     format!(
-        "cd '{root}' && \
+        "tmpfile=\"/tmp/.coast-sync-filelist.$$\" && \
+         cd '{root}' && \
          git ls-files --others --ignored --exclude-standard 2>/dev/null | \
-         grep -v -E '{grep_excludes}' > /tmp/.coast-sync-filelist 2>/dev/null; \
-         if [ -s /tmp/.coast-sync-filelist ]; then \
+         grep -v -E '{grep_excludes}' > \"$tmpfile\" 2>/dev/null; \
+         sync_status=0; \
+         if [ -s \"$tmpfile\" ]; then \
            if command -v rsync >/dev/null 2>&1; then \
-             rsync -a --link-dest='{root}' --files-from=/tmp/.coast-sync-filelist \
-               '{root}/' '{wt_path}/' 2>/dev/null; \
+             rsync -a --link-dest='{root}' --files-from=\"$tmpfile\" \
+               '{root}/' '{wt_path}/' 2>/dev/null || sync_status=$?; \
            else \
-             tar -T /tmp/.coast-sync-filelist -cf - 2>/dev/null | \
-             tar -xf - -C '{wt_path}' 2>/dev/null; \
+             tar -T \"$tmpfile\" -cf - 2>/dev/null | \
+             tar -xf - -C '{wt_path}' 2>/dev/null || sync_status=$?; \
            fi; \
          fi; \
-         rm -f /tmp/.coast-sync-filelist; \
-         touch '{wt_path}/.coast-synced'; true"
+         rm -f \"$tmpfile\"; \
+         if [ \"$sync_status\" -eq 0 ]; then {marker_cmd}; fi; \
+         exit \"$sync_status\""
     )
 }
 
@@ -59,8 +66,12 @@ mod tests {
 
     #[test]
     fn test_uses_git_ls_files() {
-        let script =
-            build_gitignored_sync_script("/home/user/project", "/home/user/.worktrees/feat", &[]);
+        let script = build_gitignored_sync_script(
+            "/home/user/project",
+            "/home/user/.worktrees/feat",
+            None,
+            &[],
+        );
         assert!(
             script.contains("git ls-files --others --ignored --exclude-standard"),
             "should use git ls-files to enumerate gitignored files"
@@ -69,8 +80,12 @@ mod tests {
 
     #[test]
     fn test_uses_rsync_files_from() {
-        let script =
-            build_gitignored_sync_script("/home/user/project", "/home/user/.worktrees/feat", &[]);
+        let script = build_gitignored_sync_script(
+            "/home/user/project",
+            "/home/user/.worktrees/feat",
+            None,
+            &[],
+        );
         assert!(
             script.contains("--files-from="),
             "should use rsync --files-from for targeted sync"
@@ -87,7 +102,7 @@ mod tests {
 
     #[test]
     fn test_grep_excludes_heavy_dirs() {
-        let script = build_gitignored_sync_script("/root", "/wt", &[]);
+        let script = build_gitignored_sync_script("/root", "/wt", None, &[]);
         let grep_idx = script.find("grep -v -E").expect("should have grep");
         let grep_section = &script[grep_idx..];
         for dir in SYNC_EXCLUDE_DIRS {
@@ -104,16 +119,19 @@ mod tests {
 
     #[test]
     fn test_creates_marker() {
-        let script = build_gitignored_sync_script("/root", "/wt", &[]);
+        let script =
+            build_gitignored_sync_script("/root", "/wt", Some("/gitdir/coast-sync-bootstrap"), &[]);
         assert!(
-            script.contains("touch '/wt/.coast-synced'"),
-            "should create .coast-synced marker on success"
+            script.contains(
+                "if [ \"$sync_status\" -eq 0 ]; then touch '/gitdir/coast-sync-bootstrap'; fi;"
+            ),
+            "should create the internal marker only after successful sync"
         );
     }
 
     #[test]
     fn test_has_tar_fallback() {
-        let script = build_gitignored_sync_script("/root", "/wt", &[]);
+        let script = build_gitignored_sync_script("/root", "/wt", None, &[]);
         assert!(
             script.contains("if command -v rsync"),
             "should check for rsync availability"
@@ -127,7 +145,7 @@ mod tests {
     #[test]
     fn test_exclude_paths_in_sync_script() {
         let extras = vec!["apps/ide".to_string(), "apps/extension".to_string()];
-        let script = build_gitignored_sync_script("/root", "/wt", &extras);
+        let script = build_gitignored_sync_script("/root", "/wt", None, &extras);
         let grep_idx = script.find("grep -v -E").expect("should have grep");
         let grep_section = &script[grep_idx..];
         assert!(
@@ -157,19 +175,58 @@ mod tests {
 
     #[test]
     fn test_empty_extra_excludes() {
-        let script = build_gitignored_sync_script("/root", "/wt", &[]);
+        let script = build_gitignored_sync_script("/root", "/wt", None, &[]);
         assert!(script.contains("grep -v -E"));
     }
 
     #[test]
     fn test_special_regex_chars_in_paths() {
         let extras = vec!["foo.bar".to_string(), "baz+qux".to_string()];
-        let script = build_gitignored_sync_script("/root", "/wt", &extras);
+        let script = build_gitignored_sync_script("/root", "/wt", None, &extras);
         let grep_idx = script.find("grep -v -E").expect("should have grep");
         let grep_section = &script[grep_idx..];
         assert!(
             grep_section.contains("foo\\.bar"),
             "dots in paths should be escaped"
+        );
+    }
+
+    #[test]
+    fn test_skips_marker_when_no_path_provided() {
+        let script = build_gitignored_sync_script("/root", "/wt", None, &[]);
+        assert!(
+            script.contains("if [ \"$sync_status\" -eq 0 ]; then true; fi;"),
+            "should skip marker creation when no marker path is available"
+        );
+    }
+
+    #[test]
+    fn test_exits_nonzero_on_copy_failure() {
+        let script = build_gitignored_sync_script("/root", "/wt", None, &[]);
+        assert!(
+            script.contains("sync_status=0;"),
+            "should track copy failures"
+        );
+        assert!(
+            script.contains("|| sync_status=$?;"),
+            "should preserve the copy command exit status"
+        );
+        assert!(
+            script.contains("exit \"$sync_status\""),
+            "should exit non-zero when the copy command fails"
+        );
+    }
+
+    #[test]
+    fn test_uses_unique_tempfile_per_shell_process() {
+        let script = build_gitignored_sync_script("/root", "/wt", None, &[]);
+        assert!(
+            script.contains("tmpfile=\"/tmp/.coast-sync-filelist.$$\""),
+            "should avoid sharing a fixed tempfile across concurrent sync runs"
+        );
+        assert!(
+            script.contains("rm -f \"$tmpfile\""),
+            "should clean up the per-process tempfile"
         );
     }
 }

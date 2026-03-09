@@ -58,6 +58,9 @@ pub struct AssignRequest {
     /// When true, analyze and report the assign plan without executing it.
     #[serde(default)]
     pub explain: bool,
+    /// When true, refresh the cached ignored-file bootstrap before assigning.
+    #[serde(default)]
+    pub force_sync: bool,
 }
 
 /// Response after a successful worktree assignment.
@@ -105,7 +108,7 @@ pub struct AssignExplainResponse {
     pub gitignored_file_count: usize,
     /// Whether the worktree already exists on disk.
     pub worktree_exists: bool,
-    /// Whether gitignored files were already synced (.coast-synced marker).
+    /// Whether ignored-file bootstrap can be skipped for this assign.
     pub worktree_synced: bool,
     /// Whether bare services have an install step.
     pub has_bare_install: bool,

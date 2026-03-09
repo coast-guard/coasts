@@ -61,8 +61,12 @@ Sin embargo, si sí quieres ejecutar tu agente en un contenedor, Coasts lo sopor
 
 Coasts no son dev containers, y no son lo mismo.
 
-Los dev containers generalmente están diseñados para montar un IDE dentro de un único espacio de trabajo de desarrollo contenedorizado. Coasts son headless y están optimizados como entornos ligeros para el uso de agentes en paralelo con worktrees: múltiples entornos de runtime aislados y conscientes de worktrees ejecutándose lado a lado, con cambios rápidos de checkout y controles de aislamiento del runtime para cada instancia.
+Los dev containers generalmente están diseñados para montar un IDE dentro de un único espacio de trabajo de desarrollo contenedorizado. Coasts son headless y están optimizados como entornos ligeros para el uso de agentes en paralelo con worktrees — múltiples entornos de runtime aislados y conscientes de worktrees ejecutándose lado a lado, con cambios rápidos de checkout y controles de aislamiento del runtime para cada instancia.
 
 ## Repo de demostración
 
 Si quieres un pequeño proyecto de ejemplo para probar con Coasts, empieza con el repositorio [`coasts-demo`](https://github.com/coast-guard/coasts-demo).
+
+## Tutoriales en video
+
+Si quieres un recorrido rápido en video, consulta [VIDEO_TUTORIALS.md](VIDEO_TUTORIALS.md) para la playlist oficial de Coasts y enlaces directos a cada tutorial.

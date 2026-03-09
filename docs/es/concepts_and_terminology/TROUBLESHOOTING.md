@@ -38,6 +38,22 @@ coast rm-build my-project
 
 Esto elimina el directorio de artefactos del proyecto, imágenes Docker, volúmenes y contenedores. Primero pide confirmación. Pasa `--force` para omitir el aviso.
 
+## Imágenes faltantes de servicios compartidos
+
+Si `coast run` falla al crear un servicio compartido con un error como `No such image: postgres:15`, la imagen no está presente en el daemon de Docker de tu host.
+
+Esto ocurre con mayor frecuencia cuando tu `Coastfile` define `shared_services` como Postgres o Redis y Docker aún no ha descargado esas imágenes.
+
+Descarga la imagen faltante y luego ejecuta la instancia de nuevo:
+
+```bash
+docker pull postgres:15
+docker pull redis:7
+coast run my-instance
+```
+
+Si no estás seguro de qué imagen falta, la salida del `coast run` que falla incluirá el nombre de la imagen en el error de Docker. Después de un intento de aprovisionamiento fallido, Coasts limpia automáticamente la instancia parcial, así que es normal ver que la instancia vuelva a `stopped`.
+
 ## Restablecimiento de fábrica con Nuke
 
 Cuando nada más funciona — o simplemente quieres una pizarra completamente limpia — `coast nuke` realiza un restablecimiento de fábrica completo:

@@ -66,3 +66,7 @@ Dev containers 通常旨在将一个 IDE 挂载到单个容器化的开发工作
 ## 演示仓库
 
 如果你想要一个小型示例项目来试用 Coasts，可以从 [`coasts-demo` 仓库](https://github.com/coast-guard/coasts-demo)开始。
+
+## 视频教程
+
+如果你想要一个快速的视频演示，请参见 [VIDEO_TUTORIALS.md](VIDEO_TUTORIALS.md)，其中包含官方 Coasts 播放列表以及每个教程的直接链接。

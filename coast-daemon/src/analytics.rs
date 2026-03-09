@@ -591,6 +591,7 @@ mod tests {
                 worktree: String::new(),
                 commit_sha: None,
                 explain: false,
+                force_sync: false,
             }),
             Request::Unassign(UnassignRequest {
                 project: String::new(),

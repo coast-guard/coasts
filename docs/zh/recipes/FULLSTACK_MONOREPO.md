@@ -312,9 +312,9 @@ api-rails = ["infra/Dockerfile", "api/Gemfile", "api/Gemfile.lock", "api/package
 
 ### `exclude_paths`
 
-这是大型 monorepo 中影响最大的单项优化。它告诉 Coast 在每次 assign 运行的 gitignored 文件同步（rsync）和 `git ls-files` diff 时，跳过整个目录树。
+这是大型 monorepo 中影响最大的单项优化。它告诉 Coast 在每次 assign 运行的 gitignored 文件同步（rsync）以及 `git ls-files` diff 期间，跳过整个目录树。
 
-目标是排除你的 Coast 服务不需要的一切。在一个包含 30,000 个文件的 monorepo 中，上述目录可能包含 8,000+ 个与运行中服务无关的文件。排除它们可以在每次切分支时减少同等数量的文件 stat。
+目标是排除你的 Coast 服务不需要的一切。在一个包含 30,000 个文件的 monorepo 中，上述目录可能包含 8,000+ 个与运行中服务无关的文件。排除它们能在每次切分支时减少大量文件 stat。
 
 要找出应排除的内容，先对你的仓库做 profiling:
 

@@ -312,17 +312,17 @@ Only list services that are actually running. If your `COMPOSE_PROFILES` only st
 
 ### `exclude_paths`
 
-This is the single most impactful optimization for large monorepos. It tells Coast to skip entire directory trees during the gitignored file sync (rsync) and the `git ls-files` diff that run on every assign.
+This is the single most impactful optimization for large monorepos when new worktrees are being created. It tells Coast to skip entire directory trees while it bootstraps gitignored files into a worktree for the first time.
 
-The goal is to exclude everything your Coast services do not need. In a monorepo with 30,000 files, the directories listed above might account for 8,000+ files that are irrelevant to the running services. Excluding them cuts that many file stats from every branch switch.
+The goal is to exclude everything your Coast services do not need. In a monorepo with 30,000 files, the directories listed above might account for 8,000+ files that are irrelevant to the running services. Excluding them keeps the ignored-file bootstrap focused on the smaller subset your Coast actually needs.
 
 To find what to exclude, profile your repo:
 
 ```bash
-git ls-files | cut -d'/' -f1 | sort | uniq -c | sort -rn
+git ls-files --others --ignored --exclude-standard | cut -d'/' -f1 | sort | uniq -c | sort -rn
 ```
 
-Keep directories that contain source code mounted into running services or shared libraries imported by those services. Exclude everything else — documentation, CI configs, tooling, other teams' apps, mobile clients, CLI tools, and vendored caches like `.yarn`.
+Keep directories that contain source code mounted into running services, shared libraries imported by those services, or generated files the runtime needs on first boot. Exclude everything else — documentation, CI configs, tooling, other teams' apps, mobile clients, CLI tools, and vendored caches like `.yarn`.
 
 ### `rebuild_triggers`
 

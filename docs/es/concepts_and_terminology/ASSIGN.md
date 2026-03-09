@@ -1,6 +1,6 @@
 # Asignar y Desasignar
 
-Asignar y desasignar controlan a qué worktree apunta una instancia de Coast. Consulta [Filesystem](FILESYSTEM.md) para ver cómo funciona el cambio de worktree a nivel de montaje.
+Asignar y desasignar controlan a qué worktree está apuntando una instancia de Coast. Consulta [Filesystem](FILESYSTEM.md) para ver cómo funciona el cambio de worktree a nivel de montaje.
 
 ## Asignar
 
@@ -31,11 +31,11 @@ After:
 └────────────────────────────┘
 ```
 
-Después de asignar, `dev-1` está ejecutando la rama `feature/oauth` con todos sus servicios levantados.
+Después de asignar, `dev-1` está ejecutando la rama `feature/oauth` con todos sus servicios activos.
 
 ## Desasignar
 
-`coast unassign` cambia una instancia de Coast de vuelta a la raíz del proyecto (tu rama main/master). Se elimina la asociación del worktree y Coast vuelve a ejecutarse desde el repositorio principal.
+`coast unassign` cambia una instancia de Coast de vuelta a la raíz del proyecto (tu rama main/master). Se elimina la asociación con el worktree y Coast vuelve a ejecutarse desde el repositorio principal.
 
 ```text
 coast unassign dev-1
@@ -46,9 +46,9 @@ coast unassign dev-1
 └────────────────────────────┘
 ```
 
-## Estrategias de Asignación
+## Estrategias de asignación
 
-Cuando una instancia de Coast se asigna a un nuevo worktree, cada servicio necesita saber cómo manejar el cambio de código. Esto se configura por servicio en tu [Coastfile](COASTFILE_TYPES.md) bajo `[assign]`:
+Cuando se asigna una instancia de Coast a un nuevo worktree, cada servicio necesita saber cómo manejar el cambio de código. Esto se configura por servicio en tu [Coastfile](COASTFILE_TYPES.md) bajo `[assign]`:
 
 ```toml
 [assign]
@@ -74,9 +74,9 @@ coast assign dev-1 --worktree feature/billing
 Las estrategias disponibles son:
 
 - **none** — no hacer nada. Úsalo para servicios que no cambian entre ramas, como Postgres o Redis.
-- **hot** — intercambiar solo el sistema de archivos. El servicio sigue en ejecución y recoge los cambios mediante propagación de montaje y vigilantes de archivos (p. ej., un servidor de desarrollo con recarga en caliente).
-- **restart** — reiniciar el contenedor del servicio. Úsalo para servicios interpretados que solo necesitan reiniciar el proceso. Este es el valor predeterminado.
-- **rebuild** — reconstruir la imagen del servicio y reiniciar. Úsalo cuando el cambio de rama afecta al `Dockerfile` o a dependencias en tiempo de compilación.
+- **hot** — intercambiar únicamente el sistema de archivos. El servicio sigue ejecutándose y recoge los cambios mediante la propagación de montajes y los observadores de archivos (p. ej., un servidor de desarrollo con recarga en caliente).
+- **restart** — reiniciar el contenedor del servicio. Úsalo para servicios interpretados que solo necesitan un reinicio del proceso. Esta es la opción predeterminada.
+- **rebuild** — reconstruir la imagen del servicio y reiniciar. Úsalo cuando el cambio de rama afecta al `Dockerfile` o a las dependencias de tiempo de compilación.
 
 También puedes especificar disparadores de reconstrucción para que un servicio solo se reconstruya cuando cambien archivos específicos:
 
@@ -85,16 +85,16 @@ También puedes especificar disparadores de reconstrucción para que un servicio
 worker = ["Dockerfile", "package.json"]
 ```
 
-Si ninguno de los archivos disparadores cambió entre ramas, el servicio omite la reconstrucción incluso si la estrategia está establecida en `rebuild`.
+Si ninguno de los archivos disparadores cambió entre ramas, el servicio omite la reconstrucción incluso si la estrategia está configurada como `rebuild`.
 
-## Worktrees Eliminados
+## Worktrees eliminados
 
-Si un worktree asignado se elimina, el daemon `coastd` desasigna automáticamente esa instancia de vuelta a la raíz del repositorio principal de Git.
+Si se elimina un worktree asignado, el daemon `coastd` desasigna automáticamente esa instancia de vuelta a la raíz del repositorio principal de Git.
 
 ---
 
 > **Consejo: Reducir la latencia de asignación en bases de código grandes**
 >
-> Por debajo, Coast ejecuta `git ls-files` cada vez que se monta o desmonta un worktree. En bases de código grandes o repositorios con muchos archivos, esto puede añadir una latencia notable a las operaciones de asignar y desasignar.
+> Internamente, la primera asignación a un nuevo worktree inicializa determinados archivos ignorados por git en ese worktree, y los servicios con `[assign.rebuild_triggers]` pueden ejecutar `git diff --name-only` para decidir si es necesaria una reconstrucción. En bases de código grandes, ese paso de inicialización y las reconstrucciones innecesarias tienden a dominar el tiempo de asignación.
 >
-> Usa `exclude_paths` en tu Coastfile para omitir directorios que sean irrelevantes para tus servicios en ejecución. Consulta [Performance Optimizations](PERFORMANCE_OPTIMIZATIONS.md) para una guía completa.
+> Usa `exclude_paths` en tu Coastfile para reducir la superficie de inicialización de archivos ignorados por git, usa `"hot"` para servicios con observadores de archivos y mantén `[assign.rebuild_triggers]` centrado en verdaderas entradas de tiempo de compilación. Si necesitas refrescar manualmente la inicialización de archivos ignorados para un worktree existente, ejecuta `coast assign --force-sync`. Consulta [Performance Optimizations](PERFORMANCE_OPTIMIZATIONS.md) para una guía completa.

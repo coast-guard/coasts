@@ -1,5 +1,8 @@
 use coast_core::error::{CoastError, Result};
 
+pub(super) const LEGACY_SYNC_MARKER_FILENAME: &str = ".coast-synced";
+pub(super) const INTERNAL_SYNC_MARKER_FILENAME: &str = "coast-sync-bootstrap";
+
 /// Detect the worktree parent directory from existing git worktrees.
 ///
 /// Runs `git worktree list --porcelain`, collects non-main worktree paths,
@@ -89,6 +92,36 @@ pub(super) async fn create_worktree_fallback(
             .output()
             .await
             .map_err(|e| CoastError::git(format!("Failed to create worktree: {e}")))
+    }
+}
+
+pub(super) fn legacy_sync_marker_path(worktree_path: &std::path::Path) -> std::path::PathBuf {
+    worktree_path.join(LEGACY_SYNC_MARKER_FILENAME)
+}
+
+pub(super) fn resolve_internal_sync_marker_path(
+    worktree_path: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    resolve_worktree_git_dir(worktree_path)
+        .map(|git_dir| git_dir.join(INTERNAL_SYNC_MARKER_FILENAME))
+}
+
+fn resolve_worktree_git_dir(worktree_path: &std::path::Path) -> Option<std::path::PathBuf> {
+    let dot_git = worktree_path.join(".git");
+    if dot_git.is_dir() {
+        return Some(dot_git);
+    }
+
+    let git_file = std::fs::read_to_string(&dot_git).ok()?;
+    let git_dir = git_file
+        .lines()
+        .find_map(|line| line.strip_prefix("gitdir: "))
+        .map(str::trim)?;
+    let git_dir_path = std::path::PathBuf::from(git_dir);
+    if git_dir_path.is_absolute() {
+        Some(git_dir_path)
+    } else {
+        Some(worktree_path.join(git_dir_path))
     }
 }
 
@@ -281,5 +314,46 @@ mod tests {
         assert!(result.is_ok());
         assert!(result.unwrap().status.success());
         assert!(wt_path.exists());
+    }
+
+    #[test]
+    fn test_resolve_internal_sync_marker_path_from_absolute_gitdir_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let worktree = dir.path().join("wt");
+        let gitdir = dir
+            .path()
+            .join("repo")
+            .join(".git")
+            .join("worktrees")
+            .join("wt");
+        std::fs::create_dir_all(&worktree).unwrap();
+        std::fs::create_dir_all(&gitdir).unwrap();
+        std::fs::write(
+            worktree.join(".git"),
+            format!("gitdir: {}", gitdir.display()),
+        )
+        .unwrap();
+
+        let marker = resolve_internal_sync_marker_path(&worktree).unwrap();
+        assert_eq!(marker, gitdir.join(INTERNAL_SYNC_MARKER_FILENAME));
+    }
+
+    #[test]
+    fn test_resolve_internal_sync_marker_path_from_relative_gitdir_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let worktree = dir.path().join("wt");
+        let gitdir = worktree.join("../repo/.git/worktrees/wt");
+        std::fs::create_dir_all(&worktree).unwrap();
+        std::fs::write(worktree.join(".git"), "gitdir: ../repo/.git/worktrees/wt").unwrap();
+
+        let marker = resolve_internal_sync_marker_path(&worktree).unwrap();
+        assert_eq!(marker, gitdir.join(INTERNAL_SYNC_MARKER_FILENAME));
+    }
+
+    #[test]
+    fn test_legacy_sync_marker_path_stays_in_worktree_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = legacy_sync_marker_path(dir.path());
+        assert_eq!(marker, dir.path().join(LEGACY_SYNC_MARKER_FILENAME));
     }
 }

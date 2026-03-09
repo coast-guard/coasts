@@ -1,6 +1,6 @@
 # Performance Optimizations
 
-Coast is designed to make branch switching fast, but in large monorepos the default behavior can introduce unnecessary latency. This page covers the levers available in your Coastfile to reduce assign and unassign times.
+Coast is designed to make branch switching fast, but in large monorepos the default behavior can still introduce latency. This page covers the levers available in your Coastfile and, more importantly, which parts of `coast assign` they actually affect.
 
 ## Why Assign Can Be Slow
 
@@ -9,33 +9,52 @@ Coast is designed to make branch switching fast, but in large monorepos the defa
 ```text
 coast assign dev-1 --worktree feature/payments
 
-  1. stop affected compose services
-  2. create git worktree (if new)
-  3. sync gitignored files into worktree (rsync)  ← often the bottleneck
-  4. remount /workspace
-  5. git ls-files diff  ← can be slow in large repos
-  6. restart/rebuild services
+  1. classify services and optional rebuild-trigger diff
+  2. stop affected services
+  3. create git worktree (if new)
+  4. bootstrap gitignored files into the worktree (first assign only)
+  5. remount /workspace
+  6. recreate/restart containers
+  7. rebuild images for services using "rebuild"
+  8. wait for healthy
 ```
 
-Two steps dominate the latency: the **gitignored file sync** and the **`git ls-files` diff**. Both scale with repository size and are amplified by macOS VirtioFS overhead.
+The biggest variable costs are usually the **first-time gitignored bootstrap**, **container restarts**, and **image rebuilds**. The optional branch diff used for rebuild triggers is much cheaper, but it can still add up if you point it at broad trigger sets.
 
-### Gitignored File Sync
+### Gitignored File Bootstrap
 
-When a worktree is created for the first time, Coast uses `rsync --link-dest` to hardlink gitignored files (build artifacts, caches, generated code) from the project root into the new worktree. Hardlinks are near-instant per file, but rsync must still traverse every directory in the source tree to discover what needs syncing.
+When a worktree is created for the first time, Coast bootstraps selected gitignored files from the project root into that worktree.
 
-If your project root contains large directories that rsync should not touch — other worktrees, vendored dependencies, unrelated apps — rsync wastes time descending into and stat-ing thousands of files it will never copy. On a repo with 400,000+ gitignored files, this traversal alone can take 30–60 seconds.
+The sequence is:
 
-Coast automatically excludes `node_modules`, `.git`, `dist`, `target`, `.worktrees`, `.coasts`, and other common heavy directories from this sync. Additional directories can be excluded via `exclude_paths` in your Coastfile (see below).
+1. Run `git ls-files --others --ignored --exclude-standard` on the host to enumerate ignored files.
+2. Filter out common heavy directories plus any configured `exclude_paths`.
+3. Run `rsync --files-from` with `--link-dest` so the selected files are hardlinked into the worktree instead of copied byte-for-byte.
+4. Record the successful bootstrap in internal worktree metadata so later assigns to the same worktree can skip it.
 
-Once a worktree has been synced, a `.coast-synced` marker is written and subsequent assigns to the same worktree skip the sync entirely.
+If `rsync` is unavailable, Coast falls back to a `tar` pipeline.
 
-### `git ls-files` Diff
+Large directories such as `node_modules`, `.git`, `dist`, `target`, `.next`, `.nuxt`, `.cache`, `.worktrees`, and `.coasts` are excluded automatically. Large dependency directories are expected to be handled by service caches or volumes rather than by this generic bootstrap step.
 
-Every assign and unassign also runs `git ls-files` to determine which tracked files changed between branches. On macOS, all file I/O between the host and the Docker VM crosses VirtioFS (or gRPC-FUSE on older setups). The `git ls-files` operation stats every tracked file, and the per-file overhead compounds quickly. A repo with 30,000 tracked files will take noticeably longer than one with 5,000, even if the actual diff is small.
+Because the file list is generated up front, `rsync` is working from a targeted list rather than blindly crawling the entire repository. Even so, repos with very large ignored-file sets can still pay a noticeable one-time bootstrap cost when a worktree is first created. If you ever need to refresh that bootstrap manually, run `coast assign --force-sync`.
 
-## `exclude_paths` — The Main Lever
+### Rebuild-Trigger Diff
 
-The `exclude_paths` option in your Coastfile tells Coast to skip entire directory trees during both the **gitignored file sync** (rsync) and the **`git ls-files` diff**. Files under excluded paths are still present in the worktree — they are just not traversed during assign.
+Coast only computes a branch diff when `[assign.rebuild_triggers]` is configured. In that case it runs:
+
+```bash
+git diff --name-only <previous>..<worktree>
+```
+
+The result is used to downgrade a service from `rebuild` to `restart` when none of its trigger files changed.
+
+This is much narrower than the old "diff every tracked file on every assign" model. If you do not configure rebuild triggers, there is no branch diff step here at all.
+
+`exclude_paths` does not currently change this diff. Keep your trigger lists focused on true build-time inputs such as Dockerfiles, lockfiles, and package manifests.
+
+## `exclude_paths` — The Main Lever for New Worktrees
+
+The `exclude_paths` option in your Coastfile tells Coast to skip entire directory trees while building the gitignored bootstrap file list for a new worktree.
 
 ```toml
 [assign]
@@ -48,31 +67,40 @@ exclude_paths = [
 ]
 ```
 
-This is the single most impactful optimization for large monorepos. It reduces both the rsync traversal on first assign and the file diff on every assign. If your project has 30,000 tracked files but only 20,000 are relevant to the services running in the Coast, excluding the other 10,000 cuts a third of the work from every assign.
+Files under excluded paths are still present in the worktree if Git tracks them. Coast just avoids spending time enumerating and hardlinking ignored files under those trees during the first-time bootstrap.
+
+This is most impactful when your repo root contains large ignored directories that your running services do not care about: unrelated apps, vendored caches, test fixtures, generated docs, and other heavy trees.
+
+If you are repeatedly assigning to the same already-synced worktree, `exclude_paths` matters less because the bootstrap is skipped. In that case, service restart/rebuild choices become the dominant factor.
 
 ### Choosing What to Exclude
 
-The goal is to exclude everything your Coast services do not need. Start by profiling what is in your repo:
+Start by profiling your ignored files:
+
+```bash
+git ls-files --others --ignored --exclude-standard | cut -d'/' -f1 | sort | uniq -c | sort -rn
+```
+
+If you also want a view of the tracked layout for rebuild-trigger tuning, use:
 
 ```bash
 git ls-files | cut -d'/' -f1 | sort | uniq -c | sort -rn
 ```
 
-This shows the file count per top-level directory. From there, identify which directories your compose services actually mount or depend on, and exclude the rest.
-
 **Keep** directories that:
-- Contain source code mounted into running services (e.g., your app directories)
+- Contain source code mounted into running services
 - Contain shared libraries imported by those services
+- Contain generated files or caches that your runtime actually needs on first boot
 - Are referenced in `[assign.rebuild_triggers]`
 
 **Exclude** directories that:
-- Belong to apps or services not running in your Coast (other teams' apps, mobile clients, CLI tools)
+- Belong to apps or services not running in your Coast
 - Contain documentation, scripts, CI configs, or tooling unrelated to runtime
-- Are large dependency caches checked into the repo (e.g., vendored proto definitions, `.yarn` offline cache)
+- Hold large ignored caches that are already preserved elsewhere, such as dedicated service caches or shared volumes
 
 ### Example: Monorepo With Multiple Apps
 
-A monorepo with 29,000 files across many apps, but only two are relevant:
+A monorepo with many top-level directories, but only a subset matters to the services running in this Coast:
 
 ```text
   13,000  bookface/         ← active
@@ -101,7 +129,7 @@ exclude_paths = [
 ]
 ```
 
-This reduces the diff surface from 29,000 files to ~21,000 — roughly 28% fewer stats on every assign.
+This keeps the first-time worktree bootstrap focused on the directories the running services actually need instead of spending time on unrelated ignored trees.
 
 ## Trim Inactive Services From `[assign.services]`
 
@@ -153,9 +181,9 @@ If none of the trigger files changed between branches, Coast skips the rebuild a
 
 | Optimization | Impact | Affects | When to use |
 |---|---|---|---|
-| `exclude_paths` | High | rsync + git diff | Always, in any repo with directories your Coast does not need |
-| Remove inactive services | Medium | service restart | When `COMPOSE_PROFILES` limits which services run |
-| `"hot"` strategy | Medium | service restart | Services with file watchers (Vite, webpack, nodemon, air) |
-| `rebuild_triggers` | Medium | image rebuild | Services using `"rebuild"` that only need it for infra changes |
+| `exclude_paths` | High | first-time gitignored bootstrap | Repos with large ignored trees your Coast does not need |
+| Remove inactive services | Medium | service restart/recreate | When `COMPOSE_PROFILES` limits which services run |
+| `"hot"` strategy | High | container restart | Services with file watchers (Vite, webpack, nodemon, air) |
+| `rebuild_triggers` | High | image rebuilds + optional branch diff | Services using `"rebuild"` that only need it for infra changes |
 
-Start with `exclude_paths`. It is the lowest-effort, highest-impact change you can make. It speeds up both the first assign (rsync) and every subsequent assign (git diff).
+If new worktrees are slow to assign for the first time, start with `exclude_paths`. If repeat assigns are slow, focus on `hot` vs `restart`, trim inactive services, and keep `rebuild_triggers` tight.

@@ -95,6 +95,6 @@ If an assigned worktree is deleted, the `coastd` daemon automatically unassigns 
 
 > **Tip: Reducing assign latency in large codebases**
 >
-> Under the hood, Coast runs `git ls-files` whenever a worktree is mounted or unmounted. In large codebases or repositories with many files, this can add noticeable latency to assign and unassign operations.
+> Under the hood, the first assign to a new worktree bootstraps selected gitignored files into that worktree, and services with `[assign.rebuild_triggers]` may run `git diff --name-only` to decide whether a rebuild is necessary. In large codebases, that bootstrap step and unnecessary rebuilds tend to dominate assign time.
 >
-> Use `exclude_paths` in your Coastfile to skip directories that are irrelevant to your running services. See [Performance Optimizations](PERFORMANCE_OPTIMIZATIONS.md) for a full guide.
+> Use `exclude_paths` in your Coastfile to shrink the gitignored bootstrap surface, use `"hot"` for services with file watchers, and keep `[assign.rebuild_triggers]` focused on true build-time inputs. If you need to refresh the ignored-file bootstrap manually for an existing worktree, run `coast assign --force-sync`. See [Performance Optimizations](PERFORMANCE_OPTIMIZATIONS.md) for a full guide.

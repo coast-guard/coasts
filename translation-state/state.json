@@ -6,14 +6,19 @@
       "translated_at": "2026-03-06T22:13:59Z"
     },
     "README.md": {
-      "commit": "8de7870",
-      "source_sha256": "35bcdebe29b86d66fb415e9a63c423087ac7450afba34dc00fc191a798312bde",
-      "translated_at": "2026-03-06T22:13:59Z"
+      "commit": "85b1396",
+      "source_sha256": "12b4d91e0c428b3cf67df9dea25bd9dc713d129efb0b557ec91256dd0d236c5b",
+      "translated_at": "2026-03-09T09:08:24Z"
     },
     "SKILLS_FOR_HOST_AGENTS.md": {
       "commit": "8de7870",
       "source_sha256": "41edafb6689beb58a73c919a295a2d8ebae6b12511e361afe93de3110464be94",
       "translated_at": "2026-03-06T22:13:59Z"
+    },
+    "VIDEO_TUTORIALS.md": {
+      "commit": "85b1396",
+      "source_sha256": "ad9d78eb5642e64ee03e882cc7717a9dcd116ab20edaf993889e65e7cc7ba66f",
+      "translated_at": "2026-03-09T09:08:24Z"
     },
     "coastfiles/AGENT_SHELL.md": {
       "commit": "3357381",
@@ -81,9 +86,9 @@
       "translated_at": "2026-02-28T13:10:06Z"
     },
     "concepts_and_terminology/ASSIGN.md": {
-      "commit": "b42c701",
-      "source_sha256": "87160a019bdd9c8044e9091a3bdce27b823225ba27384a68ecf89815780a04ba",
-      "translated_at": "2026-03-05T00:12:10Z"
+      "commit": "85b1396",
+      "source_sha256": "68d4c726dc9502fd21cdb5342d66778f210300a05197c8a2d10467420ea4b252",
+      "translated_at": "2026-03-09T09:08:24Z"
     },
     "concepts_and_terminology/BARE_SERVICES.md": {
       "commit": "d769707",
@@ -131,9 +136,9 @@
       "translated_at": "2026-02-28T13:10:06Z"
     },
     "concepts_and_terminology/FILESYSTEM.md": {
-      "commit": "3357381",
-      "source_sha256": "128514bc2b372e1eb4df67f27cda2d0fac0faf4ebb1d3b83cc30efe31fef2b56",
-      "translated_at": "2026-02-28T13:10:06Z"
+      "commit": "85b1396",
+      "source_sha256": "8ef51c567a944f6c2e066b700c7278eca64656a050205f7f50f88cfd47409aea",
+      "translated_at": "2026-03-09T09:08:24Z"
     },
     "concepts_and_terminology/LOGS.md": {
       "commit": "3357381",
@@ -156,9 +161,9 @@
       "translated_at": "2026-03-03T10:27:08Z"
     },
     "concepts_and_terminology/PERFORMANCE_OPTIMIZATIONS.md": {
-      "commit": "b42c701",
-      "source_sha256": "53b59a85b8b5948a2fc12fd3b79c8757a35d80f7f87b972e4a9ea7e564bc13df",
-      "translated_at": "2026-03-05T00:12:10Z"
+      "commit": "85b1396",
+      "source_sha256": "2074f1a085ea4c92851fc7b20a1ed66d68a6337d09d94ea7e332c18cf0534688",
+      "translated_at": "2026-03-09T09:08:24Z"
     },
     "concepts_and_terminology/PORTS.md": {
       "commit": "3357381",
@@ -191,9 +196,9 @@
       "translated_at": "2026-02-28T13:10:06Z"
     },
     "concepts_and_terminology/TROUBLESHOOTING.md": {
-      "commit": "0f69cdc",
-      "source_sha256": "7f917bcf68f84985f3b706566b84d9b8c3b3f4277a189944f83158eb989583fa",
-      "translated_at": "2026-03-02T07:44:45Z"
+      "commit": "85b1396",
+      "source_sha256": "b203847f11a1b986ba6d2f552382d508ed6bc13c6031bd22382af145d208e28f",
+      "translated_at": "2026-03-09T09:08:24Z"
     },
     "concepts_and_terminology/VOLUMES.md": {
       "commit": "3357381",
@@ -201,9 +206,9 @@
       "translated_at": "2026-02-28T13:10:06Z"
     },
     "doc_ordering.txt": {
-      "commit": "b42c701",
-      "source_sha256": "02c69751313edd62c19bb4be2272d42f976ff6ca59af6318bf5493c5de5e73bd",
-      "translated_at": "2026-03-05T00:12:10Z"
+      "commit": "85b1396",
+      "source_sha256": "664e95814e31402f9e71101ef9d25ddad9f68915d280a47a9516944221ffeda5",
+      "translated_at": "2026-03-09T09:08:24Z"
     },
     "installation_prompt.txt": {
       "commit": "b42c701",
@@ -211,9 +216,9 @@
       "translated_at": "2026-03-05T00:12:10Z"
     },
     "recipes/FULLSTACK_MONOREPO.md": {
-      "commit": "b42c701",
-      "source_sha256": "175dda6b89f9c9cb4c3fefb6ef2b950db1e559cfe1ab23bac84f10688d6d5f4b",
-      "translated_at": "2026-03-05T00:12:10Z"
+      "commit": "85b1396",
+      "source_sha256": "6310b3f52657dc74b825a27f1d46e72248d0edcf115cf879591e6afbadf6251f",
+      "translated_at": "2026-03-09T09:08:24Z"
     },
     "recipes/README.md": {
       "commit": "b42c701",
@@ -233,14 +238,19 @@
       "translated_at": "2026-03-06T22:11:47Z"
     },
     "README.md": {
-      "commit": "8de7870",
-      "source_sha256": "35bcdebe29b86d66fb415e9a63c423087ac7450afba34dc00fc191a798312bde",
-      "translated_at": "2026-03-06T22:11:47Z"
+      "commit": "85b1396",
+      "source_sha256": "12b4d91e0c428b3cf67df9dea25bd9dc713d129efb0b557ec91256dd0d236c5b",
+      "translated_at": "2026-03-09T08:59:59Z"
     },
     "SKILLS_FOR_HOST_AGENTS.md": {
       "commit": "8de7870",
       "source_sha256": "41edafb6689beb58a73c919a295a2d8ebae6b12511e361afe93de3110464be94",
       "translated_at": "2026-03-06T22:11:47Z"
+    },
+    "VIDEO_TUTORIALS.md": {
+      "commit": "85b1396",
+      "source_sha256": "ad9d78eb5642e64ee03e882cc7717a9dcd116ab20edaf993889e65e7cc7ba66f",
+      "translated_at": "2026-03-09T08:59:59Z"
     },
     "coastfiles/AGENT_SHELL.md": {
       "commit": "3357381",
@@ -308,9 +318,9 @@
       "translated_at": "2026-02-28T12:45:25Z"
     },
     "concepts_and_terminology/ASSIGN.md": {
-      "commit": "b42c701",
-      "source_sha256": "87160a019bdd9c8044e9091a3bdce27b823225ba27384a68ecf89815780a04ba",
-      "translated_at": "2026-03-05T00:03:15Z"
+      "commit": "85b1396",
+      "source_sha256": "68d4c726dc9502fd21cdb5342d66778f210300a05197c8a2d10467420ea4b252",
+      "translated_at": "2026-03-09T08:59:59Z"
     },
     "concepts_and_terminology/BARE_SERVICES.md": {
       "commit": "d769707",
@@ -358,9 +368,9 @@
       "translated_at": "2026-02-28T12:45:25Z"
     },
     "concepts_and_terminology/FILESYSTEM.md": {
-      "commit": "3357381",
-      "source_sha256": "128514bc2b372e1eb4df67f27cda2d0fac0faf4ebb1d3b83cc30efe31fef2b56",
-      "translated_at": "2026-02-28T12:45:25Z"
+      "commit": "85b1396",
+      "source_sha256": "8ef51c567a944f6c2e066b700c7278eca64656a050205f7f50f88cfd47409aea",
+      "translated_at": "2026-03-09T08:59:59Z"
     },
     "concepts_and_terminology/LOGS.md": {
       "commit": "3357381",
@@ -383,9 +393,9 @@
       "translated_at": "2026-03-03T10:23:05Z"
     },
     "concepts_and_terminology/PERFORMANCE_OPTIMIZATIONS.md": {
-      "commit": "b42c701",
-      "source_sha256": "53b59a85b8b5948a2fc12fd3b79c8757a35d80f7f87b972e4a9ea7e564bc13df",
-      "translated_at": "2026-03-05T00:03:15Z"
+      "commit": "85b1396",
+      "source_sha256": "2074f1a085ea4c92851fc7b20a1ed66d68a6337d09d94ea7e332c18cf0534688",
+      "translated_at": "2026-03-09T08:59:59Z"
     },
     "concepts_and_terminology/PORTS.md": {
       "commit": "3357381",
@@ -418,9 +428,9 @@
       "translated_at": "2026-02-28T12:45:25Z"
     },
     "concepts_and_terminology/TROUBLESHOOTING.md": {
-      "commit": "0f69cdc",
-      "source_sha256": "7f917bcf68f84985f3b706566b84d9b8c3b3f4277a189944f83158eb989583fa",
-      "translated_at": "2026-03-02T07:39:42Z"
+      "commit": "85b1396",
+      "source_sha256": "b203847f11a1b986ba6d2f552382d508ed6bc13c6031bd22382af145d208e28f",
+      "translated_at": "2026-03-09T08:59:59Z"
     },
     "concepts_and_terminology/VOLUMES.md": {
       "commit": "3357381",
@@ -428,9 +438,9 @@
       "translated_at": "2026-02-28T12:45:25Z"
     },
     "doc_ordering.txt": {
-      "commit": "b42c701",
-      "source_sha256": "02c69751313edd62c19bb4be2272d42f976ff6ca59af6318bf5493c5de5e73bd",
-      "translated_at": "2026-03-05T00:03:15Z"
+      "commit": "85b1396",
+      "source_sha256": "664e95814e31402f9e71101ef9d25ddad9f68915d280a47a9516944221ffeda5",
+      "translated_at": "2026-03-09T08:59:59Z"
     },
     "installation_prompt.txt": {
       "commit": "b42c701",
@@ -438,9 +448,9 @@
       "translated_at": "2026-03-05T00:03:15Z"
     },
     "recipes/FULLSTACK_MONOREPO.md": {
-      "commit": "b42c701",
-      "source_sha256": "175dda6b89f9c9cb4c3fefb6ef2b950db1e559cfe1ab23bac84f10688d6d5f4b",
-      "translated_at": "2026-03-05T00:03:15Z"
+      "commit": "85b1396",
+      "source_sha256": "6310b3f52657dc74b825a27f1d46e72248d0edcf115cf879591e6afbadf6251f",
+      "translated_at": "2026-03-09T08:59:59Z"
     },
     "recipes/README.md": {
       "commit": "b42c701",
@@ -460,14 +470,19 @@
       "translated_at": "2026-03-06T22:12:24Z"
     },
     "README.md": {
-      "commit": "8de7870",
-      "source_sha256": "35bcdebe29b86d66fb415e9a63c423087ac7450afba34dc00fc191a798312bde",
-      "translated_at": "2026-03-06T22:12:24Z"
+      "commit": "85b1396",
+      "source_sha256": "12b4d91e0c428b3cf67df9dea25bd9dc713d129efb0b557ec91256dd0d236c5b",
+      "translated_at": "2026-03-09T09:02:23Z"
     },
     "SKILLS_FOR_HOST_AGENTS.md": {
       "commit": "8de7870",
       "source_sha256": "41edafb6689beb58a73c919a295a2d8ebae6b12511e361afe93de3110464be94",
       "translated_at": "2026-03-06T22:12:24Z"
+    },
+    "VIDEO_TUTORIALS.md": {
+      "commit": "85b1396",
+      "source_sha256": "ad9d78eb5642e64ee03e882cc7717a9dcd116ab20edaf993889e65e7cc7ba66f",
+      "translated_at": "2026-03-09T09:02:23Z"
     },
     "coastfiles/AGENT_SHELL.md": {
       "commit": "3357381",
@@ -535,9 +550,9 @@
       "translated_at": "2026-02-28T12:52:18Z"
     },
     "concepts_and_terminology/ASSIGN.md": {
-      "commit": "b42c701",
-      "source_sha256": "87160a019bdd9c8044e9091a3bdce27b823225ba27384a68ecf89815780a04ba",
-      "translated_at": "2026-03-05T00:05:49Z"
+      "commit": "85b1396",
+      "source_sha256": "68d4c726dc9502fd21cdb5342d66778f210300a05197c8a2d10467420ea4b252",
+      "translated_at": "2026-03-09T09:02:23Z"
     },
     "concepts_and_terminology/BARE_SERVICES.md": {
       "commit": "d769707",
@@ -585,9 +600,9 @@
       "translated_at": "2026-02-28T12:52:18Z"
     },
     "concepts_and_terminology/FILESYSTEM.md": {
-      "commit": "3357381",
-      "source_sha256": "128514bc2b372e1eb4df67f27cda2d0fac0faf4ebb1d3b83cc30efe31fef2b56",
-      "translated_at": "2026-02-28T12:52:18Z"
+      "commit": "85b1396",
+      "source_sha256": "8ef51c567a944f6c2e066b700c7278eca64656a050205f7f50f88cfd47409aea",
+      "translated_at": "2026-03-09T09:02:23Z"
     },
     "concepts_and_terminology/LOGS.md": {
       "commit": "3357381",
@@ -610,9 +625,9 @@
       "translated_at": "2026-03-03T10:24:11Z"
     },
     "concepts_and_terminology/PERFORMANCE_OPTIMIZATIONS.md": {
-      "commit": "b42c701",
-      "source_sha256": "53b59a85b8b5948a2fc12fd3b79c8757a35d80f7f87b972e4a9ea7e564bc13df",
-      "translated_at": "2026-03-05T00:05:49Z"
+      "commit": "85b1396",
+      "source_sha256": "2074f1a085ea4c92851fc7b20a1ed66d68a6337d09d94ea7e332c18cf0534688",
+      "translated_at": "2026-03-09T09:02:23Z"
     },
     "concepts_and_terminology/PORTS.md": {
       "commit": "3357381",
@@ -645,9 +660,9 @@
       "translated_at": "2026-02-28T12:52:18Z"
     },
     "concepts_and_terminology/TROUBLESHOOTING.md": {
-      "commit": "0f69cdc",
-      "source_sha256": "7f917bcf68f84985f3b706566b84d9b8c3b3f4277a189944f83158eb989583fa",
-      "translated_at": "2026-03-02T07:41:07Z"
+      "commit": "85b1396",
+      "source_sha256": "b203847f11a1b986ba6d2f552382d508ed6bc13c6031bd22382af145d208e28f",
+      "translated_at": "2026-03-09T09:02:23Z"
     },
     "concepts_and_terminology/VOLUMES.md": {
       "commit": "3357381",
@@ -655,9 +670,9 @@
       "translated_at": "2026-02-28T12:52:18Z"
     },
     "doc_ordering.txt": {
-      "commit": "b42c701",
-      "source_sha256": "02c69751313edd62c19bb4be2272d42f976ff6ca59af6318bf5493c5de5e73bd",
-      "translated_at": "2026-03-05T00:05:49Z"
+      "commit": "85b1396",
+      "source_sha256": "664e95814e31402f9e71101ef9d25ddad9f68915d280a47a9516944221ffeda5",
+      "translated_at": "2026-03-09T09:02:23Z"
     },
     "installation_prompt.txt": {
       "commit": "b42c701",
@@ -665,9 +680,9 @@
       "translated_at": "2026-03-05T00:05:49Z"
     },
     "recipes/FULLSTACK_MONOREPO.md": {
-      "commit": "b42c701",
-      "source_sha256": "175dda6b89f9c9cb4c3fefb6ef2b950db1e559cfe1ab23bac84f10688d6d5f4b",
-      "translated_at": "2026-03-05T00:05:49Z"
+      "commit": "85b1396",
+      "source_sha256": "6310b3f52657dc74b825a27f1d46e72248d0edcf115cf879591e6afbadf6251f",
+      "translated_at": "2026-03-09T09:02:23Z"
     },
     "recipes/README.md": {
       "commit": "b42c701",
@@ -687,14 +702,19 @@
       "translated_at": "2026-03-06T22:13:32Z"
     },
     "README.md": {
-      "commit": "8de7870",
-      "source_sha256": "35bcdebe29b86d66fb415e9a63c423087ac7450afba34dc00fc191a798312bde",
-      "translated_at": "2026-03-06T22:13:32Z"
+      "commit": "85b1396",
+      "source_sha256": "12b4d91e0c428b3cf67df9dea25bd9dc713d129efb0b557ec91256dd0d236c5b",
+      "translated_at": "2026-03-09T09:06:35Z"
     },
     "SKILLS_FOR_HOST_AGENTS.md": {
       "commit": "8de7870",
       "source_sha256": "41edafb6689beb58a73c919a295a2d8ebae6b12511e361afe93de3110464be94",
       "translated_at": "2026-03-06T22:13:32Z"
+    },
+    "VIDEO_TUTORIALS.md": {
+      "commit": "85b1396",
+      "source_sha256": "ad9d78eb5642e64ee03e882cc7717a9dcd116ab20edaf993889e65e7cc7ba66f",
+      "translated_at": "2026-03-09T09:06:35Z"
     },
     "coastfiles/AGENT_SHELL.md": {
       "commit": "3357381",
@@ -762,9 +782,9 @@
       "translated_at": "2026-02-28T13:04:30Z"
     },
     "concepts_and_terminology/ASSIGN.md": {
-      "commit": "b42c701",
-      "source_sha256": "87160a019bdd9c8044e9091a3bdce27b823225ba27384a68ecf89815780a04ba",
-      "translated_at": "2026-03-05T00:10:17Z"
+      "commit": "85b1396",
+      "source_sha256": "68d4c726dc9502fd21cdb5342d66778f210300a05197c8a2d10467420ea4b252",
+      "translated_at": "2026-03-09T09:06:35Z"
     },
     "concepts_and_terminology/BARE_SERVICES.md": {
       "commit": "d769707",
@@ -812,9 +832,9 @@
       "translated_at": "2026-02-28T13:04:30Z"
     },
     "concepts_and_terminology/FILESYSTEM.md": {
-      "commit": "3357381",
-      "source_sha256": "128514bc2b372e1eb4df67f27cda2d0fac0faf4ebb1d3b83cc30efe31fef2b56",
-      "translated_at": "2026-02-28T13:04:30Z"
+      "commit": "85b1396",
+      "source_sha256": "8ef51c567a944f6c2e066b700c7278eca64656a050205f7f50f88cfd47409aea",
+      "translated_at": "2026-03-09T09:06:35Z"
     },
     "concepts_and_terminology/LOGS.md": {
       "commit": "3357381",
@@ -837,9 +857,9 @@
       "translated_at": "2026-03-03T10:26:12Z"
     },
     "concepts_and_terminology/PERFORMANCE_OPTIMIZATIONS.md": {
-      "commit": "b42c701",
-      "source_sha256": "53b59a85b8b5948a2fc12fd3b79c8757a35d80f7f87b972e4a9ea7e564bc13df",
-      "translated_at": "2026-03-05T00:10:17Z"
+      "commit": "85b1396",
+      "source_sha256": "2074f1a085ea4c92851fc7b20a1ed66d68a6337d09d94ea7e332c18cf0534688",
+      "translated_at": "2026-03-09T09:06:35Z"
     },
     "concepts_and_terminology/PORTS.md": {
       "commit": "3357381",
@@ -872,9 +892,9 @@
       "translated_at": "2026-02-28T13:04:30Z"
     },
     "concepts_and_terminology/TROUBLESHOOTING.md": {
-      "commit": "0f69cdc",
-      "source_sha256": "7f917bcf68f84985f3b706566b84d9b8c3b3f4277a189944f83158eb989583fa",
-      "translated_at": "2026-03-02T07:43:40Z"
+      "commit": "85b1396",
+      "source_sha256": "b203847f11a1b986ba6d2f552382d508ed6bc13c6031bd22382af145d208e28f",
+      "translated_at": "2026-03-09T09:06:35Z"
     },
     "concepts_and_terminology/VOLUMES.md": {
       "commit": "3357381",
@@ -882,9 +902,9 @@
       "translated_at": "2026-02-28T13:04:30Z"
     },
     "doc_ordering.txt": {
-      "commit": "b42c701",
-      "source_sha256": "02c69751313edd62c19bb4be2272d42f976ff6ca59af6318bf5493c5de5e73bd",
-      "translated_at": "2026-03-05T00:10:17Z"
+      "commit": "85b1396",
+      "source_sha256": "664e95814e31402f9e71101ef9d25ddad9f68915d280a47a9516944221ffeda5",
+      "translated_at": "2026-03-09T09:06:35Z"
     },
     "installation_prompt.txt": {
       "commit": "b42c701",
@@ -892,9 +912,9 @@
       "translated_at": "2026-03-05T00:10:17Z"
     },
     "recipes/FULLSTACK_MONOREPO.md": {
-      "commit": "b42c701",
-      "source_sha256": "175dda6b89f9c9cb4c3fefb6ef2b950db1e559cfe1ab23bac84f10688d6d5f4b",
-      "translated_at": "2026-03-05T00:10:17Z"
+      "commit": "85b1396",
+      "source_sha256": "6310b3f52657dc74b825a27f1d46e72248d0edcf115cf879591e6afbadf6251f",
+      "translated_at": "2026-03-09T09:06:35Z"
     },
     "recipes/README.md": {
       "commit": "b42c701",
@@ -914,14 +934,19 @@
       "translated_at": "2026-03-06T22:13:00Z"
     },
     "README.md": {
-      "commit": "8de7870",
-      "source_sha256": "35bcdebe29b86d66fb415e9a63c423087ac7450afba34dc00fc191a798312bde",
-      "translated_at": "2026-03-06T22:13:00Z"
+      "commit": "85b1396",
+      "source_sha256": "12b4d91e0c428b3cf67df9dea25bd9dc713d129efb0b557ec91256dd0d236c5b",
+      "translated_at": "2026-03-09T09:04:33Z"
     },
     "SKILLS_FOR_HOST_AGENTS.md": {
       "commit": "8de7870",
       "source_sha256": "41edafb6689beb58a73c919a295a2d8ebae6b12511e361afe93de3110464be94",
       "translated_at": "2026-03-06T22:13:00Z"
+    },
+    "VIDEO_TUTORIALS.md": {
+      "commit": "85b1396",
+      "source_sha256": "ad9d78eb5642e64ee03e882cc7717a9dcd116ab20edaf993889e65e7cc7ba66f",
+      "translated_at": "2026-03-09T09:04:33Z"
     },
     "coastfiles/AGENT_SHELL.md": {
       "commit": "3357381",
@@ -989,9 +1014,9 @@
       "translated_at": "2026-02-28T12:58:35Z"
     },
     "concepts_and_terminology/ASSIGN.md": {
-      "commit": "b42c701",
-      "source_sha256": "87160a019bdd9c8044e9091a3bdce27b823225ba27384a68ecf89815780a04ba",
-      "translated_at": "2026-03-05T00:08:04Z"
+      "commit": "85b1396",
+      "source_sha256": "68d4c726dc9502fd21cdb5342d66778f210300a05197c8a2d10467420ea4b252",
+      "translated_at": "2026-03-09T09:04:33Z"
     },
     "concepts_and_terminology/BARE_SERVICES.md": {
       "commit": "d769707",
@@ -1039,9 +1064,9 @@
       "translated_at": "2026-02-28T12:58:35Z"
     },
     "concepts_and_terminology/FILESYSTEM.md": {
-      "commit": "3357381",
-      "source_sha256": "128514bc2b372e1eb4df67f27cda2d0fac0faf4ebb1d3b83cc30efe31fef2b56",
-      "translated_at": "2026-02-28T12:58:35Z"
+      "commit": "85b1396",
+      "source_sha256": "8ef51c567a944f6c2e066b700c7278eca64656a050205f7f50f88cfd47409aea",
+      "translated_at": "2026-03-09T09:04:33Z"
     },
     "concepts_and_terminology/LOGS.md": {
       "commit": "3357381",
@@ -1064,9 +1089,9 @@
       "translated_at": "2026-03-03T10:25:12Z"
     },
     "concepts_and_terminology/PERFORMANCE_OPTIMIZATIONS.md": {
-      "commit": "b42c701",
-      "source_sha256": "53b59a85b8b5948a2fc12fd3b79c8757a35d80f7f87b972e4a9ea7e564bc13df",
-      "translated_at": "2026-03-05T00:08:04Z"
+      "commit": "85b1396",
+      "source_sha256": "2074f1a085ea4c92851fc7b20a1ed66d68a6337d09d94ea7e332c18cf0534688",
+      "translated_at": "2026-03-09T09:04:33Z"
     },
     "concepts_and_terminology/PORTS.md": {
       "commit": "3357381",
@@ -1099,9 +1124,9 @@
       "translated_at": "2026-02-28T12:58:35Z"
     },
     "concepts_and_terminology/TROUBLESHOOTING.md": {
-      "commit": "0f69cdc",
-      "source_sha256": "7f917bcf68f84985f3b706566b84d9b8c3b3f4277a189944f83158eb989583fa",
-      "translated_at": "2026-03-02T07:42:26Z"
+      "commit": "85b1396",
+      "source_sha256": "b203847f11a1b986ba6d2f552382d508ed6bc13c6031bd22382af145d208e28f",
+      "translated_at": "2026-03-09T09:04:33Z"
     },
     "concepts_and_terminology/VOLUMES.md": {
       "commit": "3357381",
@@ -1109,9 +1134,9 @@
       "translated_at": "2026-02-28T12:58:35Z"
     },
     "doc_ordering.txt": {
-      "commit": "b42c701",
-      "source_sha256": "02c69751313edd62c19bb4be2272d42f976ff6ca59af6318bf5493c5de5e73bd",
-      "translated_at": "2026-03-05T00:08:04Z"
+      "commit": "85b1396",
+      "source_sha256": "664e95814e31402f9e71101ef9d25ddad9f68915d280a47a9516944221ffeda5",
+      "translated_at": "2026-03-09T09:04:33Z"
     },
     "installation_prompt.txt": {
       "commit": "b42c701",
@@ -1119,9 +1144,9 @@
       "translated_at": "2026-03-05T00:08:04Z"
     },
     "recipes/FULLSTACK_MONOREPO.md": {
-      "commit": "b42c701",
-      "source_sha256": "175dda6b89f9c9cb4c3fefb6ef2b950db1e559cfe1ab23bac84f10688d6d5f4b",
-      "translated_at": "2026-03-05T00:08:04Z"
+      "commit": "85b1396",
+      "source_sha256": "6310b3f52657dc74b825a27f1d46e72248d0edcf115cf879591e6afbadf6251f",
+      "translated_at": "2026-03-09T09:04:33Z"
     },
     "recipes/README.md": {
       "commit": "b42c701",
@@ -1141,14 +1166,19 @@
       "translated_at": "2026-03-06T22:11:16Z"
     },
     "README.md": {
-      "commit": "8de7870",
-      "source_sha256": "35bcdebe29b86d66fb415e9a63c423087ac7450afba34dc00fc191a798312bde",
-      "translated_at": "2026-03-06T22:11:16Z"
+      "commit": "85b1396",
+      "source_sha256": "12b4d91e0c428b3cf67df9dea25bd9dc713d129efb0b557ec91256dd0d236c5b",
+      "translated_at": "2026-03-09T08:57:57Z"
     },
     "SKILLS_FOR_HOST_AGENTS.md": {
       "commit": "8de7870",
       "source_sha256": "41edafb6689beb58a73c919a295a2d8ebae6b12511e361afe93de3110464be94",
       "translated_at": "2026-03-06T22:11:16Z"
+    },
+    "VIDEO_TUTORIALS.md": {
+      "commit": "85b1396",
+      "source_sha256": "ad9d78eb5642e64ee03e882cc7717a9dcd116ab20edaf993889e65e7cc7ba66f",
+      "translated_at": "2026-03-09T08:57:57Z"
     },
     "coastfiles/AGENT_SHELL.md": {
       "commit": "3357381",
@@ -1216,9 +1246,9 @@
       "translated_at": "2026-02-28T12:39:25Z"
     },
     "concepts_and_terminology/ASSIGN.md": {
-      "commit": "b42c701",
-      "source_sha256": "87160a019bdd9c8044e9091a3bdce27b823225ba27384a68ecf89815780a04ba",
-      "translated_at": "2026-03-05T00:01:09Z"
+      "commit": "85b1396",
+      "source_sha256": "68d4c726dc9502fd21cdb5342d66778f210300a05197c8a2d10467420ea4b252",
+      "translated_at": "2026-03-09T08:57:57Z"
     },
     "concepts_and_terminology/BARE_SERVICES.md": {
       "commit": "d769707",
@@ -1266,9 +1296,9 @@
       "translated_at": "2026-02-28T12:39:25Z"
     },
     "concepts_and_terminology/FILESYSTEM.md": {
-      "commit": "3357381",
-      "source_sha256": "128514bc2b372e1eb4df67f27cda2d0fac0faf4ebb1d3b83cc30efe31fef2b56",
-      "translated_at": "2026-02-28T12:39:25Z"
+      "commit": "85b1396",
+      "source_sha256": "8ef51c567a944f6c2e066b700c7278eca64656a050205f7f50f88cfd47409aea",
+      "translated_at": "2026-03-09T08:57:57Z"
     },
     "concepts_and_terminology/LOGS.md": {
       "commit": "3357381",
@@ -1291,9 +1321,9 @@
       "translated_at": "2026-03-03T10:22:04Z"
     },
     "concepts_and_terminology/PERFORMANCE_OPTIMIZATIONS.md": {
-      "commit": "b42c701",
-      "source_sha256": "53b59a85b8b5948a2fc12fd3b79c8757a35d80f7f87b972e4a9ea7e564bc13df",
-      "translated_at": "2026-03-05T00:01:09Z"
+      "commit": "85b1396",
+      "source_sha256": "2074f1a085ea4c92851fc7b20a1ed66d68a6337d09d94ea7e332c18cf0534688",
+      "translated_at": "2026-03-09T08:57:57Z"
     },
     "concepts_and_terminology/PORTS.md": {
       "commit": "3357381",
@@ -1326,9 +1356,9 @@
       "translated_at": "2026-02-28T12:39:25Z"
     },
     "concepts_and_terminology/TROUBLESHOOTING.md": {
-      "commit": "0f69cdc",
-      "source_sha256": "7f917bcf68f84985f3b706566b84d9b8c3b3f4277a189944f83158eb989583fa",
-      "translated_at": "2026-03-02T07:38:29Z"
+      "commit": "85b1396",
+      "source_sha256": "b203847f11a1b986ba6d2f552382d508ed6bc13c6031bd22382af145d208e28f",
+      "translated_at": "2026-03-09T08:57:57Z"
     },
     "concepts_and_terminology/VOLUMES.md": {
       "commit": "3357381",
@@ -1336,9 +1366,9 @@
       "translated_at": "2026-02-28T12:39:25Z"
     },
     "doc_ordering.txt": {
-      "commit": "b42c701",
-      "source_sha256": "02c69751313edd62c19bb4be2272d42f976ff6ca59af6318bf5493c5de5e73bd",
-      "translated_at": "2026-03-05T00:01:09Z"
+      "commit": "85b1396",
+      "source_sha256": "664e95814e31402f9e71101ef9d25ddad9f68915d280a47a9516944221ffeda5",
+      "translated_at": "2026-03-09T08:57:57Z"
     },
     "installation_prompt.txt": {
       "commit": "b42c701",
@@ -1346,9 +1376,9 @@
       "translated_at": "2026-03-05T00:01:09Z"
     },
     "recipes/FULLSTACK_MONOREPO.md": {
-      "commit": "b42c701",
-      "source_sha256": "175dda6b89f9c9cb4c3fefb6ef2b950db1e559cfe1ab23bac84f10688d6d5f4b",
-      "translated_at": "2026-03-05T00:01:09Z"
+      "commit": "85b1396",
+      "source_sha256": "6310b3f52657dc74b825a27f1d46e72248d0edcf115cf879591e6afbadf6251f",
+      "translated_at": "2026-03-09T08:57:57Z"
     },
     "recipes/README.md": {
       "commit": "b42c701",

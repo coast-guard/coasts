@@ -9,7 +9,7 @@ use crate::server::AppState;
 use super::classify::classify_services;
 use super::gitignored_sync::SYNC_EXCLUDE_DIRS;
 use super::util::{check_has_bare_install, load_coastfile_data, read_project_root};
-use super::worktree::detect_worktree_dir_from_git;
+use super::worktree::{detect_worktree_dir_from_git, resolve_internal_sync_marker_path};
 
 pub(super) async fn count_tracked_files(root: &std::path::Path, exclude_paths: &[String]) -> usize {
     let output = tokio::process::Command::new("git")
@@ -53,6 +53,16 @@ pub(super) async fn count_gitignored_files(
                 .count()
         })
         .unwrap_or(0)
+}
+
+fn worktree_sync_cached(worktree_path: &std::path::Path, force_sync: bool) -> bool {
+    if force_sync {
+        return false;
+    }
+
+    resolve_internal_sync_marker_path(worktree_path)
+        .map(|path| path.exists())
+        .unwrap_or(false)
 }
 
 /// Handle an explain-only assign request. Performs analysis without executing.
@@ -144,7 +154,8 @@ pub async fn handle_explain(
             detect_worktree_dir_from_git(root).unwrap_or_else(|| cf_data.worktree_dir.clone());
         let wt_path = root.join(&wt_dir).join(&req.worktree);
         let exists = wt_path.exists();
-        (exists, exists && wt_path.join(".coast-synced").exists())
+        let synced = exists && worktree_sync_cached(&wt_path, req.force_sync);
+        (exists, synced)
     } else {
         (false, false)
     };
@@ -183,4 +194,57 @@ pub async fn handle_explain(
         has_bare_install,
         changed_files_count: changed_files.len(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_worktree_sync_cached_uses_internal_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        let worktree = dir.path().join("wt");
+        let gitdir = dir
+            .path()
+            .join("repo")
+            .join(".git")
+            .join("worktrees")
+            .join("wt");
+        std::fs::create_dir_all(&worktree).unwrap();
+        std::fs::create_dir_all(&gitdir).unwrap();
+        std::fs::write(
+            worktree.join(".git"),
+            format!("gitdir: {}", gitdir.display()),
+        )
+        .unwrap();
+
+        let marker = resolve_internal_sync_marker_path(&worktree).unwrap();
+        std::fs::write(marker, "").unwrap();
+
+        assert!(worktree_sync_cached(&worktree, false));
+    }
+
+    #[test]
+    fn test_worktree_sync_cached_force_sync_disables_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        let worktree = dir.path().join("wt");
+        let gitdir = dir
+            .path()
+            .join("repo")
+            .join(".git")
+            .join("worktrees")
+            .join("wt");
+        std::fs::create_dir_all(&worktree).unwrap();
+        std::fs::create_dir_all(&gitdir).unwrap();
+        std::fs::write(
+            worktree.join(".git"),
+            format!("gitdir: {}", gitdir.display()),
+        )
+        .unwrap();
+
+        let marker = resolve_internal_sync_marker_path(&worktree).unwrap();
+        std::fs::write(marker, "").unwrap();
+
+        assert!(!worktree_sync_cached(&worktree, true));
+    }
 }

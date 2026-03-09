@@ -1,6 +1,6 @@
 # Filesystem
 
-Your host machine and every Coast instance share the same project files. The host project root is bind-mounted into the DinD container at `/workspace`, so edits on the host appear inside the Coast instantly and vice versa. This is what makes it possible for an agent running on your host machine to edit code while services inside the Coast pick up the changes in real time.
+Your host machine and every Coast instance share the same project files. The host project root is mounted read-write into the DinD container at `/host-project`, and Coast bind-mounts the active working tree at `/workspace`. This is what makes it possible for an agent running on your host machine to edit code while services inside the Coast pick up the changes in real time.
 
 ## The Shared Mount
 
@@ -82,11 +82,13 @@ After:   /workspace  ←──mount──  /host-project/.worktrees/feature-auth
 
 The worktree is created on the host at `{project_root}/.worktrees/{worktree_name}`. The `.worktrees` directory name is configurable via `worktree_dir` in your Coastfile and should be in your `.gitignore`.
 
-Inside the container, `/workspace` is lazy-unmounted and re-bound to the worktree subdirectory at `/host-project/.worktrees/{branch_name}`. This remount is fast — it does not recreate the DinD container or restart the inner Docker daemon. Inner compose services are recreated so their bind mounts resolve through the new `/workspace`.
+If the worktree is new, Coast bootstraps selected gitignored files from the project root before the remount. It enumerates ignored files with `git ls-files --others --ignored --exclude-standard`, filters out common heavy directories plus any configured `exclude_paths`, then uses `rsync --files-from` with `--link-dest` to hardlink the selected files into the worktree. Coast records that bootstrap in internal worktree metadata and skips it on later assigns to the same worktree unless you explicitly refresh it with `coast assign --force-sync`.
 
-Gitignored files like `node_modules` are synced from the project root into the worktree via rsync with hardlinks, so the initial setup is near-instant even for large dependency trees.
+Inside the container, `/workspace` is lazy-unmounted and re-bound to the worktree subdirectory at `/host-project/.worktrees/{branch_name}`. This remount is fast — it does not recreate the DinD container or restart the inner Docker daemon. Compose and bare services may still be recreated or restarted after the remount so their bind mounts resolve through the new `/workspace`.
 
-On macOS, file I/O between the host and the Docker VM has inherent overhead. Coast runs `git ls-files` during assign and unassign to diff the worktree, and in large codebases this can add noticeable latency. If parts of your project do not need to be diffed between assigns (docs, test fixtures, scripts), you can exclude them with `exclude_paths` in your Coastfile to reduce this overhead. See [Assign and Unassign](ASSIGN.md) for details.
+Large dependency directories such as `node_modules` are not part of this generic bootstrap path. Those are typically handled through service-specific caches or volumes instead.
+
+If you use `[assign.rebuild_triggers]`, Coast also runs `git diff --name-only <previous>..<worktree>` on the host to decide whether a service marked `rebuild` can be downgraded to `restart`. See [Assign and Unassign](ASSIGN.md) and [Performance Optimizations](PERFORMANCE_OPTIMIZATIONS.md) for the details that affect assign latency.
 
 `coast unassign` reverts `/workspace` back to `/host-project` (the project root). `coast start` after a stop re-applies the correct mount based on whether the instance has an assigned worktree.
 

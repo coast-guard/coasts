@@ -1,6 +1,6 @@
 # Optimizaciones de Rendimiento
 
-Coast está diseñado para que el cambio de ramas sea rápido, pero en monorepos grandes el comportamiento predeterminado puede introducir latencia innecesaria. Esta página cubre las palancas disponibles en tu Coastfile para reducir los tiempos de asignación y desasignación.
+Coast está diseñado para que el cambio de rama sea rápido, pero en monorepos grandes el comportamiento predeterminado aún puede introducir latencia. Esta página cubre las palancas disponibles en tu Coastfile y, más importante, qué partes de `coast assign` afectan realmente.
 
 ## Por Qué Assign Puede Ser Lento
 
@@ -9,33 +9,52 @@ Coast está diseñado para que el cambio de ramas sea rápido, pero en monorepos
 ```text
 coast assign dev-1 --worktree feature/payments
 
-  1. stop affected compose services
-  2. create git worktree (if new)
-  3. sync gitignored files into worktree (rsync)  ← often the bottleneck
-  4. remount /workspace
-  5. git ls-files diff  ← can be slow in large repos
-  6. restart/rebuild services
+  1. classify services and optional rebuild-trigger diff
+  2. stop affected services
+  3. create git worktree (if new)
+  4. bootstrap gitignored files into the worktree (first assign only)
+  5. remount /workspace
+  6. recreate/restart containers
+  7. rebuild images for services using "rebuild"
+  8. wait for healthy
 ```
 
-Dos pasos dominan la latencia: la **sincronización de archivos ignorados por git** y el **diff de `git ls-files`**. Ambos escalan con el tamaño del repositorio y se amplifican por la sobrecarga de VirtioFS en macOS.
+Los mayores costos variables suelen ser el **bootstrap inicial de archivos ignorados por git**, los **reinicios de contenedores** y las **reconstrucciones de imágenes**. El diff opcional de rama usado para los disparadores de reconstrucción es mucho más barato, pero aun así puede acumularse si lo apuntas a conjuntos de disparadores amplios.
 
-### Sincronización de Archivos Ignorados por Git
+### Bootstrap de Archivos Ignorados por Git
 
-Cuando un worktree se crea por primera vez, Coast usa `rsync --link-dest` para crear hardlinks de los archivos ignorados por git (artefactos de build, cachés, código generado) desde la raíz del proyecto hacia el nuevo worktree. Los hardlinks son casi instantáneos por archivo, pero rsync aun así debe recorrer cada directorio en el árbol de origen para descubrir qué necesita sincronizarse.
+Cuando se crea un worktree por primera vez, Coast inicializa (bootstrap) archivos seleccionados ignorados por git desde la raíz del proyecto hacia ese worktree.
 
-Si la raíz de tu proyecto contiene directorios grandes que rsync no debería tocar — otros worktrees, dependencias vendorizadas, aplicaciones no relacionadas — rsync pierde tiempo descendiendo y haciendo stat a miles de archivos que nunca copiará. En un repo con 400,000+ archivos ignorados por git, solo este recorrido puede tardar 30–60 segundos.
+La secuencia es:
 
-Coast excluye automáticamente `node_modules`, `.git`, `dist`, `target`, `.worktrees`, `.coasts` y otros directorios pesados comunes de esta sincronización. Se pueden excluir directorios adicionales mediante `exclude_paths` en tu Coastfile (ver abajo).
+1. Ejecutar `git ls-files --others --ignored --exclude-standard` en el host para enumerar los archivos ignorados.
+2. Filtrar directorios pesados comunes más cualquier `exclude_paths` configurado.
+3. Ejecutar `rsync --files-from` con `--link-dest` para que los archivos seleccionados se enlacen mediante hardlinks en el worktree en lugar de copiarse byte por byte.
+4. Registrar el bootstrap exitoso en los metadatos internos del worktree para que asignaciones posteriores al mismo worktree puedan omitirlo.
 
-Una vez que un worktree ha sido sincronizado, se escribe un marcador `.coast-synced` y las asignaciones posteriores al mismo worktree omiten por completo la sincronización.
+Si `rsync` no está disponible, Coast recurre a un pipeline de `tar`.
 
-### Diff de `git ls-files`
+Directorios grandes como `node_modules`, `.git`, `dist`, `target`, `.next`, `.nuxt`, `.cache`, `.worktrees` y `.coasts` se excluyen automáticamente. Se espera que los directorios grandes de dependencias se gestionen mediante cachés o volúmenes de servicios, en lugar de este paso genérico de bootstrap.
 
-Cada assign y unassign también ejecuta `git ls-files` para determinar qué archivos rastreados cambiaron entre ramas. En macOS, toda E/S de archivos entre el host y la VM de Docker cruza VirtioFS (o gRPC-FUSE en configuraciones más antiguas). La operación `git ls-files` hace stat de cada archivo rastreado, y la sobrecarga por archivo se acumula rápidamente. Un repo con 30,000 archivos rastreados tardará notablemente más que uno con 5,000, incluso si el diff real es pequeño.
+Debido a que la lista de archivos se genera por adelantado, `rsync` trabaja desde una lista dirigida en lugar de recorrer a ciegas todo el repositorio. Aun así, los repos con conjuntos muy grandes de archivos ignorados pueden seguir pagando un costo notable y único de bootstrap cuando se crea un worktree por primera vez. Si alguna vez necesitas refrescar ese bootstrap manualmente, ejecuta `coast assign --force-sync`.
 
-## `exclude_paths` — La Palanca Principal
+### Diff de Disparadores de Reconstrucción
 
-La opción `exclude_paths` en tu Coastfile le indica a Coast que omita árboles de directorios completos durante tanto la **sincronización de archivos ignorados por git** (rsync) como el **diff de `git ls-files`**. Los archivos bajo rutas excluidas siguen presentes en el worktree — simplemente no se recorren durante assign.
+Coast solo calcula un diff de rama cuando `[assign.rebuild_triggers]` está configurado. En ese caso ejecuta:
+
+```bash
+git diff --name-only <previous>..<worktree>
+```
+
+El resultado se usa para degradar un servicio de `rebuild` a `restart` cuando ninguno de sus archivos disparadores cambió.
+
+Esto es mucho más acotado que el modelo antiguo de “hacer diff de cada archivo rastreado en cada assign”. Si no configuras disparadores de reconstrucción, aquí no hay ningún paso de diff de rama.
+
+`exclude_paths` actualmente no cambia este diff. Mantén tus listas de disparadores enfocadas en verdaderas entradas de tiempo de build como Dockerfiles, lockfiles y manifiestos de paquetes.
+
+## `exclude_paths` — La Palanca Principal para Nuevos Worktrees
+
+La opción `exclude_paths` en tu Coastfile le dice a Coast que omita árboles de directorios completos al construir la lista de archivos ignorados por git para el bootstrap de un nuevo worktree.
 
 ```toml
 [assign]
@@ -48,31 +67,40 @@ exclude_paths = [
 ]
 ```
 
-Esta es la optimización más impactante para monorepos grandes. Reduce tanto el recorrido de rsync en el primer assign como el diff de archivos en cada assign. Si tu proyecto tiene 30,000 archivos rastreados pero solo 20,000 son relevantes para los servicios que se ejecutan en el Coast, excluir los otros 10,000 reduce un tercio del trabajo en cada assign.
+Los archivos bajo rutas excluidas siguen presentes en el worktree si Git los rastrea. Coast simplemente evita gastar tiempo enumerando y creando hardlinks de archivos ignorados bajo esos árboles durante el bootstrap inicial.
+
+Esto es más impactante cuando la raíz de tu repo contiene grandes directorios ignorados de los que tus servicios en ejecución no se preocupan: apps no relacionadas, cachés vendorizadas, fixtures de test, documentación generada y otros árboles pesados.
+
+Si asignas repetidamente al mismo worktree ya sincronizado, `exclude_paths` importa menos porque el bootstrap se omite. En ese caso, las decisiones de reinicio/reconstrucción de servicios se vuelven el factor dominante.
 
 ### Elegir Qué Excluir
 
-El objetivo es excluir todo lo que tus servicios de Coast no necesitan. Empieza perfilando qué hay en tu repo:
+Empieza perfilando tus archivos ignorados:
+
+```bash
+git ls-files --others --ignored --exclude-standard | cut -d'/' -f1 | sort | uniq -c | sort -rn
+```
+
+Si además quieres una vista del layout rastreado para ajustar los disparadores de reconstrucción, usa:
 
 ```bash
 git ls-files | cut -d'/' -f1 | sort | uniq -c | sort -rn
 ```
 
-Esto muestra el conteo de archivos por directorio de nivel superior. A partir de ahí, identifica qué directorios tus servicios de compose realmente montan o de los que dependen, y excluye el resto.
-
 **Mantén** directorios que:
-- Contienen código fuente montado en servicios en ejecución (p. ej., tus directorios de la app)
-- Contienen librerías compartidas importadas por esos servicios
-- Están referenciados en `[assign.rebuild_triggers]`
+- Contengan código fuente montado en servicios en ejecución
+- Contengan librerías compartidas importadas por esos servicios
+- Contengan archivos generados o cachés que tu runtime realmente necesite en el primer arranque
+- Estén referenciados en `[assign.rebuild_triggers]`
 
 **Excluye** directorios que:
-- Pertenecen a apps o servicios que no se ejecutan en tu Coast (apps de otros equipos, clientes móviles, herramientas CLI)
-- Contienen documentación, scripts, configuraciones de CI o tooling no relacionado con el runtime
-- Son cachés grandes de dependencias incluidos en el repo (p. ej., definiciones de proto vendorizadas, caché offline de `.yarn`)
+- Pertenezcan a apps o servicios que no se ejecutan en tu Coast
+- Contengan documentación, scripts, configuraciones de CI o tooling no relacionado con el runtime
+- Almacenen grandes cachés ignoradas que ya se preservan en otro lugar, como cachés dedicadas por servicio o volúmenes compartidos
 
-### Ejemplo: Monorepo Con Múltiples Apps
+### Ejemplo: Monorepo con Múltiples Apps
 
-Un monorepo con 29,000 archivos repartidos entre muchas apps, pero solo dos son relevantes:
+Un monorepo con muchos directorios de nivel superior, pero solo un subconjunto importa para los servicios que se ejecutan en este Coast:
 
 ```text
   13,000  bookface/         ← active
@@ -101,7 +129,7 @@ exclude_paths = [
 ]
 ```
 
-Esto reduce la superficie del diff de 29,000 archivos a ~21,000 — aproximadamente 28% menos stats en cada assign.
+Esto mantiene el bootstrap inicial del worktree enfocado en los directorios que los servicios en ejecución realmente necesitan, en lugar de gastar tiempo en árboles ignorados no relacionados.
 
 ## Recorta Servicios Inactivos de `[assign.services]`
 
@@ -123,9 +151,9 @@ api = "restart"
 
 Lo mismo aplica a `[assign.rebuild_triggers]` — elimina entradas de servicios que no estén activos.
 
-## Usa `"hot"` Cuando Sea Posible
+## Usa `"hot"` Donde Sea Posible
 
-La estrategia `"hot"` omite por completo el reinicio del contenedor. El [remount del filesystem](FILESYSTEM.md) intercambia el código bajo `/workspace` y el file watcher del servicio (Vite, webpack, nodemon, air, etc.) detecta los cambios automáticamente.
+La estrategia `"hot"` omite por completo el reinicio del contenedor. El [remontaje del sistema de archivos](FILESYSTEM.md) intercambia el código bajo `/workspace` y el watcher de archivos del servicio (Vite, webpack, nodemon, air, etc.) detecta los cambios automáticamente.
 
 ```toml
 [assign.services]
@@ -133,9 +161,9 @@ web = "hot"        # Vite/webpack dev server with HMR
 api = "restart"    # Rails/Go — needs a process restart
 ```
 
-`"hot"` es más rápido que `"restart"` porque evita el ciclo de stop/start del contenedor. Úsalo para cualquier servicio que ejecute un servidor de desarrollo con observación de archivos. Reserva `"restart"` para servicios que cargan el código al inicio y no observan cambios (la mayoría de apps Rails, Go y Java).
+`"hot"` es más rápido que `"restart"` porque evita el ciclo de detener/arrancar el contenedor. Úsalo para cualquier servicio que ejecute un servidor de desarrollo con vigilancia de archivos. Reserva `"restart"` para servicios que cargan el código al arrancar y no observan cambios (la mayoría de apps Rails, Go y Java).
 
-## Usa `"rebuild"` Con Triggers
+## Usa `"rebuild"` con Disparadores
 
 Si la estrategia predeterminada de un servicio es `"rebuild"`, cada cambio de rama reconstruye la imagen de Docker — incluso si no cambió nada que afecte a la imagen. Añade `[assign.rebuild_triggers]` para condicionar la reconstrucción a archivos específicos:
 
@@ -147,15 +175,15 @@ worker = "rebuild"
 worker = ["Dockerfile", "package.json", "package-lock.json"]
 ```
 
-Si ninguno de los archivos trigger cambió entre ramas, Coast omite la reconstrucción y en su lugar hace fallback a un reinicio. Esto evita builds costosos de imágenes en cambios rutinarios de código.
+Si ninguno de los archivos disparadores cambió entre ramas, Coast omite la reconstrucción y vuelve a un reinicio en su lugar. Esto evita builds de imágenes costosos en cambios rutinarios de código.
 
 ## Resumen
 
 | Optimización | Impacto | Afecta | Cuándo usar |
 |---|---|---|---|
-| `exclude_paths` | Alto | rsync + git diff | Siempre, en cualquier repo con directorios que tu Coast no necesita |
-| Eliminar servicios inactivos | Medio | reinicio de servicios | Cuando `COMPOSE_PROFILES` limita qué servicios se ejecutan |
-| Estrategia `"hot"` | Medio | reinicio de servicios | Servicios con file watchers (Vite, webpack, nodemon, air) |
-| `rebuild_triggers` | Medio | reconstrucción de imagen | Servicios que usan `"rebuild"` y solo lo necesitan para cambios de infra |
+| `exclude_paths` | Alto | bootstrap inicial de archivos ignorados por git | Repos con árboles ignorados grandes que tu Coast no necesita |
+| Eliminar servicios inactivos | Medio | reinicio/recreación de servicios | Cuando `COMPOSE_PROFILES` limita qué servicios se ejecutan |
+| Estrategia `"hot"` | Alto | reinicio de contenedores | Servicios con watchers de archivos (Vite, webpack, nodemon, air) |
+| `rebuild_triggers` | Alto | reconstrucciones de imágenes + diff de rama opcional | Servicios que usan `"rebuild"` y solo lo necesitan para cambios de infra |
 
-Empieza con `exclude_paths`. Es el cambio de menor esfuerzo y mayor impacto que puedes hacer. Acelera tanto el primer assign (rsync) como cada assign posterior (git diff).
+Si los nuevos worktrees tardan en asignarse por primera vez, empieza con `exclude_paths`. Si los assigns repetidos son lentos, concéntrate en `hot` vs `restart`, recorta servicios inactivos y mantén `rebuild_triggers` bien acotado.

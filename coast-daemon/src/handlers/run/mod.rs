@@ -244,6 +244,7 @@ async fn assign_worktree(
         worktree: worktree_name.to_string(),
         commit_sha: None,
         explain: false,
+        force_sync: false,
     };
 
     match super::assign::handle(assign_req, state, progress.clone()).await {

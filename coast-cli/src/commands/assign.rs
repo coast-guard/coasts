@@ -32,6 +32,10 @@ pub struct AssignArgs {
     /// Analyze what an assign would do without executing it.
     #[arg(long)]
     pub explain: bool,
+
+    /// Refresh the cached ignored-file bootstrap before assigning.
+    #[arg(long)]
+    pub force_sync: bool,
 }
 
 /// Execute the `coast assign` command.
@@ -59,13 +63,14 @@ pub async fn execute(args: &AssignArgs, project: &str) -> Result<()> {
         worktree: worktree.clone(),
         commit_sha,
         explain: args.explain,
+        force_sync: args.force_sync,
     });
 
     if args.explain {
         let response = super::send_request(request).await;
         match response {
             Ok(Response::AssignExplain(resp)) => {
-                print_explain(&resp);
+                print_explain(&resp, args.force_sync);
                 Ok(())
             }
             Ok(Response::Error(e)) => bail!("{}", e.error),
@@ -124,7 +129,7 @@ pub async fn execute(args: &AssignArgs, project: &str) -> Result<()> {
     }
 }
 
-fn print_explain(resp: &AssignExplainResponse) {
+fn print_explain(resp: &AssignExplainResponse, force_sync: bool) {
     println!("{}", "Assign Explain".bold().underline());
     println!();
     println!("  Instance:  {}", resp.name.bold());
@@ -167,14 +172,14 @@ fn print_explain(resp: &AssignExplainResponse) {
             "no (will be created)".yellow()
         }
     );
-    println!(
-        "  Synced:  {}",
-        if resp.worktree_synced {
-            "yes (gitignored copy will be skipped)".green()
-        } else {
-            "no (gitignored files will be hardlinked)".yellow()
-        }
-    );
+    let cache_status = if force_sync {
+        "refresh requested (bootstrap will run)".yellow()
+    } else if resp.worktree_synced {
+        "warm (bootstrap will be skipped)".green()
+    } else {
+        "cold (bootstrap will run if needed)".yellow()
+    };
+    println!("  Bootstrap cache:  {cache_status}");
     println!();
 
     println!("{}", "File Counts".bold());
@@ -268,5 +273,38 @@ mod tests {
     fn test_assign_args_branch_rejected() {
         let result = TestCli::try_parse_from(["test", "dev-1", "--branch", "main"]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_assign_args_force_sync() {
+        let cli = TestCli::try_parse_from(["test", "dev-1", "-w", "main", "--force-sync"]).unwrap();
+        assert!(cli.args.force_sync);
+    }
+
+    #[test]
+    fn test_assign_args_force_sync_with_explain() {
+        let cli =
+            TestCli::try_parse_from(["test", "dev-1", "-w", "main", "--force-sync", "--explain"])
+                .unwrap();
+        assert!(cli.args.force_sync);
+        assert!(cli.args.explain);
+    }
+
+    #[test]
+    fn test_assign_args_force_sync_with_silent() {
+        let cli =
+            TestCli::try_parse_from(["test", "dev-1", "-w", "main", "--force-sync", "--silent"])
+                .unwrap();
+        assert!(cli.args.force_sync);
+        assert!(cli.args.silent);
+    }
+
+    #[test]
+    fn test_assign_args_force_sync_with_verbose() {
+        let cli =
+            TestCli::try_parse_from(["test", "dev-1", "-w", "main", "--force-sync", "--verbose"])
+                .unwrap();
+        assert!(cli.args.force_sync);
+        assert!(cli.args.verbose);
     }
 }

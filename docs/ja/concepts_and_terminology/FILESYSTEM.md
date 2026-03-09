@@ -1,6 +1,6 @@
 # Filesystem
 
-ホストマシンと各 Coast インスタンスは同じプロジェクトファイルを共有します。ホストのプロジェクトルートは DinD コンテナ内の `/workspace` にバインドマウントされるため、ホストでの編集は Coast 内に即座に反映され、その逆も同様です。これにより、ホストマシン上で動作するエージェントがコードを編集しつつ、Coast 内のサービスがリアルタイムで変更を取り込めます。
+ホストマシンと各 Coast インスタンスは同じプロジェクトファイルを共有します。ホスト側のプロジェクトルートは DinD コンテナ内の `/host-project` に読み書き可能でマウントされ、Coast はアクティブな作業ツリーを `/workspace` にバインドマウントします。これにより、ホストマシン上で動作するエージェントがコードを編集しつつ、Coast 内のサービスが変更をリアルタイムで反映できるようになります。
 
 ## The Shared Mount
 
@@ -31,11 +31,11 @@ Host machine
                 └── /app               ← compose bind mount from /workspace/src
 ```
 
-ホストのプロジェクトルートは、コンテナ作成時に [DinD コンテナ](RUNTIMES_AND_SERVICES.md) 内の `/host-project` に読み書き可能でマウントされます。コンテナ起動後、コンテナ内で `mount --bind /host-project /workspace` を実行して共有マウント伝播（`mount --make-rshared`）付きの作業用パス `/workspace` を作成するため、`/workspace` のサブディレクトリをバインドマウントする内側の compose サービスが正しい内容を参照できます。
+ホスト側のプロジェクトルートは、コンテナ作成時に [DinD コンテナ](RUNTIMES_AND_SERVICES.md) 内の `/host-project` に読み書き可能でマウントされます。コンテナ起動後、コンテナ内で `mount --bind /host-project /workspace` を実行し、共有マウント伝播（`mount --make-rshared`）付きの作業用 `/workspace` パスを作成します。これにより、`/workspace` のサブディレクトリを bind-mount する内側の compose サービスは正しい内容を参照できます。
 
-この 2 段階の方式には理由があります。`/host-project` の Docker バインドマウントはコンテナ作成時に固定され、コンテナを作り直さない限り変更できません。一方、コンテナ内の `/workspace` に対する Linux のバインドマウントは、コンテナのライフサイクルに触れずにアンマウントして別のサブディレクトリ（worktree）へ再バインドできます。これが `coast assign` を高速にしている理由です。
+この二段階のアプローチには理由があります。`/host-project` の Docker bind mount はコンテナ作成時に固定され、コンテナを再作成しない限り変更できません。一方、コンテナ内の Linux bind mount である `/workspace` は、コンテナのライフサイクルに触れずにアンマウントして別のサブディレクトリ（worktree）へ再バインドできます。これが `coast assign` を高速にしている要因です。
 
-`/workspace` は読み書き可能です。ファイル変更は即座に双方向へ流れます。ホストでファイルを保存すれば Coast 内の開発サーバーが変更を取り込みます。Coast 内でファイルを作成すればホスト側に現れます。
+`/workspace` は読み書き可能です。ファイル変更は両方向に即時反映されます。ホストでファイルを保存すると Coast 内の dev サーバーがそれを拾います。Coast 内でファイルを作成するとホストに表示されます。
 
 ## Host Agents and Coast
 
@@ -59,19 +59,19 @@ Host machine
 └───────────────────────────────────────────────────────────┘
 ```
 
-ファイルシステムが共有されているため、ホスト上で動作する AI コーディングエージェントは自由にファイルを編集でき、Coast 内で動作中のサービスは変更を即座に認識します。エージェントは Coast コンテナ内で動作する必要はなく、通常どおりホストから操作します。
+ファイルシステムが共有されているため、ホスト上で動作する AI コーディングエージェントは自由にファイルを編集でき、Coast 内で稼働中のサービスは変更を即座に認識します。エージェントは Coast コンテナ内で動作する必要はなく、通常どおりホストから操作できます。
 
-エージェントがランタイム情報（ログ、サービス状態、テスト出力）を必要とする場合は、ホストから Coast CLI コマンドを呼び出します:
+エージェントが実行時情報（ログ、サービス状態、テスト出力など）を必要とする場合は、ホストから Coast CLI コマンドを呼び出します。
 
-- サービス出力を見るには `coast logs dev-1 --service web --tail 50`（[Logs](LOGS.md) を参照）
-- サービス状態を見るには `coast ps dev-1`（[Runtimes and Services](RUNTIMES_AND_SERVICES.md) を参照）
-- Coast 内でコマンドを実行するには `coast exec dev-1 -- npm test`（[Exec & Docker](EXEC_AND_DOCKER.md) を参照）
+- `coast logs dev-1 --service web --tail 50` でサービス出力を確認（[Logs](LOGS.md) を参照）
+- `coast ps dev-1` でサービス状態を確認（[Runtimes and Services](RUNTIMES_AND_SERVICES.md) を参照）
+- `coast exec dev-1 -- npm test` で Coast 内でコマンドを実行（[Exec & Docker](EXEC_AND_DOCKER.md) を参照）
 
-これが基本的なアーキテクチャ上の利点です: **コード編集はホストで行い、実行環境は Coast にあり、共有ファイルシステムが両者を橋渡しします。** ホスト上のエージェントは、作業のために Coast の「内側」に入る必要がありません。
+これが基本となるアーキテクチャ上の利点です: **コード編集はホストで行い、実行は Coast で行い、共有ファイルシステムがそれらを橋渡しします。** ホスト側エージェントは作業のために Coast の「内側」に入る必要がありません。
 
 ## Worktree Switching
 
-`coast assign` が Coast を別の worktree に切り替えるとき、プロジェクトルートではなくその git worktree を指すように `/workspace` を再マウントします:
+`coast assign` が Coast を別の worktree に切り替えると、プロジェクトルートではなくその git worktree を指すように `/workspace` を再マウントします。
 
 ```text
 coast assign dev-1 --worktree feature-auth
@@ -80,27 +80,29 @@ Before:  /workspace  ←──mount──  /host-project                        
 After:   /workspace  ←──mount──  /host-project/.worktrees/feature-auth   (worktree)
 ```
 
-worktree はホスト上の `{project_root}/.worktrees/{worktree_name}` に作成されます。`.worktrees` ディレクトリ名は Coastfile の `worktree_dir` で設定でき、`.gitignore` に含めるべきです。
+worktree はホスト上の `{project_root}/.worktrees/{worktree_name}` に作成されます。`.worktrees` ディレクトリ名は Coastfile の `worktree_dir` で設定可能で、`.gitignore` に含めるべきです。
 
-コンテナ内では `/workspace` が遅延アンマウントされ、`/host-project/.worktrees/{branch_name}` にある worktree サブディレクトリへ再バインドされます。この再マウントは高速で、DinD コンテナを作り直したり内側の Docker デーモンを再起動したりしません。内側の compose サービスは再作成され、バインドマウントが新しい `/workspace` を通して解決されます。
+worktree が新規の場合、Coast は再マウントの前に、プロジェクトルートから選択した gitignored ファイルをブートストラップします。`git ls-files --others --ignored --exclude-standard` で無視ファイルを列挙し、一般的に重いディレクトリと設定された `exclude_paths` を除外してから、`rsync --files-from` と `--link-dest` を用いて選択ファイルを worktree へハードリンクします。Coast はそのブートストラップを内部 worktree メタデータに記録し、同一 worktree への後続の assign では、`coast assign --force-sync` で明示的に更新しない限りスキップします。
 
-`node_modules` のような gitignore 対象ファイルは、ハードリンク付きの rsync によりプロジェクトルートから worktree へ同期されるため、大きな依存関係ツリーでも初期セットアップはほぼ瞬時です。
+コンテナ内では、`/workspace` が遅延アンマウントされ、`/host-project/.worktrees/{branch_name}` にある worktree サブディレクトリへ再バインドされます。この再マウントは高速で、DinD コンテナの再作成や内側の Docker デーモン再起動は行いません。compose サービスおよび bare サービスは、新しい `/workspace` を経由して bind mount が解決されるよう、再マウント後に再作成または再起動されることがあります。
 
-macOS では、ホストと Docker VM 間のファイル I/O に固有のオーバーヘッドがあります。Coast は assign と unassign の際に `git ls-files` を実行して worktree の差分を取るため、大規模コードベースでは目立つ遅延が発生することがあります。プロジェクト内の一部（ドキュメント、テストフィクスチャ、スクリプトなど）が assign 間の差分対象である必要がない場合は、Coastfile の `exclude_paths` で除外してこのオーバーヘッドを減らせます。詳細は [Assign and Unassign](ASSIGN.md) を参照してください。
+`node_modules` のような大きな依存ディレクトリは、この汎用ブートストラップ経路の対象ではありません。通常はサービス固有のキャッシュやボリュームによって扱います。
 
-`coast unassign` は `/workspace` を `/host-project`（プロジェクトルート）に戻します。停止後に `coast start` すると、インスタンスに worktree が割り当てられているかどうかに応じて正しいマウントが再適用されます。
+`[assign.rebuild_triggers]` を使用している場合、Coast はホスト上で `git diff --name-only <previous>..<worktree>` も実行し、`rebuild` とマークされたサービスを `restart` に格下げできるかどうかを判断します。assign のレイテンシに影響する詳細は [Assign and Unassign](ASSIGN.md) および [Performance Optimizations](PERFORMANCE_OPTIMIZATIONS.md) を参照してください。
+
+`coast unassign` は `/workspace` を `/host-project`（プロジェクトルート）に戻します。停止後に `coast start` を実行すると、インスタンスに worktree が割り当てられているかどうかに基づいて、正しいマウントが再適用されます。
 
 ## All Mounts
 
-各 Coast コンテナには次のマウントがあります:
+すべての Coast コンテナには次のマウントがあります。
 
 | Path | Type | Access | Purpose |
 |---|---|---|---|
-| `/workspace` | bind mount (in-container) | RW | プロジェクトルートまたは worktree。assign 時に切り替え可能。 |
+| `/workspace` | bind mount (in-container) | RW | プロジェクトルートまたは worktree。assign で切り替え可能。 |
 | `/host-project` | Docker bind mount | RW | 生のプロジェクトルート。コンテナ作成時に固定。 |
-| `/image-cache` | Docker bind mount | RO | `~/.coast/image-cache/` からの事前に pull 済み OCI tarball。 |
+| `/image-cache` | Docker bind mount | RO | `~/.coast/image-cache/` からの事前 pull 済み OCI tarball。 |
 | `/coast-artifact` | Docker bind mount | RO | 書き換え済み compose ファイルを含むビルド成果物。 |
-| `/coast-override` | Docker bind mount | RO | [shared services](SHARED_SERVICES.md) 用に生成された compose override。 |
-| `/var/lib/docker` | Named volume | RW | 内側の Docker デーモンの状態。コンテナ削除後も保持される。 |
+| `/coast-override` | Docker bind mount | RO | [shared services](SHARED_SERVICES.md) 向けに生成された compose オーバーライド。 |
+| `/var/lib/docker` | Named volume | RW | 内側の Docker デーモン状態。コンテナ削除後も永続化。 |
 
-読み取り専用マウントはインフラ用途で、Coast が生成するビルド成果物、キャッシュ済みイメージ、compose override を運びます。これらは `coast build` と Coastfile を通じて間接的に操作します。読み書き可能マウントは、あなたのコードが存在する場所であり、内側のデーモンが状態を保存する場所です。
+読み取り専用マウントはインフラです。Coast が生成するビルド成果物、キャッシュ済みイメージ、compose オーバーライドを運びます。これらは `coast build` と Coastfile を通じて間接的に操作します。読み書き可能マウントは、あなたのコードが存在する場所であり、内側のデーモンが状態を保存する場所です。

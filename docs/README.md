@@ -67,3 +67,7 @@ Dev containers are generally designed for mounting an IDE into a single containe
 
 If you want a small example project to try with Coasts, start with the [`coasts-demo` repository](https://github.com/coast-guard/coasts-demo).
 
+## Video Tutorials
+
+If you want a quick video walkthrough, see [VIDEO_TUTORIALS.md](VIDEO_TUTORIALS.md) for the official Coasts playlist and direct links to each tutorial.
+

@@ -1,6 +1,6 @@
 # Monorepo Full-Stack
 
-Esta receita é para um monorepo grande com várias aplicações web apoiadas por um banco de dados e uma camada de cache compartilhados. A stack usa Docker Compose para os serviços de backend mais pesados (Rails, Sidekiq, SSR) e executa servidores de desenvolvimento Vite como serviços bare no host DinD. Postgres e Redis rodam como serviços compartilhados no daemon Docker do host para que cada instância do Coast se comunique com a mesma infraestrutura sem duplicá-la.
+Esta receita é para um monorepo grande com múltiplas aplicações web apoiadas por um banco de dados e uma camada de cache compartilhados. A stack usa Docker Compose para os serviços de backend mais pesados (Rails, Sidekiq, SSR) e executa servidores de desenvolvimento Vite como serviços bare no host DinD. Postgres e Redis rodam como serviços compartilhados no daemon Docker do host para que cada instância do Coast se comunique com a mesma infraestrutura sem duplicá-la.
 
 Este padrão funciona bem quando:
 
@@ -260,7 +260,7 @@ mount = "/usr/src/web/public/assets"
 Todos os volumes aqui usam `strategy = "shared"`, o que significa que um único volume Docker é compartilhado entre todas as instâncias do Coast. Esta é a escolha correta para **caches e artefatos de build** — coisas em que escritas concorrentes são seguras e duplicar por instância desperdiçaria espaço em disco e tornaria o startup mais lento:
 
 - **`bundle`** — o cache de gems Ruby. As gems são as mesmas entre branches. Compartilhar evita baixar o bundle inteiro para cada instância do Coast.
-- **`*_rails_cache`** — caches baseados em arquivo do Rails. Eles aceleram o desenvolvimento mas não são preciosos — qualquer instância pode regenerá-los.
+- **`*_rails_cache`** — caches baseados em arquivo do Rails. Eles aceleram o desenvolvimento, mas não são preciosos — qualquer instância pode regenerá-los.
 - **`*_assets`** — assets compilados. Mesma lógica dos caches.
 
 **Por que não shared para bancos de dados?** O Coast imprime um aviso se você usar `strategy = "shared"` em um volume anexado a um serviço do tipo banco de dados. Múltiplos processos Postgres escrevendo no mesmo diretório de dados causam corrupção. Para bancos de dados, use [serviços compartilhados](../coastfiles/SHARED_SERVICES.md) (um Postgres no host, como esta receita faz) ou `strategy = "isolated"` (cada Coast recebe seu próprio volume). Veja a página de [Topologia de Volumes](../concepts_and_terminology/VOLUMES.md) para a matriz completa de decisão.
@@ -314,7 +314,7 @@ Liste apenas serviços que estão realmente rodando. Se o seu `COMPOSE_PROFILES`
 
 Esta é a otimização mais impactante para monorepos grandes. Ela diz ao Coast para pular árvores de diretórios inteiras durante a sincronização de arquivos ignorados pelo git (rsync) e o diff de `git ls-files` que rodam a cada assign.
 
-O objetivo é excluir tudo o que seus serviços do Coast não precisam. Em um monorepo com 30.000 arquivos, os diretórios listados acima podem representar 8.000+ arquivos que são irrelevantes para os serviços em execução. Excluí-los elimina essa quantidade de stats de arquivo de cada troca de branch.
+O objetivo é excluir tudo o que seus serviços do Coast não precisam. Em um monorepo com 30.000 arquivos, os diretórios listados acima podem representar 8.000+ arquivos que são irrelevantes para os serviços em execução. Excluí-los reduz essa quantidade de stats de arquivo a cada troca de branch.
 
 Para descobrir o que excluir, faça profiling do seu repo:
 

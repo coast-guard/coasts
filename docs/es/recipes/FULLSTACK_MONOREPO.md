@@ -171,7 +171,7 @@ Postgres y Redis se declaran como [servicios compartidos](../concepts_and_termin
 **¿Por qué servicios compartidos en lugar de bases de datos internas de compose?**
 
 - **Instancias más ligeras.** Cada Coast evita levantar sus propios contenedores de Postgres y Redis, lo que ahorra memoria y tiempo de arranque.
-- **Reutilización de volúmenes del host.** El campo `volumes` referencia tus volúmenes de Docker existentes (los creados por tu `docker-compose up` local). Todos los datos que ya tienes están disponibles de inmediato — sin seed, sin volver a ejecutar migraciones.
+- **Reutilización de volúmenes del host.** El campo `volumes` referencia tus volúmenes de Docker existentes (los creados por tu `docker-compose up` local). Todos los datos que ya tienes están disponibles de inmediato — sin seeding, sin volver a ejecutar migraciones.
 - **Compatibilidad con MCP.** Si tienes herramientas MCP de base de datos en tu host conectándose a `localhost:5432`, siguen funcionando porque el Postgres compartido está en el host en ese mismo puerto. No se requiere reconfiguración.
 
 **La desventaja:** no hay aislamiento de datos entre instancias de Coast. Cada instancia lee y escribe en la misma base de datos. Si tu flujo de trabajo necesita bases de datos por instancia, usa [estrategias de volumen](../concepts_and_terminology/VOLUMES.md) con `strategy = "isolated"` en su lugar, o usa `auto_create_db = true` en el servicio compartido para obtener una base de datos por instancia dentro del Postgres compartido. Consulta la [referencia de Coastfile para Servicios Compartidos](../coastfiles/SHARED_SERVICES.md) para más detalles.

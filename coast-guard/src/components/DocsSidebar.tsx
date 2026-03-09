@@ -23,6 +23,7 @@ const DOC_TITLE_KEYS: Record<string, string> = {
   'README.md': 'docs.nav.overview',
   'GETTING_STARTED.md': 'docs.nav.gettingStarted',
   'SKILLS_FOR_HOST_AGENTS.md': 'docs.nav.skillsForHostAgents',
+  'VIDEO_TUTORIALS.md': 'docs.nav.videoTutorials',
   'concepts_and_terminology/README.md': 'docs.nav.conceptsAndTerminology',
   'concepts_and_terminology/COASTS.md': 'docs.nav.coasts',
   'concepts_and_terminology/PORTS.md': 'docs.nav.ports',

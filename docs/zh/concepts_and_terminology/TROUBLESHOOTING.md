@@ -38,6 +38,22 @@ coast rm-build my-project
 
 这会删除该项目的产物目录、Docker 镜像、卷以及容器。它会先请求确认。传入 `--force` 可跳过提示。
 
+## Missing Shared Service Images
+
+如果 `coast run` 在创建共享服务时失败，并出现类似 `No such image: postgres:15` 的错误，那么该镜像在你的宿主机 Docker 守护进程中缺失。
+
+这最常发生在你的 `Coastfile` 定义了诸如 Postgres 或 Redis 的 `shared_services`，但 Docker 尚未拉取这些镜像时。
+
+拉取缺失的镜像，然后再次运行该实例:
+
+```bash
+docker pull postgres:15
+docker pull redis:7
+coast run my-instance
+```
+
+如果你不确定缺的是哪个镜像，失败的 `coast run` 输出会在 Docker 错误中包含镜像名称。一次失败的置备尝试之后，Coasts 会自动清理部分创建的实例，因此看到实例回到 `stopped` 属于预期行为。
+
 ## Factory Reset with Nuke
 
 当其他方法都无效——或者你只是想要一个完全干净的环境——`coast nuke` 会执行完整的出厂重置:

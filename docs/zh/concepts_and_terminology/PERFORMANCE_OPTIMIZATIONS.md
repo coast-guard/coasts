@@ -1,41 +1,60 @@
 # 性能优化
 
-Coast 的设计目标是让分支切换很快，但在大型 monorepo 中，默认行为可能会引入不必要的延迟。本页介绍你可以在 Coastfile 中使用哪些调节手段来减少 assign 和 unassign 的耗时。
+Coast 的设计目标是让分支切换快速完成，但在大型 monorepo 中，默认行为仍可能引入延迟。本页面介绍你在 Coastfile 中可用的调节手段，更重要的是，它们实际会影响 `coast assign` 的哪些部分。
 
 ## 为什么 Assign 可能很慢
 
-`coast assign` 在将一个 Coast 切换到新的 worktree 时会做几件事:
+当把一个 Coast 切换到新的 worktree 时，`coast assign` 会做几件事:
 
 ```text
 coast assign dev-1 --worktree feature/payments
 
-  1. stop affected compose services
-  2. create git worktree (if new)
-  3. sync gitignored files into worktree (rsync)  ← often the bottleneck
-  4. remount /workspace
-  5. git ls-files diff  ← can be slow in large repos
-  6. restart/rebuild services
+  1. classify services and optional rebuild-trigger diff
+  2. stop affected services
+  3. create git worktree (if new)
+  4. bootstrap gitignored files into the worktree (first assign only)
+  5. remount /workspace
+  6. recreate/restart containers
+  7. rebuild images for services using "rebuild"
+  8. wait for healthy
 ```
 
-有两个步骤主导了延迟:**gitignored 文件同步** 和 **`git ls-files` diff**。这两者都会随仓库规模增长而变慢，并且会被 macOS VirtioFS 的开销放大。
+最大的可变成本通常是 **首次 gitignored 引导（bootstrap）**、**容器重启** 和 **镜像重建**。用于重建触发器的可选分支 diff 要便宜得多，但如果你把它指向很宽泛的触发器集合，累计起来仍会有开销。
 
-### Gitignored 文件同步
+### Gitignored 文件引导（Bootstrap）
 
-当某个 worktree 第一次创建时，Coast 会使用 `rsync --link-dest` 将 gitignored 文件（构建产物、缓存、生成代码）从项目根目录硬链接到新的 worktree 中。对每个文件而言，硬链接几乎是瞬时的，但 rsync 仍然必须遍历源目录树中的每个目录，以发现需要同步的内容。
+当某个 worktree 第一次被创建时，Coast 会将项目根目录中选定的 gitignored 文件引导到该 worktree 中。
 
-如果你的项目根目录包含 rsync 不应触碰的大目录——其他 worktree、被 vendored 的依赖、无关的应用——rsync 会浪费时间深入这些目录并对成千上万它永远不会复制的文件进行 stat。在一个包含 400,000+ 个 gitignored 文件的仓库中，仅仅这种遍历就可能需要 30–60 秒。
+流程如下:
 
-Coast 会自动在该同步中排除 `node_modules`、`.git`、`dist`、`target`、`.worktrees`、`.coasts` 以及其他常见的重型目录。额外的目录可以通过 Coastfile 中的 `exclude_paths` 进行排除（见下文）。
+1. 在宿主机上运行 `git ls-files --others --ignored --exclude-standard` 来枚举被忽略的文件。
+2. 过滤掉常见的重型目录，以及任何已配置的 `exclude_paths`。
+3. 使用 `rsync --files-from` 配合 `--link-dest`，将选定文件以硬链接的方式引入 worktree，而不是逐字节复制。
+4. 在内部 worktree 元数据中记录成功的引导，这样后续 assign 到同一个 worktree 时就可以跳过该步骤。
 
-一旦某个 worktree 已完成同步，就会写入一个 `.coast-synced` 标记，之后对同一 worktree 的 assign 会完全跳过同步。
+如果没有 `rsync`，Coast 会回退到 `tar` 管道。
 
-### `git ls-files` Diff
+诸如 `node_modules`、`.git`、`dist`、`target`、`.next`、`.nuxt`、`.cache`、`.worktrees` 和 `.coasts` 之类的大目录会被自动排除。大型依赖目录预期应由服务缓存或卷来处理，而不是由这个通用引导步骤处理。
 
-每次 assign 和 unassign 也都会运行 `git ls-files` 来确定分支之间哪些被跟踪的文件发生了变化。在 macOS 上，主机与 Docker VM 之间的所有文件 I/O 都要经过 VirtioFS（或较旧环境中的 gRPC-FUSE）。`git ls-files` 操作会对每个被跟踪文件进行 stat，而单文件的开销会很快叠加。一个有 30,000 个被跟踪文件的仓库会明显比只有 5,000 个的仓库耗时更长，即使实际 diff 很小。
+由于文件列表会预先生成，`rsync` 会基于一个有针对性的列表工作，而不是盲目爬取整个仓库。即便如此，若仓库包含非常大量的 ignored 文件集合，在首次创建 worktree 时仍可能付出明显的一次性引导成本。如果你需要手动刷新这次引导，请运行 `coast assign --force-sync`。
 
-## `exclude_paths` — 主要杠杆
+### 重建触发器 Diff（Rebuild-Trigger Diff）
 
-Coastfile 中的 `exclude_paths` 选项会让 Coast 在 **gitignored 文件同步**（rsync）和 **`git ls-files` diff** 两个阶段都跳过整个目录树。被排除路径下的文件仍然存在于 worktree 中——只是 assign 期间不会遍历它们。
+只有在配置了 `[assign.rebuild_triggers]` 时，Coast 才会计算分支 diff。在这种情况下它会运行:
+
+```bash
+git diff --name-only <previous>..<worktree>
+```
+
+其结果用于在某个服务的触发器文件都未发生变化时，将该服务从 `rebuild` 降级为 `restart`。
+
+这比旧的“每次 assign 都 diff 所有被跟踪文件”的模型要窄得多。如果你未配置重建触发器，这里根本不会有分支 diff 步骤。
+
+`exclude_paths` 当前不会改变这个 diff。请将触发器列表聚焦于真正的构建期输入，例如 Dockerfile、lockfile 和包清单（package manifest）。
+
+## `exclude_paths` — 针对新 Worktree 的主要调节杆
+
+Coastfile 中的 `exclude_paths` 选项告诉 Coast:在为新 worktree 构建 gitignored 引导文件列表时，跳过整棵目录树。
 
 ```toml
 [assign]
@@ -48,31 +67,40 @@ exclude_paths = [
 ]
 ```
 
-对于大型 monorepo，这是影响最大的单项优化。它既减少首次 assign 时的 rsync 遍历，也减少每次 assign 时的文件 diff。如果你的项目有 30,000 个被跟踪文件，但只有 20,000 个与 Coast 中运行的服务相关，那么把另外 10,000 个排除掉，就能让每次 assign 的工作量减少三分之一。
+如果 Git 跟踪了被排除路径下的文件，它们仍会出现在 worktree 中。Coast 只是避免在首次引导期间花时间枚举并硬链接这些目录树下的 ignored 文件。
 
-### 如何选择要排除的内容
+当你的仓库根目录包含大量运行中服务不关心的 ignored 大目录时，这个选项最有效:无关的应用、vendor 缓存、测试夹具、生成的文档，以及其他沉重的目录树。
 
-目标是排除所有你的 Coast 服务不需要的东西。先从分析仓库内容开始:
+如果你反复 assign 到同一个已经同步过的 worktree，`exclude_paths` 的重要性就会降低，因为引导会被跳过。在这种情况下，服务重启/重建的选择会成为主导因素。
+
+### 选择要排除的内容
+
+先对你的 ignored 文件做画像分析:
+
+```bash
+git ls-files --others --ignored --exclude-standard | cut -d'/' -f1 | sort | uniq -c | sort -rn
+```
+
+如果你还想查看被跟踪文件的目录布局以便调优重建触发器，可使用:
 
 ```bash
 git ls-files | cut -d'/' -f1 | sort | uniq -c | sort -rn
 ```
 
-这会显示每个顶层目录的文件数量。然后识别哪些目录是你的 compose 服务实际会挂载或依赖的，并排除其余部分。
-
 **保留**以下目录:
-- 包含挂载到运行中服务的源代码（例如你的应用目录）
-- 包含这些服务会导入的共享库
+- 包含挂载到运行中服务的源代码
+- 包含被这些服务导入的共享库
+- 包含运行时在首次启动时确实需要的生成文件或缓存
 - 在 `[assign.rebuild_triggers]` 中被引用
 
 **排除**以下目录:
-- 属于不在你的 Coast 中运行的应用或服务（其他团队的应用、移动端客户端、CLI 工具）
+- 属于未在你的 Coast 中运行的应用或服务
 - 包含与运行时无关的文档、脚本、CI 配置或工具
-- 仓库中提交的体积很大的依赖缓存（例如 vendored 的 proto 定义、`.yarn` 离线缓存）
+- 存放已经在别处保留的大型 ignored 缓存，例如专用服务缓存或共享卷
 
 ### 示例:包含多个应用的 Monorepo
 
-一个 monorepo 有 29,000 个文件分布在许多应用中，但只有两个相关:
+一个拥有很多顶层目录的 monorepo，但只有其中一部分与此 Coast 中运行的服务有关:
 
 ```text
   13,000  bookface/         ← active
@@ -101,11 +129,11 @@ exclude_paths = [
 ]
 ```
 
-这将 diff 范围从 29,000 个文件减少到约 21,000 个——也就是每次 assign 需要进行的 stat 大约减少 28%。
+这能让首次 worktree 引导聚焦于运行中服务实际需要的目录，而不是在无关的 ignored 目录树上耗时。
 
-## 从 `[assign.services]` 中移除不活跃的服务
+## 从 `[assign.services]` 中剔除不活跃的服务
 
-如果你的 `COMPOSE_PROFILES` 只启动一部分服务，就把不活跃的服务从 `[assign.services]` 中移除。Coast 会对每个列出的服务评估 assign 策略，而重启或重建一个并未运行的服务就是浪费工作。
+如果你的 `COMPOSE_PROFILES` 只启动一部分服务，请从 `[assign.services]` 中移除不活跃的服务。Coast 会为列表中的每个服务评估 assign 策略，而对未运行的服务进行重启或重建是浪费工作。
 
 ```toml
 # Bad — restarts services that aren't running
@@ -121,11 +149,11 @@ web = "restart"
 api = "restart"
 ```
 
-同样也适用于 `[assign.rebuild_triggers]` ——移除那些不活跃服务的条目。
+同样适用于 `[assign.rebuild_triggers]` — 移除不活跃服务的条目。
 
 ## 尽可能使用 `"hot"`
 
-`"hot"` 策略会完全跳过容器重启。[filesystem remount](FILESYSTEM.md) 会替换 `/workspace` 下的代码，而服务的文件监视器（Vite、webpack、nodemon、air 等）会自动捕获变更。
+`"hot"` 策略会完全跳过容器重启。[文件系统重新挂载](FILESYSTEM.md) 会替换 `/workspace` 下的代码，而服务的文件监视器（Vite、webpack、nodemon、air 等）会自动捕获变更。
 
 ```toml
 [assign.services]
@@ -133,11 +161,11 @@ web = "hot"        # Vite/webpack dev server with HMR
 api = "restart"    # Rails/Go — needs a process restart
 ```
 
-`"hot"` 比 `"restart"` 更快，因为它避免了容器 stop/start 周期。对任何运行带文件监视的开发服务器的服务都应使用它。把 `"restart"` 留给那些仅在启动时加载代码且不会监视变更的服务（大多数 Rails、Go 和 Java 应用）。
+`"hot"` 比 `"restart"` 更快，因为它避免了容器 stop/start 周期。对于任何运行带文件监听的开发服务器的服务都应使用它。将 `"restart"` 留给那些在启动时加载代码且不监听变更的服务（大多数 Rails、Go 和 Java 应用）。
 
-## 配合触发器使用 `"rebuild"`
+## 使用带触发器的 `"rebuild"`
 
-如果某个服务的默认策略是 `"rebuild"`，每次分支切换都会重建 Docker 镜像——即使没有任何影响镜像的内容发生变化。添加 `[assign.rebuild_triggers]` 来把重建限制在特定文件发生变化时才触发:
+如果某个服务的默认策略是 `"rebuild"`，那么每次切换分支都会重建 Docker 镜像——即使没有任何会影响镜像的内容发生变化。添加 `[assign.rebuild_triggers]`，用特定文件来控制何时需要重建:
 
 ```toml
 [assign.services]
@@ -147,15 +175,15 @@ worker = "rebuild"
 worker = ["Dockerfile", "package.json", "package-lock.json"]
 ```
 
-如果分支之间没有任何触发文件发生变化，Coast 会跳过重建并改为回退到 restart。这能避免在日常代码变更时进行昂贵的镜像构建。
+如果在分支之间这些触发器文件都没有变化，Coast 会跳过重建并回退为重启。这样可以避免在日常代码变更时进行昂贵的镜像构建。
 
 ## 总结
 
-| 优化 | 影响 | 影响对象 | 何时使用 |
+| 优化项 | 影响 | 影响范围 | 何时使用 |
 |---|---|---|---|
-| `exclude_paths` | 高 | rsync + git diff | 始终使用，在任何包含 Coast 不需要目录的仓库中 |
-| 移除不活跃服务 | 中 | service restart | 当 `COMPOSE_PROFILES` 限制实际运行的服务时 |
-| `"hot"` 策略 | 中 | service restart | 具有文件监视器的服务（Vite、webpack、nodemon、air） |
-| `rebuild_triggers` | 中 | image rebuild | 使用 `"rebuild"` 且只有在基础设施变更时才需要重建的服务 |
+| `exclude_paths` | 高 | 首次 gitignored 引导 | 仓库包含你的 Coast 不需要的大型 ignored 目录树 |
+| 移除不活跃服务 | 中 | 服务重启/重建容器 | 当 `COMPOSE_PROFILES` 限制了运行的服务集合 |
+| `"hot"` 策略 | 高 | 容器重启 | 带文件监听器的服务（Vite、webpack、nodemon、air） |
+| `rebuild_triggers` | 高 | 镜像重建 + 可选分支 diff | 使用 `"rebuild"` 且只在基础设施变更时才需要重建的服务 |
 
-从 `exclude_paths` 开始。它是你能做的最低成本、最高收益的改动。它能同时加速首次 assign（rsync）以及之后每一次 assign（git diff）。
+如果新 worktree 第一次 assign 很慢，先从 `exclude_paths` 入手。如果重复 assign 很慢，则聚焦于 `hot` 与 `restart` 的选择、剔除不活跃服务，并保持 `rebuild_triggers` 足够精确。

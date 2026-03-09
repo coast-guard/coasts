@@ -224,6 +224,7 @@ mod tests {
             worktree: "feature/x".to_string(),
             commit_sha: None,
             explain: false,
+            force_sync: false,
         };
 
         let result = handle(req, &state, discard_progress()).await;
@@ -245,6 +246,7 @@ mod tests {
             worktree: "feature/x".to_string(),
             commit_sha: None,
             explain: false,
+            force_sync: false,
         };
 
         let result = handle(req, &state, discard_progress()).await;
@@ -271,6 +273,7 @@ mod tests {
             worktree: "feature/x".to_string(),
             commit_sha: None,
             explain: false,
+            force_sync: false,
         };
 
         let result = handle(req, &state, discard_progress()).await;
@@ -308,6 +311,7 @@ mod tests {
             worktree: "feature/x".to_string(),
             commit_sha: None,
             explain: false,
+            force_sync: false,
         };
 
         let result = handle(req, &state, discard_progress()).await;
@@ -331,6 +335,7 @@ mod tests {
             worktree: "feature/new".to_string(),
             commit_sha: None,
             explain: false,
+            force_sync: false,
         };
 
         let result = handle(req, &state, discard_progress()).await;
@@ -371,6 +376,7 @@ mod tests {
             worktree: "feature/x".to_string(),
             commit_sha: None,
             explain: false,
+            force_sync: false,
         };
 
         let result = handle(req, &state, discard_progress()).await;
@@ -392,6 +398,7 @@ mod tests {
             worktree: "feature/x".to_string(),
             commit_sha: None,
             explain: false,
+            force_sync: false,
         };
 
         let _ = handle(req, &state, discard_progress()).await;
@@ -430,6 +437,7 @@ mod tests {
             worktree: "feature/x".to_string(),
             commit_sha: None,
             explain: false,
+            force_sync: false,
         };
 
         let result = handle(req, &state, discard_progress()).await;
@@ -454,6 +462,7 @@ mod tests {
             worktree: "feature/x".to_string(),
             commit_sha: None,
             explain: false,
+            force_sync: false,
         };
 
         let result = handle(req, &state, discard_progress()).await;
@@ -494,6 +503,7 @@ mod tests {
             worktree: "feature/x".to_string(),
             commit_sha: None,
             explain: false,
+            force_sync: false,
         };
 
         let result = handle(req, &state, discard_progress()).await;
@@ -523,6 +533,7 @@ mod tests {
             worktree: "feature/x".to_string(),
             commit_sha: None,
             explain: false,
+            force_sync: false,
         };
 
         let result = handle(req, &state, tx).await;

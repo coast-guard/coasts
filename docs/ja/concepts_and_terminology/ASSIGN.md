@@ -2,9 +2,9 @@
 
 割り当て（assign）と割り当て解除（unassign）は、Coast インスタンスがどの worktree を指すかを制御します。マウントレベルでの worktree 切り替えの仕組みについては [Filesystem](FILESYSTEM.md) を参照してください。
 
-## Assign
+## 割り当て
 
-`coast assign` は Coast インスタンスを特定の worktree に切り替えます。Coast は worktree がまだ存在しない場合は作成し、Coast 内のコードを更新し、設定された割り当て戦略に従ってサービスを再起動します。
+`coast assign` は、Coast インスタンスを特定の worktree に切り替えます。Coast は worktree がまだ存在しない場合は作成し、Coast 内のコードを更新し、設定された割り当て戦略に従ってサービスを再起動します。
 
 ```bash
 coast assign dev-1 --worktree feature/oauth
@@ -31,11 +31,11 @@ After:
 └────────────────────────────┘
 ```
 
-割り当て後、`dev-1` は `feature/oauth` ブランチで動作し、すべてのサービスが起動した状態になります。
+割り当て後、`dev-1` は `feature/oauth` ブランチで稼働し、すべてのサービスが起動した状態になります。
 
-## Unassign
+## 割り当て解除
 
-`coast unassign` は Coast インスタンスをプロジェクトルート（main/master ブランチ）に戻します。worktree の関連付けが解除され、Coast はプライマリリポジトリから実行する状態に戻ります。
+`coast unassign` は、Coast インスタンスをプロジェクトルート（main/master ブランチ）に戻します。worktree の関連付けが削除され、Coast はプライマリリポジトリから実行する状態に戻ります。
 
 ```text
 coast unassign dev-1
@@ -46,9 +46,9 @@ coast unassign dev-1
 └────────────────────────────┘
 ```
 
-## Assign Strategies
+## 割り当て戦略
 
-Coast が新しい worktree に割り当てられると、各サービスはコード変更への対処方法を知る必要があります。これは [Coastfile](COASTFILE_TYPES.md) の `[assign]` 配下でサービスごとに設定します。
+Coast が新しい worktree に割り当てられると、各サービスはコード変更をどのように扱うかを把握する必要があります。これは [Coastfile](COASTFILE_TYPES.md) の `[assign]` 配下でサービスごとに設定します。
 
 ```toml
 [assign]
@@ -74,27 +74,27 @@ coast assign dev-1 --worktree feature/billing
 利用可能な戦略は次のとおりです。
 
 - **none** — 何もしません。Postgres や Redis のようにブランチ間で変化しないサービスに使用します。
-- **hot** — ファイルシステムのみを入れ替えます。サービスは稼働し続け、マウント伝播とファイルウォッチャ（例: ホットリロード付きの開発サーバ）によって変更を取り込みます。
-- **restart** — サービスコンテナを再起動します。プロセス再起動だけが必要なインタプリタ言語のサービスに使用します。これがデフォルトです。
+- **hot** — ファイルシステムのみを入れ替えます。サービスは稼働したままで、マウントの伝播とファイルウォッチャー（例: ホットリロード付きの開発サーバー）により変更を取り込みます。
+- **restart** — サービスコンテナを再起動します。プロセスの再起動だけが必要なインタプリタ系サービスに使用します。これがデフォルトです。
 - **rebuild** — サービスイメージを再ビルドして再起動します。ブランチ変更が `Dockerfile` やビルド時依存関係に影響する場合に使用します。
 
-また、再ビルドトリガーを指定して、特定のファイルが変更されたときにのみサービスが再ビルドされるようにすることもできます。
+また、特定のファイルが変更されたときだけサービスが再ビルドされるように、rebuild トリガーを指定することもできます。
 
 ```toml
 [assign.rebuild_triggers]
 worker = ["Dockerfile", "package.json"]
 ```
 
-ブランチ間でトリガーファイルが1つも変更されていない場合、戦略が `rebuild` に設定されていてもサービスは再ビルドをスキップします。
+ブランチ間でトリガーファイルがどれも変更されていない場合、戦略が `rebuild` に設定されていても、そのサービスは再ビルドをスキップします。
 
-## Deleted Worktrees
+## 削除された Worktree
 
-割り当てられた worktree が削除された場合、`coastd` デーモンはそのインスタンスを自動的に割り当て解除し、メインの Git リポジトリルートに戻します。
+割り当てられている worktree が削除された場合、`coastd` デーモンはそのインスタンスを自動的にメインの Git リポジトリルートへ割り当て解除します。
 
 ---
 
-> **Tip: 大規模コードベースでの割り当て遅延を減らす**
+> **ヒント: 大規模コードベースで assign の待ち時間を削減する**
 >
-> 内部的に、Coast は worktree のマウントまたはアンマウントのたびに `git ls-files` を実行します。大規模なコードベースや多数のファイルを含むリポジトリでは、これにより assign と unassign の操作に目立つ遅延が追加されることがあります。
+> 内部的には、新しい worktree への最初の assign で、選択された gitignored ファイルがその worktree にブートストラップされ、`[assign.rebuild_triggers]` を持つサービスは再ビルドが必要かどうか判断するために `git diff --name-only` を実行する場合があります。大規模コードベースでは、このブートストラップ手順と不要な再ビルドが assign 時間の大半を占めがちです。
 >
-> Coastfile の `exclude_paths` を使用して、実行中のサービスに関係のないディレクトリをスキップしてください。完全なガイドは [Performance Optimizations](PERFORMANCE_OPTIMIZATIONS.md) を参照してください。
+> Coastfile の `exclude_paths` を使って gitignored のブートストラップ対象範囲を縮小し、ファイルウォッチャーを持つサービスには `"hot"` を使用し、`[assign.rebuild_triggers]` は真のビルド時入力に絞ってください。既存の worktree に対して ignored-file のブートストラップを手動で更新する必要がある場合は、`coast assign --force-sync` を実行します。完全なガイドは [Performance Optimizations](PERFORMANCE_OPTIMIZATIONS.md) を参照してください。

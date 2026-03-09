@@ -9,7 +9,7 @@
 
 ## Coasts とは？
 
-Coast（**containerized host**）は、ローカル開発用のランタイムです。Coasts を使うと、1 台のマシン上で同一プロジェクトの複数の分離された環境を実行できます。
+A Coast（**containerized host**）は、ローカル開発用のランタイムです。Coasts を使うと、1 台のマシン上で同一プロジェクトの複数の分離された環境を実行できます。
 
 Coasts は、多数の相互依存サービスを持つ複雑な `docker-compose` スタックで特に有用ですが、コンテナ化されていないローカル開発セットアップでも同様に効果的です。Coasts は幅広い[ランタイム構成パターン](concepts_and_terminology/RUNTIMES_AND_SERVICES.md)をサポートしているため、並列に作業する複数のエージェントにとって理想的な環境を形作れます。
 
@@ -63,6 +63,10 @@ Coasts は dev container ではなく、同じものではありません。
 
 Dev container は一般に、IDE を 1 つのコンテナ化された開発ワークスペースへマウントするために設計されています。Coasts はヘッドレスで、worktree と並列エージェント利用のための軽量環境として最適化されています。つまり、worktree を認識する複数の分離されたランタイム環境を並べて実行でき、素早いチェックアウト切り替えと、インスタンスごとのランタイム分離制御を提供します。
 
-## デモリポジトリ
+## Demo Repo
 
-Coasts を試すための小さなサンプルプロジェクトが欲しい場合は、[`coasts-demo` リポジトリ](https://github.com/coast-guard/coasts-demo)から始めてください。
+Coasts を試すための小さなサンプルプロジェクトが欲しい場合は、[`coasts-demo` repository](https://github.com/coast-guard/coasts-demo)から始めてください。
+
+## Video Tutorials
+
+手早く動画で一通り確認したい場合は、公式の Coasts プレイリストと各チュートリアルへの直リンクが載っている [VIDEO_TUTORIALS.md](VIDEO_TUTORIALS.md) を参照してください。

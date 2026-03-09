@@ -2,6 +2,7 @@
 README.md
 GETTING_STARTED.md
 SKILLS_FOR_HOST_AGENTS.md
+VIDEO_TUTORIALS.md
 
 # 개념 및 용어
 concepts_and_terminology/README.md
