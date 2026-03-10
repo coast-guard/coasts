@@ -21,7 +21,7 @@ env = { POSTGRES_PASSWORD = "dev" }
 
 ### `ports`
 
-サービスが公開するポートの一覧。共有サービスと Coast インスタンス間のブリッジネットワークのルーティングに使用されます。
+サービスが公開するポートの一覧。Coast は、コンテナポートのみの指定、または Docker Compose スタイルの `"HOST:CONTAINER"` マッピングのいずれも受け付けます。
 
 ```toml
 [shared_services.redis]
@@ -29,7 +29,15 @@ image = "redis:7-alpine"
 ports = [6379]
 ```
 
-ポート値は 0 以外でなければなりません。
+```toml
+[shared_services.postgis]
+image = "ghcr.io/baosystems/postgis:12-3.3"
+ports = ["5433:5432"]
+```
+
+- `6379` のような整数のみの指定は、`"6379:6379"` の省略形です。
+- `"5433:5432"` のようなマッピング文字列は、共有サービスをホストポート `5433` で公開しつつ、Coast 内部からは `service-name:5432` で到達可能なままにします。
+- ホストポートとコンテナポートは、どちらも 0 以外でなければなりません。
 
 ### `volumes`
 
@@ -117,6 +125,15 @@ env = { MONGO_INITDB_ROOT_USERNAME = "myapp", MONGO_INITDB_ROOT_PASSWORD = "myap
 [shared_services.postgres]
 image = "postgres:16-alpine"
 ports = [5432]
+env = { POSTGRES_USER = "coast", POSTGRES_PASSWORD = "coast", POSTGRES_DB = "coast_demo" }
+```
+
+### ホスト/コンテナをマッピングした共有 Postgres
+
+```toml
+[shared_services.postgres]
+image = "postgres:16-alpine"
+ports = ["5433:5432"]
 env = { POSTGRES_USER = "coast", POSTGRES_PASSWORD = "coast", POSTGRES_DB = "coast_demo" }
 ```
 

@@ -1,6 +1,6 @@
 # 共享服务
 
-`[shared_services.*]` 部分用于定义基础设施服务——数据库、缓存、消息代理——这些服务运行在宿主机 Docker 守护进程上，而不是在各个 Coast 容器内部运行。多个 Coast 实例通过桥接网络连接到同一个共享服务。
+`[shared_services.*]` 部分定义基础设施服务——数据库、缓存、消息代理——这些服务运行在宿主机 Docker 守护进程上，而不是在各个 Coast 容器内部运行。多个 Coast 实例通过桥接网络连接到同一个共享服务。
 
 关于共享服务在运行时如何工作、生命周期管理以及故障排查，请参阅 [共享服务](../concepts_and_terminology/SHARED_SERVICES.md)。
 
@@ -21,7 +21,7 @@ env = { POSTGRES_PASSWORD = "dev" }
 
 ### `ports`
 
-服务暴露的端口列表。用于共享服务与 Coast 实例之间的桥接网络路由。
+服务暴露的端口列表。Coast 接受裸容器端口，或 Docker Compose 风格的 `"HOST:CONTAINER"` 映射。
 
 ```toml
 [shared_services.redis]
@@ -29,11 +29,19 @@ image = "redis:7-alpine"
 ports = [6379]
 ```
 
-端口值必须为非零。
+```toml
+[shared_services.postgis]
+image = "ghcr.io/baosystems/postgis:12-3.3"
+ports = ["5433:5432"]
+```
+
+- 像 `6379` 这样的裸整数是 `"6379:6379"`` 的简写。
+- 像 `"5433:5432"` 这样的映射字符串会将共享服务发布到宿主机端口 `5433`，同时使其在 Coast 内部仍可通过 `service-name:5432` 访问。
+- 宿主机端口和容器端口都必须为非零。
 
 ### `volumes`
 
-用于持久化数据的 Docker volume 绑定字符串。这些是宿主机级别的 Docker volume，而不是由 Coast 管理的 volume。
+用于持久化数据的 Docker volume 绑定字符串。这些是宿主机级别的 Docker volumes，而不是由 Coast 管理的 volumes。
 
 ```toml
 [shared_services.postgres]
@@ -86,7 +94,7 @@ inject = "env:DATABASE_URL"
 
 ## 何时使用共享服务 vs volumes
 
-当多个 Coast 实例需要与同一个数据库服务器通信时（例如共享的 Postgres，每个实例拥有自己的数据库），请使用共享服务。当你希望控制 compose 内部服务的数据如何被共享或隔离时，请使用 [volume 策略](VOLUMES.md)。
+当多个 Coast 实例需要与同一个数据库服务器通信时（例如共享的 Postgres，每个实例拥有自己的数据库），请使用共享服务。当你希望控制 compose 内部服务的数据如何被共享或隔离时，请使用 [volume strategies](VOLUMES.md)。
 
 ## 示例
 
@@ -111,12 +119,21 @@ volumes = ["infra_mongodb_data:/data/db"]
 env = { MONGO_INITDB_ROOT_USERNAME = "myapp", MONGO_INITDB_ROOT_PASSWORD = "myapp_pass" }
 ```
 
-### 最小化的共享 Postgres
+### 最小化共享 Postgres
 
 ```toml
 [shared_services.postgres]
 image = "postgres:16-alpine"
 ports = [5432]
+env = { POSTGRES_USER = "coast", POSTGRES_PASSWORD = "coast", POSTGRES_DB = "coast_demo" }
+```
+
+### 宿主机/容器端口映射的共享 Postgres
+
+```toml
+[shared_services.postgres]
+image = "postgres:16-alpine"
+ports = ["5433:5432"]
 env = { POSTGRES_USER = "coast", POSTGRES_PASSWORD = "coast", POSTGRES_DB = "coast_demo" }
 ```
 

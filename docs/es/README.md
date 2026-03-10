@@ -1,5 +1,10 @@
 # Documentación de Coasts
 
+```youtube
+MBGKSKau4sU
+Part of the [Coasts Video Course](learn-coasts/README.md).
+```
+
 ## Instalación
 
 - `curl -fsSL https://coasts.dev/install | sh`
@@ -55,7 +60,7 @@ Puedes contenerizar un agente con un Coast. Eso podría sonar como una gran idea
 
 Debido a que Coasts comparten el [sistema de archivos](concepts_and_terminology/FILESYSTEM.md) con tu máquina host mediante un montaje de volumen compartido, el flujo de trabajo más fácil y fiable es ejecutar el agente en tu host e indicarle que ejecute tareas pesadas de runtime (como pruebas de integración) dentro de la instancia de Coast usando [`coast exec`](concepts_and_terminology/EXEC_AND_DOCKER.md).
 
-Sin embargo, si sí quieres ejecutar tu agente en un contenedor, Coasts lo soportan absolutamente mediante [Agent Shells](concepts_and_terminology/AGENT_SHELLS.md). Puedes construir un rig increíblemente intrincado para esta configuración, incluyendo la [configuración del servidor MCP](concepts_and_terminology/MCP_SERVERS.md), pero puede que no interoperé limpiamente con el software de orquestación que existe hoy. Para la mayoría de los flujos de trabajo, los agentes del lado del host son más simples y más fiables.
+Sin embargo, si sí quieres ejecutar tu agente en un contenedor, Coasts lo soportan absolutamente mediante [Agent Shells](concepts_and_terminology/AGENT_SHELLS.md). Puedes construir un rig increíblemente intrincado para esta configuración, incluyendo la [configuración del servidor MCP](concepts_and_terminology/MCP_SERVERS.md), pero puede que no interopere limpiamente con el software de orquestación que existe hoy. Para la mayoría de los flujos de trabajo, los agentes del lado del host son más simples y más fiables.
 
 ## Coasts vs Dev Containers
 
@@ -67,6 +72,6 @@ Los dev containers generalmente están diseñados para montar un IDE dentro de u
 
 Si quieres un pequeño proyecto de ejemplo para probar con Coasts, empieza con el repositorio [`coasts-demo`](https://github.com/coast-guard/coasts-demo).
 
-## Tutoriales en video
+## Coasts Video Course
 
-Si quieres un recorrido rápido en video, consulta [VIDEO_TUTORIALS.md](VIDEO_TUTORIALS.md) para la playlist oficial de Coasts y enlaces directos a cada tutorial.
+Si prefieres el video, el [Coasts Video Course](learn-coasts/README.md) cubre cada concepto central en menos de tres minutos cada uno.

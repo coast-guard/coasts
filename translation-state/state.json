@@ -1,14 +1,14 @@
 {
   "es": {
     "GETTING_STARTED.md": {
-      "commit": "8de7870",
-      "source_sha256": "14e53441bfc337f9611fe25c7988cdd34e03d701e451fcb14c0ad4459942a32a",
-      "translated_at": "2026-03-06T22:13:59Z"
+      "commit": "d7ed347",
+      "source_sha256": "336e3bfd5fe30e595581f444db7640b1ed12f0daa924a8ef86ed8f18da5dc37c",
+      "translated_at": "2026-03-10T20:35:46Z"
     },
     "README.md": {
-      "commit": "85b1396",
-      "source_sha256": "12b4d91e0c428b3cf67df9dea25bd9dc713d129efb0b557ec91256dd0d236c5b",
-      "translated_at": "2026-03-09T09:08:24Z"
+      "commit": "d7ed347",
+      "source_sha256": "cc72e4a31bb0a7b6f321971ab3fd864511211fae1ae2835da4668dbad532477c",
+      "translated_at": "2026-03-10T20:35:46Z"
     },
     "SKILLS_FOR_HOST_AGENTS.md": {
       "commit": "8de7870",
@@ -71,9 +71,9 @@
       "translated_at": "2026-02-28T13:10:06Z"
     },
     "coastfiles/SHARED_SERVICES.md": {
-      "commit": "0f69cdc",
-      "source_sha256": "13545489a79fa29de7cef9a4e527c41248e363e8afd0f81d5cc322c11d8e2e97",
-      "translated_at": "2026-03-02T07:44:45Z"
+      "commit": "d7ed347",
+      "source_sha256": "8f69bb7804daed0cbc98d08a6bc94a906e758c7bbb6e081b947f7175e92b2899",
+      "translated_at": "2026-03-10T20:35:46Z"
     },
     "coastfiles/VOLUMES.md": {
       "commit": "3357381",
@@ -191,9 +191,9 @@
       "translated_at": "2026-02-28T13:10:06Z"
     },
     "concepts_and_terminology/SHARED_SERVICES.md": {
-      "commit": "3357381",
-      "source_sha256": "963d72d593646b6d0ad5e925fa9fd846b767480cf0406c79f8db60fb4a009445",
-      "translated_at": "2026-02-28T13:10:06Z"
+      "commit": "d7ed347",
+      "source_sha256": "5bca939e6547309306c02a745259e4a6a8fea6c397347f4f6eb998c8038837d4",
+      "translated_at": "2026-03-10T20:35:46Z"
     },
     "concepts_and_terminology/TROUBLESHOOTING.md": {
       "commit": "85b1396",
@@ -206,14 +206,59 @@
       "translated_at": "2026-02-28T13:10:06Z"
     },
     "doc_ordering.txt": {
-      "commit": "85b1396",
-      "source_sha256": "664e95814e31402f9e71101ef9d25ddad9f68915d280a47a9516944221ffeda5",
-      "translated_at": "2026-03-09T09:08:24Z"
+      "commit": "d7ed347",
+      "source_sha256": "b2795f1dd4ea8c6d6b8c0aa592d2d65c3678805c1c6e5db9d530919625335e33",
+      "translated_at": "2026-03-10T20:35:46Z"
     },
     "installation_prompt.txt": {
       "commit": "b42c701",
       "source_sha256": "1848d3fcc131c11fb00caaed79fd8861bba7bef7696472275240d221d6cef046",
       "translated_at": "2026-03-05T00:12:10Z"
+    },
+    "learn-coasts-videos/README.md": {
+      "commit": "d7ed347",
+      "source_sha256": "3fbba4596ca2c6b1ee3741c488bbf6885226c0a769710f3131bdc48950c089f5",
+      "translated_at": "2026-03-10T20:35:46Z"
+    },
+    "learn-coasts-videos/assign.md": {
+      "commit": "d7ed347",
+      "source_sha256": "7ce2bc3e8374edaf71b96bd4b6a7f827396a9b9c9d5ead4f0480ecce59a80bfa",
+      "translated_at": "2026-03-10T20:35:46Z"
+    },
+    "learn-coasts-videos/checkout.md": {
+      "commit": "d7ed347",
+      "source_sha256": "ef75270195b87edc8189b5509694b28f807c561d2b84a2d1cee7b61d4b02660c",
+      "translated_at": "2026-03-10T20:35:46Z"
+    },
+    "learn-coasts-videos/coast-ui.md": {
+      "commit": "d7ed347",
+      "source_sha256": "ebf43cf61ca732a1387c81854f829fe48d2380831c8ab968607df032bd664dde",
+      "translated_at": "2026-03-10T20:35:46Z"
+    },
+    "learn-coasts-videos/coasts.md": {
+      "commit": "d7ed347",
+      "source_sha256": "c65cc753442576be957537f6e373419de91320a28291b9554b4460c557b91c19",
+      "translated_at": "2026-03-10T20:35:46Z"
+    },
+    "learn-coasts-videos/getting-started.md": {
+      "commit": "d7ed347",
+      "source_sha256": "5fc45e25d78d3118143be578a9d501018aa2b8382a933cf6ad89dcc78361d329",
+      "translated_at": "2026-03-10T20:35:46Z"
+    },
+    "learn-coasts-videos/ports.md": {
+      "commit": "d7ed347",
+      "source_sha256": "ca00317a89ef533ea4a66c24159370b800dcd53a2b53673a63a31a426012c72e",
+      "translated_at": "2026-03-10T20:35:46Z"
+    },
+    "learn-coasts-videos/secrets.md": {
+      "commit": "d7ed347",
+      "source_sha256": "bb9b95ac6b889ca6649bb8752ba02a8264b57311ef8b44d41cf2c523f94dd447",
+      "translated_at": "2026-03-10T20:35:46Z"
+    },
+    "learn-coasts-videos/volumes.md": {
+      "commit": "d7ed347",
+      "source_sha256": "72f6a5f0a2984f70a93eac76728caeb4f277cab9694bf9d14c5398bc6f07e18a",
+      "translated_at": "2026-03-10T20:35:46Z"
     },
     "recipes/FULLSTACK_MONOREPO.md": {
       "commit": "85b1396",
@@ -233,14 +278,14 @@
   },
   "ja": {
     "GETTING_STARTED.md": {
-      "commit": "8de7870",
-      "source_sha256": "14e53441bfc337f9611fe25c7988cdd34e03d701e451fcb14c0ad4459942a32a",
-      "translated_at": "2026-03-06T22:11:47Z"
+      "commit": "d7ed347",
+      "source_sha256": "336e3bfd5fe30e595581f444db7640b1ed12f0daa924a8ef86ed8f18da5dc37c",
+      "translated_at": "2026-03-10T20:30:45Z"
     },
     "README.md": {
-      "commit": "85b1396",
-      "source_sha256": "12b4d91e0c428b3cf67df9dea25bd9dc713d129efb0b557ec91256dd0d236c5b",
-      "translated_at": "2026-03-09T08:59:59Z"
+      "commit": "d7ed347",
+      "source_sha256": "cc72e4a31bb0a7b6f321971ab3fd864511211fae1ae2835da4668dbad532477c",
+      "translated_at": "2026-03-10T20:30:45Z"
     },
     "SKILLS_FOR_HOST_AGENTS.md": {
       "commit": "8de7870",
@@ -303,9 +348,9 @@
       "translated_at": "2026-02-28T12:45:25Z"
     },
     "coastfiles/SHARED_SERVICES.md": {
-      "commit": "0f69cdc",
-      "source_sha256": "13545489a79fa29de7cef9a4e527c41248e363e8afd0f81d5cc322c11d8e2e97",
-      "translated_at": "2026-03-02T07:39:42Z"
+      "commit": "d7ed347",
+      "source_sha256": "8f69bb7804daed0cbc98d08a6bc94a906e758c7bbb6e081b947f7175e92b2899",
+      "translated_at": "2026-03-10T20:30:45Z"
     },
     "coastfiles/VOLUMES.md": {
       "commit": "3357381",
@@ -423,9 +468,9 @@
       "translated_at": "2026-02-28T12:45:25Z"
     },
     "concepts_and_terminology/SHARED_SERVICES.md": {
-      "commit": "3357381",
-      "source_sha256": "963d72d593646b6d0ad5e925fa9fd846b767480cf0406c79f8db60fb4a009445",
-      "translated_at": "2026-02-28T12:45:25Z"
+      "commit": "d7ed347",
+      "source_sha256": "5bca939e6547309306c02a745259e4a6a8fea6c397347f4f6eb998c8038837d4",
+      "translated_at": "2026-03-10T20:30:45Z"
     },
     "concepts_and_terminology/TROUBLESHOOTING.md": {
       "commit": "85b1396",
@@ -438,14 +483,59 @@
       "translated_at": "2026-02-28T12:45:25Z"
     },
     "doc_ordering.txt": {
-      "commit": "85b1396",
-      "source_sha256": "664e95814e31402f9e71101ef9d25ddad9f68915d280a47a9516944221ffeda5",
-      "translated_at": "2026-03-09T08:59:59Z"
+      "commit": "d7ed347",
+      "source_sha256": "b2795f1dd4ea8c6d6b8c0aa592d2d65c3678805c1c6e5db9d530919625335e33",
+      "translated_at": "2026-03-10T20:30:45Z"
     },
     "installation_prompt.txt": {
       "commit": "b42c701",
       "source_sha256": "1848d3fcc131c11fb00caaed79fd8861bba7bef7696472275240d221d6cef046",
       "translated_at": "2026-03-05T00:03:15Z"
+    },
+    "learn-coasts-videos/README.md": {
+      "commit": "d7ed347",
+      "source_sha256": "3fbba4596ca2c6b1ee3741c488bbf6885226c0a769710f3131bdc48950c089f5",
+      "translated_at": "2026-03-10T20:30:45Z"
+    },
+    "learn-coasts-videos/assign.md": {
+      "commit": "d7ed347",
+      "source_sha256": "7ce2bc3e8374edaf71b96bd4b6a7f827396a9b9c9d5ead4f0480ecce59a80bfa",
+      "translated_at": "2026-03-10T20:30:45Z"
+    },
+    "learn-coasts-videos/checkout.md": {
+      "commit": "d7ed347",
+      "source_sha256": "ef75270195b87edc8189b5509694b28f807c561d2b84a2d1cee7b61d4b02660c",
+      "translated_at": "2026-03-10T20:30:45Z"
+    },
+    "learn-coasts-videos/coast-ui.md": {
+      "commit": "d7ed347",
+      "source_sha256": "ebf43cf61ca732a1387c81854f829fe48d2380831c8ab968607df032bd664dde",
+      "translated_at": "2026-03-10T20:30:45Z"
+    },
+    "learn-coasts-videos/coasts.md": {
+      "commit": "d7ed347",
+      "source_sha256": "c65cc753442576be957537f6e373419de91320a28291b9554b4460c557b91c19",
+      "translated_at": "2026-03-10T20:30:45Z"
+    },
+    "learn-coasts-videos/getting-started.md": {
+      "commit": "d7ed347",
+      "source_sha256": "5fc45e25d78d3118143be578a9d501018aa2b8382a933cf6ad89dcc78361d329",
+      "translated_at": "2026-03-10T20:30:45Z"
+    },
+    "learn-coasts-videos/ports.md": {
+      "commit": "d7ed347",
+      "source_sha256": "ca00317a89ef533ea4a66c24159370b800dcd53a2b53673a63a31a426012c72e",
+      "translated_at": "2026-03-10T20:30:45Z"
+    },
+    "learn-coasts-videos/secrets.md": {
+      "commit": "d7ed347",
+      "source_sha256": "bb9b95ac6b889ca6649bb8752ba02a8264b57311ef8b44d41cf2c523f94dd447",
+      "translated_at": "2026-03-10T20:30:45Z"
+    },
+    "learn-coasts-videos/volumes.md": {
+      "commit": "d7ed347",
+      "source_sha256": "72f6a5f0a2984f70a93eac76728caeb4f277cab9694bf9d14c5398bc6f07e18a",
+      "translated_at": "2026-03-10T20:30:45Z"
     },
     "recipes/FULLSTACK_MONOREPO.md": {
       "commit": "85b1396",
@@ -465,14 +555,14 @@
   },
   "ko": {
     "GETTING_STARTED.md": {
-      "commit": "8de7870",
-      "source_sha256": "14e53441bfc337f9611fe25c7988cdd34e03d701e451fcb14c0ad4459942a32a",
-      "translated_at": "2026-03-06T22:12:24Z"
+      "commit": "d7ed347",
+      "source_sha256": "336e3bfd5fe30e595581f444db7640b1ed12f0daa924a8ef86ed8f18da5dc37c",
+      "translated_at": "2026-03-10T20:32:07Z"
     },
     "README.md": {
-      "commit": "85b1396",
-      "source_sha256": "12b4d91e0c428b3cf67df9dea25bd9dc713d129efb0b557ec91256dd0d236c5b",
-      "translated_at": "2026-03-09T09:02:23Z"
+      "commit": "d7ed347",
+      "source_sha256": "cc72e4a31bb0a7b6f321971ab3fd864511211fae1ae2835da4668dbad532477c",
+      "translated_at": "2026-03-10T20:32:07Z"
     },
     "SKILLS_FOR_HOST_AGENTS.md": {
       "commit": "8de7870",
@@ -535,9 +625,9 @@
       "translated_at": "2026-02-28T12:52:18Z"
     },
     "coastfiles/SHARED_SERVICES.md": {
-      "commit": "0f69cdc",
-      "source_sha256": "13545489a79fa29de7cef9a4e527c41248e363e8afd0f81d5cc322c11d8e2e97",
-      "translated_at": "2026-03-02T07:41:07Z"
+      "commit": "d7ed347",
+      "source_sha256": "8f69bb7804daed0cbc98d08a6bc94a906e758c7bbb6e081b947f7175e92b2899",
+      "translated_at": "2026-03-10T20:32:07Z"
     },
     "coastfiles/VOLUMES.md": {
       "commit": "3357381",
@@ -655,9 +745,9 @@
       "translated_at": "2026-02-28T12:52:18Z"
     },
     "concepts_and_terminology/SHARED_SERVICES.md": {
-      "commit": "3357381",
-      "source_sha256": "963d72d593646b6d0ad5e925fa9fd846b767480cf0406c79f8db60fb4a009445",
-      "translated_at": "2026-02-28T12:52:18Z"
+      "commit": "d7ed347",
+      "source_sha256": "5bca939e6547309306c02a745259e4a6a8fea6c397347f4f6eb998c8038837d4",
+      "translated_at": "2026-03-10T20:32:07Z"
     },
     "concepts_and_terminology/TROUBLESHOOTING.md": {
       "commit": "85b1396",
@@ -670,14 +760,59 @@
       "translated_at": "2026-02-28T12:52:18Z"
     },
     "doc_ordering.txt": {
-      "commit": "85b1396",
-      "source_sha256": "664e95814e31402f9e71101ef9d25ddad9f68915d280a47a9516944221ffeda5",
-      "translated_at": "2026-03-09T09:02:23Z"
+      "commit": "d7ed347",
+      "source_sha256": "b2795f1dd4ea8c6d6b8c0aa592d2d65c3678805c1c6e5db9d530919625335e33",
+      "translated_at": "2026-03-10T20:32:07Z"
     },
     "installation_prompt.txt": {
       "commit": "b42c701",
       "source_sha256": "1848d3fcc131c11fb00caaed79fd8861bba7bef7696472275240d221d6cef046",
       "translated_at": "2026-03-05T00:05:49Z"
+    },
+    "learn-coasts-videos/README.md": {
+      "commit": "d7ed347",
+      "source_sha256": "3fbba4596ca2c6b1ee3741c488bbf6885226c0a769710f3131bdc48950c089f5",
+      "translated_at": "2026-03-10T20:32:07Z"
+    },
+    "learn-coasts-videos/assign.md": {
+      "commit": "d7ed347",
+      "source_sha256": "7ce2bc3e8374edaf71b96bd4b6a7f827396a9b9c9d5ead4f0480ecce59a80bfa",
+      "translated_at": "2026-03-10T20:32:07Z"
+    },
+    "learn-coasts-videos/checkout.md": {
+      "commit": "d7ed347",
+      "source_sha256": "ef75270195b87edc8189b5509694b28f807c561d2b84a2d1cee7b61d4b02660c",
+      "translated_at": "2026-03-10T20:32:07Z"
+    },
+    "learn-coasts-videos/coast-ui.md": {
+      "commit": "d7ed347",
+      "source_sha256": "ebf43cf61ca732a1387c81854f829fe48d2380831c8ab968607df032bd664dde",
+      "translated_at": "2026-03-10T20:32:07Z"
+    },
+    "learn-coasts-videos/coasts.md": {
+      "commit": "d7ed347",
+      "source_sha256": "c65cc753442576be957537f6e373419de91320a28291b9554b4460c557b91c19",
+      "translated_at": "2026-03-10T20:32:07Z"
+    },
+    "learn-coasts-videos/getting-started.md": {
+      "commit": "d7ed347",
+      "source_sha256": "5fc45e25d78d3118143be578a9d501018aa2b8382a933cf6ad89dcc78361d329",
+      "translated_at": "2026-03-10T20:32:07Z"
+    },
+    "learn-coasts-videos/ports.md": {
+      "commit": "d7ed347",
+      "source_sha256": "ca00317a89ef533ea4a66c24159370b800dcd53a2b53673a63a31a426012c72e",
+      "translated_at": "2026-03-10T20:32:07Z"
+    },
+    "learn-coasts-videos/secrets.md": {
+      "commit": "d7ed347",
+      "source_sha256": "bb9b95ac6b889ca6649bb8752ba02a8264b57311ef8b44d41cf2c523f94dd447",
+      "translated_at": "2026-03-10T20:32:07Z"
+    },
+    "learn-coasts-videos/volumes.md": {
+      "commit": "d7ed347",
+      "source_sha256": "72f6a5f0a2984f70a93eac76728caeb4f277cab9694bf9d14c5398bc6f07e18a",
+      "translated_at": "2026-03-10T20:32:07Z"
     },
     "recipes/FULLSTACK_MONOREPO.md": {
       "commit": "85b1396",
@@ -697,14 +832,14 @@
   },
   "pt": {
     "GETTING_STARTED.md": {
-      "commit": "8de7870",
-      "source_sha256": "14e53441bfc337f9611fe25c7988cdd34e03d701e451fcb14c0ad4459942a32a",
-      "translated_at": "2026-03-06T22:13:32Z"
+      "commit": "d7ed347",
+      "source_sha256": "336e3bfd5fe30e595581f444db7640b1ed12f0daa924a8ef86ed8f18da5dc37c",
+      "translated_at": "2026-03-10T20:34:41Z"
     },
     "README.md": {
-      "commit": "85b1396",
-      "source_sha256": "12b4d91e0c428b3cf67df9dea25bd9dc713d129efb0b557ec91256dd0d236c5b",
-      "translated_at": "2026-03-09T09:06:35Z"
+      "commit": "d7ed347",
+      "source_sha256": "cc72e4a31bb0a7b6f321971ab3fd864511211fae1ae2835da4668dbad532477c",
+      "translated_at": "2026-03-10T20:34:41Z"
     },
     "SKILLS_FOR_HOST_AGENTS.md": {
       "commit": "8de7870",
@@ -767,9 +902,9 @@
       "translated_at": "2026-02-28T13:04:30Z"
     },
     "coastfiles/SHARED_SERVICES.md": {
-      "commit": "0f69cdc",
-      "source_sha256": "13545489a79fa29de7cef9a4e527c41248e363e8afd0f81d5cc322c11d8e2e97",
-      "translated_at": "2026-03-02T07:43:40Z"
+      "commit": "d7ed347",
+      "source_sha256": "8f69bb7804daed0cbc98d08a6bc94a906e758c7bbb6e081b947f7175e92b2899",
+      "translated_at": "2026-03-10T20:34:41Z"
     },
     "coastfiles/VOLUMES.md": {
       "commit": "3357381",
@@ -887,9 +1022,9 @@
       "translated_at": "2026-02-28T13:04:30Z"
     },
     "concepts_and_terminology/SHARED_SERVICES.md": {
-      "commit": "3357381",
-      "source_sha256": "963d72d593646b6d0ad5e925fa9fd846b767480cf0406c79f8db60fb4a009445",
-      "translated_at": "2026-02-28T13:04:30Z"
+      "commit": "d7ed347",
+      "source_sha256": "5bca939e6547309306c02a745259e4a6a8fea6c397347f4f6eb998c8038837d4",
+      "translated_at": "2026-03-10T20:34:41Z"
     },
     "concepts_and_terminology/TROUBLESHOOTING.md": {
       "commit": "85b1396",
@@ -902,14 +1037,59 @@
       "translated_at": "2026-02-28T13:04:30Z"
     },
     "doc_ordering.txt": {
-      "commit": "85b1396",
-      "source_sha256": "664e95814e31402f9e71101ef9d25ddad9f68915d280a47a9516944221ffeda5",
-      "translated_at": "2026-03-09T09:06:35Z"
+      "commit": "d7ed347",
+      "source_sha256": "b2795f1dd4ea8c6d6b8c0aa592d2d65c3678805c1c6e5db9d530919625335e33",
+      "translated_at": "2026-03-10T20:34:41Z"
     },
     "installation_prompt.txt": {
       "commit": "b42c701",
       "source_sha256": "1848d3fcc131c11fb00caaed79fd8861bba7bef7696472275240d221d6cef046",
       "translated_at": "2026-03-05T00:10:17Z"
+    },
+    "learn-coasts-videos/README.md": {
+      "commit": "d7ed347",
+      "source_sha256": "3fbba4596ca2c6b1ee3741c488bbf6885226c0a769710f3131bdc48950c089f5",
+      "translated_at": "2026-03-10T20:34:41Z"
+    },
+    "learn-coasts-videos/assign.md": {
+      "commit": "d7ed347",
+      "source_sha256": "7ce2bc3e8374edaf71b96bd4b6a7f827396a9b9c9d5ead4f0480ecce59a80bfa",
+      "translated_at": "2026-03-10T20:34:41Z"
+    },
+    "learn-coasts-videos/checkout.md": {
+      "commit": "d7ed347",
+      "source_sha256": "ef75270195b87edc8189b5509694b28f807c561d2b84a2d1cee7b61d4b02660c",
+      "translated_at": "2026-03-10T20:34:41Z"
+    },
+    "learn-coasts-videos/coast-ui.md": {
+      "commit": "d7ed347",
+      "source_sha256": "ebf43cf61ca732a1387c81854f829fe48d2380831c8ab968607df032bd664dde",
+      "translated_at": "2026-03-10T20:34:41Z"
+    },
+    "learn-coasts-videos/coasts.md": {
+      "commit": "d7ed347",
+      "source_sha256": "c65cc753442576be957537f6e373419de91320a28291b9554b4460c557b91c19",
+      "translated_at": "2026-03-10T20:34:41Z"
+    },
+    "learn-coasts-videos/getting-started.md": {
+      "commit": "d7ed347",
+      "source_sha256": "5fc45e25d78d3118143be578a9d501018aa2b8382a933cf6ad89dcc78361d329",
+      "translated_at": "2026-03-10T20:34:41Z"
+    },
+    "learn-coasts-videos/ports.md": {
+      "commit": "d7ed347",
+      "source_sha256": "ca00317a89ef533ea4a66c24159370b800dcd53a2b53673a63a31a426012c72e",
+      "translated_at": "2026-03-10T20:34:41Z"
+    },
+    "learn-coasts-videos/secrets.md": {
+      "commit": "d7ed347",
+      "source_sha256": "bb9b95ac6b889ca6649bb8752ba02a8264b57311ef8b44d41cf2c523f94dd447",
+      "translated_at": "2026-03-10T20:34:41Z"
+    },
+    "learn-coasts-videos/volumes.md": {
+      "commit": "d7ed347",
+      "source_sha256": "72f6a5f0a2984f70a93eac76728caeb4f277cab9694bf9d14c5398bc6f07e18a",
+      "translated_at": "2026-03-10T20:34:41Z"
     },
     "recipes/FULLSTACK_MONOREPO.md": {
       "commit": "85b1396",
@@ -929,14 +1109,14 @@
   },
   "ru": {
     "GETTING_STARTED.md": {
-      "commit": "8de7870",
-      "source_sha256": "14e53441bfc337f9611fe25c7988cdd34e03d701e451fcb14c0ad4459942a32a",
-      "translated_at": "2026-03-06T22:13:00Z"
+      "commit": "d7ed347",
+      "source_sha256": "336e3bfd5fe30e595581f444db7640b1ed12f0daa924a8ef86ed8f18da5dc37c",
+      "translated_at": "2026-03-10T20:33:19Z"
     },
     "README.md": {
-      "commit": "85b1396",
-      "source_sha256": "12b4d91e0c428b3cf67df9dea25bd9dc713d129efb0b557ec91256dd0d236c5b",
-      "translated_at": "2026-03-09T09:04:33Z"
+      "commit": "d7ed347",
+      "source_sha256": "cc72e4a31bb0a7b6f321971ab3fd864511211fae1ae2835da4668dbad532477c",
+      "translated_at": "2026-03-10T20:33:19Z"
     },
     "SKILLS_FOR_HOST_AGENTS.md": {
       "commit": "8de7870",
@@ -999,9 +1179,9 @@
       "translated_at": "2026-02-28T12:58:35Z"
     },
     "coastfiles/SHARED_SERVICES.md": {
-      "commit": "0f69cdc",
-      "source_sha256": "13545489a79fa29de7cef9a4e527c41248e363e8afd0f81d5cc322c11d8e2e97",
-      "translated_at": "2026-03-02T07:42:26Z"
+      "commit": "d7ed347",
+      "source_sha256": "8f69bb7804daed0cbc98d08a6bc94a906e758c7bbb6e081b947f7175e92b2899",
+      "translated_at": "2026-03-10T20:33:19Z"
     },
     "coastfiles/VOLUMES.md": {
       "commit": "3357381",
@@ -1119,9 +1299,9 @@
       "translated_at": "2026-02-28T12:58:35Z"
     },
     "concepts_and_terminology/SHARED_SERVICES.md": {
-      "commit": "3357381",
-      "source_sha256": "963d72d593646b6d0ad5e925fa9fd846b767480cf0406c79f8db60fb4a009445",
-      "translated_at": "2026-02-28T12:58:35Z"
+      "commit": "d7ed347",
+      "source_sha256": "5bca939e6547309306c02a745259e4a6a8fea6c397347f4f6eb998c8038837d4",
+      "translated_at": "2026-03-10T20:33:19Z"
     },
     "concepts_and_terminology/TROUBLESHOOTING.md": {
       "commit": "85b1396",
@@ -1143,6 +1323,51 @@
       "source_sha256": "1848d3fcc131c11fb00caaed79fd8861bba7bef7696472275240d221d6cef046",
       "translated_at": "2026-03-05T00:08:04Z"
     },
+    "learn-coasts-videos/README.md": {
+      "commit": "d7ed347",
+      "source_sha256": "3fbba4596ca2c6b1ee3741c488bbf6885226c0a769710f3131bdc48950c089f5",
+      "translated_at": "2026-03-10T20:33:19Z"
+    },
+    "learn-coasts-videos/assign.md": {
+      "commit": "d7ed347",
+      "source_sha256": "7ce2bc3e8374edaf71b96bd4b6a7f827396a9b9c9d5ead4f0480ecce59a80bfa",
+      "translated_at": "2026-03-10T20:33:19Z"
+    },
+    "learn-coasts-videos/checkout.md": {
+      "commit": "d7ed347",
+      "source_sha256": "ef75270195b87edc8189b5509694b28f807c561d2b84a2d1cee7b61d4b02660c",
+      "translated_at": "2026-03-10T20:33:19Z"
+    },
+    "learn-coasts-videos/coast-ui.md": {
+      "commit": "d7ed347",
+      "source_sha256": "ebf43cf61ca732a1387c81854f829fe48d2380831c8ab968607df032bd664dde",
+      "translated_at": "2026-03-10T20:33:19Z"
+    },
+    "learn-coasts-videos/coasts.md": {
+      "commit": "d7ed347",
+      "source_sha256": "c65cc753442576be957537f6e373419de91320a28291b9554b4460c557b91c19",
+      "translated_at": "2026-03-10T20:33:19Z"
+    },
+    "learn-coasts-videos/getting-started.md": {
+      "commit": "d7ed347",
+      "source_sha256": "5fc45e25d78d3118143be578a9d501018aa2b8382a933cf6ad89dcc78361d329",
+      "translated_at": "2026-03-10T20:33:19Z"
+    },
+    "learn-coasts-videos/ports.md": {
+      "commit": "d7ed347",
+      "source_sha256": "ca00317a89ef533ea4a66c24159370b800dcd53a2b53673a63a31a426012c72e",
+      "translated_at": "2026-03-10T20:33:19Z"
+    },
+    "learn-coasts-videos/secrets.md": {
+      "commit": "d7ed347",
+      "source_sha256": "bb9b95ac6b889ca6649bb8752ba02a8264b57311ef8b44d41cf2c523f94dd447",
+      "translated_at": "2026-03-10T20:33:19Z"
+    },
+    "learn-coasts-videos/volumes.md": {
+      "commit": "d7ed347",
+      "source_sha256": "72f6a5f0a2984f70a93eac76728caeb4f277cab9694bf9d14c5398bc6f07e18a",
+      "translated_at": "2026-03-10T20:33:19Z"
+    },
     "recipes/FULLSTACK_MONOREPO.md": {
       "commit": "85b1396",
       "source_sha256": "6310b3f52657dc74b825a27f1d46e72248d0edcf115cf879591e6afbadf6251f",
@@ -1161,14 +1386,14 @@
   },
   "zh": {
     "GETTING_STARTED.md": {
-      "commit": "8de7870",
-      "source_sha256": "14e53441bfc337f9611fe25c7988cdd34e03d701e451fcb14c0ad4459942a32a",
-      "translated_at": "2026-03-06T22:11:16Z"
+      "commit": "d7ed347",
+      "source_sha256": "336e3bfd5fe30e595581f444db7640b1ed12f0daa924a8ef86ed8f18da5dc37c",
+      "translated_at": "2026-03-10T20:29:21Z"
     },
     "README.md": {
-      "commit": "85b1396",
-      "source_sha256": "12b4d91e0c428b3cf67df9dea25bd9dc713d129efb0b557ec91256dd0d236c5b",
-      "translated_at": "2026-03-09T08:57:57Z"
+      "commit": "d7ed347",
+      "source_sha256": "cc72e4a31bb0a7b6f321971ab3fd864511211fae1ae2835da4668dbad532477c",
+      "translated_at": "2026-03-10T20:29:21Z"
     },
     "SKILLS_FOR_HOST_AGENTS.md": {
       "commit": "8de7870",
@@ -1231,9 +1456,9 @@
       "translated_at": "2026-02-28T12:39:25Z"
     },
     "coastfiles/SHARED_SERVICES.md": {
-      "commit": "0f69cdc",
-      "source_sha256": "13545489a79fa29de7cef9a4e527c41248e363e8afd0f81d5cc322c11d8e2e97",
-      "translated_at": "2026-03-02T07:38:29Z"
+      "commit": "d7ed347",
+      "source_sha256": "8f69bb7804daed0cbc98d08a6bc94a906e758c7bbb6e081b947f7175e92b2899",
+      "translated_at": "2026-03-10T20:29:21Z"
     },
     "coastfiles/VOLUMES.md": {
       "commit": "3357381",
@@ -1351,9 +1576,9 @@
       "translated_at": "2026-02-28T12:39:25Z"
     },
     "concepts_and_terminology/SHARED_SERVICES.md": {
-      "commit": "3357381",
-      "source_sha256": "963d72d593646b6d0ad5e925fa9fd846b767480cf0406c79f8db60fb4a009445",
-      "translated_at": "2026-02-28T12:39:25Z"
+      "commit": "d7ed347",
+      "source_sha256": "5bca939e6547309306c02a745259e4a6a8fea6c397347f4f6eb998c8038837d4",
+      "translated_at": "2026-03-10T20:29:21Z"
     },
     "concepts_and_terminology/TROUBLESHOOTING.md": {
       "commit": "85b1396",
@@ -1366,14 +1591,59 @@
       "translated_at": "2026-02-28T12:39:25Z"
     },
     "doc_ordering.txt": {
-      "commit": "85b1396",
-      "source_sha256": "664e95814e31402f9e71101ef9d25ddad9f68915d280a47a9516944221ffeda5",
-      "translated_at": "2026-03-09T08:57:57Z"
+      "commit": "d7ed347",
+      "source_sha256": "b2795f1dd4ea8c6d6b8c0aa592d2d65c3678805c1c6e5db9d530919625335e33",
+      "translated_at": "2026-03-10T20:29:21Z"
     },
     "installation_prompt.txt": {
       "commit": "b42c701",
       "source_sha256": "1848d3fcc131c11fb00caaed79fd8861bba7bef7696472275240d221d6cef046",
       "translated_at": "2026-03-05T00:01:09Z"
+    },
+    "learn-coasts-videos/README.md": {
+      "commit": "d7ed347",
+      "source_sha256": "3fbba4596ca2c6b1ee3741c488bbf6885226c0a769710f3131bdc48950c089f5",
+      "translated_at": "2026-03-10T20:29:21Z"
+    },
+    "learn-coasts-videos/assign.md": {
+      "commit": "d7ed347",
+      "source_sha256": "7ce2bc3e8374edaf71b96bd4b6a7f827396a9b9c9d5ead4f0480ecce59a80bfa",
+      "translated_at": "2026-03-10T20:29:21Z"
+    },
+    "learn-coasts-videos/checkout.md": {
+      "commit": "d7ed347",
+      "source_sha256": "ef75270195b87edc8189b5509694b28f807c561d2b84a2d1cee7b61d4b02660c",
+      "translated_at": "2026-03-10T20:29:21Z"
+    },
+    "learn-coasts-videos/coast-ui.md": {
+      "commit": "d7ed347",
+      "source_sha256": "ebf43cf61ca732a1387c81854f829fe48d2380831c8ab968607df032bd664dde",
+      "translated_at": "2026-03-10T20:29:21Z"
+    },
+    "learn-coasts-videos/coasts.md": {
+      "commit": "d7ed347",
+      "source_sha256": "c65cc753442576be957537f6e373419de91320a28291b9554b4460c557b91c19",
+      "translated_at": "2026-03-10T20:29:21Z"
+    },
+    "learn-coasts-videos/getting-started.md": {
+      "commit": "d7ed347",
+      "source_sha256": "5fc45e25d78d3118143be578a9d501018aa2b8382a933cf6ad89dcc78361d329",
+      "translated_at": "2026-03-10T20:29:21Z"
+    },
+    "learn-coasts-videos/ports.md": {
+      "commit": "d7ed347",
+      "source_sha256": "ca00317a89ef533ea4a66c24159370b800dcd53a2b53673a63a31a426012c72e",
+      "translated_at": "2026-03-10T20:29:21Z"
+    },
+    "learn-coasts-videos/secrets.md": {
+      "commit": "d7ed347",
+      "source_sha256": "bb9b95ac6b889ca6649bb8752ba02a8264b57311ef8b44d41cf2c523f94dd447",
+      "translated_at": "2026-03-10T20:29:21Z"
+    },
+    "learn-coasts-videos/volumes.md": {
+      "commit": "d7ed347",
+      "source_sha256": "72f6a5f0a2984f70a93eac76728caeb4f277cab9694bf9d14c5398bc6f07e18a",
+      "translated_at": "2026-03-10T20:29:21Z"
     },
     "recipes/FULLSTACK_MONOREPO.md": {
       "commit": "85b1396",

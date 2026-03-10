@@ -2,7 +2,17 @@
 README.md
 GETTING_STARTED.md
 SKILLS_FOR_HOST_AGENTS.md
-VIDEO_TUTORIALS.md
+
+# Aprende Coasts
+learn-coasts-videos/README.md
+learn-coasts-videos/coasts.md
+learn-coasts-videos/ports.md
+learn-coasts-videos/assign.md
+learn-coasts-videos/checkout.md
+learn-coasts-videos/volumes.md
+learn-coasts-videos/secrets.md
+learn-coasts-videos/getting-started.md
+learn-coasts-videos/coast-ui.md
 
 # Conceptos y terminología
 concepts_and_terminology/README.md

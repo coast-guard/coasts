@@ -2,7 +2,7 @@
 
 ```youtube
 Je921fgJ4RY
-Part of the [Coasts Video Course](learn-coasts/README.md).
+Part of the [Coasts Video Course](learn-coasts-videos/README.md).
 ```
 
 ## Installing

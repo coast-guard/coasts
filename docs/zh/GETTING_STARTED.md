@@ -1,6 +1,9 @@
 # Coasts 入门
 
-如果你还没有完成，请先完成下面的安装和要求。然后本指南将带你了解如何在项目中使用 Coast。
+```youtube
+Je921fgJ4RY
+Part of the [Coasts Video Course](learn-coasts/README.md).
+```
 
 ## 安装
 

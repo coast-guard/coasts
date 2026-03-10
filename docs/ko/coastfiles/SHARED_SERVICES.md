@@ -21,7 +21,7 @@ env = { POSTGRES_PASSWORD = "dev" }
 
 ### `ports`
 
-서비스가 노출하는 포트 목록입니다. 공유 서비스와 Coast 인스턴스 간의 브리지 네트워크 라우팅에 사용됩니다.
+서비스가 노출하는 포트 목록입니다. Coast는 컨테이너 포트만 지정하는 형식과 Docker Compose 스타일의 `"HOST:CONTAINER"` 매핑 형식을 모두 허용합니다.
 
 ```toml
 [shared_services.redis]
@@ -29,7 +29,15 @@ image = "redis:7-alpine"
 ports = [6379]
 ```
 
-포트 값은 0이 아니어야 합니다.
+```toml
+[shared_services.postgis]
+image = "ghcr.io/baosystems/postgis:12-3.3"
+ports = ["5433:5432"]
+```
+
+- `6379` 같은 정수만 있는 값은 `"6379:6379"`의 축약형입니다.
+- `"5433:5432"` 같은 매핑 문자열은 공유 서비스를 호스트 포트 `5433`에 게시하면서, Coast 내부에서는 `service-name:5432`로 계속 접근 가능하게 합니다.
+- 호스트 포트와 컨테이너 포트는 둘 다 0이 아니어야 합니다.
 
 ### `volumes`
 
@@ -117,6 +125,15 @@ env = { MONGO_INITDB_ROOT_USERNAME = "myapp", MONGO_INITDB_ROOT_PASSWORD = "myap
 [shared_services.postgres]
 image = "postgres:16-alpine"
 ports = [5432]
+env = { POSTGRES_USER = "coast", POSTGRES_PASSWORD = "coast", POSTGRES_DB = "coast_demo" }
+```
+
+### Host/container mapped shared Postgres
+
+```toml
+[shared_services.postgres]
+image = "postgres:16-alpine"
+ports = ["5433:5432"]
 env = { POSTGRES_USER = "coast", POSTGRES_PASSWORD = "coast", POSTGRES_DB = "coast_demo" }
 ```
 

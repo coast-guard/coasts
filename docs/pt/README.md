@@ -1,5 +1,10 @@
 # Documentação do Coasts
 
+```youtube
+MBGKSKau4sU
+Part of the [Coasts Video Course](learn-coasts-videos/README.md).
+```
+
 ## Instalação
 
 - `curl -fsSL https://coasts.dev/install | sh`
@@ -67,6 +72,6 @@ Dev containers geralmente são projetados para montar uma IDE em um único works
 
 Se você quiser um pequeno projeto de exemplo para experimentar com Coasts, comece com o repositório [`coasts-demo`](https://github.com/coast-guard/coasts-demo).
 
-## Video Tutorials
+## Coasts Video Course
 
-Se você quiser uma rápida apresentação em vídeo, veja [VIDEO_TUTORIALS.md](VIDEO_TUTORIALS.md) para a playlist oficial do Coasts e links diretos para cada tutorial.
+Se você preferir vídeo, o [Coasts Video Course](learn-coasts-videos/README.md) cobre todos os conceitos centrais em menos de três minutos cada.

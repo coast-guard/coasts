@@ -1,6 +1,9 @@
 # Primeiros Passos com Coasts
 
-Se você ainda não o fez, conclua primeiro a instalação e os requisitos abaixo. Em seguida, este guia mostra como usar o Coast em um projeto.
+```youtube
+Je921fgJ4RY
+Part of the [Coasts Video Course](learn-coasts/README.md).
+```
 
 ## Instalando
 

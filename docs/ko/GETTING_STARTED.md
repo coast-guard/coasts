@@ -1,6 +1,9 @@
 # Coasts 시작하기
 
-아직 하지 않았다면, 먼저 아래의 설치 및 요구 사항을 완료하세요. 그런 다음 이 가이드는 프로젝트에서 Coast를 사용하는 방법을 안내합니다.
+```youtube
+Je921fgJ4RY
+Part of the [Coasts Video Course](learn-coasts-videos/README.md).
+```
 
 ## 설치
 
@@ -107,7 +110,7 @@ coast ls
 # dev-1  my-project  running  main    dind     -         ✓   ~/dev/my-project
 ```
 
-프로젝트의 Coastguard 관측(Observability) UI를 띄우려면:
+프로젝트의 Coastguard 관측 UI를 띄우려면:
 
 ```bash
 coast ui

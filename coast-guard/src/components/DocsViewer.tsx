@@ -398,8 +398,9 @@ export default function DocsViewer({ content, basePath, files }: DocsViewerProps
               <p className="mt-2 text-center text-sm text-muted-ui italic">
                 {caption.split(/(\[[^\]]+\]\([^)]+\))/).map((part, i) => {
                   const linkMatch = part.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
-                  if (linkMatch?.[1] != null && linkMatch[2] != null) {
-                    const href = linkMatch[2];
+                  const label = linkMatch?.[1];
+                  const href = linkMatch?.[2];
+                  if (label != null && href != null) {
                     const docLink = resolveDocLink(href, basePath);
                     if (docLink != null) {
                       return (
@@ -409,13 +410,13 @@ export default function DocsViewer({ content, basePath, files }: DocsViewerProps
                           onClick={(e) => { e.preventDefault(); void navigate(docLink); }}
                           className="text-[var(--primary)] hover:text-[var(--primary-strong)] underline underline-offset-2"
                         >
-                          {linkMatch[1]}
+                          {label}
                         </a>
                       );
                     }
                     return (
                       <a key={i} href={href} target="_blank" rel="noopener noreferrer" className="text-[var(--primary)] hover:text-[var(--primary-strong)] underline underline-offset-2">
-                        {linkMatch[1]}
+                        {label}
                       </a>
                     );
                   }

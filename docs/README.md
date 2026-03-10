@@ -2,7 +2,7 @@
 
 ```youtube
 MBGKSKau4sU
-Part of the [Coasts Video Course](learn-coasts/README.md).
+Part of the [Coasts Video Course](learn-coasts-videos/README.md).
 ```
 
 ## Installing
@@ -74,5 +74,5 @@ If you want a small example project to try with Coasts, start with the [`coasts-
 
 ## Coasts Video Course
 
-If you prefer video, the [Coasts Video Course](learn-coasts/README.md) covers every core concept in under three minutes each.
+If you prefer video, the [Coasts Video Course](learn-coasts-videos/README.md) covers every core concept in under three minutes each.
 
