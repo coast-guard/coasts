@@ -12,6 +12,14 @@ Coasts is agnostic to AI providers and agent harnesses. The only host requiremen
 
 Coasts is also offline-first with no hosted service dependency, so there is no vendor lock-in risk: even if we disappeared, your local workflow would keep running.
 
+## Installation
+
+Install the latest public release:
+
+```sh
+eval "$(curl -fsSL https://coasts.dev/install)"
+```
+
 [Visit coasts.dev](https://coasts.dev) for the website, docs, and installation instructions.
 
 ![Coastguard overview showing multiple coasts](assets/coastguard-overview-live.png)
@@ -26,17 +34,11 @@ Want a concrete example to explore? Check out the [`coasts-demo` repository](htt
 
 ## Contributing
 
-To contribute, read the [contributing guide](CONTRIBUTING.md).
+To contribute, read the [contributing guide](CONTRIBUTING.md) for PR guidelines.
 
 > Note: Coasts is currently macOS-specific. General Linux support is coming shortly.
 
-## Installation
-
-```sh
-eval "$(curl -fsSL https://coasts.dev/install)"
-```
-
-## Prerequisites
+### Prerequisites
 
 - Rust (stable toolchain)
 - Docker
@@ -44,55 +46,17 @@ eval "$(curl -fsSL https://coasts.dev/install)"
 - socat (`brew install socat` on macOS)
 - Git
 
-## Building
-
-```bash
-cargo build --release
-```
-
-Binaries are placed in `target/release/`:
-- `coast` -- the CLI client
-- `coastd` -- the background daemon
-
-## Quick Start (building from source)
-
-```bash
-# Start the daemon
-coastd --foreground &
-
-# In a project with a Coastfile and docker-compose.yml:
-coast build
-coast run main
-coast run feature-x --worktree feature/x
-
-# Swap which instance owns the canonical ports
-coast checkout main
-coast checkout feature-x
-
-# Inspect
-coast ls
-coast ps main
-coast logs main
-coast ports main
-
-# Clean up
-coast rm main
-coast rm feature-x
-```
-
-## Development
-
 ### Dev setup
 
-If you have coast globally installed, the production daemon occupies `~/.coast/` and port 31415. The workspace builds separate `coast-dev` and `coastd-dev` binaries that use `~/.coast-dev/` and port 31416, so the two never conflict.
-
-Run the setup script once to build everything and symlink the dev binaries into `~/.local/bin`:
+Run the setup script once to build the web UI, compile the workspace, and symlink `coast-dev` / `coastd-dev` into `~/.local/bin`:
 
 ```bash
 ./dev_setup.sh
 ```
 
-This builds the web UI, compiles the workspace, and creates `coast-dev` / `coastd-dev` symlinks. On first run it adds `~/.local/bin` to your PATH — restart your shell or `source ~/.zshrc` to pick it up.
+On first run it adds `~/.local/bin` to your PATH — restart your shell or `source ~/.zshrc` to pick it up.
+
+Dev mode uses `~/.coast-dev/` and port 31416, so it never conflicts with a global coast install on port 31415.
 
 ### Day-to-day development workflow
 
@@ -219,6 +183,40 @@ coast/
   scripts/            # Python build scripts (translation, search index generation)
   docs/               # User-facing documentation (English + translations)
   integrated-examples/  # Example projects and shell-based integration tests
+```
+
+## Building from source
+
+```bash
+cargo build --release
+```
+
+Binaries are placed in `target/release/`:
+- `coast` -- the CLI client
+- `coastd` -- the background daemon
+
+```bash
+# Start the daemon
+coastd --foreground &
+
+# In a project with a Coastfile and docker-compose.yml:
+coast build
+coast run main
+coast run feature-x --worktree feature/x
+
+# Swap which instance owns the canonical ports
+coast checkout main
+coast checkout feature-x
+
+# Inspect
+coast ls
+coast ps main
+coast logs main
+coast ports main
+
+# Clean up
+coast rm main
+coast rm feature-x
 ```
 
 ## Original History
