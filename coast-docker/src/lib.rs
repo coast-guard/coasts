@@ -7,6 +7,7 @@ pub mod compose;
 pub mod compose_build;
 pub mod container;
 pub mod dind;
+pub mod host;
 pub mod image_cache;
 pub mod network;
 pub mod podman;

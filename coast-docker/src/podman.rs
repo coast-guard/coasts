@@ -14,6 +14,7 @@ use tracing::{debug, info};
 
 use coast_core::error::{CoastError, Result};
 
+use crate::host::connect_to_host_docker;
 use crate::runtime::{ContainerConfig, ExecResult, Runtime};
 
 /// The default image used for Podman coast containers.
@@ -41,14 +42,7 @@ pub struct PodmanRuntime {
 impl PodmanRuntime {
     /// Create a new Podman runtime connected to the default Docker socket.
     pub fn new() -> Result<Self> {
-        let docker = Docker::connect_with_local_defaults().map_err(|e| CoastError::Docker {
-            message: format!(
-                "Failed to connect to Docker daemon. Is Docker running? \
-                 The Podman runtime still requires Docker on the host to \
-                 manage coast containers. Error: {e}"
-            ),
-            source: Some(Box::new(e)),
-        })?;
+        let docker = connect_to_host_docker()?;
         Ok(Self { docker })
     }
 

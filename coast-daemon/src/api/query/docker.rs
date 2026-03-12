@@ -7,6 +7,7 @@ use axum::{Json, Router};
 use tokio::sync::OnceCell;
 
 use coast_core::protocol::{DockerInfoResponse, OpenDockerSettingsResponse};
+use coast_docker::host::docker_endpoint_source_label;
 
 use crate::server::AppState;
 
@@ -53,6 +54,19 @@ async fn docker_info(State(state): State<Arc<AppState>>) -> Json<DockerInfoRespo
         server_version: String::new(),
         can_adjust: false,
         provider: String::new(),
+        endpoint_source: state
+            .docker_endpoint
+            .as_ref()
+            .map(|endpoint| docker_endpoint_source_label(&endpoint.source).to_string()),
+        endpoint_host: state
+            .docker_endpoint
+            .as_ref()
+            .map(|endpoint| endpoint.host.clone()),
+        context_name: state
+            .docker_endpoint
+            .as_ref()
+            .and_then(|endpoint| endpoint.context.clone()),
+        connect_error: state.docker_connect_error.clone(),
     });
 
     let Some(docker) = state.docker.as_ref() else {
@@ -81,6 +95,19 @@ async fn docker_info(State(state): State<Arc<AppState>>) -> Json<DockerInfoRespo
         server_version,
         can_adjust,
         provider,
+        endpoint_source: state
+            .docker_endpoint
+            .as_ref()
+            .map(|endpoint| docker_endpoint_source_label(&endpoint.source).to_string()),
+        endpoint_host: state
+            .docker_endpoint
+            .as_ref()
+            .map(|endpoint| endpoint.host.clone()),
+        context_name: state
+            .docker_endpoint
+            .as_ref()
+            .and_then(|endpoint| endpoint.context.clone()),
+        connect_error: state.docker_connect_error.clone(),
     })
 }
 

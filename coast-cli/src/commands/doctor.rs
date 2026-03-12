@@ -99,8 +99,25 @@ pub async fn execute(args: &DoctorArgs) -> Result<()> {
 
     let db = rusqlite::Connection::open(&db_path).context("Failed to open state database")?;
 
-    let docker = bollard::Docker::connect_with_local_defaults()
-        .context("Failed to connect to Docker. Is Docker running?")?;
+    let probe = coast_docker::host::probe_host_docker();
+    let docker = match probe.docker {
+        Ok(docker) => docker,
+        Err(error) => {
+            let mut detail =
+                "Failed to connect to Docker. Is Docker running and is your active Docker context reachable?".to_string();
+            if let Some(endpoint) = probe.endpoint {
+                detail.push_str(&format!(
+                    "\nResolved endpoint source: {}\nResolved endpoint host: {}",
+                    coast_docker::host::docker_endpoint_source_label(&endpoint.source),
+                    endpoint.host
+                ));
+                if let Some(context) = endpoint.context {
+                    detail.push_str(&format!("\nResolved context: {context}"));
+                }
+            }
+            return Err(anyhow::anyhow!("{detail}\n{error}"));
+        }
+    };
 
     let mut fixes: Vec<String> = Vec::new();
     let mut findings: Vec<String> = Vec::new();

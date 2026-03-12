@@ -63,7 +63,7 @@ pub async fn execute(args: &NukeArgs) -> Result<()> {
         ..Default::default()
     };
 
-    match bollard::Docker::connect_with_local_defaults() {
+    match coast_docker::host::connect_to_host_docker() {
         Ok(docker) => {
             report.containers_removed = remove_containers(&docker).await;
             report.volumes_removed = remove_volumes(&docker).await;

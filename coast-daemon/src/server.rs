@@ -21,6 +21,7 @@ use crate::analytics::{self, AnalyticsClient, CommandSource};
 use crate::api::streaming::spawn_agent_shell_if_configured;
 use crate::handlers;
 use crate::state::StateDb;
+use coast_docker::host::{docker_endpoint_source_label, DockerEndpoint};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpdateOperationKind {
@@ -120,6 +121,10 @@ pub struct AppState {
     /// Bollard Docker client connected to the host daemon.
     /// None in test environments where Docker is not available.
     pub docker: Option<bollard::Docker>,
+    /// Resolved Docker endpoint metadata, if endpoint resolution succeeded.
+    pub docker_endpoint: Option<DockerEndpoint>,
+    /// Last Docker connection error captured at daemon startup, if any.
+    pub docker_connect_error: Option<String>,
     /// Broadcast channel for WebSocket event notifications.
     pub event_bus: tokio::sync::broadcast::Sender<CoastEvent>,
     /// Persistent PTY sessions for the host terminal feature.
@@ -186,7 +191,25 @@ pub struct AppState {
 impl AppState {
     /// Create a new `AppState` with the given state database and Docker client.
     pub fn new(db: StateDb) -> Self {
-        let docker = bollard::Docker::connect_with_local_defaults().ok();
+        let probe = coast_docker::host::probe_host_docker();
+        let docker_endpoint = probe.endpoint.clone();
+        let (docker, docker_connect_error) = match probe.docker {
+            Ok(docker) => (Some(docker), None),
+            Err(error) => {
+                if let Some(ref endpoint) = docker_endpoint {
+                    warn!(
+                        source = docker_endpoint_source_label(&endpoint.source),
+                        host = %endpoint.host,
+                        context = endpoint.context.as_deref().unwrap_or(""),
+                        error = %error,
+                        "Docker is unavailable at daemon startup"
+                    );
+                } else {
+                    warn!(error = %error, "Docker is unavailable at daemon startup");
+                }
+                (None, Some(error.to_string()))
+            }
+        };
         let (event_bus, _) = tokio::sync::broadcast::channel(256);
         let initial_lang = db.get_language().unwrap_or_else(|_| "en".to_string());
         let (language_tx, language_rx) = tokio::sync::watch::channel(initial_lang);
@@ -208,6 +231,8 @@ impl AppState {
         Self {
             db: Mutex::new(db),
             docker,
+            docker_endpoint,
+            docker_connect_error,
             event_bus,
             pty_sessions: Mutex::new(std::collections::HashMap::new()),
             exec_sessions: Mutex::new(std::collections::HashMap::new()),
@@ -243,6 +268,8 @@ impl AppState {
         Self {
             db: Mutex::new(db),
             docker: None,
+            docker_endpoint: None,
+            docker_connect_error: None,
             event_bus,
             pty_sessions: Mutex::new(std::collections::HashMap::new()),
             exec_sessions: Mutex::new(std::collections::HashMap::new()),
@@ -284,6 +311,11 @@ impl AppState {
             )
             .expect("bollard stub client creation should not fail"),
         );
+        s.docker_endpoint = Some(DockerEndpoint {
+            host: "http://127.0.0.1:0".to_string(),
+            source: coast_docker::host::DockerEndpointSource::EnvHost,
+            context: None,
+        });
         s
     }
 

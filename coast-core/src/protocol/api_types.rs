@@ -338,6 +338,10 @@ pub struct DockerInfoResponse {
     pub server_version: String,
     pub can_adjust: bool,
     pub provider: String,
+    pub endpoint_source: Option<String>,
+    pub endpoint_host: Option<String>,
+    pub context_name: Option<String>,
+    pub connect_error: Option<String>,
 }
 
 /// Response after requesting Docker Desktop settings to be opened.
