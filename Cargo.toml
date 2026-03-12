@@ -29,7 +29,7 @@ toml = "0.8"
 clap = { version = "4", features = ["derive", "env"] }
 
 # Docker
-bollard = "0.18"
+bollard = { version = "0.18", features = ["ssl"] }
 
 # Database
 rusqlite = { version = "0.32", features = ["bundled"] }

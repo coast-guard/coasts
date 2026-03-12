@@ -11,6 +11,8 @@ use tracing::{debug, info, warn};
 
 use coast_core::error::{CoastError, Result};
 
+use crate::host::connect_to_host_docker;
+
 /// Prefix for coast shared network names.
 pub const NETWORK_PREFIX: &str = "coast-shared-";
 
@@ -36,10 +38,7 @@ pub struct NetworkManager {
 impl NetworkManager {
     /// Create a new network manager connected to the default Docker socket.
     pub fn new() -> Result<Self> {
-        let docker = Docker::connect_with_local_defaults().map_err(|e| CoastError::Docker {
-            message: format!("Failed to connect to Docker daemon: {e}"),
-            source: Some(Box::new(e)),
-        })?;
+        let docker = connect_to_host_docker()?;
         Ok(Self { docker })
     }
 
