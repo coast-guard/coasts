@@ -18,6 +18,7 @@ path = "src/bin/coast-dev.rs"
 
 [dependencies]
 coast-core = { path = "../coast-core" }
+coast-docker = { path = "../coast-docker" }
 coast-i18n = { path = "../coast-i18n" }
 coast-update = { path = "../coast-update" }
 rust-i18n = { workspace = true }

@@ -186,7 +186,13 @@ pub struct AppState {
 impl AppState {
     /// Create a new `AppState` with the given state database and Docker client.
     pub fn new(db: StateDb) -> Self {
-        let docker = bollard::Docker::connect_with_local_defaults().ok();
+        let docker = match coast_docker::host::connect_to_host_docker() {
+            Ok(docker) => Some(docker),
+            Err(error) => {
+                warn!(error = %error, "Docker is unavailable at daemon startup");
+                None
+            }
+        };
         let (event_bus, _) = tokio::sync::broadcast::channel(256);
         let initial_lang = db.get_language().unwrap_or_else(|_| "en".to_string());
         let (language_tx, language_rx) = tokio::sync::watch::channel(initial_lang);

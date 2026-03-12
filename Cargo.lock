@@ -401,6 +401,7 @@ dependencies = [
  "chrono",
  "clap",
  "coast-core",
+ "coast-docker",
  "coast-i18n",
  "coast-update",
  "colored",
