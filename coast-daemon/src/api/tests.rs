@@ -1391,6 +1391,10 @@ mod tests {
             .unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["connected"], false);
+        assert!(json.get("endpoint_source").is_some());
+        assert!(json.get("endpoint_host").is_some());
+        assert!(json.get("context_name").is_some());
+        assert!(json.get("connect_error").is_some());
     }
 
     #[tokio::test]

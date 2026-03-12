@@ -1026,6 +1026,10 @@ fn test_docker_info_response_serialization() {
         server_version: "28.3.3".to_string(),
         can_adjust: true,
         provider: "docker-desktop".to_string(),
+        endpoint_source: Some("config_context".to_string()),
+        endpoint_host: Some("unix:///Users/test/.orbstack/run/docker.sock".to_string()),
+        context_name: Some("orbstack".to_string()),
+        connect_error: None,
     };
     let json = serde_json::to_value(&resp).unwrap();
     assert_eq!(json["mem_total_bytes"], 8_589_934_592u64);
@@ -1033,6 +1037,12 @@ fn test_docker_info_response_serialization() {
     assert_eq!(json["os"], "Docker Desktop");
     assert_eq!(json["server_version"], "28.3.3");
     assert_eq!(json["can_adjust"], true);
+    assert_eq!(json["endpoint_source"], "config_context");
+    assert_eq!(
+        json["endpoint_host"],
+        "unix:///Users/test/.orbstack/run/docker.sock"
+    );
+    assert_eq!(json["context_name"], "orbstack");
 }
 
 #[test]

@@ -30,6 +30,21 @@ pub struct DockerEndpoint {
     pub context: Option<String>,
 }
 
+#[derive(Debug)]
+pub struct HostDockerProbe {
+    pub endpoint: Option<DockerEndpoint>,
+    pub docker: Result<Docker>,
+}
+
+pub fn docker_endpoint_source_label(source: &DockerEndpointSource) -> &'static str {
+    match source {
+        DockerEndpointSource::EnvHost => "env_host",
+        DockerEndpointSource::EnvContext => "env_context",
+        DockerEndpointSource::ConfigContext => "config_context",
+        DockerEndpointSource::DefaultLocal => "default_local",
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct DockerCliConfig {
     #[serde(rename = "currentContext")]
@@ -51,25 +66,37 @@ struct ContextEndpoint {
 }
 
 pub fn connect_to_host_docker() -> Result<Docker> {
-    connect_to_host_docker_with(
-        env::var_os("DOCKER_CONFIG").map(PathBuf::from),
-        env::var("DOCKER_HOST").ok(),
-        env::var("DOCKER_CONTEXT").ok(),
-    )
+    probe_host_docker().docker
 }
 
-fn connect_to_host_docker_with(
-    docker_config_dir: Option<PathBuf>,
-    env_host: Option<String>,
-    env_context: Option<String>,
-) -> Result<Docker> {
-    let endpoint = resolve_docker_endpoint(
+pub fn probe_host_docker() -> HostDockerProbe {
+    let docker_config_dir = env::var_os("DOCKER_CONFIG").map(PathBuf::from);
+    let env_host = env::var("DOCKER_HOST").ok();
+    let env_context = env::var("DOCKER_CONTEXT").ok();
+
+    probe_host_docker_with(
         docker_config_dir.as_deref(),
         env_host.as_deref(),
         env_context.as_deref(),
-    )?;
+    )
+}
 
-    match endpoint.source {
+fn probe_host_docker_with(
+    docker_config_dir: Option<&Path>,
+    env_host: Option<&str>,
+    env_context: Option<&str>,
+) -> HostDockerProbe {
+    let endpoint = match resolve_docker_endpoint(docker_config_dir, env_host, env_context) {
+        Ok(endpoint) => endpoint,
+        Err(error) => {
+            return HostDockerProbe {
+                endpoint: None,
+                docker: Err(error),
+            };
+        }
+    };
+
+    let docker = match endpoint.source {
         DockerEndpointSource::EnvHost => Docker::connect_with_defaults().map_err(|e| {
             CoastError::docker(format!(
                 "Failed to connect to Docker using DOCKER_HOST='{}'. Error: {e}",
@@ -77,6 +104,11 @@ fn connect_to_host_docker_with(
             ))
         }),
         _ => connect_to_endpoint(&endpoint),
+    };
+
+    HostDockerProbe {
+        endpoint: Some(endpoint),
+        docker,
     }
 }
 
@@ -152,13 +184,14 @@ fn connect_to_endpoint(endpoint: &DockerEndpoint) -> Result<Docker> {
     }
 
     if host.starts_with("tcp://") || host.starts_with("http://") {
-        return Docker::connect_with_http(host, DEFAULT_TIMEOUT_SECS, API_DEFAULT_VERSION)
-            .map_err(|e| {
+        return Docker::connect_with_http(host, DEFAULT_TIMEOUT_SECS, API_DEFAULT_VERSION).map_err(
+            |e| {
                 CoastError::docker(format!(
                     "Failed to connect to {context_msg} at '{}'. Error: {e}",
                     endpoint.host
                 ))
-            });
+            },
+        );
     }
 
     Err(CoastError::docker(format!(
@@ -197,13 +230,14 @@ fn current_context_from_config(config_dir: &Path) -> Result<Option<String>> {
         source: Some(Box::new(e)),
     })?;
 
-    let config: DockerCliConfig = serde_json::from_str(&contents).map_err(|e| CoastError::Docker {
-        message: format!(
-            "Failed to parse Docker config '{}'. Error: {e}",
-            config_path.display()
-        ),
-        source: Some(Box::new(e)),
-    })?;
+    let config: DockerCliConfig =
+        serde_json::from_str(&contents).map_err(|e| CoastError::Docker {
+            message: format!(
+                "Failed to parse Docker config '{}'. Error: {e}",
+                config_path.display()
+            ),
+            source: Some(Box::new(e)),
+        })?;
 
     Ok(normalize_context_name(config.current_context.as_deref()))
 }
@@ -250,13 +284,14 @@ fn resolve_context_host(config_dir: Option<&Path>, context_name: &str) -> Result
             ),
             source: Some(Box::new(e)),
         })?;
-        let meta: ContextMeta = serde_json::from_str(&contents).map_err(|e| CoastError::Docker {
-            message: format!(
-                "Failed to parse Docker context metadata '{}'. Error: {e}",
-                meta_path.display()
-            ),
-            source: Some(Box::new(e)),
-        })?;
+        let meta: ContextMeta =
+            serde_json::from_str(&contents).map_err(|e| CoastError::Docker {
+                message: format!(
+                    "Failed to parse Docker context metadata '{}'. Error: {e}",
+                    meta_path.display()
+                ),
+                source: Some(Box::new(e)),
+            })?;
 
         if meta.name != context_name {
             continue;
@@ -303,12 +338,9 @@ mod tests {
             r#"{"currentContext":"orbstack"}"#,
         );
 
-        let endpoint = resolve_docker_endpoint(
-            Some(temp.path()),
-            Some("unix:///tmp/docker.sock"),
-            None,
-        )
-        .unwrap();
+        let endpoint =
+            resolve_docker_endpoint(Some(temp.path()), Some("unix:///tmp/docker.sock"), None)
+                .unwrap();
 
         assert_eq!(endpoint.source, DockerEndpointSource::EnvHost);
         assert_eq!(endpoint.host, "unix:///tmp/docker.sock");
@@ -322,8 +354,7 @@ mod tests {
             r#"{"Name":"orbstack","Endpoints":{"docker":{"Host":"unix:///Users/test/.orbstack/run/docker.sock"}}}"#,
         );
 
-        let endpoint =
-            resolve_docker_endpoint(Some(temp.path()), None, Some("orbstack")).unwrap();
+        let endpoint = resolve_docker_endpoint(Some(temp.path()), None, Some("orbstack")).unwrap();
 
         assert_eq!(endpoint.source, DockerEndpointSource::EnvContext);
         assert_eq!(
@@ -375,12 +406,9 @@ mod tests {
 
     #[test]
     fn explicit_default_context_falls_back_to_default_socket() {
-        let endpoint = resolve_docker_endpoint(
-            None,
-            Some("unix:///tmp/docker.sock"),
-            Some("default"),
-        )
-        .unwrap();
+        let endpoint =
+            resolve_docker_endpoint(None, Some("unix:///tmp/docker.sock"), Some("default"))
+                .unwrap();
 
         assert_eq!(endpoint.source, DockerEndpointSource::DefaultLocal);
         assert_eq!(endpoint.host, DEFAULT_LOCAL_DOCKER_HOST);
@@ -389,9 +417,22 @@ mod tests {
     #[test]
     fn missing_context_is_actionable() {
         let temp = TempDir::new().unwrap();
-        let error =
-            resolve_docker_endpoint(Some(temp.path()), None, Some("missing")).unwrap_err();
+        let error = resolve_docker_endpoint(Some(temp.path()), None, Some("missing")).unwrap_err();
 
         assert!(error.to_string().contains("Docker context 'missing'"));
+    }
+
+    #[test]
+    fn probe_captures_endpoint_on_connection_failure() {
+        let temp = TempDir::new().unwrap();
+        write_json(
+            &temp.path().join("contexts/meta/hash/meta.json"),
+            r#"{"Name":"orbstack","Endpoints":{"docker":{"Host":"unix:///tmp/does-not-exist.sock"}}}"#,
+        );
+
+        let probe = probe_host_docker_with(Some(temp.path()), None, Some("orbstack"));
+
+        assert!(probe.endpoint.is_some());
+        assert!(probe.docker.is_err());
     }
 }
