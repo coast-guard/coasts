@@ -259,11 +259,144 @@ impl Coastfile {
         }
     }
 
+    fn resolve_path(path: &str, project_root: &Path) -> PathBuf {
+        let path = Path::new(path);
+        if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            project_root.join(path)
+        }
+    }
+
+    fn parse_runtime(runtime: Option<&str>) -> Result<Option<RuntimeType>> {
+        runtime
+            .map(|runtime| {
+                RuntimeType::from_str_value(runtime).ok_or_else(|| {
+                    CoastError::coastfile(format!(
+                        "invalid runtime '{}'. Expected one of: dind, sysbox, podman",
+                        runtime
+                    ))
+                })
+            })
+            .transpose()
+    }
+
+    fn validate_named_ports(ports: &HashMap<String, u16>, kind: &str) -> Result<()> {
+        for (name, port) in ports {
+            if *port == 0 {
+                return Err(CoastError::coastfile(format!(
+                    "{kind} '{name}' has value 0, which is not a valid port number"
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn merge_validated_ports(
+        mut base: HashMap<String, u16>,
+        layer: HashMap<String, u16>,
+        kind: &str,
+    ) -> Result<HashMap<String, u16>> {
+        Self::validate_named_ports(&layer, kind)?;
+        base.extend(layer);
+        Ok(base)
+    }
+
+    fn merge_named_items<T, F>(mut base: Vec<T>, layer: Vec<T>, key: F) -> Vec<T>
+    where
+        F: Fn(&T) -> &str,
+    {
+        for item in layer {
+            if let Some(pos) = base.iter().position(|existing| key(existing) == key(&item)) {
+                base[pos] = item;
+            } else {
+                base.push(item);
+            }
+        }
+
+        base
+    }
+
+    fn merge_inject(base: HostInjectConfig, raw: Option<RawInjectConfig>) -> HostInjectConfig {
+        match raw {
+            Some(raw_inject) => {
+                let mut env = base.env;
+                env.extend(raw_inject.env);
+                let mut files = base.files;
+                files.extend(raw_inject.files);
+                HostInjectConfig { env, files }
+            }
+            None => base,
+        }
+    }
+
+    fn merge_setup(base: SetupConfig, raw: Option<RawSetupConfig>) -> Result<SetupConfig> {
+        match raw {
+            Some(raw_setup) => {
+                let RawSetupConfig {
+                    packages: raw_packages,
+                    run: raw_run,
+                    files: raw_files,
+                } = raw_setup;
+                let mut packages = base.packages;
+                for pkg in raw_packages {
+                    if !packages.contains(&pkg) {
+                        packages.push(pkg);
+                    }
+                }
+                let mut run = base.run;
+                run.extend(raw_run);
+                let files = Self::merge_named_items(
+                    base.files,
+                    Self::parse_setup_files(raw_files)?,
+                    |file| file.path.as_str(),
+                );
+                Ok(SetupConfig {
+                    packages,
+                    run,
+                    files,
+                })
+            }
+            None => Ok(base),
+        }
+    }
+
+    fn merge_omit(base: OmitConfig, raw: Option<RawOmitConfig>) -> OmitConfig {
+        match raw {
+            Some(raw_omit) => {
+                let mut services = base.services;
+                services.extend(raw_omit.services);
+                let mut volumes = base.volumes;
+                volumes.extend(raw_omit.volumes);
+                OmitConfig { services, volumes }
+            }
+            None => base,
+        }
+    }
+
+    fn validate_primary_port(
+        primary_port: &Option<String>,
+        ports: &HashMap<String, u16>,
+    ) -> Result<()> {
+        if let Some(primary_port) = primary_port {
+            if !ports.contains_key(primary_port) {
+                return Err(CoastError::coastfile(format!(
+                    "primary_port '{}' does not match any declared port. \
+                     Available ports: {}",
+                    primary_port,
+                    ports.keys().cloned().collect::<Vec<_>>().join(", ")
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
     /// Merge a raw TOML layer on top of an existing Coastfile.
     ///
     /// Fields present in `raw` override the base. Absent fields are inherited.
     /// Maps and named collections are merged (layer overrides same-name items).
-    #[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
     fn merge_raw_onto(
         base: Coastfile,
         raw: RawCoastfile,
@@ -277,197 +410,56 @@ impl Coastfile {
             None => base.name,
         };
 
-        let compose = match raw.coast.compose {
-            Some(c) => {
-                let p = Path::new(&c);
-                Some(if p.is_absolute() {
-                    p.to_path_buf()
-                } else {
-                    project_root.join(p)
-                })
-            }
-            None => base.compose,
-        };
-
-        let runtime = match raw.coast.runtime {
-            Some(ref r) => RuntimeType::from_str_value(r).ok_or_else(|| {
-                CoastError::coastfile(format!(
-                    "invalid runtime '{}'. Expected one of: dind, sysbox, podman",
-                    r
-                ))
-            })?,
-            None => base.runtime,
-        };
-
-        // Ports: merge maps, validate
-        let mut ports = base.ports;
-        for (pname, port) in &raw.ports {
-            if *port == 0 {
-                return Err(CoastError::coastfile(format!(
-                    "port '{pname}' has value 0, which is not a valid port number"
-                )));
-            }
-        }
-        ports.extend(raw.ports);
-
-        // Egress: merge maps, validate
-        let mut egress = base.egress;
-        for (ename, port) in &raw.egress {
-            if *port == 0 {
-                return Err(CoastError::coastfile(format!(
-                    "egress '{ename}' has value 0, which is not a valid port number"
-                )));
-            }
-        }
-        egress.extend(raw.egress);
-
-        // Secrets: merge by name
-        let layer_secrets = Self::parse_secrets(raw.secrets)?;
-        let mut secrets = base.secrets;
-        for ls in layer_secrets {
-            if let Some(pos) = secrets.iter().position(|s| s.name == ls.name) {
-                secrets[pos] = ls;
-            } else {
-                secrets.push(ls);
-            }
-        }
-
-        // Inject: concatenate
-        let inject = match raw.inject {
-            Some(raw_inject) => {
-                let mut env = base.inject.env;
-                env.extend(raw_inject.env);
-                let mut files = base.inject.files;
-                files.extend(raw_inject.files);
-                HostInjectConfig { env, files }
-            }
-            None => base.inject,
-        };
-
-        // Volumes: merge by name
-        let layer_volumes = Self::parse_volumes(raw.volumes)?;
-        let mut volumes = base.volumes;
-        for lv in layer_volumes {
-            if let Some(pos) = volumes.iter().position(|v| v.name == lv.name) {
-                volumes[pos] = lv;
-            } else {
-                volumes.push(lv);
-            }
-        }
-
-        // Shared services: merge by name
-        let layer_shared = Self::parse_shared_services(raw.shared_services)?;
-        let mut shared_services = base.shared_services;
-        for ls in layer_shared {
-            if let Some(pos) = shared_services.iter().position(|s| s.name == ls.name) {
-                shared_services[pos] = ls;
-            } else {
-                shared_services.push(ls);
-            }
-        }
-
-        // Setup: concatenate (packages deduped, run appended)
-        let setup = match raw.coast.setup {
-            Some(raw_setup) => {
-                let RawSetupConfig {
-                    packages: raw_packages,
-                    run: raw_run,
-                    files: raw_files,
-                } = raw_setup;
-                let mut packages = base.setup.packages;
-                for pkg in raw_packages {
-                    if !packages.contains(&pkg) {
-                        packages.push(pkg);
-                    }
-                }
-                let mut run = base.setup.run;
-                run.extend(raw_run);
-                let mut files = base.setup.files;
-                for raw_file in raw_files {
-                    let parsed = Self::parse_setup_file(raw_file)?;
-                    if let Some(pos) = files.iter().position(|f| f.path == parsed.path) {
-                        files[pos] = parsed;
-                    } else {
-                        files.push(parsed);
-                    }
-                }
-                SetupConfig {
-                    packages,
-                    run,
-                    files,
-                }
-            }
-            None => base.setup,
-        };
-
-        // Project root: layer overrides if set
-        let resolved_root = match raw.coast.root {
-            Some(ref root_str) => {
-                let root_path = Path::new(root_str);
-                if root_path.is_absolute() {
-                    root_path.to_path_buf()
-                } else {
-                    project_root.join(root_path)
-                }
-            }
-            None => base.project_root,
-        };
-
-        // Assign: layer overrides entirely if present
-        let assign = match raw.assign {
-            Some(raw_assign) => Self::parse_assign_config(Some(raw_assign))?,
-            None => base.assign,
-        };
-
+        let compose = raw
+            .coast
+            .compose
+            .map(|compose| Self::resolve_path(&compose, project_root))
+            .or(base.compose);
+        let runtime = Self::parse_runtime(raw.coast.runtime.as_deref())?.unwrap_or(base.runtime);
+        let ports = Self::merge_validated_ports(base.ports, raw.ports, "port")?;
+        let egress = Self::merge_validated_ports(base.egress, raw.egress, "egress")?;
+        let secrets =
+            Self::merge_named_items(base.secrets, Self::parse_secrets(raw.secrets)?, |secret| {
+                secret.name.as_str()
+            });
+        let inject = Self::merge_inject(base.inject, raw.inject);
+        let volumes =
+            Self::merge_named_items(base.volumes, Self::parse_volumes(raw.volumes)?, |volume| {
+                volume.name.as_str()
+            });
+        let shared_services = Self::merge_named_items(
+            base.shared_services,
+            Self::parse_shared_services(raw.shared_services)?,
+            |service| service.name.as_str(),
+        );
+        let setup = Self::merge_setup(base.setup, raw.coast.setup)?;
+        let resolved_root = raw
+            .coast
+            .root
+            .map(|root| Self::resolve_path(&root, project_root))
+            .unwrap_or(base.project_root);
+        let assign = raw
+            .assign
+            .map(|assign| Self::parse_assign_config(Some(assign)))
+            .transpose()?
+            .unwrap_or(base.assign);
         let worktree_dir = raw.coast.worktree_dir.unwrap_or(base.worktree_dir);
-
-        // Omit: concatenate
-        let omit = match raw.omit {
-            Some(raw_omit) => {
-                let mut services = base.omit.services;
-                services.extend(raw_omit.services);
-                let mut vols = base.omit.volumes;
-                vols.extend(raw_omit.volumes);
-                OmitConfig {
-                    services,
-                    volumes: vols,
-                }
-            }
-            None => base.omit,
-        };
-
-        // MCP servers: merge by name
-        let layer_mcp = Self::parse_mcp_servers(raw.mcp)?;
-        let mut mcp_servers = base.mcp_servers;
-        for lm in layer_mcp {
-            if let Some(pos) = mcp_servers.iter().position(|m| m.name == lm.name) {
-                mcp_servers[pos] = lm;
-            } else {
-                mcp_servers.push(lm);
-            }
-        }
-
-        // MCP clients: merge by name
-        let layer_clients = Self::parse_mcp_clients(raw.mcp_clients)?;
-        let mut mcp_clients = base.mcp_clients;
-        for lc in layer_clients {
-            if let Some(pos) = mcp_clients.iter().position(|c| c.name == lc.name) {
-                mcp_clients[pos] = lc;
-            } else {
-                mcp_clients.push(lc);
-            }
-        }
-
-        // Bare services: merge by name
-        let layer_services = Self::parse_bare_services(raw.services)?;
-        let mut services = base.services;
-        for ls in layer_services {
-            if let Some(pos) = services.iter().position(|s| s.name == ls.name) {
-                services[pos] = ls;
-            } else {
-                services.push(ls);
-            }
-        }
+        let omit = Self::merge_omit(base.omit, raw.omit);
+        let mcp_servers = Self::merge_named_items(
+            base.mcp_servers,
+            Self::parse_mcp_servers(raw.mcp)?,
+            |server| server.name.as_str(),
+        );
+        let mcp_clients = Self::merge_named_items(
+            base.mcp_clients,
+            Self::parse_mcp_clients(raw.mcp_clients)?,
+            |client| client.name.as_str(),
+        );
+        let services = Self::merge_named_items(
+            base.services,
+            Self::parse_bare_services(raw.services)?,
+            |service| service.name.as_str(),
+        );
 
         let agent_shell = match raw.agent_shell {
             Some(raw_agent) => Some(AgentShellConfig {
@@ -477,17 +469,7 @@ impl Coastfile {
         };
 
         let primary_port = raw.coast.primary_port.or(base.primary_port);
-
-        if let Some(ref pp) = primary_port {
-            if !ports.contains_key(pp) {
-                return Err(CoastError::coastfile(format!(
-                    "primary_port '{}' does not match any declared port. \
-                     Available ports: {}",
-                    pp,
-                    ports.keys().cloned().collect::<Vec<_>>().join(", ")
-                )));
-            }
-        }
+        Self::validate_primary_port(&primary_port, &ports)?;
 
         Ok(Coastfile {
             name,
@@ -555,41 +537,20 @@ impl Coastfile {
         }
 
         // Validate and resolve compose path (optional)
-        let compose = raw.coast.compose.map(|c| {
-            let compose_path = Path::new(&c);
-            if compose_path.is_absolute() {
-                compose_path.to_path_buf()
-            } else {
-                project_root.join(compose_path)
-            }
-        });
+        let compose = raw
+            .coast
+            .compose
+            .map(|compose| Self::resolve_path(&compose, project_root));
 
         // Validate runtime
-        let runtime_str = raw.coast.runtime.unwrap_or_else(|| "dind".to_string());
-        let runtime = RuntimeType::from_str_value(&runtime_str).ok_or_else(|| {
-            CoastError::coastfile(format!(
-                "invalid runtime '{}'. Expected one of: dind, sysbox, podman",
-                runtime_str
-            ))
-        })?;
+        let runtime =
+            Self::parse_runtime(raw.coast.runtime.as_deref())?.unwrap_or(RuntimeType::Dind);
 
         // Validate ports
-        for (name, port) in &raw.ports {
-            if *port == 0 {
-                return Err(CoastError::coastfile(format!(
-                    "port '{name}' has value 0, which is not a valid port number"
-                )));
-            }
-        }
+        Self::validate_named_ports(&raw.ports, "port")?;
 
         // Validate egress ports
-        for (name, port) in &raw.egress {
-            if *port == 0 {
-                return Err(CoastError::coastfile(format!(
-                    "egress '{name}' has value 0, which is not a valid port number"
-                )));
-            }
-        }
+        Self::validate_named_ports(&raw.egress, "egress")?;
 
         // Parse secrets
         let secrets = Self::parse_secrets(raw.secrets)?;
@@ -631,14 +592,7 @@ impl Coastfile {
 
         // Resolve project root: if `root` is set, resolve relative to Coastfile dir
         let resolved_root = match raw.coast.root {
-            Some(ref root_str) => {
-                let root_path = Path::new(root_str);
-                if root_path.is_absolute() {
-                    root_path.to_path_buf()
-                } else {
-                    project_root.join(root_path)
-                }
-            }
+            Some(root_str) => Self::resolve_path(&root_str, project_root),
             None => project_root.to_path_buf(),
         };
 
@@ -668,16 +622,7 @@ impl Coastfile {
             .map(|r| AgentShellConfig { command: r.command });
 
         let primary_port = raw.coast.primary_port;
-        if let Some(ref pp) = primary_port {
-            if !raw.ports.contains_key(pp) {
-                return Err(CoastError::coastfile(format!(
-                    "primary_port '{}' does not match any declared port. \
-                     Available ports: {}",
-                    pp,
-                    raw.ports.keys().cloned().collect::<Vec<_>>().join(", ")
-                )));
-            }
-        }
+        Self::validate_primary_port(&primary_port, &raw.ports)?;
 
         Ok(Coastfile {
             name,

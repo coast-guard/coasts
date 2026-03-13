@@ -603,6 +603,473 @@ volumes = ["keycloak-db-data"]
 }
 
 #[test]
+fn test_extends_merge_egress() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("Coastfile"),
+        r#"
+[coast]
+name = "my-app"
+
+[egress]
+host-api = 48080
+postgres = 5432
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        dir.path().join("Coastfile.light"),
+        r#"
+[coast]
+extends = "Coastfile"
+
+[egress]
+postgres = 15432
+redis = 6379
+"#,
+    )
+    .unwrap();
+
+    let cf = Coastfile::from_file(&dir.path().join("Coastfile.light")).unwrap();
+    assert_eq!(cf.egress.get("host-api"), Some(&48080));
+    assert_eq!(cf.egress.get("postgres"), Some(&15432));
+    assert_eq!(cf.egress.get("redis"), Some(&6379));
+}
+
+#[test]
+fn test_extends_egress_zero_rejected() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("Coastfile"),
+        r#"
+[coast]
+name = "my-app"
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        dir.path().join("Coastfile.light"),
+        r#"
+[coast]
+extends = "Coastfile"
+
+[egress]
+bad = 0
+"#,
+    )
+    .unwrap();
+
+    let result = Coastfile::from_file(&dir.path().join("Coastfile.light"));
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("egress"));
+    assert!(err.contains("bad"));
+}
+
+#[test]
+fn test_extends_merge_mcp_servers_by_name() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("Coastfile"),
+        r#"
+[coast]
+name = "my-app"
+
+[mcp.filesystem]
+command = "npx"
+args = ["@mcp/server-filesystem", "/workspace"]
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        dir.path().join("Coastfile.light"),
+        r#"
+[coast]
+extends = "Coastfile"
+
+[mcp.filesystem]
+proxy = "host"
+
+[mcp.host-db]
+proxy = "host"
+"#,
+    )
+    .unwrap();
+
+    let cf = Coastfile::from_file(&dir.path().join("Coastfile.light")).unwrap();
+    assert_eq!(cf.mcp_servers.len(), 2);
+    let filesystem = cf
+        .mcp_servers
+        .iter()
+        .find(|server| server.name == "filesystem")
+        .unwrap();
+    assert!(filesystem.is_host_proxied());
+    assert!(filesystem.command.is_none());
+    assert!(cf.mcp_servers.iter().any(|server| server.name == "host-db"));
+}
+
+#[test]
+fn test_extends_merge_mcp_clients_by_name() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("Coastfile"),
+        r#"
+[coast]
+name = "my-app"
+
+[mcp_clients.cursor]
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        dir.path().join("Coastfile.light"),
+        r#"
+[coast]
+extends = "Coastfile"
+
+[mcp_clients.cursor]
+config_path = "/workspace/.cursor/merged.json"
+
+[mcp_clients.exotic]
+run = "custom-mcp-sync"
+"#,
+    )
+    .unwrap();
+
+    let cf = Coastfile::from_file(&dir.path().join("Coastfile.light")).unwrap();
+    assert_eq!(cf.mcp_clients.len(), 2);
+    let cursor = cf
+        .mcp_clients
+        .iter()
+        .find(|client| client.name == "cursor")
+        .unwrap();
+    assert_eq!(
+        cursor.config_path.as_deref(),
+        Some("/workspace/.cursor/merged.json")
+    );
+    let exotic = cf
+        .mcp_clients
+        .iter()
+        .find(|client| client.name == "exotic")
+        .unwrap();
+    assert_eq!(exotic.run.as_deref(), Some("custom-mcp-sync"));
+}
+
+#[test]
+fn test_extends_healthcheck_is_not_inherited() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("Coastfile"),
+        r#"
+[coast]
+name = "my-app"
+
+[ports]
+web = 3000
+
+[healthcheck]
+web = "/"
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        dir.path().join("Coastfile.light"),
+        r#"
+[coast]
+extends = "Coastfile"
+"#,
+    )
+    .unwrap();
+
+    let cf = Coastfile::from_file(&dir.path().join("Coastfile.light")).unwrap();
+    assert!(cf.healthcheck.is_empty());
+}
+
+#[test]
+fn test_extends_ports_zero_rejected() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("Coastfile"),
+        r#"
+[coast]
+name = "my-app"
+
+[ports]
+web = 3000
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        dir.path().join("Coastfile.light"),
+        r#"
+[coast]
+extends = "Coastfile"
+
+[ports]
+bad = 0
+"#,
+    )
+    .unwrap();
+
+    let result = Coastfile::from_file(&dir.path().join("Coastfile.light"));
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("port"));
+    assert!(err.contains("bad"));
+}
+
+#[test]
+fn test_extends_merge_volumes_by_name() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("Coastfile"),
+        r#"
+[coast]
+name = "my-app"
+
+[volumes.cache]
+strategy = "isolated"
+service = "web"
+mount = "/cache"
+
+[volumes.data]
+strategy = "shared"
+service = "db"
+mount = "/data"
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        dir.path().join("Coastfile.light"),
+        r#"
+[coast]
+extends = "Coastfile"
+
+[volumes.cache]
+strategy = "shared"
+service = "api"
+mount = "/cache-override"
+
+[volumes.logs]
+strategy = "isolated"
+service = "web"
+mount = "/logs"
+"#,
+    )
+    .unwrap();
+
+    let cf = Coastfile::from_file(&dir.path().join("Coastfile.light")).unwrap();
+    assert_eq!(cf.volumes.len(), 3);
+
+    let cache = cf
+        .volumes
+        .iter()
+        .find(|volume| volume.name == "cache")
+        .unwrap();
+    assert_eq!(cache.service, "api");
+    assert_eq!(cache.mount, PathBuf::from("/cache-override"));
+
+    let data = cf
+        .volumes
+        .iter()
+        .find(|volume| volume.name == "data")
+        .unwrap();
+    assert_eq!(data.service, "db");
+
+    let logs = cf
+        .volumes
+        .iter()
+        .find(|volume| volume.name == "logs")
+        .unwrap();
+    assert_eq!(logs.mount, PathBuf::from("/logs"));
+}
+
+#[test]
+fn test_extends_child_paths_resolve_from_child_dir() {
+    let dir = tempfile::tempdir().unwrap();
+    let base_dir = dir.path().join("base");
+    let child_dir = dir.path().join("variants");
+    std::fs::create_dir_all(&base_dir).unwrap();
+    std::fs::create_dir_all(&child_dir).unwrap();
+
+    std::fs::write(
+        base_dir.join("Coastfile"),
+        r#"
+[coast]
+name = "my-app"
+compose = "./docker-compose.base.yml"
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        child_dir.join("Coastfile.light"),
+        r#"
+[coast]
+extends = "../base/Coastfile"
+compose = "./docker-compose.child.yml"
+root = "../workspace"
+"#,
+    )
+    .unwrap();
+
+    let child_path = child_dir.join("Coastfile.light");
+    let cf = Coastfile::from_file(&child_path).unwrap();
+    assert_eq!(
+        cf.compose,
+        Some(child_dir.join("./docker-compose.child.yml"))
+    );
+    assert_eq!(cf.project_root, child_dir.join("../workspace"));
+}
+
+#[test]
+fn test_extends_primary_port_can_reference_inherited_port() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("Coastfile"),
+        r#"
+[coast]
+name = "my-app"
+
+[ports]
+web = 3000
+postgres = 5432
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        dir.path().join("Coastfile.light"),
+        r#"
+[coast]
+extends = "Coastfile"
+primary_port = "web"
+"#,
+    )
+    .unwrap();
+
+    let cf = Coastfile::from_file(&dir.path().join("Coastfile.light")).unwrap();
+    assert_eq!(cf.primary_port.as_deref(), Some("web"));
+}
+
+#[test]
+fn test_extends_primary_port_invalid_rejected() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("Coastfile"),
+        r#"
+[coast]
+name = "my-app"
+
+[ports]
+web = 3000
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        dir.path().join("Coastfile.light"),
+        r#"
+[coast]
+extends = "Coastfile"
+primary_port = "admin"
+"#,
+    )
+    .unwrap();
+
+    let result = Coastfile::from_file(&dir.path().join("Coastfile.light"));
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("primary_port"));
+    assert!(err.contains("admin"));
+}
+
+#[test]
+fn test_extends_worktree_dir_inheritance_and_override() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("Coastfile"),
+        r#"
+[coast]
+name = "my-app"
+worktree_dir = ".coasts-worktrees"
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        dir.path().join("Coastfile.inherit"),
+        r#"
+[coast]
+extends = "Coastfile"
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        dir.path().join("Coastfile.override"),
+        r#"
+[coast]
+extends = "Coastfile"
+worktree_dir = ".custom-worktrees"
+"#,
+    )
+    .unwrap();
+
+    let inherited = Coastfile::from_file(&dir.path().join("Coastfile.inherit")).unwrap();
+    assert_eq!(inherited.worktree_dir, ".coasts-worktrees");
+
+    let overridden = Coastfile::from_file(&dir.path().join("Coastfile.override")).unwrap();
+    assert_eq!(overridden.worktree_dir, ".custom-worktrees");
+}
+
+#[test]
+fn test_extends_autostart_inheritance_and_override() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("Coastfile"),
+        r#"
+[coast]
+name = "my-app"
+autostart = false
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        dir.path().join("Coastfile.inherit"),
+        r#"
+[coast]
+extends = "Coastfile"
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        dir.path().join("Coastfile.override"),
+        r#"
+[coast]
+extends = "Coastfile"
+autostart = true
+"#,
+    )
+    .unwrap();
+
+    let inherited = Coastfile::from_file(&dir.path().join("Coastfile.inherit")).unwrap();
+    assert!(!inherited.autostart);
+
+    let overridden = Coastfile::from_file(&dir.path().join("Coastfile.override")).unwrap();
+    assert!(overridden.autostart);
+}
+
+#[test]
 fn test_mcp_clients_reject_custom_format_without_path() {
     let toml = r#"
 [coast]
