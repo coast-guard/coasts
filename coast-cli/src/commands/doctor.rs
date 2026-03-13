@@ -176,6 +176,7 @@ pub async fn execute(args: &DoctorArgs) -> Result<()> {
     }
 
     repair_stale_checkout_rows(&db, args.dry_run, &mut fixes, &mut findings, kill_socat_pid)?;
+    repair_checked_out_instances_without_ports(&db, args.dry_run, &mut fixes, &mut findings)?;
 
     // Check shared services
     {
@@ -425,6 +426,56 @@ fn repair_stale_checkout_rows(
         fixes.push(format!(
             "Cleared stale checkout pid {} for {} ({})",
             row.socat_pid, label, reason,
+        ));
+    }
+
+    Ok(())
+}
+
+fn repair_checked_out_instances_without_ports(
+    db: &rusqlite::Connection,
+    dry_run: bool,
+    fixes: &mut Vec<String>,
+    findings: &mut Vec<String>,
+) -> Result<()> {
+    let mut stmt = db.prepare(
+        "SELECT i.project, i.name
+         FROM instances i
+         LEFT JOIN port_allocations p
+           ON p.project = i.project AND p.instance_name = i.name
+         WHERE i.status = 'checked_out'
+         GROUP BY i.project, i.name
+         HAVING COUNT(p.logical_name) = 0",
+    )?;
+
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+
+    for row in rows {
+        let (project, instance_name) = row?;
+        let label = format!("{project}/{instance_name}");
+
+        if dry_run {
+            findings.push(format!(
+                "Checked-out instance {} has no port allocations and would be demoted to running",
+                label
+            ));
+            println!(
+                "  {} Checked-out instance {} has no port allocations and would be demoted to running",
+                "!!".yellow().bold(),
+                label.bold(),
+            );
+            continue;
+        }
+
+        db.execute(
+            "UPDATE instances SET status = 'running' WHERE project = ?1 AND name = ?2",
+            rusqlite::params![project, instance_name],
+        )?;
+        fixes.push(format!(
+            "Demoted checked-out instance {} to running because it had no port allocations",
+            label
         ));
     }
 
@@ -974,6 +1025,56 @@ mod tests {
             )
             .unwrap();
         assert!(pid.is_none());
+    }
+
+    #[test]
+    fn test_repair_checked_out_instances_without_ports_demotes_instance() {
+        let db = setup_test_db();
+        db.execute(
+            "INSERT INTO instances (name, project, status, container_id) VALUES ('dev-1', 'proj', 'checked_out', 'cid-1')",
+            [],
+        )
+        .unwrap();
+
+        let mut fixes = Vec::new();
+        let mut findings = Vec::new();
+        repair_checked_out_instances_without_ports(&db, false, &mut fixes, &mut findings).unwrap();
+
+        let status: String = db
+            .query_row(
+                "SELECT status FROM instances WHERE project = 'proj' AND name = 'dev-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, "running");
+        assert_eq!(fixes.len(), 1);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn test_repair_checked_out_instances_without_ports_dry_run_only_reports() {
+        let db = setup_test_db();
+        db.execute(
+            "INSERT INTO instances (name, project, status, container_id) VALUES ('dev-1', 'proj', 'checked_out', 'cid-1')",
+            [],
+        )
+        .unwrap();
+
+        let mut fixes = Vec::new();
+        let mut findings = Vec::new();
+        repair_checked_out_instances_without_ports(&db, true, &mut fixes, &mut findings).unwrap();
+
+        let status: String = db
+            .query_row(
+                "SELECT status FROM instances WHERE project = 'proj' AND name = 'dev-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, "checked_out");
+        assert!(fixes.is_empty());
+        assert_eq!(findings.len(), 1);
     }
 
     #[test]
