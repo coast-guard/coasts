@@ -166,6 +166,14 @@ pub fn clear_checked_out_state(
     }
 
     let port_allocs = db.get_port_allocations(project, name)?;
+    if crate::port_manager::running_in_wsl() {
+        if let Err(err) = crate::port_manager::remove_checkout_bridge(project, name) {
+            warn!(
+                error = %err,
+                "failed to remove WSL checkout bridge during uncheckout"
+            );
+        }
+    }
     for alloc in &port_allocs {
         if let Some(pid) = alloc.socat_pid {
             if let Err(err) = crate::port_manager::kill_socat(pid as u32) {

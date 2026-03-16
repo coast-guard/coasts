@@ -36,6 +36,8 @@ Canonical ports below `1024` are different. If your Coastfile declares ports lik
 
 Coast reports this explicitly when the host denies the bind.
 
+On WSL, Coast uses Docker-published checkout bridges so Windows browsers and tools can reach checked-out canonical ports through `127.0.0.1`, similar to Docker Desktop workflows like Sail.
+
 ## Do You Need to Check Out?
 
 Not necessarily. Every running Coast always has its own dynamic ports, and you can access any Coast through those ports at any time without checking anything out.

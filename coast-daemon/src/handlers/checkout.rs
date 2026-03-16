@@ -292,6 +292,7 @@ pub async fn handle(req: CheckoutRequest, state: &AppState) -> Result<CheckoutRe
     // Spawn canonical socat forwarders: canonical_port → localhost:dynamic_port.
     // Collect errors and revert if any spawn fails.
     if state.docker.is_some() {
+        let use_wsl_bridge = crate::port_manager::running_in_wsl();
         let permission_denied_ports: HashSet<u16> =
             check_canonical_ports_available(&canonical_ports, &target_name)?
                 .into_iter()
@@ -301,31 +302,56 @@ pub async fn handle(req: CheckoutRequest, state: &AppState) -> Result<CheckoutRe
         let mut bind_errors: Vec<String> = Vec::new();
         let mut permission_errors: Vec<u16> = Vec::new();
 
-        for alloc in &port_allocs {
-            let cmd = crate::port_manager::socat_command_canonical(
-                alloc.canonical_port,
-                "127.0.0.1",
-                alloc.dynamic_port,
-            );
-            match crate::port_manager::spawn_socat_verified(&cmd, alloc.canonical_port) {
-                Ok(pid) => {
-                    let _ = db.update_socat_pid(
-                        &req.project,
-                        &target_name,
-                        &alloc.logical_name,
-                        Some(pid as i32),
-                    );
-                    spawned_pids.push(pid);
-                    spawned_logical_names.push(alloc.logical_name.clone());
+        if use_wsl_bridge {
+            let bridge_ports = port_allocs
+                .iter()
+                .map(|alloc| crate::port_manager::CheckoutBridgePort {
+                    _logical_name: &alloc.logical_name,
+                    canonical_port: alloc.canonical_port,
+                    dynamic_port: alloc.dynamic_port,
+                })
+                .collect::<Vec<_>>();
+
+            match crate::port_manager::start_checkout_bridge(
+                &req.project,
+                &target_name,
+                &bridge_ports,
+            ) {
+                Ok(()) => {
+                    spawned_logical_names
+                        .extend(port_allocs.iter().map(|alloc| alloc.logical_name.clone()));
                 }
                 Err(e) => {
-                    let error = e.to_string();
-                    if permission_denied_ports.contains(&alloc.canonical_port)
-                        && !error.contains("Failed to spawn socat process")
-                    {
-                        permission_errors.push(alloc.canonical_port);
-                    } else {
-                        bind_errors.push(format!("port {}: {error}", alloc.canonical_port));
+                    bind_errors.push(e.to_string());
+                }
+            }
+        } else {
+            for alloc in &port_allocs {
+                let cmd = crate::port_manager::socat_command_canonical(
+                    alloc.canonical_port,
+                    "127.0.0.1",
+                    alloc.dynamic_port,
+                );
+                match crate::port_manager::spawn_socat_verified(&cmd, alloc.canonical_port) {
+                    Ok(pid) => {
+                        let _ = db.update_socat_pid(
+                            &req.project,
+                            &target_name,
+                            &alloc.logical_name,
+                            Some(pid as i32),
+                        );
+                        spawned_pids.push(pid);
+                        spawned_logical_names.push(alloc.logical_name.clone());
+                    }
+                    Err(e) => {
+                        let error = e.to_string();
+                        if permission_denied_ports.contains(&alloc.canonical_port)
+                            && !error.contains("Failed to spawn socat process")
+                        {
+                            permission_errors.push(alloc.canonical_port);
+                        } else {
+                            bind_errors.push(format!("port {}: {error}", alloc.canonical_port));
+                        }
                     }
                 }
             }
@@ -336,8 +362,12 @@ pub async fn handle(req: CheckoutRequest, state: &AppState) -> Result<CheckoutRe
             for pid in &spawned_pids {
                 let _ = crate::port_manager::kill_socat(*pid);
             }
-            for logical_name in &spawned_logical_names {
-                let _ = db.update_socat_pid(&req.project, &target_name, logical_name, None);
+            if use_wsl_bridge {
+                let _ = crate::port_manager::remove_checkout_bridge(&req.project, &target_name);
+            } else {
+                for logical_name in &spawned_logical_names {
+                    let _ = db.update_socat_pid(&req.project, &target_name, logical_name, None);
+                }
             }
             let mut messages = Vec::new();
             if !permission_errors.is_empty() {
@@ -1110,6 +1140,9 @@ mod tests {
     #[tokio::test]
     async fn test_checkout_verified_bind_failure_reverts_status() {
         let _guard = env_lock().lock().unwrap();
+        if crate::port_manager::running_in_wsl() {
+            return;
+        }
         let state = test_state_with_docker();
 
         // Pick a free port so the pre-check passes.
