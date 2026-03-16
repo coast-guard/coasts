@@ -61,15 +61,32 @@ root = "../my-project"
 
 ### `worktree_dir`
 
-Директория, где создаются git worktrees для экземпляров Coast. По умолчанию `".worktrees"`. Во время выполнения Coast автоматически определяет директорию по существующим git worktrees (через `git worktree list`) и предпочитает её значению по умолчанию. Относительные пути разрешаются относительно корня проекта.
+Директории, в которых находятся git worktrees. Принимает одну строку или массив строк. По умолчанию `".worktrees"`.
+
+```toml
+# Single directory
+worktree_dir = ".worktrees"
+
+# Multiple directories, including an external one
+worktree_dir = [".worktrees", ".claude/worktrees", "~/.codex/worktrees"]
+```
+
+Относительные пути разрешаются относительно корня проекта. Пути, начинающиеся с `~/` или `/`, считаются **внешними** директориями — Coast добавляет отдельный bind mount, чтобы контейнер мог получить к ним доступ. Так интегрируются инструменты вроде Codex, которые создают worktrees вне корня проекта.
+
+Во время выполнения Coast автоматически определяет директорию worktree по существующим git worktrees (через `git worktree list`) и предпочитает её настроенному значению по умолчанию, когда все worktrees указывают на одну директорию.
+
+Полное описание, включая поведение внешних директорий, фильтрацию по проекту и примеры, см. в [Worktree Directories](WORKTREE_DIR.md).
+
+### `default_worktree_dir`
+
+Какую директорию использовать при создании **новых** worktrees. По умолчанию это первая запись в `worktree_dir`. Имеет значение только тогда, когда `worktree_dir` — массив.
 
 ```toml
 [coast]
 name = "my-app"
-worktree_dir = ".worktrees"
+worktree_dir = [".worktrees", "~/.codex/worktrees"]
+default_worktree_dir = ".worktrees"
 ```
-
-Если директория относительная и находится внутри проекта, Coast автоматически добавляет её в `.gitignore`.
 
 ### `autostart`
 
@@ -162,7 +179,7 @@ mode = "0644"
 name = "my-fullstack-app"
 compose = "./docker-compose.yml"
 runtime = "dind"
-worktree_dir = ".worktrees"
+worktree_dir = [".worktrees", "~/.codex/worktrees"]
 primary_port = "web"
 
 [coast.setup]

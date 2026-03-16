@@ -1,8 +1,8 @@
 # Coastfiles
 
-Un Coastfile es un archivo de configuración TOML que vive en la raíz de tu proyecto. Le dice a Coast todo lo que necesita saber para construir y ejecutar entornos de desarrollo aislados para ese proyecto: qué servicios ejecutar, qué puertos reenviar, cómo manejar los datos y cómo gestionar secretos.
+Un Coastfile es un archivo de configuración TOML que vive en la raíz de tu proyecto. Le indica a Coast todo lo que necesita saber para construir y ejecutar entornos de desarrollo aislados para ese proyecto: qué servicios ejecutar, qué puertos reenviar, cómo manejar los datos y cómo administrar los secretos.
 
-Cada proyecto de Coast necesita al menos un Coastfile. El archivo siempre se llama `Coastfile` (C mayúscula, sin extensión). Si necesitas variantes para distintos flujos de trabajo, creas Coastfiles tipados como `Coastfile.light` o `Coastfile.snap` que [heredan del base](INHERITANCE.md).
+Cada proyecto de Coast necesita al menos un Coastfile. El archivo siempre se llama `Coastfile` (C mayúscula, sin extensión). Si necesitas variantes para diferentes flujos de trabajo, creas Coastfiles tipados como `Coastfile.light` o `Coastfile.snap` que [heredan del base](INHERITANCE.md).
 
 Para una comprensión más profunda de cómo se relacionan los Coastfiles con el resto de Coast, consulta [Coasts](../concepts_and_terminology/COASTS.md) y [Builds](../concepts_and_terminology/BUILDS.md).
 
@@ -15,7 +15,7 @@ El Coastfile más pequeño posible:
 name = "my-app"
 ```
 
-Esto te da un contenedor DinD en el que puedes hacer `coast exec`. La mayoría de los proyectos querrán una referencia `compose` o [servicios bare](SERVICES.md):
+Esto te da un contenedor DinD al que puedes entrar con `coast exec`. La mayoría de los proyectos querrán ya sea una referencia `compose` o [servicios bare](SERVICES.md):
 
 ```toml
 [coast]
@@ -50,9 +50,9 @@ Ejecuta `coast build` y luego `coast run dev-1` y tendrás un entorno aislado.
 
 ## Example Coastfiles
 
-### Simple bare-service project
+### Proyecto simple con servicios bare
 
-Una aplicación Next.js sin archivo compose. Coast instala Node, ejecuta `npm install` e inicia el servidor de desarrollo directamente.
+Una app de Next.js sin archivo compose. Coast instala Node, ejecuta `npm install` e inicia el servidor de desarrollo directamente.
 
 ```toml
 [coast]
@@ -72,15 +72,15 @@ restart = "on-failure"
 web = 3002
 ```
 
-### Full-stack compose project
+### Proyecto full-stack con compose
 
-Un proyecto multservicio con bases de datos compartidas, secretos, estrategias de volúmenes y configuración personalizada.
+Un proyecto multiservicio con bases de datos compartidas, secretos, estrategias de volúmenes y configuración personalizada.
 
 ```toml
 [coast]
 name = "my-app"
 compose = "./infra/docker-compose.yml"
-worktree_dir = ".worktrees"
+worktree_dir = [".worktrees", "~/.codex/worktrees"]
 primary_port = "web"
 
 [coast.setup]
@@ -126,9 +126,9 @@ backend = "hot"
 web = "hot"
 ```
 
-### Lightweight test variant (inheritance)
+### Variante ligera para pruebas (herencia)
 
-Extiende el Coastfile base pero lo reduce a solo lo necesario para ejecutar pruebas de backend. Sin puertos, sin servicios compartidos, bases de datos aisladas.
+Extiende el Coastfile base, pero lo reduce a solo lo necesario para ejecutar pruebas del backend. Sin puertos, sin servicios compartidos, bases de datos aisladas.
 
 ```toml
 [coast]
@@ -153,9 +153,9 @@ default = "none"
 backend-test = "rebuild"
 ```
 
-### Snapshot-seeded variant
+### Variante inicializada con snapshot
 
-Cada instancia de coast inicia con una copia de los volúmenes de base de datos existentes del host y luego diverge de manera independiente.
+Cada instancia de coast comienza con una copia de los volúmenes de base de datos existentes del host y luego diverge de forma independiente.
 
 ```toml
 [coast]
@@ -186,23 +186,24 @@ mount = "/data/db"
 ## Conventions
 
 - El archivo debe llamarse `Coastfile` (C mayúscula, sin extensión) y vivir en la raíz del proyecto.
-- Las variantes tipadas usan el patrón `Coastfile.{type}` — por ejemplo `Coastfile.light`, `Coastfile.snap`. Consulta [Herencia y Tipos](INHERITANCE.md).
+- Las variantes tipadas usan el patrón `Coastfile.{type}` — por ejemplo `Coastfile.light`, `Coastfile.snap`. Consulta [Inheritance and Types](INHERITANCE.md).
 - El nombre reservado `Coastfile.default` no está permitido.
-- Se usa sintaxis TOML en todo. Todos los encabezados de sección usan `[corchetes]` y las entradas con nombre usan `[section.name]` (no array-of-tables).
-- No puedes usar `compose` y `[services]` en el mismo Coastfile — elige uno.
-- Las rutas relativas (para `compose`, `root`, etc.) se resuelven con respecto al directorio padre del Coastfile.
+- Se usa sintaxis TOML en todo el documento. Todos los encabezados de sección usan `[brackets]` y las entradas con nombre usan `[section.name]` (no array-of-tables).
+- No puedes usar tanto `compose` como `[services]` en el mismo Coastfile — elige uno.
+- Las rutas relativas (para `compose`, `root`, etc.) se resuelven contra el directorio padre del Coastfile.
 
 ## Reference
 
 | Page | Sections | What it covers |
 |------|----------|----------------|
-| [Project and Setup](PROJECT.md) | `[coast]`, `[coast.setup]` | Nombre, ruta de compose, runtime, directorio de worktree, configuración del contenedor |
-| [Ports](PORTS.md) | `[ports]`, `[egress]` | Reenvío de puertos, declaraciones de egress, puerto principal |
-| [Volumes](VOLUMES.md) | `[volumes.*]` | Estrategias de volúmenes aislados, compartidos y seeded por snapshot |
-| [Shared Services](SHARED_SERVICES.md) | `[shared_services.*]` | Bases de datos y servicios de infraestructura a nivel de host |
-| [Secrets](SECRETS.md) | `[secrets.*]`, `[inject]` | Extracción e inyección de secretos, y reenvío de env/archivos del host |
+| [Project and Setup](PROJECT.md) | `[coast]`, `[coast.setup]` | Nombre, ruta de compose, runtime, worktree dir, configuración del contenedor |
+| [Worktree Directories](WORKTREE_DIR.md) | `worktree_dir`, `default_worktree_dir` | Directorios worktree locales y externos, rutas con tilde, integración con Codex/Claude |
+| [Ports](PORTS.md) | `[ports]`, `[egress]` | Reenvío de puertos, declaraciones de egress, puerto primario |
+| [Volumes](VOLUMES.md) | `[volumes.*]` | Estrategias de volúmenes aislados, compartidos e inicializados con snapshot |
+| [Shared Services](SHARED_SERVICES.md) | `[shared_services.*]` | Bases de datos a nivel de host y servicios de infraestructura |
+| [Secrets](SECRETS.md) | `[secrets.*]`, `[inject]` | Extracción, inyección y reenvío de secretos desde env/archivo del host |
 | [Bare Services](SERVICES.md) | `[services.*]` | Ejecutar procesos directamente sin Docker Compose |
-| [Agent Shell](AGENT_SHELL.md) | `[agent_shell]` | Runtimes TUI del agente en contenedores |
-| [MCP Servers](MCP.md) | `[mcp.*]`, `[mcp_clients.*]` | Servidores MCP internos y proxied desde el host, conectores de clientes |
-| [Assign](ASSIGN.md) | `[assign]` | Comportamiento de cambio de rama por servicio |
+| [Agent Shell](AGENT_SHELL.md) | `[agent_shell]` | Entornos TUI de agente en contenedores |
+| [MCP Servers](MCP.md) | `[mcp.*]`, `[mcp_clients.*]` | Servidores MCP internos y proxyados desde el host, conectores de cliente |
+| [Assign](ASSIGN.md) | `[assign]` | Comportamiento al cambiar de rama por servicio |
 | [Inheritance and Types](INHERITANCE.md) | `extends`, `includes`, `[unset]`, `[omit]` | Coastfiles tipados, composición y sobrescrituras |

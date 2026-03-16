@@ -57,8 +57,10 @@ pub struct Coastfile {
     /// Egress port declarations (logical_name -> host port).
     /// When non-empty, enables host connectivity from inner compose services.
     pub egress: HashMap<String, u16>,
-    /// Directory for git worktrees, relative to project root (default: ".worktrees").
-    pub worktree_dir: String,
+    /// Directories for git worktrees, relative to project root (default: [".worktrees"]).
+    pub worktree_dirs: Vec<String>,
+    /// Directory to create new worktrees in (default: first entry of `worktree_dirs`).
+    pub default_worktree_dir: String,
     /// Services and volumes to omit from the compose file.
     pub omit: OmitConfig,
     /// MCP server configurations.
@@ -248,7 +250,8 @@ impl Coastfile {
             project_root: project_root.to_path_buf(),
             assign: AssignConfig::default(),
             egress: HashMap::new(),
-            worktree_dir: ".worktrees".to_string(),
+            worktree_dirs: vec![".worktrees".to_string()],
+            default_worktree_dir: ".worktrees".to_string(),
             omit: OmitConfig::default(),
             mcp_servers: vec![],
             mcp_clients: vec![],
@@ -443,7 +446,17 @@ impl Coastfile {
             .map(|assign| Self::parse_assign_config(Some(assign)))
             .transpose()?
             .unwrap_or(base.assign);
-        let worktree_dir = raw.coast.worktree_dir.unwrap_or(base.worktree_dir);
+        let worktree_dirs = raw.coast.worktree_dir.unwrap_or(base.worktree_dirs);
+        let default_worktree_dir = raw
+            .coast
+            .default_worktree_dir
+            .or(Some(base.default_worktree_dir))
+            .unwrap_or_else(|| {
+                worktree_dirs
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| ".worktrees".to_string())
+            });
         let omit = Self::merge_omit(base.omit, raw.omit);
         let mcp_servers = Self::merge_named_items(
             base.mcp_servers,
@@ -486,7 +499,8 @@ impl Coastfile {
             project_root: resolved_root,
             assign,
             egress,
-            worktree_dir,
+            worktree_dirs,
+            default_worktree_dir,
             omit,
             mcp_servers,
             mcp_clients,
@@ -639,10 +653,18 @@ impl Coastfile {
             project_root: resolved_root,
             assign,
             egress: raw.egress,
-            worktree_dir: raw
+            worktree_dirs: raw
                 .coast
                 .worktree_dir
-                .unwrap_or_else(|| ".worktrees".to_string()),
+                .clone()
+                .unwrap_or_else(|| vec![".worktrees".to_string()]),
+            default_worktree_dir: raw.coast.default_worktree_dir.unwrap_or_else(|| {
+                raw.coast
+                    .worktree_dir
+                    .as_ref()
+                    .and_then(|v| v.first().cloned())
+                    .unwrap_or_else(|| ".worktrees".to_string())
+            }),
             omit,
             mcp_servers,
             mcp_clients,
@@ -651,5 +673,52 @@ impl Coastfile {
             services,
             agent_shell,
         })
+    }
+}
+
+/// Container mount path prefix for external worktree directories.
+pub const EXTERNAL_WORKTREE_MOUNT_PREFIX: &str = "/host-external-wt";
+
+impl Coastfile {
+    /// Returns `true` if a worktree dir path is external (absolute or home-relative).
+    ///
+    /// External dirs start with `~/` or `/`. Relative dirs (like `.worktrees`)
+    /// are resolved against the project root and are considered local.
+    pub fn is_external_worktree_dir(dir: &str) -> bool {
+        dir.starts_with("~/") || dir.starts_with('/')
+    }
+
+    /// Resolve a worktree dir to an absolute path.
+    ///
+    /// - `~/foo` expands `~` to the user's home directory
+    /// - `/absolute/path` is returned as-is
+    /// - `relative/path` is joined to `project_root`
+    pub fn resolve_worktree_dir(project_root: &Path, dir: &str) -> PathBuf {
+        if let Some(rest) = dir.strip_prefix("~/") {
+            dirs::home_dir()
+                .unwrap_or_else(|| PathBuf::from("/"))
+                .join(rest)
+        } else if dir.starts_with('/') {
+            PathBuf::from(dir)
+        } else {
+            project_root.join(dir)
+        }
+    }
+
+    /// Returns `(index, resolved_path)` pairs for all external worktree dirs.
+    ///
+    /// The index corresponds to the position in `self.worktree_dirs`.
+    pub fn external_worktree_dirs(&self) -> Vec<(usize, PathBuf)> {
+        self.worktree_dirs
+            .iter()
+            .enumerate()
+            .filter(|(_, dir)| Self::is_external_worktree_dir(dir))
+            .map(|(idx, dir)| (idx, Self::resolve_worktree_dir(&self.project_root, dir)))
+            .collect()
+    }
+
+    /// Compute the container mount path for an external worktree dir by its index.
+    pub fn external_mount_path(index: usize) -> String {
+        format!("{EXTERNAL_WORKTREE_MOUNT_PREFIX}/{index}")
     }
 }

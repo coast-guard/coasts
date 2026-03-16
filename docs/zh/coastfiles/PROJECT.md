@@ -61,15 +61,32 @@ root = "../my-project"
 
 ### `worktree_dir`
 
-为 Coast 实例创建 git worktree 的目录。默认值为 `".worktrees"`。在运行时，Coast 会从现有的 git worktree（通过 `git worktree list`）中自动检测目录，并优先使用检测到的目录而不是默认值。相对路径会相对于项目根目录解析。
+git worktree 所在的目录。接受单个字符串或字符串数组。默认值为 `".worktrees"`。
+
+```toml
+# Single directory
+worktree_dir = ".worktrees"
+
+# Multiple directories, including an external one
+worktree_dir = [".worktrees", ".claude/worktrees", "~/.codex/worktrees"]
+```
+
+相对路径会相对于项目根目录解析。以 `~/` 或 `/` 开头的路径会被视为**外部**目录——Coast 会添加单独的绑定挂载，以便容器可以访问它们。这就是你如何与像 Codex 这样在项目根目录之外创建 worktree 的工具集成。
+
+在运行时，Coast 会从现有的 git worktree（通过 `git worktree list`）中自动检测 worktree 目录；当所有 worktree 都一致指向单个目录时，它会优先使用该目录而不是已配置的默认值。
+
+完整参考请参见 [Worktree Directories](WORKTREE_DIR.md)，其中包括外部目录行为、项目过滤和示例。
+
+### `default_worktree_dir`
+
+创建**新** worktree 时要使用的目录。默认值是 `worktree_dir` 中的第一个条目。仅当 `worktree_dir` 是数组时相关。
 
 ```toml
 [coast]
 name = "my-app"
-worktree_dir = ".worktrees"
+worktree_dir = [".worktrees", "~/.codex/worktrees"]
+default_worktree_dir = ".worktrees"
 ```
-
-如果该目录是相对路径并且位于项目内，Coast 会自动将其添加到 `.gitignore`。
 
 ### `autostart`
 
@@ -162,7 +179,7 @@ mode = "0644"
 name = "my-fullstack-app"
 compose = "./docker-compose.yml"
 runtime = "dind"
-worktree_dir = ".worktrees"
+worktree_dir = [".worktrees", "~/.codex/worktrees"]
 primary_port = "web"
 
 [coast.setup]

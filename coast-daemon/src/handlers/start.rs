@@ -209,20 +209,11 @@ pub async fn handle(
             // Re-apply the /workspace bind mount (project root or worktree).
             {
                 let mount_rt = coast_docker::dind::DindRuntime::with_client(docker.clone());
-                let wt_dir = {
-                    let coastfile_default = parsed_coastfile
-                        .as_ref()
-                        .map(|cf| cf.worktree_dir.clone())
-                        .unwrap_or_else(|| ".worktrees".to_string());
-                    // Prefer detection from existing git worktrees over the Coastfile default.
-                    super::assign::read_project_root(&req.project)
-                        .and_then(|root| super::assign::detect_worktree_dir_from_git(&root))
-                        .unwrap_or(coastfile_default)
-                };
-                let mount_src = match instance.worktree_name.as_deref() {
-                    Some(wt) => format!("/host-project/{wt_dir}/{wt}"),
-                    None => "/host-project".to_string(),
-                };
+                let mount_src = compute_start_mount_src(
+                    &req.project,
+                    instance.worktree_name.as_deref(),
+                    parsed_coastfile.as_ref(),
+                );
                 let home = dirs::home_dir().unwrap_or_default();
                 let project_dir = home.join(".coast").join("images").join(&req.project);
                 let manifest_path = project_dir.join("latest").join("manifest.json");
@@ -390,6 +381,116 @@ pub async fn handle(
         name: req.name,
         ports,
     })
+}
+
+/// Compute the container mount source for `/workspace` during `coast start`.
+///
+/// For local worktrees, returns `/host-project/{wt_dir}/{name}`.
+/// For external worktrees, uses `git worktree list --porcelain` to find the
+/// actual path, then maps it to `/host-external-wt/{index}/{relative}`.
+fn compute_start_mount_src(
+    project: &str,
+    worktree_name: Option<&str>,
+    coastfile: Option<&coast_core::coastfile::Coastfile>,
+) -> String {
+    use coast_core::coastfile::Coastfile;
+
+    let Some(wt) = worktree_name else {
+        return "/host-project".to_string();
+    };
+
+    let project_root = super::assign::read_project_root(project);
+    let detected = project_root
+        .as_ref()
+        .and_then(|root| super::assign::detect_worktree_dir_from_git(root));
+
+    if let Some(ref d) = detected {
+        if !Coastfile::is_external_worktree_dir(d) {
+            return format!("/host-project/{d}/{wt}");
+        }
+    }
+
+    let worktree_dirs = coastfile
+        .map(|cf| cf.worktree_dirs.clone())
+        .unwrap_or_else(|| vec![".worktrees".to_string()]);
+    let default_dir = coastfile
+        .map(|cf| cf.default_worktree_dir.clone())
+        .unwrap_or_else(|| ".worktrees".to_string());
+
+    if let Some(ref root) = project_root {
+        for (idx, dir) in worktree_dirs.iter().enumerate() {
+            if Coastfile::is_external_worktree_dir(dir) {
+                let resolved = Coastfile::resolve_worktree_dir(root, dir);
+                if let Some(mount) = find_external_wt_mount_src(root, &resolved, idx, wt) {
+                    return mount;
+                }
+            } else {
+                let candidate = root.join(dir).join(wt);
+                if candidate.exists() {
+                    return format!("/host-project/{dir}/{wt}");
+                }
+            }
+        }
+    }
+
+    format!("/host-project/{default_dir}/{wt}")
+}
+
+/// Search an external worktree dir for a worktree matching `worktree_name`
+/// using `git worktree list --porcelain`, returning the container mount path.
+fn find_external_wt_mount_src(
+    project_root: &std::path::Path,
+    external_dir: &std::path::Path,
+    ext_index: usize,
+    worktree_name: &str,
+) -> Option<String> {
+    use coast_core::coastfile::Coastfile;
+
+    let output = std::process::Command::new("git")
+        .args(["worktree", "list", "--porcelain"])
+        .current_dir(project_root)
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let canon_ext = external_dir
+        .canonicalize()
+        .unwrap_or_else(|_| external_dir.to_path_buf());
+    let mut current_path: Option<std::path::PathBuf> = None;
+
+    for line in stdout.lines() {
+        if let Some(path_str) = line.strip_prefix("worktree ") {
+            current_path = Some(std::path::PathBuf::from(path_str));
+        } else if line.starts_with("branch ") || line == "detached" {
+            if let Some(ref wt_path) = current_path {
+                let wt_canonical = wt_path.canonicalize().unwrap_or_else(|_| wt_path.clone());
+                let branch_name = if let Some(branch_ref) = line.strip_prefix("branch ") {
+                    branch_ref.strip_prefix("refs/heads/").unwrap_or(branch_ref)
+                } else {
+                    wt_path.file_name().and_then(|n| n.to_str()).unwrap_or("")
+                };
+
+                if wt_canonical.starts_with(&canon_ext) {
+                    let relative = wt_canonical
+                        .strip_prefix(&canon_ext)
+                        .unwrap_or(&wt_canonical);
+                    let relative_str = relative.display().to_string();
+                    if branch_name == worktree_name || relative_str == worktree_name {
+                        let ext_mount = Coastfile::external_mount_path(ext_index);
+                        return Some(format!("{ext_mount}/{relative_str}"));
+                    }
+                }
+            }
+        } else if line.is_empty() {
+            current_path = None;
+        }
+    }
+
+    None
 }
 
 #[cfg(test)]

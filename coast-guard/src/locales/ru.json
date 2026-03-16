@@ -509,7 +509,10 @@
   "docs.nav.coastfileAssign": "Назначение",
   "docs.nav.coastfileInheritance": "Наследование и типы",
   "docs.nav.coastfileAgentShell": "Агентная оболочка",
+  "docs.nav.coastfileWorktreeDir": "Каталоги рабочих деревьев",
   "docs.nav.coastfileMcp": "MCP-серверы и клиенты",
+  "docs.nav.harnesses": "Интеграции",
+  "docs.nav.harnessCodex": "Codex",
   "docs.nav.recipes": "Рецепты",
   "docs.nav.recipesFullstackMonorepo": "Фулстек-монорепо"
 }

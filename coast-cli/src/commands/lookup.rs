@@ -142,16 +142,21 @@ pub async fn execute(args: &LookupArgs, project: &str) -> Result<()> {
 }
 
 /// Detect which worktree the user is in by examining the cwd relative to
-/// the project root and its configured `worktree_dir`.
+/// the project root and its configured `worktree_dir` entries.
 ///
 /// Returns `Some(name)` if the cwd is inside `{project_root}/{worktree_dir}/{name}/...`,
 /// or `None` if the cwd is the project root (or not inside any worktree).
 pub fn detect_worktree() -> Result<Option<String>> {
     let cwd = std::env::current_dir().context("Failed to get current directory")?;
-    let (project_root, worktree_dir) = find_project_root_and_worktree_dir(&cwd)?;
+    let (project_root, worktree_dirs) = find_project_root_and_worktree_dirs(&cwd)?;
 
-    let wt_path = project_root.join(&worktree_dir);
-    detect_worktree_from_paths(&cwd, &wt_path)
+    for dir in &worktree_dirs {
+        let wt_path = project_root.join(dir);
+        if let Some(name) = detect_worktree_from_paths(&cwd, &wt_path)? {
+            return Ok(Some(name));
+        }
+    }
+    Ok(None)
 }
 
 /// Detect the worktree name given explicit paths (for testability).
@@ -197,7 +202,7 @@ pub fn detect_worktree_from_paths(cwd: &Path, worktree_base: &Path) -> Result<Op
     Ok(None)
 }
 
-/// Walk up from `start` to find the true project root and `worktree_dir`.
+/// Walk up from `start` to find the true project root and `worktree_dirs`.
 ///
 /// A worktree directory contains a copy of the project, including its
 /// Coastfile. So we collect every directory containing a Coastfile while
@@ -205,14 +210,14 @@ pub fn detect_worktree_from_paths(cwd: &Path, worktree_base: &Path) -> Result<Op
 /// project root. This ensures that if cwd is inside
 /// `{project_root}/{worktree_dir}/{name}/...`, we resolve the actual
 /// project root rather than the worktree copy.
-fn find_project_root_and_worktree_dir(start: &Path) -> Result<(std::path::PathBuf, String)> {
+fn find_project_root_and_worktree_dirs(start: &Path) -> Result<(std::path::PathBuf, Vec<String>)> {
     let mut dir = start.to_path_buf();
-    let mut outermost: Option<(std::path::PathBuf, String)> = None;
+    let mut outermost: Option<(std::path::PathBuf, Vec<String>)> = None;
     loop {
         let coastfile_path = dir.join("Coastfile");
         if coastfile_path.exists() {
             if let Ok(cf) = coast_core::coastfile::Coastfile::from_file(&coastfile_path) {
-                outermost = Some((dir.clone(), cf.worktree_dir));
+                outermost = Some((dir.clone(), cf.worktree_dirs));
             }
         }
         if !dir.pop() {

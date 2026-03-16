@@ -2,20 +2,20 @@
 
 Coastfile — это конфигурационный файл TOML, который находится в корне вашего проекта. Он сообщает Coast всё, что нужно знать для сборки и запуска изолированных сред разработки для этого проекта — какие сервисы запускать, какие порты пробрасывать, как обрабатывать данные и как управлять секретами.
 
-Каждому проекту Coast нужен как минимум один Coastfile. Файл всегда называется `Coastfile` (с заглавной C, без расширения). Если вам нужны варианты для разных рабочих процессов, вы создаёте типизированные Coastfile’ы, такие как `Coastfile.light` или `Coastfile.snap`, которые [наследуются от базового](INHERITANCE.md).
+Каждому проекту Coast нужен как минимум один Coastfile. Файл всегда называется `Coastfile` (с заглавной C, без расширения). Если вам нужны варианты для разных рабочих процессов, вы создаёте типизированные Coastfiles, например `Coastfile.light` или `Coastfile.snap`, которые [наследуются от базового](INHERITANCE.md).
 
-Чтобы глубже понять, как Coastfile’ы соотносятся с остальной частью Coast, см. [Coasts](../concepts_and_terminology/COASTS.md) и [Builds](../concepts_and_terminology/BUILDS.md).
+Чтобы глубже понять, как Coastfiles связаны с остальной частью Coast, см. [Coasts](../concepts_and_terminology/COASTS.md) и [Builds](../concepts_and_terminology/BUILDS.md).
 
 ## Quickstart
 
-Самый маленький возможный Coastfile:
+Наименьший возможный Coastfile:
 
 ```toml
 [coast]
 name = "my-app"
 ```
 
-Это даёт вам контейнер DinD, в который можно зайти через `coast exec`. Большинству проектов понадобится либо ссылка на `compose`, либо [bare services](SERVICES.md):
+Это даёт вам контейнер DinD, в который можно войти через `coast exec`. Большинству проектов понадобится либо ссылка на `compose`, либо [bare services](SERVICES.md):
 
 ```toml
 [coast]
@@ -46,13 +46,13 @@ restart = "on-failure"
 web = 3000
 ```
 
-Запустите `coast build`, затем `coast run dev-1`, и у вас будет изолированная среда.
+Выполните `coast build`, затем `coast run dev-1`, и у вас будет изолированная среда.
 
 ## Example Coastfiles
 
 ### Simple bare-service project
 
-Приложение Next.js без файла compose. Coast устанавливает Node, выполняет `npm install` и запускает dev-сервер напрямую.
+Приложение Next.js без compose-файла. Coast устанавливает Node, выполняет `npm install` и напрямую запускает dev-сервер.
 
 ```toml
 [coast]
@@ -74,13 +74,13 @@ web = 3002
 
 ### Full-stack compose project
 
-Мультисервисный проект с общими базами данных, секретами, стратегиями томов и пользовательской настройкой.
+Проект с несколькими сервисами, с общими базами данных, секретами, стратегиями томов и пользовательской настройкой.
 
 ```toml
 [coast]
 name = "my-app"
 compose = "./infra/docker-compose.yml"
-worktree_dir = ".worktrees"
+worktree_dir = [".worktrees", "~/.codex/worktrees"]
 primary_port = "web"
 
 [coast.setup]
@@ -128,7 +128,7 @@ web = "hot"
 
 ### Lightweight test variant (inheritance)
 
-Расширяет базовый Coastfile, но урезает его до необходимого только для запуска backend-тестов. Без портов, без общих сервисов, изолированные базы данных.
+Расширяет базовый Coastfile, но упрощает его до того, что нужно только для запуска backend-тестов. Без портов, без общих сервисов, с изолированными базами данных.
 
 ```toml
 [coast]
@@ -155,7 +155,7 @@ backend-test = "rebuild"
 
 ### Snapshot-seeded variant
 
-Каждый экземпляр coast запускается с копией существующих томов базы данных хоста, а затем расходится независимо.
+Каждый экземпляр coast запускается с копией существующих томов базы данных хоста, а затем развивается независимо.
 
 ```toml
 [coast]
@@ -186,23 +186,24 @@ mount = "/data/db"
 ## Conventions
 
 - Файл должен называться `Coastfile` (с заглавной C, без расширения) и находиться в корне проекта.
-- Типизированные варианты используют шаблон `Coastfile.{type}` — например `Coastfile.light`, `Coastfile.snap`. См. [Inheritance and Types](INHERITANCE.md).
-- Зарезервированное имя `Coastfile.default` недопустимо.
-- Везде используется синтаксис TOML. Все заголовки секций используют `[скобки]`, а именованные записи используют `[section.name]` (не array-of-tables).
+- Типизированные варианты используют шаблон `Coastfile.{type}` — например, `Coastfile.light`, `Coastfile.snap`. См. [Inheritance and Types](INHERITANCE.md).
+- Зарезервированное имя `Coastfile.default` не допускается.
+- Повсюду используется синтаксис TOML. Все заголовки секций используют `[brackets]`, а именованные записи используют `[section.name]` (не array-of-tables).
 - Нельзя использовать одновременно `compose` и `[services]` в одном Coastfile — выберите что-то одно.
-- Относительные пути (для `compose`, `root` и т. п.) разрешаются относительно родительского каталога Coastfile.
+- Относительные пути (для `compose`, `root` и т. д.) разрешаются относительно родительского каталога Coastfile.
 
 ## Reference
 
 | Page | Sections | What it covers |
 |------|----------|----------------|
-| [Project and Setup](PROJECT.md) | `[coast]`, `[coast.setup]` | Имя, путь compose, runtime, каталог worktree, настройка контейнера |
+| [Project and Setup](PROJECT.md) | `[coast]`, `[coast.setup]` | Имя, путь к compose, runtime, каталог worktree, настройка контейнера |
+| [Worktree Directories](WORKTREE_DIR.md) | `worktree_dir`, `default_worktree_dir` | Локальные и внешние каталоги worktree, пути с тильдой, интеграция с Codex/Claude |
 | [Ports](PORTS.md) | `[ports]`, `[egress]` | Проброс портов, объявления egress, основной порт |
-| [Volumes](VOLUMES.md) | `[volumes.*]` | Стратегии томов: isolated, shared и snapshot-seeded |
-| [Shared Services](SHARED_SERVICES.md) | `[shared_services.*]` | Базы данных и инфраструктурные сервисы уровня хоста |
-| [Secrets](SECRETS.md) | `[secrets.*]`, `[inject]` | Извлечение секретов, инъекция и проброс host env/файлов |
+| [Volumes](VOLUMES.md) | `[volumes.*]` | Стратегии томов: изолированные, общие и инициализированные из snapshot |
+| [Shared Services](SHARED_SERVICES.md) | `[shared_services.*]` | Базы данных и инфраструктурные сервисы на уровне хоста |
+| [Secrets](SECRETS.md) | `[secrets.*]`, `[inject]` | Извлечение секретов, внедрение и проброс env/файлов хоста |
 | [Bare Services](SERVICES.md) | `[services.*]` | Запуск процессов напрямую без Docker Compose |
-| [Agent Shell](AGENT_SHELL.md) | `[agent_shell]` | Контейнеризованные TUI-рантаймы агента |
+| [Agent Shell](AGENT_SHELL.md) | `[agent_shell]` | Контейнеризированные TUI-рантаймы агента |
 | [MCP Servers](MCP.md) | `[mcp.*]`, `[mcp_clients.*]` | Внутренние и проксируемые с хоста MCP-серверы, клиентские коннекторы |
 | [Assign](ASSIGN.md) | `[assign]` | Поведение при переключении веток для каждого сервиса |
-| [Inheritance and Types](INHERITANCE.md) | `extends`, `includes`, `[unset]`, `[omit]` | Типизированные Coastfile’ы, композиция и переопределения |
+| [Inheritance and Types](INHERITANCE.md) | `extends`, `includes`, `[unset]`, `[omit]` | Типизированные Coastfiles, композиция и переопределения |

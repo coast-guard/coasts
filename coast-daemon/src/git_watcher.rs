@@ -39,10 +39,20 @@ fn resolve_project_root(project: &str) -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
-/// Read the worktree_dir from the project's cached Coastfile (default ".worktrees").
-fn read_worktree_dir(project: &str) -> String {
+/// Read `worktree_dirs` from the live Coastfile on disk, falling back to the
+/// cached build artifact at `~/.coast/images/{project}/latest/coastfile.toml`.
+fn read_worktree_dirs(project: &str) -> Vec<String> {
+    use coast_core::coastfile::Coastfile;
+
+    if let Some(root) = resolve_project_root(project) {
+        let live_path = root.join("Coastfile");
+        if let Ok(cf) = Coastfile::from_file(&live_path) {
+            return cf.worktree_dirs;
+        }
+    }
+
     let Some(home) = dirs::home_dir() else {
-        return ".worktrees".to_string();
+        return vec![".worktrees".to_string()];
     };
     let cf_path = home
         .join(".coast")
@@ -50,10 +60,10 @@ fn read_worktree_dir(project: &str) -> String {
         .join(project)
         .join("latest")
         .join("coastfile.toml");
-    if let Ok(cf) = coast_core::coastfile::Coastfile::from_file(&cf_path) {
-        return cf.worktree_dir;
+    if let Ok(cf) = Coastfile::from_file(&cf_path) {
+        return cf.worktree_dirs;
     }
-    ".worktrees".to_string()
+    vec![".worktrees".to_string()]
 }
 
 /// Read the contents of `.git/HEAD` for a project root.
@@ -65,24 +75,106 @@ async fn read_git_head(project_root: &Path) -> Option<String> {
         .map(|s| s.trim().to_string())
 }
 
-/// List worktree subdirectory names.
-async fn list_worktree_dirs(project_root: &Path, wt_dir_name: &str) -> Option<Vec<String>> {
-    let wt_path = project_root.join(wt_dir_name);
-    let Ok(mut entries) = tokio::fs::read_dir(&wt_path).await else {
-        return None;
-    };
+/// List worktree subdirectory names across all configured worktree directories.
+///
+/// For local (relative) dirs, scans subdirectories directly.
+/// For external (absolute/tilde) dirs, scans recursively and filters by
+/// checking each subdirectory's `.git` file to verify it points back to this project's repo.
+async fn list_worktree_dirs(project_root: &Path, wt_dir_names: &[String]) -> Option<Vec<String>> {
+    use coast_core::coastfile::Coastfile;
+
     let mut names = Vec::new();
-    while let Ok(Some(entry)) = entries.next_entry().await {
-        if let Ok(ft) = entry.file_type().await {
-            if ft.is_dir() {
-                if let Some(name) = entry.file_name().to_str() {
-                    names.push(name.to_string());
+    let mut found_any = false;
+    let git_dir = project_root.join(".git");
+
+    for wt_dir_name in wt_dir_names {
+        if Coastfile::is_external_worktree_dir(wt_dir_name) {
+            let resolved = Coastfile::resolve_worktree_dir(project_root, wt_dir_name);
+            let found = scan_external_worktree_dir(&resolved, &git_dir).await;
+            if !found.is_empty() {
+                found_any = true;
+                names.extend(found);
+            }
+        } else {
+            let wt_path = project_root.join(wt_dir_name);
+            let Ok(mut entries) = tokio::fs::read_dir(&wt_path).await else {
+                continue;
+            };
+            found_any = true;
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                if let Ok(ft) = entry.file_type().await {
+                    if ft.is_dir() {
+                        if let Some(name) = entry.file_name().to_str() {
+                            names.push(name.to_string());
+                        }
+                    }
                 }
             }
         }
     }
+    if !found_any {
+        return None;
+    }
     names.sort();
+    names.dedup();
     Some(names)
+}
+
+/// Recursively scan an external worktree directory for subdirectories that
+/// belong to the current project, verified by checking the `.git` gitdir pointer.
+async fn scan_external_worktree_dir(external_dir: &Path, project_git_dir: &Path) -> Vec<String> {
+    let mut results = Vec::new();
+    let canonical_git_dir = project_git_dir
+        .canonicalize()
+        .unwrap_or_else(|_| project_git_dir.to_path_buf());
+
+    let mut stack: Vec<std::path::PathBuf> = vec![external_dir.to_path_buf()];
+
+    while let Some(dir) = stack.pop() {
+        let Ok(mut entries) = tokio::fs::read_dir(&dir).await else {
+            continue;
+        };
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let Ok(ft) = entry.file_type().await else {
+                continue;
+            };
+            if !ft.is_dir() {
+                continue;
+            }
+            let child = entry.path();
+            if worktree_belongs_to_repo(&child, &canonical_git_dir).await {
+                if let Some(name) = child.file_name().and_then(|n| n.to_str()) {
+                    results.push(name.to_string());
+                }
+            } else {
+                stack.push(child);
+            }
+        }
+    }
+    results
+}
+
+/// Check if a directory is a git worktree belonging to the given repo.
+///
+/// Reads the `.git` file (not directory) in the worktree, extracts the
+/// `gitdir:` path, and checks whether it resolves back to the project's
+/// `.git/worktrees/` directory.
+async fn worktree_belongs_to_repo(worktree_path: &Path, canonical_project_git_dir: &Path) -> bool {
+    let dot_git = worktree_path.join(".git");
+    let Ok(content) = tokio::fs::read_to_string(&dot_git).await else {
+        return false;
+    };
+    let Some(gitdir_str) = content.lines().find_map(|l| l.strip_prefix("gitdir: ")) else {
+        return false;
+    };
+    let gitdir_str = gitdir_str.trim();
+    let gitdir_path = if std::path::Path::new(gitdir_str).is_absolute() {
+        std::path::PathBuf::from(gitdir_str)
+    } else {
+        worktree_path.join(gitdir_str)
+    };
+    let canonical_gitdir = gitdir_path.canonicalize().unwrap_or(gitdir_path);
+    canonical_gitdir.starts_with(canonical_project_git_dir)
 }
 
 /// Find instances whose assigned worktree directory no longer exists on disk.
@@ -229,9 +321,11 @@ pub async fn reconcile_orphaned_worktrees(state: &Arc<AppState>) {
         let Some(project_root) = resolve_project_root(project) else {
             continue;
         };
-        let wt_dir = crate::handlers::assign::detect_worktree_dir_from_git(&project_root)
-            .unwrap_or_else(|| read_worktree_dir(project));
-        let listing = list_worktree_dirs(&project_root, &wt_dir)
+        let wt_dirs = match crate::handlers::assign::detect_worktree_dir_from_git(&project_root) {
+            Some(d) => vec![d],
+            None => read_worktree_dirs(project),
+        };
+        let listing = list_worktree_dirs(&project_root, &wt_dirs)
             .await
             .unwrap_or_default();
 
@@ -315,10 +409,13 @@ pub fn spawn_git_watcher(state: Arc<AppState>) {
                     }
                 }
 
-                let wt_dir =
-                    crate::handlers::assign::detect_worktree_dir_from_git(&entry.project_root)
-                        .unwrap_or_else(|| read_worktree_dir(project));
-                if let Some(listing) = list_worktree_dirs(&entry.project_root, &wt_dir).await {
+                let wt_dirs = match crate::handlers::assign::detect_worktree_dir_from_git(
+                    &entry.project_root,
+                ) {
+                    Some(d) => vec![d],
+                    None => read_worktree_dirs(project),
+                };
+                if let Some(listing) = list_worktree_dirs(&entry.project_root, &wt_dirs).await {
                     if entry.last_worktree_listing.as_ref() != Some(&listing) {
                         if entry.last_worktree_listing.is_some() {
                             debug!(project, "worktree directory changed");
@@ -458,5 +555,111 @@ mod tests {
         let orphans = find_orphaned_worktrees(&instances, &listing);
         assert_eq!(orphans.len(), 1);
         assert_eq!(orphans[0].0, "dev-1");
+    }
+
+    #[tokio::test]
+    async fn test_worktree_belongs_to_repo_valid() {
+        let dir = tempfile::tempdir().unwrap();
+        let git_dir = dir.path().join(".git");
+        std::fs::create_dir_all(git_dir.join("worktrees").join("feat")).unwrap();
+
+        let wt = dir.path().join("external-wt");
+        std::fs::create_dir_all(&wt).unwrap();
+        let gitdir_target = git_dir.join("worktrees").join("feat");
+        std::fs::write(
+            wt.join(".git"),
+            format!("gitdir: {}", gitdir_target.display()),
+        )
+        .unwrap();
+
+        let canonical_git = git_dir.canonicalize().unwrap();
+        assert!(worktree_belongs_to_repo(&wt, &canonical_git).await);
+    }
+
+    #[tokio::test]
+    async fn test_worktree_belongs_to_repo_wrong_repo() {
+        let repo_a = tempfile::tempdir().unwrap();
+        let repo_b = tempfile::tempdir().unwrap();
+        let git_dir_a = repo_a.path().join(".git");
+        let git_dir_b = repo_b.path().join(".git");
+        std::fs::create_dir_all(git_dir_a.join("worktrees").join("feat")).unwrap();
+        std::fs::create_dir_all(git_dir_b.join("worktrees").join("feat")).unwrap();
+
+        let wt = repo_a.path().join("ext-wt");
+        std::fs::create_dir_all(&wt).unwrap();
+        std::fs::write(
+            wt.join(".git"),
+            format!("gitdir: {}", git_dir_b.join("worktrees/feat").display()),
+        )
+        .unwrap();
+
+        let canonical_git_a = git_dir_a.canonicalize().unwrap();
+        assert!(!worktree_belongs_to_repo(&wt, &canonical_git_a).await);
+    }
+
+    #[tokio::test]
+    async fn test_worktree_belongs_to_repo_no_git_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let git_dir = dir.path().join(".git");
+        std::fs::create_dir_all(&git_dir).unwrap();
+
+        let wt = dir.path().join("ext-wt");
+        std::fs::create_dir_all(&wt).unwrap();
+
+        let canonical_git = git_dir.canonicalize().unwrap();
+        assert!(!worktree_belongs_to_repo(&wt, &canonical_git).await);
+    }
+
+    #[tokio::test]
+    async fn test_scan_external_worktree_dir_filters_by_repo() {
+        let project = tempfile::tempdir().unwrap();
+        let other = tempfile::tempdir().unwrap();
+        let ext_dir = tempfile::tempdir().unwrap();
+
+        let project_git = project.path().join(".git");
+        let other_git = other.path().join(".git");
+        std::fs::create_dir_all(project_git.join("worktrees").join("mine")).unwrap();
+        std::fs::create_dir_all(other_git.join("worktrees").join("theirs")).unwrap();
+
+        let wt_mine = ext_dir.path().join("hash1").join("mine");
+        let wt_theirs = ext_dir.path().join("hash2").join("theirs");
+        std::fs::create_dir_all(&wt_mine).unwrap();
+        std::fs::create_dir_all(&wt_theirs).unwrap();
+
+        std::fs::write(
+            wt_mine.join(".git"),
+            format!("gitdir: {}", project_git.join("worktrees/mine").display()),
+        )
+        .unwrap();
+        std::fs::write(
+            wt_theirs.join(".git"),
+            format!("gitdir: {}", other_git.join("worktrees/theirs").display()),
+        )
+        .unwrap();
+
+        let results = scan_external_worktree_dir(ext_dir.path(), &project_git).await;
+
+        assert_eq!(results, vec!["mine"]);
+    }
+
+    #[tokio::test]
+    async fn test_scan_external_worktree_dir_recursive() {
+        let project = tempfile::tempdir().unwrap();
+        let ext_dir = tempfile::tempdir().unwrap();
+
+        let project_git = project.path().join(".git");
+        std::fs::create_dir_all(project_git.join("worktrees").join("deep")).unwrap();
+
+        let wt = ext_dir.path().join("level1").join("level2").join("deep");
+        std::fs::create_dir_all(&wt).unwrap();
+        std::fs::write(
+            wt.join(".git"),
+            format!("gitdir: {}", project_git.join("worktrees/deep").display()),
+        )
+        .unwrap();
+
+        let results = scan_external_worktree_dir(ext_dir.path(), &project_git).await;
+
+        assert_eq!(results, vec!["deep"]);
     }
 }

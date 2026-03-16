@@ -4,15 +4,19 @@ GETTING_STARTED.md
 SKILLS_FOR_HOST_AGENTS.md
 
 # Learn Coasts
-learn-coasts/README.md
-learn-coasts/coasts.md
-learn-coasts/ports.md
-learn-coasts/assign.md
-learn-coasts/checkout.md
-learn-coasts/volumes.md
-learn-coasts/secrets.md
-learn-coasts/getting-started.md
-learn-coasts/coast-ui.md
+learn-coasts-videos/README.md
+learn-coasts-videos/coasts.md
+learn-coasts-videos/ports.md
+learn-coasts-videos/assign.md
+learn-coasts-videos/checkout.md
+learn-coasts-videos/volumes.md
+learn-coasts-videos/secrets.md
+learn-coasts-videos/getting-started.md
+learn-coasts-videos/coast-ui.md
+
+# Harnesses
+harnesses/README.md
+harnesses/CODEX.md
 
 # Conceitos e Terminologia
 concepts_and_terminology/README.md
@@ -44,6 +48,7 @@ concepts_and_terminology/TROUBLESHOOTING.md
 # Coastfiles
 coastfiles/README.md
 coastfiles/PROJECT.md
+coastfiles/WORKTREE_DIR.md
 coastfiles/PORTS.md
 coastfiles/SHARED_SERVICES.md
 coastfiles/SERVICES.md

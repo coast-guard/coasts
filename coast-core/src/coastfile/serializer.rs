@@ -39,12 +39,40 @@ fn write_coast_section(coastfile: &Coastfile, out: &mut String) {
         writeln!(out, "compose = {}", toml_quote(&rel)).unwrap();
     }
     writeln!(out, "runtime = {}", toml_quote(coastfile.runtime.as_str())).unwrap();
-    writeln!(
-        out,
-        "worktree_dir = {}",
-        toml_quote(&coastfile.worktree_dir)
-    )
-    .unwrap();
+    if coastfile.worktree_dirs.len() == 1 {
+        writeln!(
+            out,
+            "worktree_dir = {}",
+            toml_quote(&coastfile.worktree_dirs[0])
+        )
+        .unwrap();
+    } else {
+        writeln!(
+            out,
+            "worktree_dir = [{}]",
+            coastfile
+                .worktree_dirs
+                .iter()
+                .map(|d| toml_quote(d))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+        .unwrap();
+    }
+    if coastfile.default_worktree_dir
+        != coastfile
+            .worktree_dirs
+            .first()
+            .map(String::as_str)
+            .unwrap_or(".worktrees")
+    {
+        writeln!(
+            out,
+            "default_worktree_dir = {}",
+            toml_quote(&coastfile.default_worktree_dir)
+        )
+        .unwrap();
+    }
     if !coastfile.autostart {
         writeln!(out, "autostart = false").unwrap();
     }

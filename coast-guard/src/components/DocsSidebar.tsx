@@ -65,8 +65,11 @@ const DOC_TITLE_KEYS: Record<string, string> = {
   'coastfiles/VOLUMES.md': 'docs.nav.coastfileVolumes',
   'coastfiles/ASSIGN.md': 'docs.nav.coastfileAssign',
   'coastfiles/INHERITANCE.md': 'docs.nav.coastfileInheritance',
+  'coastfiles/WORKTREE_DIR.md': 'docs.nav.coastfileWorktreeDir',
   'coastfiles/AGENT_SHELL.md': 'docs.nav.coastfileAgentShell',
   'coastfiles/MCP.md': 'docs.nav.coastfileMcp',
+  'harnesses/README.md': 'docs.nav.harnesses',
+  'harnesses/CODEX.md': 'docs.nav.harnessCodex',
   'recipes/README.md': 'docs.nav.recipes',
   'recipes/FULLSTACK_MONOREPO.md': 'docs.nav.recipesFullstackMonorepo',
 };

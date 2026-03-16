@@ -15,7 +15,7 @@ name = "my-app"
 
 ### `compose`
 
-Docker Compose 파일의 경로입니다. 상대 경로는 프로젝트 루트( Coastfile이 들어 있는 디렉터리, 또는 `root`가 설정된 경우 그 디렉터리)를 기준으로 해석됩니다.
+Docker Compose 파일의 경로입니다. 상대 경로는 프로젝트 루트(Coastfile이 들어 있는 디렉터리, 또는 `root`가 설정된 경우 그 디렉터리)를 기준으로 해석됩니다.
 
 ```toml
 [coast]
@@ -61,15 +61,32 @@ root = "../my-project"
 
 ### `worktree_dir`
 
-Coast 인스턴스를 위한 git worktree가 생성되는 디렉터리입니다. 기본값은 `".worktrees"`입니다. 런타임에 Coast는 기존 git worktree( `git worktree list`를 통해)에서 디렉터리를 자동 감지하고, 이를 기본값보다 우선합니다. 상대 경로는 프로젝트 루트를 기준으로 해석됩니다.
+git worktree가 위치하는 디렉터리들입니다. 단일 문자열 또는 문자열 배열을 받습니다. 기본값은 `".worktrees"`입니다.
+
+```toml
+# Single directory
+worktree_dir = ".worktrees"
+
+# Multiple directories, including an external one
+worktree_dir = [".worktrees", ".claude/worktrees", "~/.codex/worktrees"]
+```
+
+상대 경로는 프로젝트 루트를 기준으로 해석됩니다. `~/` 또는 `/`로 시작하는 경로는 **외부** 디렉터리로 취급되며, Coast는 컨테이너가 이에 접근할 수 있도록 별도의 바인드 마운트를 추가합니다. 이것이 Codex처럼 프로젝트 루트 밖에 worktree를 생성하는 도구와 통합하는 방법입니다.
+
+런타임에 Coast는 기존 git worktree(`git worktree list`를 통해)에서 worktree 디렉터리를 자동 감지하고, 모든 worktree가 하나의 디렉터리에 일치하면 구성된 기본값보다 이를 우선합니다.
+
+외부 디렉터리 동작, 프로젝트 필터링, 예제를 포함한 전체 참조는 [Worktree Directories](WORKTREE_DIR.md)를 참고하세요.
+
+### `default_worktree_dir`
+
+**새로운** worktree를 생성할 때 사용할 디렉터리입니다. 기본값은 `worktree_dir`의 첫 번째 항목입니다. `worktree_dir`가 배열일 때만 관련이 있습니다.
 
 ```toml
 [coast]
 name = "my-app"
-worktree_dir = ".worktrees"
+worktree_dir = [".worktrees", "~/.codex/worktrees"]
+default_worktree_dir = ".worktrees"
 ```
-
-디렉터리가 상대 경로이며 프로젝트 내부에 있으면, Coast가 이를 `.gitignore`에 자동으로 추가합니다.
 
 ### `autostart`
 
@@ -102,7 +119,7 @@ api = 8080
 
 ## `[coast.setup]`
 
-Coast 컨테이너 자체를 커스터마이즈합니다 — 도구 설치, 빌드 단계 실행, 설정 파일 구체화 등을 포함합니다. `[coast.setup]`의 모든 항목은 DinD 컨테이너 내부에서 실행됩니다( compose 서비스 내부가 아님).
+Coast 컨테이너 자체를 커스터마이즈합니다 — 도구 설치, 빌드 단계 실행, 설정 파일 구체화 등을 포함합니다. `[coast.setup]`의 모든 항목은 DinD 컨테이너 내부에서 실행됩니다(compose 서비스 내부가 아님).
 
 ### `packages`
 
@@ -162,7 +179,7 @@ Go 및 Node.js 개발을 위해 설정된 Coast 컨테이너:
 name = "my-fullstack-app"
 compose = "./docker-compose.yml"
 runtime = "dind"
-worktree_dir = ".worktrees"
+worktree_dir = [".worktrees", "~/.codex/worktrees"]
 primary_port = "web"
 
 [coast.setup]

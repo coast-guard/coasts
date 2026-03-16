@@ -61,15 +61,32 @@ root = "../my-project"
 
 ### `worktree_dir`
 
-Coast インスタンス用に git worktree を作成するディレクトリです。デフォルトは `".worktrees"` です。実行時に Coast は既存の git worktree（`git worktree list` 経由）からディレクトリを自動検出し、デフォルトよりもそれを優先します。相対パスはプロジェクトルートを基準に解決されます。
+git worktree が存在するディレクトリです。単一の文字列または文字列の配列を受け付けます。デフォルトは `".worktrees"` です。
+
+```toml
+# Single directory
+worktree_dir = ".worktrees"
+
+# Multiple directories, including an external one
+worktree_dir = [".worktrees", ".claude/worktrees", "~/.codex/worktrees"]
+```
+
+相対パスはプロジェクトルートを基準に解決されます。`~/` または `/` で始まるパスは**外部**ディレクトリとして扱われ、Coast はコンテナからアクセスできるように別個のバインドマウントを追加します。これは、プロジェクトルートの外側に worktree を作成する Codex のようなツールと統合する方法です。
+
+実行時に Coast は既存の git worktree（`git worktree list` 経由）から worktree ディレクトリを自動検出し、すべての worktree が単一のディレクトリで一致している場合は、設定されたデフォルトよりもそれを優先します。
+
+外部ディレクトリの挙動、プロジェクトフィルタリング、例を含む完全なリファレンスについては、[Worktree Directories](WORKTREE_DIR.md) を参照してください。
+
+### `default_worktree_dir`
+
+**新しい** worktree を作成するときに使用するディレクトリです。デフォルトは `worktree_dir` の最初のエントリです。`worktree_dir` が配列である場合にのみ関係します。
 
 ```toml
 [coast]
 name = "my-app"
-worktree_dir = ".worktrees"
+worktree_dir = [".worktrees", "~/.codex/worktrees"]
+default_worktree_dir = ".worktrees"
 ```
-
-ディレクトリが相対パスでプロジェクト内にある場合、Coast はそれを自動的に `.gitignore` に追加します。
 
 ### `autostart`
 
@@ -162,7 +179,7 @@ Go と Node.js 開発向けにセットアップされた Coast コンテナ:
 name = "my-fullstack-app"
 compose = "./docker-compose.yml"
 runtime = "dind"
-worktree_dir = ".worktrees"
+worktree_dir = [".worktrees", "~/.codex/worktrees"]
 primary_port = "web"
 
 [coast.setup]

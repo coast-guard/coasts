@@ -61,15 +61,32 @@ Isso é incomum. A maioria dos projetos mantém o Coastfile na raiz real do proj
 
 ### `worktree_dir`
 
-Diretório onde worktrees do git são criadas para instâncias do Coast. O padrão é `".worktrees"`. Em tempo de execução, o Coast detecta automaticamente o diretório a partir de worktrees existentes do git (via `git worktree list`) e prefere isso ao padrão. Caminhos relativos são resolvidos em relação à raiz do projeto.
+Diretórios onde worktrees do git ficam. Aceita uma única string ou um array de strings. O padrão é `".worktrees"`.
+
+```toml
+# Single directory
+worktree_dir = ".worktrees"
+
+# Multiple directories, including an external one
+worktree_dir = [".worktrees", ".claude/worktrees", "~/.codex/worktrees"]
+```
+
+Caminhos relativos são resolvidos em relação à raiz do projeto. Caminhos que começam com `~/` ou `/` são tratados como diretórios **externos** — o Coast adiciona um bind mount separado para que o contêiner possa acessá-los. É assim que você integra com ferramentas como o Codex que criam worktrees fora da raiz do projeto.
+
+Em tempo de execução, o Coast detecta automaticamente o diretório de worktree a partir de worktrees existentes do git (via `git worktree list`) e prefere isso ao padrão configurado quando todos os worktrees concordam em um único diretório.
+
+Veja [Worktree Directories](WORKTREE_DIR.md) para a referência completa, incluindo comportamento de diretórios externos, filtragem por projeto e exemplos.
+
+### `default_worktree_dir`
+
+Qual diretório usar ao criar **novos** worktrees. O padrão é a primeira entrada em `worktree_dir`. Relevante apenas quando `worktree_dir` é um array.
 
 ```toml
 [coast]
 name = "my-app"
-worktree_dir = ".worktrees"
+worktree_dir = [".worktrees", "~/.codex/worktrees"]
+default_worktree_dir = ".worktrees"
 ```
-
-Se o diretório for relativo e estiver dentro do projeto, o Coast o adiciona automaticamente ao `.gitignore`.
 
 ### `autostart`
 
@@ -162,7 +179,7 @@ Um contêiner Coast configurado para desenvolvimento em Go e Node.js:
 name = "my-fullstack-app"
 compose = "./docker-compose.yml"
 runtime = "dind"
-worktree_dir = ".worktrees"
+worktree_dir = [".worktrees", "~/.codex/worktrees"]
 primary_port = "web"
 
 [coast.setup]

@@ -522,7 +522,10 @@
   "docs.nav.coastfileAssign": "分配",
   "docs.nav.coastfileInheritance": "继承与类型",
   "docs.nav.coastfileAgentShell": "Agent Shell",
+  "docs.nav.coastfileWorktreeDir": "工作树目录",
   "docs.nav.coastfileMcp": "MCP 服务器与客户端",
+  "docs.nav.harnesses": "工具集成",
+  "docs.nav.harnessCodex": "Codex",
   "docs.nav.recipes": "配置示例",
   "docs.nav.recipesFullstackMonorepo": "全栈 Monorepo"
 }

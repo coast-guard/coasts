@@ -458,6 +458,24 @@ async fn create_container(
         dind_extra_hosts,
     );
 
+    if let Ok(cf) = coast_core::coastfile::Coastfile::from_file(
+        &home
+            .join(".coast")
+            .join("images")
+            .join(&req.project)
+            .join("latest")
+            .join("coastfile.toml"),
+    ) {
+        for (idx, resolved) in cf.external_worktree_dirs() {
+            config.bind_mounts.push(coast_docker::runtime::BindMount {
+                host_path: resolved,
+                container_path: coast_core::coastfile::Coastfile::external_mount_path(idx),
+                read_only: false,
+                propagation: None,
+            });
+        }
+    }
+
     for (_name, canonical, dynamic) in pre_allocated_ports {
         config
             .published_ports

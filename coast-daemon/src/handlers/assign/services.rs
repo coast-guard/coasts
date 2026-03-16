@@ -15,6 +15,18 @@ use super::worktree::{
     resolve_internal_sync_marker_path,
 };
 
+/// Describes where a worktree lives on the host and how it maps into the container.
+#[derive(Debug, Clone)]
+pub(super) struct WorktreeLocation {
+    /// The worktree dir string (e.g. ".worktrees" or "~/.codex/worktrees").
+    pub wt_dir: String,
+    /// Absolute path to the worktree on the host.
+    pub host_path: std::path::PathBuf,
+    /// Mount source path inside the container (e.g. "/host-project/.worktrees/feat"
+    /// or "/host-external-wt/1/eca7/project-name").
+    pub container_mount_src: String,
+}
+
 /// Parameters for the Docker-dependent assign steps (steps 2-7).
 pub(super) struct DockerStepsParams<'a> {
     pub req: &'a AssignRequest,
@@ -62,10 +74,16 @@ pub(super) async fn run_docker_steps(p: DockerStepsParams<'_>) -> Result<()> {
     let restart_svcs: Vec<&str> = services_with_action(&service_actions, &AssignAction::Restart);
     let rebuild_svcs: Vec<&str> = services_with_action(&service_actions, &AssignAction::Rebuild);
 
-    let (wt_dir, worktree_path) =
-        detect_worktree_path(p.project_root, &p.cf_data.worktree_dir, &p.req.worktree).await;
+    let wt_location = detect_worktree_path(
+        p.project_root,
+        &p.cf_data.worktree_dirs,
+        &p.cf_data.default_worktree_dir,
+        &p.req.worktree,
+    )
+    .await;
 
-    let wt_child = spawn_worktree_creation(p.project_root, &worktree_path, &p.req.worktree);
+    let wt_host_path = wt_location.as_ref().map(|loc| loc.host_path.clone());
+    let wt_child = spawn_worktree_creation(p.project_root, &wt_host_path, &p.req.worktree);
     let wt_spawn_t = std::time::Instant::now();
 
     step(p.progress, "Stopping services", 3).await;
@@ -89,8 +107,7 @@ pub(super) async fn run_docker_steps(p: DockerStepsParams<'_>) -> Result<()> {
         p.state,
         p.req,
         p.project_root,
-        &wt_dir,
-        &worktree_path,
+        &wt_location,
         wt_child,
         wt_spawn_t,
         p.assign_config,
@@ -206,24 +223,191 @@ async fn discover_and_classify(
 
 async fn detect_worktree_path(
     project_root: &Option<std::path::PathBuf>,
+    worktree_dirs: &[String],
     default_wt_dir: &str,
     worktree_name: &str,
-) -> (Option<String>, Option<std::path::PathBuf>) {
-    if let Some(ref root) = project_root {
-        let step_t = std::time::Instant::now();
-        let root_clone = root.clone();
-        let detected =
-            tokio::task::spawn_blocking(move || detect_worktree_dir_from_git(&root_clone))
-                .await
-                .ok()
-                .flatten();
-        let dir = detected.unwrap_or_else(|| default_wt_dir.to_string());
-        info!(elapsed_ms = step_t.elapsed().as_millis() as u64, wt_dir = %dir, "detected worktree directory");
-        let path = root.join(&dir).join(worktree_name);
-        (Some(dir), Some(path))
-    } else {
-        (None, None)
+) -> Option<WorktreeLocation> {
+    let root = project_root.as_ref()?;
+    let step_t = std::time::Instant::now();
+
+    let root_clone = root.clone();
+    let git_detected =
+        tokio::task::spawn_blocking(move || detect_worktree_dir_from_git(&root_clone))
+            .await
+            .ok()
+            .flatten();
+
+    let loc = try_git_detected(root, git_detected.as_deref(), worktree_name)
+        .or_else(|| find_worktree_in_local_dirs(root, worktree_dirs, worktree_name));
+
+    if let Some(loc) = loc {
+        info!(elapsed_ms = step_t.elapsed().as_millis() as u64, wt_dir = %loc.wt_dir, "resolved worktree location");
+        return Some(loc);
     }
+
+    if let Some(loc) = find_worktree_in_external_dirs(root, worktree_dirs, worktree_name).await {
+        info!(elapsed_ms = step_t.elapsed().as_millis() as u64, wt_dir = %loc.wt_dir, "found worktree in external dir");
+        return Some(loc);
+    }
+
+    let path = root.join(default_wt_dir).join(worktree_name);
+    let mount_src = format!("/host-project/{default_wt_dir}/{worktree_name}");
+    info!(elapsed_ms = step_t.elapsed().as_millis() as u64, wt_dir = %default_wt_dir, "using default worktree directory");
+    Some(WorktreeLocation {
+        wt_dir: default_wt_dir.to_string(),
+        host_path: path,
+        container_mount_src: mount_src,
+    })
+}
+
+fn try_git_detected(
+    root: &std::path::Path,
+    detected: Option<&str>,
+    worktree_name: &str,
+) -> Option<WorktreeLocation> {
+    use coast_core::coastfile::Coastfile;
+
+    let d = detected?;
+    if Coastfile::is_external_worktree_dir(d) {
+        return None;
+    }
+    let path = root.join(d).join(worktree_name);
+    let mount_src = format!("/host-project/{d}/{worktree_name}");
+    Some(WorktreeLocation {
+        wt_dir: d.to_string(),
+        host_path: path,
+        container_mount_src: mount_src,
+    })
+}
+
+/// Search local (relative) worktree directories for an existing worktree.
+fn find_worktree_in_local_dirs(
+    project_root: &std::path::Path,
+    worktree_dirs: &[String],
+    worktree_name: &str,
+) -> Option<WorktreeLocation> {
+    use coast_core::coastfile::Coastfile;
+
+    for dir in worktree_dirs {
+        if Coastfile::is_external_worktree_dir(dir) {
+            continue;
+        }
+        let candidate = project_root.join(dir).join(worktree_name);
+        if candidate.exists() {
+            let mount_src = format!("/host-project/{dir}/{worktree_name}");
+            return Some(WorktreeLocation {
+                wt_dir: dir.clone(),
+                host_path: candidate,
+                container_mount_src: mount_src,
+            });
+        }
+    }
+    None
+}
+
+/// Search external worktree directories for a worktree matching `worktree_name`
+/// by parsing `git worktree list --porcelain`.
+async fn find_worktree_in_external_dirs(
+    project_root: &std::path::Path,
+    worktree_dirs: &[String],
+    worktree_name: &str,
+) -> Option<WorktreeLocation> {
+    use coast_core::coastfile::Coastfile;
+
+    let external_dirs: Vec<(usize, String, std::path::PathBuf)> = worktree_dirs
+        .iter()
+        .enumerate()
+        .filter(|(_, d)| Coastfile::is_external_worktree_dir(d))
+        .map(|(idx, d)| {
+            (
+                idx,
+                d.clone(),
+                Coastfile::resolve_worktree_dir(project_root, d),
+            )
+        })
+        .collect();
+
+    if external_dirs.is_empty() {
+        return None;
+    }
+
+    let output = tokio::process::Command::new("git")
+        .args(["worktree", "list", "--porcelain"])
+        .current_dir(project_root)
+        .output()
+        .await
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    match_porcelain_to_external(&stdout, worktree_name, &external_dirs)
+}
+
+fn match_porcelain_to_external(
+    porcelain: &str,
+    worktree_name: &str,
+    external_dirs: &[(usize, String, std::path::PathBuf)],
+) -> Option<WorktreeLocation> {
+    let mut current_path: Option<std::path::PathBuf> = None;
+
+    for line in porcelain.lines() {
+        if let Some(path_str) = line.strip_prefix("worktree ") {
+            current_path = Some(std::path::PathBuf::from(path_str));
+        } else if line.starts_with("branch ") || line == "detached" {
+            if let Some(loc) =
+                try_match_external_worktree(line, &current_path, worktree_name, external_dirs)
+            {
+                return Some(loc);
+            }
+        } else if line.is_empty() {
+            current_path = None;
+        }
+    }
+
+    None
+}
+
+fn try_match_external_worktree(
+    line: &str,
+    current_path: &Option<std::path::PathBuf>,
+    worktree_name: &str,
+    external_dirs: &[(usize, String, std::path::PathBuf)],
+) -> Option<WorktreeLocation> {
+    use coast_core::coastfile::Coastfile;
+
+    let wt_path = current_path.as_ref()?;
+    let wt_canonical = wt_path.canonicalize().unwrap_or_else(|_| wt_path.clone());
+
+    let branch_name = if let Some(branch_ref) = line.strip_prefix("branch ") {
+        branch_ref.strip_prefix("refs/heads/").unwrap_or(branch_ref)
+    } else {
+        wt_path.file_name().and_then(|n| n.to_str()).unwrap_or("")
+    };
+
+    for (idx, raw_dir, resolved) in external_dirs {
+        let canon_ext = resolved.canonicalize().unwrap_or_else(|_| resolved.clone());
+        if !wt_canonical.starts_with(&canon_ext) {
+            continue;
+        }
+        let relative = wt_canonical
+            .strip_prefix(&canon_ext)
+            .unwrap_or(&wt_canonical);
+        let relative_str = relative.display().to_string();
+        if branch_name == worktree_name || relative_str == worktree_name {
+            let ext_mount = Coastfile::external_mount_path(*idx);
+            let mount_src = format!("{ext_mount}/{relative_str}");
+            return Some(WorktreeLocation {
+                wt_dir: raw_dir.clone(),
+                host_path: wt_canonical,
+                container_mount_src: mount_src,
+            });
+        }
+    }
+
+    None
 }
 
 fn spawn_worktree_creation(
@@ -486,8 +670,7 @@ async fn switch_worktree(
     state: &AppState,
     req: &AssignRequest,
     project_root: &Option<std::path::PathBuf>,
-    wt_dir: &Option<String>,
-    worktree_path: &Option<std::path::PathBuf>,
+    wt_location: &Option<WorktreeLocation>,
     wt_child: Option<Option<tokio::process::Child>>,
     wt_spawn_t: std::time::Instant,
     assign_config: &AssignConfig,
@@ -496,14 +679,20 @@ async fn switch_worktree(
     let Some(ref root) = project_root else {
         return Ok(());
     };
-    let wt_dir = wt_dir.clone().unwrap_or_else(|| ".worktrees".to_string());
-    let worktree_path = worktree_path
-        .clone()
-        .unwrap_or_else(|| root.join(".worktrees").join(&req.worktree));
+    let loc = wt_location.clone().unwrap_or_else(|| {
+        let dir = ".worktrees".to_string();
+        let host_path = root.join(".worktrees").join(&req.worktree);
+        let mount_src = format!("/host-project/.worktrees/{}", req.worktree);
+        WorktreeLocation {
+            wt_dir: dir,
+            host_path,
+            container_mount_src: mount_src,
+        }
+    });
 
     ensure_worktree_exists(
         root,
-        &worktree_path,
+        &loc.host_path,
         &req.worktree,
         wt_child,
         wt_spawn_t,
@@ -512,14 +701,14 @@ async fn switch_worktree(
     .await?;
     sync_gitignored_files(
         root,
-        &worktree_path,
-        &wt_dir,
+        &loc.host_path,
+        &loc.wt_dir,
         &req.worktree,
         assign_config,
         req.force_sync,
     )
     .await;
-    remount_workspace(rt, container_id, root, &wt_dir, &req.worktree).await;
+    remount_workspace(rt, container_id, root, &loc.container_mount_src).await;
 
     let _ = state
         .db
@@ -768,10 +957,8 @@ async fn remount_workspace(
     rt: &coast_docker::dind::DindRuntime,
     container_id: &str,
     root: &std::path::Path,
-    wt_dir: &str,
-    worktree_name: &str,
+    mount_src: &str,
 ) {
-    let mount_src = format!("/host-project/{wt_dir}/{worktree_name}");
     let host_root = root.to_string_lossy();
     let parent = root
         .parent()

@@ -1,21 +1,21 @@
 # Coastfiles
 
-Coastfile は、プロジェクトのルートに置かれる TOML 設定ファイルです。Coast がそのプロジェクト向けに分離された開発環境を構築・実行するために必要な情報（どのサービスを起動するか、どのポートをフォワードするか、データをどう扱うか、シークレットをどう管理するか）をすべて Coast に伝えます。
+Coastfile は、プロジェクトのルートに配置される TOML 設定ファイルです。これは、そのプロジェクト用の分離された開発環境を構築して実行するために Coast が知る必要のあるすべての情報、つまり、どのサービスを実行するか、どのポートを転送するか、データをどのように扱うか、シークレットをどのように管理するかを Coast に伝えます。
 
-すべての Coast プロジェクトには少なくとも 1 つの Coastfile が必要です。ファイル名は常に `Coastfile`（C は大文字、拡張子なし）です。異なるワークフロー向けにバリアントが必要な場合は、`Coastfile.light` や `Coastfile.snap` のような型付き Coastfile を作成し、[ベースを継承](INHERITANCE.md)します。
+すべての Coast プロジェクトには、少なくとも 1 つの Coastfile が必要です。ファイル名は常に `Coastfile` です（大文字の C、拡張子なし）。異なるワークフロー向けのバリアントが必要な場合は、`Coastfile.light` や `Coastfile.snap` のような型付き Coastfile を作成し、[ベースを継承](INHERITANCE.md)します。
 
-Coastfile が Coast 全体の中でどのように関係しているかをより深く理解するには、[Coasts](../concepts_and_terminology/COASTS.md) と [Builds](../concepts_and_terminology/BUILDS.md) を参照してください。
+Coastfile が Coast の他の部分とどのように関係しているかをより深く理解するには、[Coasts](../concepts_and_terminology/COASTS.md) と [Builds](../concepts_and_terminology/BUILDS.md) を参照してください。
 
 ## Quickstart
 
-最小構成の Coastfile:
+可能な限り最小の Coastfile:
 
 ```toml
 [coast]
 name = "my-app"
 ```
 
-これにより、`coast exec` で入れる DinD コンテナが得られます。多くのプロジェクトでは `compose` 参照か [bare services](SERVICES.md) のいずれかが必要になります:
+これにより、`coast exec` で入れる DinD コンテナが得られます。ほとんどのプロジェクトでは、`compose` 参照または [bare services](SERVICES.md) のいずれかが必要になります。
 
 ```toml
 [coast]
@@ -27,7 +27,7 @@ web = 3000
 api = 8080
 ```
 
-または compose なしで、bare services を使う場合:
+あるいは、compose を使わずに bare services を使う場合:
 
 ```toml
 [coast]
@@ -46,13 +46,13 @@ restart = "on-failure"
 web = 3000
 ```
 
-`coast build` を実行し、その後 `coast run dev-1` を実行すれば、分離された環境が手に入ります。
+`coast build` を実行してから `coast run dev-1` を実行すれば、分離された環境が得られます。
 
 ## Example Coastfiles
 
 ### Simple bare-service project
 
-compose ファイルのない Next.js アプリ。Coast が Node をインストールし、`npm install` を実行し、開発サーバーを直接起動します。
+compose ファイルなしの Next.js アプリです。Coast が Node をインストールし、`npm install` を実行し、開発サーバーを直接起動します。
 
 ```toml
 [coast]
@@ -74,13 +74,13 @@ web = 3002
 
 ### Full-stack compose project
 
-共有データベース、シークレット、ボリューム戦略、カスタムセットアップを備えたマルチサービスプロジェクト。
+共有データベース、シークレット、ボリューム戦略、カスタムセットアップを備えたマルチサービスプロジェクトです。
 
 ```toml
 [coast]
 name = "my-app"
 compose = "./infra/docker-compose.yml"
-worktree_dir = ".worktrees"
+worktree_dir = [".worktrees", "~/.codex/worktrees"]
 primary_port = "web"
 
 [coast.setup]
@@ -128,7 +128,7 @@ web = "hot"
 
 ### Lightweight test variant (inheritance)
 
-ベースの Coastfile を拡張しつつ、バックエンドテストの実行に必要なものだけに削ぎ落とします。ポートなし、共有サービスなし、分離されたデータベース。
+ベースの Coastfile を拡張しつつ、バックエンドテストの実行に必要なものだけに絞り込みます。ポートなし、共有サービスなし、分離データベースです。
 
 ```toml
 [coast]
@@ -155,7 +155,7 @@ backend-test = "rebuild"
 
 ### Snapshot-seeded variant
 
-各 coast インスタンスは、ホストに既存のデータベースボリュームのコピーから開始し、その後は独立して分岐します。
+各 coast インスタンスは、ホスト上にある既存のデータベースボリュームのコピーから開始し、その後はそれぞれ独立して分岐します。
 
 ```toml
 [coast]
@@ -185,24 +185,25 @@ mount = "/data/db"
 
 ## Conventions
 
-- ファイル名は `Coastfile`（C は大文字、拡張子なし）でなければならず、プロジェクトのルートに置く必要があります。
-- 型付きバリアントは `Coastfile.{type}` というパターンを使用します — たとえば `Coastfile.light`、`Coastfile.snap`。詳しくは [Inheritance and Types](INHERITANCE.md) を参照してください。
+- ファイル名は `Coastfile` でなければならず（大文字の C、拡張子なし）、プロジェクトルートに配置する必要があります。
+- 型付きバリアントは `Coastfile.{type}` というパターンを使います。たとえば `Coastfile.light`、`Coastfile.snap` です。[Inheritance and Types](INHERITANCE.md) を参照してください。
 - 予約名 `Coastfile.default` は使用できません。
-- 全体を通して TOML 構文を使用します。すべてのセクションヘッダーは `[brackets]` を使い、名前付きエントリは `[section.name]` を使います（array-of-tables ではありません）。
-- 同じ Coastfile 内で `compose` と `[services]` の両方を使うことはできません — どちらか一方を選んでください。
-- 相対パス（`compose`、`root` など）は Coastfile の親ディレクトリを基準に解決されます。
+- 全体を通して TOML 構文を使用します。すべてのセクションヘッダーは `[brackets]` を使用し、名前付きエントリは `[section.name]` を使用します（array-of-tables ではありません）。
+- 同じ Coastfile 内で `compose` と `[services]` の両方を使うことはできません。どちらか一方を選んでください。
+- 相対パス（`compose`、`root` など）は、Coastfile の親ディレクトリを基準に解決されます。
 
 ## Reference
 
 | Page | Sections | What it covers |
 |------|----------|----------------|
 | [Project and Setup](PROJECT.md) | `[coast]`, `[coast.setup]` | 名前、compose パス、ランタイム、worktree ディレクトリ、コンテナセットアップ |
-| [Ports](PORTS.md) | `[ports]`, `[egress]` | ポートフォワーディング、egress 宣言、プライマリポート |
-| [Volumes](VOLUMES.md) | `[volumes.*]` | 分離・共有・スナップショットシードのボリューム戦略 |
+| [Worktree Directories](WORKTREE_DIR.md) | `worktree_dir`, `default_worktree_dir` | ローカルおよび外部 worktree ディレクトリ、チルダパス、Codex/Claude 統合 |
+| [Ports](PORTS.md) | `[ports]`, `[egress]` | ポート転送、egress 宣言、プライマリポート |
+| [Volumes](VOLUMES.md) | `[volumes.*]` | 分離、共有、スナップショットシードのボリューム戦略 |
 | [Shared Services](SHARED_SERVICES.md) | `[shared_services.*]` | ホストレベルのデータベースおよびインフラサービス |
-| [Secrets](SECRETS.md) | `[secrets.*]`, `[inject]` | シークレットの抽出、注入、ホストの env/ファイルのフォワーディング |
-| [Bare Services](SERVICES.md) | `[services.*]` | Docker Compose なしでプロセスを直接実行 |
+| [Secrets](SECRETS.md) | `[secrets.*]`, `[inject]` | シークレットの抽出、注入、ホスト環境/ファイル転送 |
+| [Bare Services](SERVICES.md) | `[services.*]` | Docker Compose を使わずにプロセスを直接実行する方法 |
 | [Agent Shell](AGENT_SHELL.md) | `[agent_shell]` | コンテナ化されたエージェント TUI ランタイム |
-| [MCP Servers](MCP.md) | `[mcp.*]`, `[mcp_clients.*]` | 内部およびホストプロキシの MCP サーバー、クライアントコネクタ |
+| [MCP Servers](MCP.md) | `[mcp.*]`, `[mcp_clients.*]` | 内部およびホストプロキシ型 MCP サーバー、クライアントコネクタ |
 | [Assign](ASSIGN.md) | `[assign]` | サービスごとのブランチ切り替え動作 |
-| [Inheritance and Types](INHERITANCE.md) | `extends`, `includes`, `[unset]`, `[omit]` | 型付き Coastfile、合成、オーバーライド |
+| [Inheritance and Types](INHERITANCE.md) | `extends`, `includes`, `[unset]`, `[omit]` | 型付き Coastfile、構成、およびオーバーライド |

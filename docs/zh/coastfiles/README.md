@@ -1,12 +1,12 @@
-# Coastfiles
+# Coastfile
 
-Coastfile 是一个 TOML 配置文件，位于你项目的根目录。它告诉 Coast 构建并运行该项目的隔离开发环境所需的一切信息——要运行哪些服务、要转发哪些端口、如何处理数据，以及如何管理机密。
+Coastfile 是一个 TOML 配置文件，位于你的项目根目录。它会告诉 Coast 构建和运行该项目的隔离开发环境所需了解的一切——运行哪些服务、转发哪些端口、如何处理数据，以及如何管理密钥。
 
-每个 Coast 项目至少需要一个 Coastfile。该文件始终命名为 `Coastfile`（大写 C，无扩展名）。如果你需要用于不同工作流的变体，可以创建带类型的 Coastfile，例如 `Coastfile.light` 或 `Coastfile.snap`，它们会[继承自基础文件](INHERITANCE.md)。
+每个 Coast 项目都至少需要一个 Coastfile。该文件的名称始终为 `Coastfile`（大写 C，无扩展名）。如果你需要针对不同工作流的变体，可以创建带类型的 Coastfile，例如 `Coastfile.light` 或 `Coastfile.snap`，它们会[继承基础配置](INHERITANCE.md)。
 
-要更深入理解 Coastfile 与 Coast 其余部分的关系，请参阅 [Coasts](../concepts_and_terminology/COASTS.md) 和 [Builds](../concepts_and_terminology/BUILDS.md)。
+若要更深入地理解 Coastfile 与 Coast 其他部分之间的关系，请参阅 [Coasts](../concepts_and_terminology/COASTS.md) 和 [Builds](../concepts_and_terminology/BUILDS.md)。
 
-## Quickstart
+## 快速开始
 
 最小可用的 Coastfile:
 
@@ -15,7 +15,7 @@ Coastfile 是一个 TOML 配置文件，位于你项目的根目录。它告诉 
 name = "my-app"
 ```
 
-这会给你一个 DinD 容器，你可以 `coast exec` 进入其中。大多数项目会需要一个 `compose` 引用或[裸服务](SERVICES.md):
+这会为你提供一个可以通过 `coast exec` 进入的 DinD 容器。大多数项目通常会需要一个 `compose` 引用或[裸服务](SERVICES.md):
 
 ```toml
 [coast]
@@ -27,7 +27,7 @@ web = 3000
 api = 8080
 ```
 
-或者不使用 compose，改用裸服务:
+或者不使用 compose，而是使用裸服务:
 
 ```toml
 [coast]
@@ -46,13 +46,13 @@ restart = "on-failure"
 web = 3000
 ```
 
-运行 `coast build` 然后 `coast run dev-1`，你就拥有了一个隔离环境。
+运行 `coast build`，然后运行 `coast run dev-1`，你就拥有了一个隔离环境。
 
-## Example Coastfiles
+## Coastfile 示例
 
-### Simple bare-service project
+### 简单的裸服务项目
 
-一个没有 compose 文件的 Next.js 应用。Coast 安装 Node，运行 `npm install`，并直接启动开发服务器。
+一个没有 compose 文件的 Next.js 应用。Coast 会安装 Node，运行 `npm install`，并直接启动开发服务器。
 
 ```toml
 [coast]
@@ -72,15 +72,15 @@ restart = "on-failure"
 web = 3002
 ```
 
-### Full-stack compose project
+### 全栈 compose 项目
 
-一个多服务项目，包含共享数据库、机密、卷策略以及自定义设置。
+一个多服务项目，包含共享数据库、密钥、卷策略以及自定义设置。
 
 ```toml
 [coast]
 name = "my-app"
 compose = "./infra/docker-compose.yml"
-worktree_dir = ".worktrees"
+worktree_dir = [".worktrees", "~/.codex/worktrees"]
 primary_port = "web"
 
 [coast.setup]
@@ -126,9 +126,9 @@ backend = "hot"
 web = "hot"
 ```
 
-### Lightweight test variant (inheritance)
+### 轻量级测试变体（继承）
 
-扩展基础 Coastfile，但将其精简到仅包含运行后端测试所需内容。无端口、无共享服务、隔离数据库。
+扩展基础 Coastfile，但将其精简为仅保留运行后端测试所需的内容。没有端口，没有共享服务，数据库隔离。
 
 ```toml
 [coast]
@@ -153,9 +153,9 @@ default = "none"
 backend-test = "rebuild"
 ```
 
-### Snapshot-seeded variant
+### 快照播种变体
 
-每个 coast 实例都会以宿主机现有数据库卷的副本启动，然后各自独立分叉演进。
+每个 coast 实例启动时都会复制主机上现有数据库卷的内容，然后各自独立分化。
 
 ```toml
 [coast]
@@ -183,26 +183,27 @@ service = "mongodb"
 mount = "/data/db"
 ```
 
-## Conventions
+## 约定
 
 - 文件必须命名为 `Coastfile`（大写 C，无扩展名），并位于项目根目录。
-- 带类型的变体使用 `Coastfile.{type}` 模式——例如 `Coastfile.light`、`Coastfile.snap`。参见 [Inheritance and Types](INHERITANCE.md)。
+- 带类型的变体使用 `Coastfile.{type}` 模式——例如 `Coastfile.light`、`Coastfile.snap`。参见 [继承与类型](INHERITANCE.md)。
 - 保留名称 `Coastfile.default` 不允许使用。
-- 全程使用 TOML 语法。所有小节标题使用 `[brackets]`，命名条目使用 `[section.name]`（不是 array-of-tables）。
+- 全文使用 TOML 语法。所有节标题都使用 `[brackets]`，命名条目使用 `[section.name]`（不是 array-of-tables）。
 - 你不能在同一个 Coastfile 中同时使用 `compose` 和 `[services]`——二选一。
-- 相对路径（用于 `compose`、`root` 等）会相对于 Coastfile 所在目录解析。
+- 相对路径（用于 `compose`、`root` 等）会相对于 Coastfile 的父目录进行解析。
 
-## Reference
+## 参考
 
-| Page | Sections | What it covers |
+| 页面 | 节 | 覆盖内容 |
 |------|----------|----------------|
-| [Project and Setup](PROJECT.md) | `[coast]`, `[coast.setup]` | 名称、compose 路径、运行时、worktree 目录、容器设置 |
-| [Ports](PORTS.md) | `[ports]`, `[egress]` | 端口转发、egress 声明、主端口 |
-| [Volumes](VOLUMES.md) | `[volumes.*]` | 隔离、共享与快照种子卷策略 |
-| [Shared Services](SHARED_SERVICES.md) | `[shared_services.*]` | 宿主级数据库与基础设施服务 |
-| [Secrets](SECRETS.md) | `[secrets.*]`, `[inject]` | 机密提取、注入与宿主环境/文件转发 |
-| [Bare Services](SERVICES.md) | `[services.*]` | 不使用 Docker Compose 直接运行进程 |
-| [Agent Shell](AGENT_SHELL.md) | `[agent_shell]` | 容器化 agent TUI 运行时 |
-| [MCP Servers](MCP.md) | `[mcp.*]`, `[mcp_clients.*]` | 内部与宿主代理的 MCP 服务器、客户端连接器 |
-| [Assign](ASSIGN.md) | `[assign]` | 按服务的分支切换行为 |
-| [Inheritance and Types](INHERITANCE.md) | `extends`, `includes`, `[unset]`, `[omit]` | 带类型的 Coastfile、组合与覆盖 |
+| [项目与设置](PROJECT.md) | `[coast]`, `[coast.setup]` | 名称、compose 路径、运行时、worktree 目录、容器设置 |
+| [Worktree 目录](WORKTREE_DIR.md) | `worktree_dir`, `default_worktree_dir` | 本地和外部 worktree 目录、波浪线路径、Codex/Claude 集成 |
+| [端口](PORTS.md) | `[ports]`, `[egress]` | 端口转发、出口声明、主端口 |
+| [卷](VOLUMES.md) | `[volumes.*]` | 隔离、共享和快照播种的卷策略 |
+| [共享服务](SHARED_SERVICES.md) | `[shared_services.*]` | 主机级数据库和基础设施服务 |
+| [密钥](SECRETS.md) | `[secrets.*]`, `[inject]` | 密钥提取、注入，以及主机环境/文件转发 |
+| [裸服务](SERVICES.md) | `[services.*]` | 无需 Docker Compose 直接运行进程 |
+| [代理 Shell](AGENT_SHELL.md) | `[agent_shell]` | 容器化代理 TUI 运行时 |
+| [MCP 服务器](MCP.md) | `[mcp.*]`, `[mcp_clients.*]` | 内部和主机代理的 MCP 服务器、客户端连接器 |
+| [Assign](ASSIGN.md) | `[assign]` | 按服务划分的分支切换行为 |
+| [继承与类型](INHERITANCE.md) | `extends`, `includes`, `[unset]`, `[omit]` | 带类型的 Coastfile、组合与覆盖 |

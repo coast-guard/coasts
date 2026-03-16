@@ -2,7 +2,7 @@
 
 Um Coastfile é um arquivo de configuração TOML que fica na raiz do seu projeto. Ele informa ao Coast tudo o que ele precisa saber para construir e executar ambientes de desenvolvimento isolados para esse projeto — quais serviços executar, quais portas encaminhar, como lidar com dados e como gerenciar segredos.
 
-Todo projeto Coast precisa de pelo menos um Coastfile. O arquivo sempre se chama `Coastfile` (C maiúsculo, sem extensão). Se você precisar de variantes para diferentes fluxos de trabalho, você cria Coastfiles tipados como `Coastfile.light` ou `Coastfile.snap` que [herdam do base](INHERITANCE.md).
+Todo projeto Coast precisa de pelo menos um Coastfile. O arquivo é sempre nomeado `Coastfile` (C maiúsculo, sem extensão). Se você precisar de variantes para diferentes fluxos de trabalho, crie Coastfiles tipados como `Coastfile.light` ou `Coastfile.snap` que [herdam do base](INHERITANCE.md).
 
 Para um entendimento mais profundo de como os Coastfiles se relacionam com o restante do Coast, veja [Coasts](../concepts_and_terminology/COASTS.md) e [Builds](../concepts_and_terminology/BUILDS.md).
 
@@ -15,7 +15,7 @@ O menor Coastfile possível:
 name = "my-app"
 ```
 
-Isso oferece a você um container DinD no qual você pode entrar com `coast exec`. A maioria dos projetos vai querer uma referência a `compose` ou [serviços bare](SERVICES.md):
+Isso fornece a você um contêiner DinD no qual você pode entrar com `coast exec`. A maioria dos projetos vai querer ou uma referência `compose` ou [serviços bare](SERVICES.md):
 
 ```toml
 [coast]
@@ -50,7 +50,7 @@ Execute `coast build` e depois `coast run dev-1` e você terá um ambiente isola
 
 ## Example Coastfiles
 
-### Simple bare-service project
+### Projeto simples com serviço bare
 
 Um app Next.js sem arquivo compose. O Coast instala Node, executa `npm install` e inicia o servidor de desenvolvimento diretamente.
 
@@ -72,15 +72,15 @@ restart = "on-failure"
 web = 3002
 ```
 
-### Full-stack compose project
+### Projeto full-stack com compose
 
-Um projeto multi-serviço com bancos de dados compartilhados, segredos, estratégias de volumes e setup personalizado.
+Um projeto com múltiplos serviços, com bancos de dados compartilhados, segredos, estratégias de volume e configuração personalizada.
 
 ```toml
 [coast]
 name = "my-app"
 compose = "./infra/docker-compose.yml"
-worktree_dir = ".worktrees"
+worktree_dir = [".worktrees", "~/.codex/worktrees"]
 primary_port = "web"
 
 [coast.setup]
@@ -126,9 +126,9 @@ backend = "hot"
 web = "hot"
 ```
 
-### Lightweight test variant (inheritance)
+### Variante leve para testes (herança)
 
-Estende o Coastfile base, mas o reduz apenas ao necessário para executar testes de backend. Sem portas, sem serviços compartilhados, bancos de dados isolados.
+Estende o Coastfile base, mas o reduz ao mínimo necessário para executar testes de backend. Sem portas, sem serviços compartilhados, bancos de dados isolados.
 
 ```toml
 [coast]
@@ -153,9 +153,9 @@ default = "none"
 backend-test = "rebuild"
 ```
 
-### Snapshot-seeded variant
+### Variante inicializada por snapshot
 
-Cada instância do coast inicia com uma cópia dos volumes de banco de dados existentes no host e, em seguida, diverge de forma independente.
+Cada instância de coast inicia com uma cópia dos volumes de banco de dados existentes no host e depois diverge independentemente.
 
 ```toml
 [coast]
@@ -185,24 +185,25 @@ mount = "/data/db"
 
 ## Conventions
 
-- O arquivo deve se chamar `Coastfile` (C maiúsculo, sem extensão) e ficar na raiz do projeto.
+- O arquivo deve ser nomeado `Coastfile` (C maiúsculo, sem extensão) e ficar na raiz do projeto.
 - Variantes tipadas usam o padrão `Coastfile.{type}` — por exemplo `Coastfile.light`, `Coastfile.snap`. Veja [Inheritance and Types](INHERITANCE.md).
 - O nome reservado `Coastfile.default` não é permitido.
-- A sintaxe TOML é usada em todo lugar. Todos os cabeçalhos de seção usam `[colchetes]` e entradas nomeadas usam `[section.name]` (não array-of-tables).
+- A sintaxe TOML é usada em todo o documento. Todos os cabeçalhos de seção usam `[colchetes]` e entradas nomeadas usam `[section.name]` (não array-of-tables).
 - Você não pode usar `compose` e `[services]` no mesmo Coastfile — escolha um.
-- Caminhos relativos (para `compose`, `root`, etc.) são resolvidos em relação ao diretório pai do Coastfile.
+- Caminhos relativos (para `compose`, `root` etc.) são resolvidos em relação ao diretório pai do Coastfile.
 
 ## Reference
 
 | Page | Sections | What it covers |
 |------|----------|----------------|
-| [Project and Setup](PROJECT.md) | `[coast]`, `[coast.setup]` | Nome, caminho do compose, runtime, diretório de worktree, setup do container |
+| [Project and Setup](PROJECT.md) | `[coast]`, `[coast.setup]` | Nome, caminho do compose, runtime, diretório de worktree, configuração do contêiner |
+| [Worktree Directories](WORKTREE_DIR.md) | `worktree_dir`, `default_worktree_dir` | Diretórios de worktree locais e externos, caminhos com til, integração com Codex/Claude |
 | [Ports](PORTS.md) | `[ports]`, `[egress]` | Encaminhamento de portas, declarações de egress, porta primária |
-| [Volumes](VOLUMES.md) | `[volumes.*]` | Estratégias de volumes isolados, compartilhados e semeados por snapshot |
-| [Shared Services](SHARED_SERVICES.md) | `[shared_services.*]` | Bancos de dados em nível de host e serviços de infraestrutura |
-| [Secrets](SECRETS.md) | `[secrets.*]`, `[inject]` | Extração e injeção de segredos e encaminhamento de env/arquivo do host |
-| [Bare Services](SERVICES.md) | `[services.*]` | Executar processos diretamente sem Docker Compose |
-| [Agent Shell](AGENT_SHELL.md) | `[agent_shell]` | Runtimes de TUI do agente containerizado |
-| [MCP Servers](MCP.md) | `[mcp.*]`, `[mcp_clients.*]` | Servidores MCP internos e proxied a partir do host, conectores de cliente |
+| [Volumes](VOLUMES.md) | `[volumes.*]` | Estratégias de volume isoladas, compartilhadas e inicializadas por snapshot |
+| [Shared Services](SHARED_SERVICES.md) | `[shared_services.*]` | Bancos de dados e serviços de infraestrutura no nível do host |
+| [Secrets](SECRETS.md) | `[secrets.*]`, `[inject]` | Extração, injeção e encaminhamento de segredos do env/arquivo do host |
+| [Bare Services](SERVICES.md) | `[services.*]` | Execução de processos diretamente sem Docker Compose |
+| [Agent Shell](AGENT_SHELL.md) | `[agent_shell]` | Runtimes TUI de agente conteinerizados |
+| [MCP Servers](MCP.md) | `[mcp.*]`, `[mcp_clients.*]` | Servidores MCP internos e com proxy do host, conectores de cliente |
 | [Assign](ASSIGN.md) | `[assign]` | Comportamento de troca de branch por serviço |
-| [Inheritance and Types](INHERITANCE.md) | `extends`, `includes`, `[unset]`, `[omit]` | Coastfiles tipados, composição e substituições |
+| [Inheritance and Types](INHERITANCE.md) | `extends`, `includes`, `[unset]`, `[omit]` | Coastfiles tipados, composição e sobrescritas |

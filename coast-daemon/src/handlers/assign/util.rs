@@ -17,7 +17,8 @@ pub(super) fn health_poll_interval(elapsed: tokio::time::Duration) -> tokio::tim
 
 pub(super) struct CoastfileData {
     pub assign: AssignConfig,
-    pub worktree_dir: String,
+    pub worktree_dirs: Vec<String>,
+    pub default_worktree_dir: String,
     pub has_compose: bool,
 }
 
@@ -33,14 +34,16 @@ pub(super) fn load_coastfile_data(project: &str) -> CoastfileData {
         if let Ok(cf) = coast_core::coastfile::Coastfile::from_file(&coastfile_path) {
             return CoastfileData {
                 assign: cf.assign,
-                worktree_dir: cf.worktree_dir,
+                worktree_dirs: cf.worktree_dirs,
+                default_worktree_dir: cf.default_worktree_dir,
                 has_compose: cf.compose.is_some(),
             };
         }
     }
     CoastfileData {
         assign: AssignConfig::default(),
-        worktree_dir: ".worktrees".to_string(),
+        worktree_dirs: vec![".worktrees".to_string()],
+        default_worktree_dir: ".worktrees".to_string(),
         has_compose: true,
     }
 }

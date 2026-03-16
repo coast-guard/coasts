@@ -51,14 +51,14 @@
       "translated_at": "2026-02-28T13:10:06Z"
     },
     "coastfiles/PROJECT.md": {
-      "commit": "b42c701",
-      "source_sha256": "04fe32f587ff2f6d89d501f281259c2da9b26c1f134053b8ebd831cff5443b2d",
-      "translated_at": "2026-03-05T00:12:10Z"
+      "commit": "36c1f8f",
+      "source_sha256": "a98bef3fcf05c7167873780be83bfe355d232f490062c2a61db6d4594bfadc55",
+      "translated_at": "2026-03-16T08:47:07Z"
     },
     "coastfiles/README.md": {
-      "commit": "3357381",
-      "source_sha256": "6f965b0408ba4f995a01c96c625dd7b7489ab34f13ce2b7c34891e2e3a337229",
-      "translated_at": "2026-02-28T13:10:06Z"
+      "commit": "36c1f8f",
+      "source_sha256": "21ca2aaff498e4a04cc9e9305c1afe254ac32375c835b46517df6cf438734dc6",
+      "translated_at": "2026-03-16T08:47:07Z"
     },
     "coastfiles/SECRETS.md": {
       "commit": "3357381",
@@ -79,6 +79,11 @@
       "commit": "3357381",
       "source_sha256": "7e56e2cafef0219f52b6e012af145f6e6528a53405e4e15b978906c4afab2496",
       "translated_at": "2026-02-28T13:10:06Z"
+    },
+    "coastfiles/WORKTREE_DIR.md": {
+      "commit": "36c1f8f",
+      "source_sha256": "900ea1a98080d2d6700c598ccdccb82b080b8db4fe4af7d69e853b6b9d919030",
+      "translated_at": "2026-03-16T08:47:07Z"
     },
     "concepts_and_terminology/AGENT_SHELLS.md": {
       "commit": "3357381",
@@ -206,9 +211,19 @@
       "translated_at": "2026-02-28T13:10:06Z"
     },
     "doc_ordering.txt": {
-      "commit": "d7ed347",
-      "source_sha256": "b2795f1dd4ea8c6d6b8c0aa592d2d65c3678805c1c6e5db9d530919625335e33",
-      "translated_at": "2026-03-10T20:35:46Z"
+      "commit": "36c1f8f",
+      "source_sha256": "ab17fc56753302d9b8ae4bb4c61fc221446395d2de479153d6a58586796e7fa5",
+      "translated_at": "2026-03-16T08:47:07Z"
+    },
+    "harnesses/CODEX.md": {
+      "commit": "36c1f8f",
+      "source_sha256": "a6553b8d0c3077a61ce03f6fde4cf69dd0fc418332c1cb527db40685a162100c",
+      "translated_at": "2026-03-16T08:47:07Z"
+    },
+    "harnesses/README.md": {
+      "commit": "36c1f8f",
+      "source_sha256": "de5dc0bd47409d92521c33d5bb3a5558fc42649c03c800bd2e02fe8e730289d3",
+      "translated_at": "2026-03-16T08:47:07Z"
     },
     "installation_prompt.txt": {
       "commit": "b42c701",
@@ -328,14 +343,14 @@
       "translated_at": "2026-02-28T12:45:25Z"
     },
     "coastfiles/PROJECT.md": {
-      "commit": "b42c701",
-      "source_sha256": "04fe32f587ff2f6d89d501f281259c2da9b26c1f134053b8ebd831cff5443b2d",
-      "translated_at": "2026-03-05T00:03:15Z"
+      "commit": "36c1f8f",
+      "source_sha256": "a98bef3fcf05c7167873780be83bfe355d232f490062c2a61db6d4594bfadc55",
+      "translated_at": "2026-03-16T08:42:26Z"
     },
     "coastfiles/README.md": {
-      "commit": "3357381",
-      "source_sha256": "6f965b0408ba4f995a01c96c625dd7b7489ab34f13ce2b7c34891e2e3a337229",
-      "translated_at": "2026-02-28T12:45:25Z"
+      "commit": "36c1f8f",
+      "source_sha256": "21ca2aaff498e4a04cc9e9305c1afe254ac32375c835b46517df6cf438734dc6",
+      "translated_at": "2026-03-16T08:42:26Z"
     },
     "coastfiles/SECRETS.md": {
       "commit": "3357381",
@@ -356,6 +371,11 @@
       "commit": "3357381",
       "source_sha256": "7e56e2cafef0219f52b6e012af145f6e6528a53405e4e15b978906c4afab2496",
       "translated_at": "2026-02-28T12:45:25Z"
+    },
+    "coastfiles/WORKTREE_DIR.md": {
+      "commit": "36c1f8f",
+      "source_sha256": "900ea1a98080d2d6700c598ccdccb82b080b8db4fe4af7d69e853b6b9d919030",
+      "translated_at": "2026-03-16T08:42:26Z"
     },
     "concepts_and_terminology/AGENT_SHELLS.md": {
       "commit": "3357381",
@@ -483,9 +503,19 @@
       "translated_at": "2026-02-28T12:45:25Z"
     },
     "doc_ordering.txt": {
-      "commit": "d7ed347",
-      "source_sha256": "b2795f1dd4ea8c6d6b8c0aa592d2d65c3678805c1c6e5db9d530919625335e33",
-      "translated_at": "2026-03-10T20:30:45Z"
+      "commit": "36c1f8f",
+      "source_sha256": "ab17fc56753302d9b8ae4bb4c61fc221446395d2de479153d6a58586796e7fa5",
+      "translated_at": "2026-03-16T08:42:26Z"
+    },
+    "harnesses/CODEX.md": {
+      "commit": "36c1f8f",
+      "source_sha256": "a6553b8d0c3077a61ce03f6fde4cf69dd0fc418332c1cb527db40685a162100c",
+      "translated_at": "2026-03-16T08:42:26Z"
+    },
+    "harnesses/README.md": {
+      "commit": "36c1f8f",
+      "source_sha256": "de5dc0bd47409d92521c33d5bb3a5558fc42649c03c800bd2e02fe8e730289d3",
+      "translated_at": "2026-03-16T08:42:26Z"
     },
     "installation_prompt.txt": {
       "commit": "b42c701",
@@ -605,14 +635,14 @@
       "translated_at": "2026-02-28T12:52:18Z"
     },
     "coastfiles/PROJECT.md": {
-      "commit": "b42c701",
-      "source_sha256": "04fe32f587ff2f6d89d501f281259c2da9b26c1f134053b8ebd831cff5443b2d",
-      "translated_at": "2026-03-05T00:05:49Z"
+      "commit": "36c1f8f",
+      "source_sha256": "a98bef3fcf05c7167873780be83bfe355d232f490062c2a61db6d4594bfadc55",
+      "translated_at": "2026-03-16T08:43:46Z"
     },
     "coastfiles/README.md": {
-      "commit": "3357381",
-      "source_sha256": "6f965b0408ba4f995a01c96c625dd7b7489ab34f13ce2b7c34891e2e3a337229",
-      "translated_at": "2026-02-28T12:52:18Z"
+      "commit": "36c1f8f",
+      "source_sha256": "21ca2aaff498e4a04cc9e9305c1afe254ac32375c835b46517df6cf438734dc6",
+      "translated_at": "2026-03-16T08:43:46Z"
     },
     "coastfiles/SECRETS.md": {
       "commit": "3357381",
@@ -633,6 +663,11 @@
       "commit": "3357381",
       "source_sha256": "7e56e2cafef0219f52b6e012af145f6e6528a53405e4e15b978906c4afab2496",
       "translated_at": "2026-02-28T12:52:18Z"
+    },
+    "coastfiles/WORKTREE_DIR.md": {
+      "commit": "36c1f8f",
+      "source_sha256": "900ea1a98080d2d6700c598ccdccb82b080b8db4fe4af7d69e853b6b9d919030",
+      "translated_at": "2026-03-16T08:43:46Z"
     },
     "concepts_and_terminology/AGENT_SHELLS.md": {
       "commit": "3357381",
@@ -760,9 +795,19 @@
       "translated_at": "2026-02-28T12:52:18Z"
     },
     "doc_ordering.txt": {
-      "commit": "d7ed347",
-      "source_sha256": "b2795f1dd4ea8c6d6b8c0aa592d2d65c3678805c1c6e5db9d530919625335e33",
-      "translated_at": "2026-03-10T20:32:07Z"
+      "commit": "36c1f8f",
+      "source_sha256": "ab17fc56753302d9b8ae4bb4c61fc221446395d2de479153d6a58586796e7fa5",
+      "translated_at": "2026-03-16T08:43:46Z"
+    },
+    "harnesses/CODEX.md": {
+      "commit": "36c1f8f",
+      "source_sha256": "a6553b8d0c3077a61ce03f6fde4cf69dd0fc418332c1cb527db40685a162100c",
+      "translated_at": "2026-03-16T08:43:46Z"
+    },
+    "harnesses/README.md": {
+      "commit": "36c1f8f",
+      "source_sha256": "de5dc0bd47409d92521c33d5bb3a5558fc42649c03c800bd2e02fe8e730289d3",
+      "translated_at": "2026-03-16T08:43:46Z"
     },
     "installation_prompt.txt": {
       "commit": "b42c701",
@@ -882,14 +927,14 @@
       "translated_at": "2026-02-28T13:04:30Z"
     },
     "coastfiles/PROJECT.md": {
-      "commit": "b42c701",
-      "source_sha256": "04fe32f587ff2f6d89d501f281259c2da9b26c1f134053b8ebd831cff5443b2d",
-      "translated_at": "2026-03-05T00:10:17Z"
+      "commit": "36c1f8f",
+      "source_sha256": "a98bef3fcf05c7167873780be83bfe355d232f490062c2a61db6d4594bfadc55",
+      "translated_at": "2026-03-16T08:46:06Z"
     },
     "coastfiles/README.md": {
-      "commit": "3357381",
-      "source_sha256": "6f965b0408ba4f995a01c96c625dd7b7489ab34f13ce2b7c34891e2e3a337229",
-      "translated_at": "2026-02-28T13:04:30Z"
+      "commit": "36c1f8f",
+      "source_sha256": "21ca2aaff498e4a04cc9e9305c1afe254ac32375c835b46517df6cf438734dc6",
+      "translated_at": "2026-03-16T08:46:06Z"
     },
     "coastfiles/SECRETS.md": {
       "commit": "3357381",
@@ -910,6 +955,11 @@
       "commit": "3357381",
       "source_sha256": "7e56e2cafef0219f52b6e012af145f6e6528a53405e4e15b978906c4afab2496",
       "translated_at": "2026-02-28T13:04:30Z"
+    },
+    "coastfiles/WORKTREE_DIR.md": {
+      "commit": "36c1f8f",
+      "source_sha256": "900ea1a98080d2d6700c598ccdccb82b080b8db4fe4af7d69e853b6b9d919030",
+      "translated_at": "2026-03-16T08:46:06Z"
     },
     "concepts_and_terminology/AGENT_SHELLS.md": {
       "commit": "3357381",
@@ -1037,9 +1087,19 @@
       "translated_at": "2026-02-28T13:04:30Z"
     },
     "doc_ordering.txt": {
-      "commit": "d7ed347",
-      "source_sha256": "b2795f1dd4ea8c6d6b8c0aa592d2d65c3678805c1c6e5db9d530919625335e33",
-      "translated_at": "2026-03-10T20:34:41Z"
+      "commit": "36c1f8f",
+      "source_sha256": "ab17fc56753302d9b8ae4bb4c61fc221446395d2de479153d6a58586796e7fa5",
+      "translated_at": "2026-03-16T08:46:06Z"
+    },
+    "harnesses/CODEX.md": {
+      "commit": "36c1f8f",
+      "source_sha256": "a6553b8d0c3077a61ce03f6fde4cf69dd0fc418332c1cb527db40685a162100c",
+      "translated_at": "2026-03-16T08:46:06Z"
+    },
+    "harnesses/README.md": {
+      "commit": "36c1f8f",
+      "source_sha256": "de5dc0bd47409d92521c33d5bb3a5558fc42649c03c800bd2e02fe8e730289d3",
+      "translated_at": "2026-03-16T08:46:06Z"
     },
     "installation_prompt.txt": {
       "commit": "b42c701",
@@ -1159,14 +1219,14 @@
       "translated_at": "2026-02-28T12:58:35Z"
     },
     "coastfiles/PROJECT.md": {
-      "commit": "b42c701",
-      "source_sha256": "04fe32f587ff2f6d89d501f281259c2da9b26c1f134053b8ebd831cff5443b2d",
-      "translated_at": "2026-03-05T00:08:04Z"
+      "commit": "36c1f8f",
+      "source_sha256": "a98bef3fcf05c7167873780be83bfe355d232f490062c2a61db6d4594bfadc55",
+      "translated_at": "2026-03-16T08:45:01Z"
     },
     "coastfiles/README.md": {
-      "commit": "3357381",
-      "source_sha256": "6f965b0408ba4f995a01c96c625dd7b7489ab34f13ce2b7c34891e2e3a337229",
-      "translated_at": "2026-02-28T12:58:35Z"
+      "commit": "36c1f8f",
+      "source_sha256": "21ca2aaff498e4a04cc9e9305c1afe254ac32375c835b46517df6cf438734dc6",
+      "translated_at": "2026-03-16T08:45:01Z"
     },
     "coastfiles/SECRETS.md": {
       "commit": "3357381",
@@ -1187,6 +1247,11 @@
       "commit": "3357381",
       "source_sha256": "7e56e2cafef0219f52b6e012af145f6e6528a53405e4e15b978906c4afab2496",
       "translated_at": "2026-02-28T12:58:35Z"
+    },
+    "coastfiles/WORKTREE_DIR.md": {
+      "commit": "36c1f8f",
+      "source_sha256": "900ea1a98080d2d6700c598ccdccb82b080b8db4fe4af7d69e853b6b9d919030",
+      "translated_at": "2026-03-16T08:45:01Z"
     },
     "concepts_and_terminology/AGENT_SHELLS.md": {
       "commit": "3357381",
@@ -1314,9 +1379,19 @@
       "translated_at": "2026-02-28T12:58:35Z"
     },
     "doc_ordering.txt": {
-      "commit": "85b1396",
-      "source_sha256": "664e95814e31402f9e71101ef9d25ddad9f68915d280a47a9516944221ffeda5",
-      "translated_at": "2026-03-09T09:04:33Z"
+      "commit": "36c1f8f",
+      "source_sha256": "ab17fc56753302d9b8ae4bb4c61fc221446395d2de479153d6a58586796e7fa5",
+      "translated_at": "2026-03-16T08:45:01Z"
+    },
+    "harnesses/CODEX.md": {
+      "commit": "36c1f8f",
+      "source_sha256": "a6553b8d0c3077a61ce03f6fde4cf69dd0fc418332c1cb527db40685a162100c",
+      "translated_at": "2026-03-16T08:45:01Z"
+    },
+    "harnesses/README.md": {
+      "commit": "36c1f8f",
+      "source_sha256": "de5dc0bd47409d92521c33d5bb3a5558fc42649c03c800bd2e02fe8e730289d3",
+      "translated_at": "2026-03-16T08:45:01Z"
     },
     "installation_prompt.txt": {
       "commit": "b42c701",
@@ -1436,14 +1511,14 @@
       "translated_at": "2026-02-28T12:39:25Z"
     },
     "coastfiles/PROJECT.md": {
-      "commit": "b42c701",
-      "source_sha256": "04fe32f587ff2f6d89d501f281259c2da9b26c1f134053b8ebd831cff5443b2d",
-      "translated_at": "2026-03-05T00:01:09Z"
+      "commit": "36c1f8f",
+      "source_sha256": "a98bef3fcf05c7167873780be83bfe355d232f490062c2a61db6d4594bfadc55",
+      "translated_at": "2026-03-16T08:41:17Z"
     },
     "coastfiles/README.md": {
-      "commit": "3357381",
-      "source_sha256": "6f965b0408ba4f995a01c96c625dd7b7489ab34f13ce2b7c34891e2e3a337229",
-      "translated_at": "2026-02-28T12:39:25Z"
+      "commit": "36c1f8f",
+      "source_sha256": "21ca2aaff498e4a04cc9e9305c1afe254ac32375c835b46517df6cf438734dc6",
+      "translated_at": "2026-03-16T08:41:17Z"
     },
     "coastfiles/SECRETS.md": {
       "commit": "3357381",
@@ -1464,6 +1539,11 @@
       "commit": "3357381",
       "source_sha256": "7e56e2cafef0219f52b6e012af145f6e6528a53405e4e15b978906c4afab2496",
       "translated_at": "2026-02-28T12:39:25Z"
+    },
+    "coastfiles/WORKTREE_DIR.md": {
+      "commit": "36c1f8f",
+      "source_sha256": "900ea1a98080d2d6700c598ccdccb82b080b8db4fe4af7d69e853b6b9d919030",
+      "translated_at": "2026-03-16T08:41:17Z"
     },
     "concepts_and_terminology/AGENT_SHELLS.md": {
       "commit": "3357381",
@@ -1591,9 +1671,19 @@
       "translated_at": "2026-02-28T12:39:25Z"
     },
     "doc_ordering.txt": {
-      "commit": "d7ed347",
-      "source_sha256": "b2795f1dd4ea8c6d6b8c0aa592d2d65c3678805c1c6e5db9d530919625335e33",
-      "translated_at": "2026-03-10T20:29:21Z"
+      "commit": "36c1f8f",
+      "source_sha256": "ab17fc56753302d9b8ae4bb4c61fc221446395d2de479153d6a58586796e7fa5",
+      "translated_at": "2026-03-16T08:41:17Z"
+    },
+    "harnesses/CODEX.md": {
+      "commit": "36c1f8f",
+      "source_sha256": "a6553b8d0c3077a61ce03f6fde4cf69dd0fc418332c1cb527db40685a162100c",
+      "translated_at": "2026-03-16T08:41:17Z"
+    },
+    "harnesses/README.md": {
+      "commit": "36c1f8f",
+      "source_sha256": "de5dc0bd47409d92521c33d5bb3a5558fc42649c03c800bd2e02fe8e730289d3",
+      "translated_at": "2026-03-16T08:41:17Z"
     },
     "installation_prompt.txt": {
       "commit": "b42c701",

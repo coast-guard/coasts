@@ -80,7 +80,7 @@ A multi-service project with shared databases, secrets, volume strategies, and c
 [coast]
 name = "my-app"
 compose = "./infra/docker-compose.yml"
-worktree_dir = ".worktrees"
+worktree_dir = [".worktrees", "~/.codex/worktrees"]
 primary_port = "web"
 
 [coast.setup]
@@ -197,6 +197,7 @@ mount = "/data/db"
 | Page | Sections | What it covers |
 |------|----------|----------------|
 | [Project and Setup](PROJECT.md) | `[coast]`, `[coast.setup]` | Name, compose path, runtime, worktree dir, container setup |
+| [Worktree Directories](WORKTREE_DIR.md) | `worktree_dir`, `default_worktree_dir` | Local and external worktree dirs, tilde paths, Codex/Claude integration |
 | [Ports](PORTS.md) | `[ports]`, `[egress]` | Port forwarding, egress declarations, primary port |
 | [Volumes](VOLUMES.md) | `[volumes.*]` | Isolated, shared, and snapshot-seeded volume strategies |
 | [Shared Services](SHARED_SERVICES.md) | `[shared_services.*]` | Host-level databases and infrastructure services |

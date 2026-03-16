@@ -1024,10 +1024,10 @@ worktree_dir = ".custom-worktrees"
     .unwrap();
 
     let inherited = Coastfile::from_file(&dir.path().join("Coastfile.inherit")).unwrap();
-    assert_eq!(inherited.worktree_dir, ".coasts-worktrees");
+    assert_eq!(inherited.worktree_dirs, vec![".coasts-worktrees"]);
 
     let overridden = Coastfile::from_file(&dir.path().join("Coastfile.override")).unwrap();
-    assert_eq!(overridden.worktree_dir, ".custom-worktrees");
+    assert_eq!(overridden.worktree_dirs, vec![".custom-worktrees"]);
 }
 
 #[test]
@@ -1167,7 +1167,7 @@ args = ["-y", "@upstash/context7-mcp"]
 
     assert_eq!(reparsed.name, original.name);
     assert_eq!(reparsed.runtime, original.runtime);
-    assert_eq!(reparsed.worktree_dir, original.worktree_dir);
+    assert_eq!(reparsed.worktree_dirs, original.worktree_dirs);
     assert_eq!(reparsed.autostart, original.autostart);
     assert_eq!(reparsed.ports, original.ports);
     assert_eq!(reparsed.setup.packages, original.setup.packages);
@@ -1289,7 +1289,7 @@ web = 3000
         reparsed.compose,
         Some(dir.path().join("./infra/docker-compose.yml"))
     );
-    assert_eq!(reparsed.worktree_dir, ".custom-worktrees");
+    assert_eq!(reparsed.worktree_dirs, vec![".custom-worktrees"]);
     assert!(!reparsed.autostart);
     assert_eq!(reparsed.primary_port.as_deref(), Some("web"));
 }

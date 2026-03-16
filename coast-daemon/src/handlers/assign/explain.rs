@@ -150,9 +150,22 @@ pub async fn handle_explain(
     let service_actions = classify_services(&all_service_names, &assign_config, &changed_files);
 
     let (worktree_exists, worktree_synced) = if let Some(ref root) = project_root {
-        let wt_dir =
-            detect_worktree_dir_from_git(root).unwrap_or_else(|| cf_data.worktree_dir.clone());
-        let wt_path = root.join(&wt_dir).join(&req.worktree);
+        use coast_core::coastfile::Coastfile;
+
+        let wt_path = detect_worktree_dir_from_git(root)
+            .map(|d| root.join(&d).join(&req.worktree))
+            .filter(|p| p.exists())
+            .or_else(|| {
+                cf_data.worktree_dirs.iter().find_map(|d| {
+                    let resolved = Coastfile::resolve_worktree_dir(root, d);
+                    let candidate = resolved.join(&req.worktree);
+                    candidate.exists().then_some(candidate)
+                })
+            })
+            .unwrap_or_else(|| {
+                let fallback = Coastfile::resolve_worktree_dir(root, &cf_data.default_worktree_dir);
+                fallback.join(&req.worktree)
+            });
         let exists = wt_path.exists();
         let synced = exists && worktree_sync_cached(&wt_path, req.force_sync);
         (exists, synced)

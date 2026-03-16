@@ -14,6 +14,10 @@ learn-coasts-videos/secrets.md
 learn-coasts-videos/getting-started.md
 learn-coasts-videos/coast-ui.md
 
+# Arneses
+harnesses/README.md
+harnesses/CODEX.md
+
 # Conceptos y terminología
 concepts_and_terminology/README.md
 concepts_and_terminology/COASTS.md
@@ -44,6 +48,7 @@ concepts_and_terminology/TROUBLESHOOTING.md
 # Coastfiles
 coastfiles/README.md
 coastfiles/PROJECT.md
+coastfiles/WORKTREE_DIR.md
 coastfiles/PORTS.md
 coastfiles/SHARED_SERVICES.md
 coastfiles/SERVICES.md

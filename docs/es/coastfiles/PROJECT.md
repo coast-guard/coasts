@@ -61,15 +61,32 @@ Esto es poco común. La mayoría de los proyectos mantienen el Coastfile en la r
 
 ### `worktree_dir`
 
-Directorio donde se crean los worktrees de git para las instancias de Coast. Por defecto es `".worktrees"`. En tiempo de ejecución, Coast detecta automáticamente el directorio a partir de worktrees de git existentes (mediante `git worktree list`) y prefiere eso sobre el valor por defecto. Las rutas relativas se resuelven contra la raíz del proyecto.
+Directorios donde viven los worktrees de git. Acepta una sola cadena o un arreglo de cadenas. Por defecto es `".worktrees"`.
+
+```toml
+# Single directory
+worktree_dir = ".worktrees"
+
+# Multiple directories, including an external one
+worktree_dir = [".worktrees", ".claude/worktrees", "~/.codex/worktrees"]
+```
+
+Las rutas relativas se resuelven contra la raíz del proyecto. Las rutas que comienzan con `~/` o `/` se tratan como directorios **externos** — Coast añade un bind mount separado para que el contenedor pueda acceder a ellos. Así es como te integras con herramientas como Codex que crean worktrees fuera de la raíz del proyecto.
+
+En tiempo de ejecución, Coast detecta automáticamente el directorio de worktree a partir de los worktrees de git existentes (mediante `git worktree list`) y prefiere eso sobre el valor por defecto configurado cuando todos los worktrees coinciden en un único directorio.
+
+Consulta [Worktree Directories](WORKTREE_DIR.md) para la referencia completa, incluido el comportamiento de directorios externos, el filtrado por proyecto y ejemplos.
+
+### `default_worktree_dir`
+
+Qué directorio usar al crear **nuevos** worktrees. Por defecto es la primera entrada en `worktree_dir`. Solo es relevante cuando `worktree_dir` es un arreglo.
 
 ```toml
 [coast]
 name = "my-app"
-worktree_dir = ".worktrees"
+worktree_dir = [".worktrees", "~/.codex/worktrees"]
+default_worktree_dir = ".worktrees"
 ```
-
-Si el directorio es relativo y está dentro del proyecto, Coast lo añade automáticamente a `.gitignore`.
 
 ### `autostart`
 
@@ -162,7 +179,7 @@ Un contenedor de Coast configurado para desarrollo con Go y Node.js:
 name = "my-fullstack-app"
 compose = "./docker-compose.yml"
 runtime = "dind"
-worktree_dir = ".worktrees"
+worktree_dir = [".worktrees", "~/.codex/worktrees"]
 primary_port = "web"
 
 [coast.setup]

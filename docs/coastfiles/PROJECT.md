@@ -61,15 +61,32 @@ This is uncommon. Most projects keep the Coastfile at the actual project root.
 
 ### `worktree_dir`
 
-Directory where git worktrees are created for Coast instances. Defaults to `".worktrees"`. At runtime, Coast auto-detects the directory from existing git worktrees (via `git worktree list`) and prefers that over the default. Relative paths are resolved against the project root.
+Directories where git worktrees live. Accepts a single string or an array of strings. Defaults to `".worktrees"`.
+
+```toml
+# Single directory
+worktree_dir = ".worktrees"
+
+# Multiple directories, including an external one
+worktree_dir = [".worktrees", ".claude/worktrees", "~/.codex/worktrees"]
+```
+
+Relative paths are resolved against the project root. Paths starting with `~/` or `/` are treated as **external** directories — Coast adds a separate bind mount so the container can access them. This is how you integrate with tools like Codex that create worktrees outside the project root.
+
+At runtime, Coast auto-detects the worktree directory from existing git worktrees (via `git worktree list`) and prefers that over the configured default when all worktrees agree on a single directory.
+
+See [Worktree Directories](WORKTREE_DIR.md) for the full reference, including external directory behavior, project filtering, and examples.
+
+### `default_worktree_dir`
+
+Which directory to use when creating **new** worktrees. Defaults to the first entry in `worktree_dir`. Only relevant when `worktree_dir` is an array.
 
 ```toml
 [coast]
 name = "my-app"
-worktree_dir = ".worktrees"
+worktree_dir = [".worktrees", "~/.codex/worktrees"]
+default_worktree_dir = ".worktrees"
 ```
-
-If the directory is relative and inside the project, Coast auto-adds it to `.gitignore`.
 
 ### `autostart`
 
@@ -162,7 +179,7 @@ A Coast container set up for Go and Node.js development:
 name = "my-fullstack-app"
 compose = "./docker-compose.yml"
 runtime = "dind"
-worktree_dir = ".worktrees"
+worktree_dir = [".worktrees", "~/.codex/worktrees"]
 primary_port = "web"
 
 [coast.setup]

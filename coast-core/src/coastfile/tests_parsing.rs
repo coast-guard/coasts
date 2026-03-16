@@ -1551,3 +1551,175 @@ fn test_type_non_coastfile_returns_none() {
     let t = Coastfile::coastfile_type_from_path(Path::new("/proj/docker-compose.yml")).unwrap();
     assert_eq!(t, None);
 }
+
+// ---------------------------------------------------------------------------
+// External worktree dir helpers
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_is_external_worktree_dir_relative() {
+    assert!(!Coastfile::is_external_worktree_dir(".worktrees"));
+    assert!(!Coastfile::is_external_worktree_dir("my-worktrees"));
+    assert!(!Coastfile::is_external_worktree_dir(".claude/worktrees"));
+}
+
+#[test]
+fn test_is_external_worktree_dir_tilde() {
+    assert!(Coastfile::is_external_worktree_dir("~/.codex/worktrees"));
+    assert!(Coastfile::is_external_worktree_dir("~/worktrees"));
+}
+
+#[test]
+fn test_is_external_worktree_dir_absolute() {
+    assert!(Coastfile::is_external_worktree_dir("/tmp/worktrees"));
+    assert!(Coastfile::is_external_worktree_dir(
+        "/home/user/.codex/worktrees"
+    ));
+}
+
+#[test]
+fn test_is_external_worktree_dir_empty() {
+    assert!(!Coastfile::is_external_worktree_dir(""));
+}
+
+#[test]
+fn test_is_external_worktree_dir_tilde_alone() {
+    assert!(!Coastfile::is_external_worktree_dir("~"));
+}
+
+#[test]
+fn test_resolve_worktree_dir_relative() {
+    let root = Path::new("/projects/my-app");
+    let resolved = Coastfile::resolve_worktree_dir(root, ".worktrees");
+    assert_eq!(resolved, Path::new("/projects/my-app/.worktrees"));
+}
+
+#[test]
+fn test_resolve_worktree_dir_nested_relative() {
+    let root = Path::new("/projects/my-app");
+    let resolved = Coastfile::resolve_worktree_dir(root, ".claude/worktrees");
+    assert_eq!(resolved, Path::new("/projects/my-app/.claude/worktrees"));
+}
+
+#[test]
+fn test_resolve_worktree_dir_absolute() {
+    let root = Path::new("/projects/my-app");
+    let resolved = Coastfile::resolve_worktree_dir(root, "/tmp/worktrees");
+    assert_eq!(resolved, Path::new("/tmp/worktrees"));
+}
+
+#[test]
+fn test_resolve_worktree_dir_tilde_expansion() {
+    let root = Path::new("/projects/my-app");
+    let resolved = Coastfile::resolve_worktree_dir(root, "~/.codex/worktrees");
+    let home = dirs::home_dir().unwrap();
+    assert_eq!(resolved, home.join(".codex/worktrees"));
+}
+
+#[test]
+fn test_external_worktree_dirs_mixed() {
+    let dir = tempfile::tempdir().unwrap();
+    let cf = Coastfile::parse(
+        r#"
+[coast]
+name = "test"
+worktree_dir = [".worktrees", "~/.codex/worktrees", "/tmp/ext-wt"]
+"#,
+        dir.path(),
+    )
+    .unwrap();
+
+    let externals = cf.external_worktree_dirs();
+    assert_eq!(externals.len(), 2);
+    assert_eq!(externals[0].0, 1);
+    assert_eq!(externals[1].0, 2);
+    assert_eq!(externals[1].1, Path::new("/tmp/ext-wt"));
+}
+
+#[test]
+fn test_external_worktree_dirs_all_local() {
+    let dir = tempfile::tempdir().unwrap();
+    let cf = Coastfile::parse(
+        r#"
+[coast]
+name = "test"
+worktree_dir = [".worktrees", ".claude/worktrees"]
+"#,
+        dir.path(),
+    )
+    .unwrap();
+
+    let externals = cf.external_worktree_dirs();
+    assert!(externals.is_empty());
+}
+
+#[test]
+fn test_external_worktree_dirs_all_external() {
+    let dir = tempfile::tempdir().unwrap();
+    let cf = Coastfile::parse(
+        r#"
+[coast]
+name = "test"
+worktree_dir = ["~/.codex/worktrees", "/opt/worktrees"]
+"#,
+        dir.path(),
+    )
+    .unwrap();
+
+    let externals = cf.external_worktree_dirs();
+    assert_eq!(externals.len(), 2);
+    assert_eq!(externals[0].0, 0);
+    assert_eq!(externals[1].0, 1);
+}
+
+#[test]
+fn test_external_worktree_dirs_empty() {
+    let dir = tempfile::tempdir().unwrap();
+    let cf = Coastfile::parse(
+        r#"
+[coast]
+name = "test"
+"#,
+        dir.path(),
+    )
+    .unwrap();
+
+    let externals = cf.external_worktree_dirs();
+    assert!(externals.is_empty());
+}
+
+#[test]
+fn test_external_mount_path() {
+    assert_eq!(Coastfile::external_mount_path(0), "/host-external-wt/0");
+    assert_eq!(Coastfile::external_mount_path(3), "/host-external-wt/3");
+}
+
+#[test]
+fn test_worktree_dir_string_or_vec_compat() {
+    let dir = tempfile::tempdir().unwrap();
+
+    let single = Coastfile::parse(
+        r#"
+[coast]
+name = "test"
+worktree_dir = ".custom"
+"#,
+        dir.path(),
+    )
+    .unwrap();
+    assert_eq!(single.worktree_dirs, vec![".custom"]);
+
+    let array = Coastfile::parse(
+        r#"
+[coast]
+name = "test"
+worktree_dir = [".worktrees", "~/.codex/worktrees"]
+"#,
+        dir.path(),
+    )
+    .unwrap();
+    assert_eq!(
+        array.worktree_dirs,
+        vec![".worktrees", "~/.codex/worktrees"]
+    );
+}

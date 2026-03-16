@@ -102,8 +102,10 @@ pub(super) struct RawCoastSection {
     pub setup: Option<RawSetupConfig>,
     #[serde(default)]
     pub root: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string_or_vec")]
+    pub worktree_dir: Option<Vec<String>>,
     #[serde(default)]
-    pub worktree_dir: Option<String>,
+    pub default_worktree_dir: Option<String>,
     #[serde(default)]
     pub autostart: Option<bool>,
     #[serde(default)]
@@ -214,6 +216,19 @@ pub(super) struct RawMcpClientConfig {
     pub config_path: Option<String>,
     #[serde(default)]
     pub run: Option<String>,
+}
+
+/// Deserialize an optional field that can be either a single string or an array of strings.
+///
+/// Returns `None` when the field is absent (via `#[serde(default)]`).
+/// When present, wraps the result of [`deserialize_string_or_vec`] in `Some`.
+pub(super) fn deserialize_optional_string_or_vec<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<Vec<String>>, D::Error>
+where
+    D: de::Deserializer<'de>,
+{
+    deserialize_string_or_vec(deserializer).map(Some)
 }
 
 /// Deserialize a field that can be either a single string or an array of strings.
