@@ -90,7 +90,7 @@ preflight_checks() {
     echo "=== Preflight checks ==="
     [ -f "$COAST" ] || { echo "coast binary not found at $COAST. Run: cargo build --release"; exit 1; }
     [ -f "$COASTD" ] || { echo "coastd binary not found at $COASTD. Run: cargo build --release"; exit 1; }
-    command -v socat >/dev/null || { echo "socat not installed. Run: brew install socat"; exit 1; }
+    command -v socat >/dev/null || { echo "socat not installed. Run: brew install socat (macOS) or sudo apt-get install socat (Ubuntu)"; exit 1; }
     command -v docker >/dev/null || { echo "docker not installed"; exit 1; }
     docker info >/dev/null 2>&1 || { echo "Docker daemon not running"; exit 1; }
     pass "All prerequisites met"

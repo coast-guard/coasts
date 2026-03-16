@@ -9,7 +9,7 @@
 /// and always-on dynamic ports. The daemon spawns socat processes that forward
 /// traffic from host ports to coast container ports.
 use std::collections::HashMap;
-use std::net::TcpListener;
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::os::unix::process::CommandExt;
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -284,7 +284,38 @@ pub fn allocate_dynamic_port() -> Result<u16> {
 ///
 /// Returns `true` if the port is free (bind succeeds), `false` otherwise.
 pub fn is_port_available(port: u16) -> bool {
-    TcpListener::bind(("127.0.0.1", port)).is_ok()
+    matches!(inspect_port_binding(port), PortBindStatus::Available)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PortBindStatus {
+    Available,
+    InUse,
+    PermissionDenied,
+    UnexpectedError(String),
+}
+
+fn can_connect_to_port(port: u16) -> bool {
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    TcpStream::connect_timeout(&addr, Duration::from_millis(50)).is_ok()
+}
+
+pub fn inspect_port_binding(port: u16) -> PortBindStatus {
+    match TcpListener::bind(("127.0.0.1", port)) {
+        Ok(listener) => {
+            drop(listener);
+            PortBindStatus::Available
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => PortBindStatus::InUse,
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+            if can_connect_to_port(port) {
+                PortBindStatus::InUse
+            } else {
+                PortBindStatus::PermissionDenied
+            }
+        }
+        Err(error) => PortBindStatus::UnexpectedError(error.to_string()),
+    }
 }
 
 /// Build the socat command arguments for canonical port forwarding.
@@ -364,7 +395,7 @@ pub fn spawn_socat(cmd: &[String]) -> Result<u32> {
         CoastError::port(format!(
             "Failed to spawn socat process `{}`: {}. \
              Ensure socat is installed (e.g., `brew install socat` on macOS, \
-             `apt-get install socat` on Ubuntu).",
+             `sudo apt-get install socat` on Ubuntu).",
             cmd.join(" "),
             e
         ))
@@ -419,7 +450,7 @@ pub fn spawn_socat_verified(cmd: &[String], listen_port: u16) -> Result<u32> {
 
     loop {
         let healthy = !process_looks_stale(pid);
-        let port_bound = !is_port_available(listen_port);
+        let port_bound = can_connect_to_port(listen_port);
 
         if healthy && port_bound {
             return Ok(pid);
@@ -660,6 +691,51 @@ mod tests {
         );
 
         drop(listener);
+    }
+
+    #[test]
+    fn test_inspect_port_binding_on_free_port() {
+        assert_eq!(inspect_port_binding(0), PortBindStatus::Available);
+    }
+
+    #[test]
+    fn test_inspect_port_binding_on_occupied_port() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        assert_eq!(inspect_port_binding(port), PortBindStatus::InUse);
+
+        drop(listener);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_inspect_port_binding_permission_denied_on_restricted_low_port() {
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+
+        let Ok(raw_threshold) =
+            std::fs::read_to_string("/proc/sys/net/ipv4/ip_unprivileged_port_start")
+        else {
+            return;
+        };
+        let Ok(threshold) = raw_threshold.trim().parse::<u16>() else {
+            return;
+        };
+        if threshold <= 1 {
+            return;
+        }
+
+        let restricted_port = [1_u16, 2, 3, 7, 9, 13]
+            .into_iter()
+            .find(|port| *port < threshold)
+            .unwrap_or(1);
+
+        assert_eq!(
+            inspect_port_binding(restricted_port),
+            PortBindStatus::PermissionDenied
+        );
     }
 
     #[test]

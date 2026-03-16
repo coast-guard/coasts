@@ -25,6 +25,17 @@ coast checkout dev-2   # instant swap
 # localhost:5432  ──→  dev-2 db
 ```
 
+## Linux Note
+
+Dynamic ports always work on Linux without special privileges.
+
+Canonical ports below `1024` are different. If your Coastfile declares ports like `80` or `443`, Linux may block `coast checkout` from binding them until you configure the host. The usual fixes are:
+
+- raise `net.ipv4.ip_unprivileged_port_start`
+- grant bind capability to the forwarding binary or process
+
+Coast reports this explicitly when the host denies the bind.
+
 ## Do You Need to Check Out?
 
 Not necessarily. Every running Coast always has its own dynamic ports, and you can access any Coast through those ports at any time without checking anything out.

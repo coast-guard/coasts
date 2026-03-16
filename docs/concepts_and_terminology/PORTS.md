@@ -17,6 +17,8 @@ localhost:5432  ──→  dev-1
 
 This means your browser, API clients, database tools, and test suites all work exactly as they normally would — no port number changes needed.
 
+On Linux, canonical ports below `1024` may require host configuration before [`coast checkout`](CHECKOUT.md) can bind them. Dynamic ports do not have this restriction.
+
 ## Dynamic Ports
 
 Every running Coast always gets its own set of dynamic ports in a high range (49152–65535). These are assigned automatically and are always accessible, regardless of which Coast is checked out.

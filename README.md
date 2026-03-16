@@ -36,14 +36,14 @@ Want a concrete example to explore? Check out the [`coasts-demo` repository](htt
 
 To contribute, read the [contributing guide](CONTRIBUTING.md) for PR guidelines.
 
-> Note: Coasts is currently macOS-specific. General Linux support is coming shortly.
+> Note: Coasts is currently macOS-first. Linux development works, but canonical ports below `1024` require host setup before `coast checkout` can bind them.
 
 ### Prerequisites
 
 - Rust (stable toolchain)
 - Docker
 - Node.js
-- socat (`brew install socat` on macOS)
+- socat (`brew install socat` on macOS, `sudo apt install socat` on Ubuntu)
 - Git
 
 ### Dev setup

@@ -282,7 +282,13 @@ fn write_assign_section(coastfile: &Coastfile, out: &mut String) {
         let mut services: Vec<_> = coastfile.assign.services.iter().collect();
         services.sort_by_key(|(name, _)| *name);
         for (name, action) in services {
-            writeln!(out, "{} = {}", toml_key(name), toml_quote(&action.to_string())).unwrap();
+            writeln!(
+                out,
+                "{} = {}",
+                toml_key(name),
+                toml_quote(&action.to_string())
+            )
+            .unwrap();
         }
     }
     if !coastfile.assign.rebuild_triggers.is_empty() {

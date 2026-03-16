@@ -14,32 +14,129 @@ use coast_docker::runtime::Runtime;
 
 use crate::server::AppState;
 
-/// Check that all canonical ports are free on the host.
-/// Returns `Ok(())` if every port can be bound, or an actionable error listing
-/// the occupied ports.
-fn check_canonical_ports_available(canonical_ports: &[u16], target_name: &str) -> Result<()> {
-    let occupied: Vec<u16> = canonical_ports
-        .iter()
-        .copied()
-        .filter(|&p| !crate::port_manager::is_port_available(p))
-        .collect();
-    if occupied.is_empty() {
-        return Ok(());
-    }
-    let port_list = occupied
+#[derive(Debug, Default, PartialEq, Eq)]
+struct CanonicalPortCheck {
+    occupied: Vec<u16>,
+    permission_denied: Vec<u16>,
+    unexpected: Vec<(u16, String)>,
+}
+
+fn format_port_list(ports: &[u16]) -> String {
+    ports
         .iter()
         .map(std::string::ToString::to_string)
         .collect::<Vec<_>>()
-        .join(", ");
+        .join(", ")
+}
+
+fn inspect_canonical_ports_with<F>(canonical_ports: &[u16], inspect: F) -> CanonicalPortCheck
+where
+    F: Fn(u16) -> crate::port_manager::PortBindStatus,
+{
+    let mut result = CanonicalPortCheck::default();
+    for port in canonical_ports {
+        match inspect(*port) {
+            crate::port_manager::PortBindStatus::Available => {}
+            crate::port_manager::PortBindStatus::InUse => result.occupied.push(*port),
+            crate::port_manager::PortBindStatus::PermissionDenied => {
+                result.permission_denied.push(*port)
+            }
+            crate::port_manager::PortBindStatus::UnexpectedError(error) => {
+                result.unexpected.push((*port, error))
+            }
+        }
+    }
+    result
+}
+
+fn check_canonical_ports_available_with<F>(
+    canonical_ports: &[u16],
+    target_name: &str,
+    inspect: F,
+) -> Result<Vec<u16>>
+where
+    F: Fn(u16) -> crate::port_manager::PortBindStatus,
+{
+    let result = inspect_canonical_ports_with(canonical_ports, inspect);
+    if result.occupied.is_empty() && result.unexpected.is_empty() {
+        return Ok(result.permission_denied);
+    }
+
+    let mut parts = Vec::new();
+    if !result.occupied.is_empty() {
+        parts.push(format!(
+            "canonical port(s) {} already in use. Another process is occupying {} port(s). \
+             Free them before checking out, or run `coast checkout --none` to unbind all canonical ports.",
+            format_port_list(&result.occupied),
+            result.occupied.len(),
+        ));
+    }
+    if !result.permission_denied.is_empty() {
+        parts.push(format!(
+            "canonical port(s) {} require elevated bind privileges on this host. \
+             On Linux, ports below 1024 are restricted unless you raise \
+             `net.ipv4.ip_unprivileged_port_start` or grant bind capability to the forwarding process or binary.",
+            format_port_list(&result.permission_denied),
+        ));
+    }
+    if !result.unexpected.is_empty() {
+        let details = result
+            .unexpected
+            .iter()
+            .map(|(port, error)| format!("{port}: {error}"))
+            .collect::<Vec<_>>()
+            .join("; ");
+        parts.push(format!(
+            "failed to inspect canonical port availability: {details}"
+        ));
+    }
+
     Err(CoastError::port(format!(
-        "Cannot checkout '{}': canonical port(s) {} already in use. \
-         Another process is occupying {} port(s). Free them before \
-         checking out, or run `coast checkout --none` to unbind all \
-         canonical ports.",
+        "Cannot checkout '{}': {}",
         target_name,
-        port_list,
-        occupied.len(),
+        parts.join(" Also, ")
     )))
+}
+
+/// Check canonical ports before checkout.
+///
+/// Truly occupied ports and unexpected probe failures are fatal. Low ports that
+/// return `PermissionDenied` are recorded and retried through verified socat
+/// binding, which allows Linux hosts configured via `setcap` on socat.
+fn check_canonical_ports_available(canonical_ports: &[u16], target_name: &str) -> Result<Vec<u16>> {
+    check_canonical_ports_available_with(
+        canonical_ports,
+        target_name,
+        crate::port_manager::inspect_port_binding,
+    )
+}
+
+fn format_linux_permission_error(target_name: &str, ports: &[u16]) -> String {
+    format!(
+        "Checkout of '{}' failed — canonical port(s) {} require Linux host setup before Coast can bind them. \
+         Ports below 1024 are restricted unless you raise `net.ipv4.ip_unprivileged_port_start` \
+         or grant bind capability to the forwarding process or binary.",
+        target_name,
+        format_port_list(ports),
+    )
+}
+
+fn format_checkout_bind_failure(target_name: &str, errors: &[String]) -> String {
+    let needs_install_hint = errors
+        .iter()
+        .any(|error| error.contains("Failed to spawn socat process"));
+    let install_hint = if needs_install_hint {
+        " Ensure socat is installed (e.g., `brew install socat` on macOS, `sudo apt-get install socat` on Ubuntu)."
+    } else {
+        ""
+    };
+
+    format!(
+        "Checkout of '{}' failed — could not bind canonical port forwarder(s): {}.{}",
+        target_name,
+        errors.join("; "),
+        install_hint
+    )
 }
 
 /// Find checked-out instances in other projects that own canonical ports needed
@@ -157,10 +254,6 @@ pub async fn handle(req: CheckoutRequest, state: &AppState) -> Result<CheckoutRe
     // Pre-flight: verify all canonical ports are available before committing
     // to the checkout. This catches "address already in use" early with a
     // clear, actionable error message.
-    if state.docker.is_some() {
-        check_canonical_ports_available(&canonical_ports, &target_name)?;
-    }
-
     // Pre-flight: verify the inner Docker daemon is responsive before routing
     // traffic to this instance. Status is not yet set to CheckedOut so early
     // returns here leave the DB in a consistent state.
@@ -199,9 +292,14 @@ pub async fn handle(req: CheckoutRequest, state: &AppState) -> Result<CheckoutRe
     // Spawn canonical socat forwarders: canonical_port → localhost:dynamic_port.
     // Collect errors and revert if any spawn fails.
     if state.docker.is_some() {
+        let permission_denied_ports: HashSet<u16> =
+            check_canonical_ports_available(&canonical_ports, &target_name)?
+                .into_iter()
+                .collect();
         let mut spawned_pids: Vec<u32> = Vec::new();
         let mut spawned_logical_names: Vec<String> = Vec::new();
-        let mut errors: Vec<String> = Vec::new();
+        let mut bind_errors: Vec<String> = Vec::new();
+        let mut permission_errors: Vec<u16> = Vec::new();
 
         for alloc in &port_allocs {
             let cmd = crate::port_manager::socat_command_canonical(
@@ -209,7 +307,7 @@ pub async fn handle(req: CheckoutRequest, state: &AppState) -> Result<CheckoutRe
                 "127.0.0.1",
                 alloc.dynamic_port,
             );
-            match crate::port_manager::spawn_socat(&cmd) {
+            match crate::port_manager::spawn_socat_verified(&cmd, alloc.canonical_port) {
                 Ok(pid) => {
                     let _ = db.update_socat_pid(
                         &req.project,
@@ -221,12 +319,19 @@ pub async fn handle(req: CheckoutRequest, state: &AppState) -> Result<CheckoutRe
                     spawned_logical_names.push(alloc.logical_name.clone());
                 }
                 Err(e) => {
-                    errors.push(format!("port {}: {e}", alloc.canonical_port));
+                    let error = e.to_string();
+                    if permission_denied_ports.contains(&alloc.canonical_port)
+                        && !error.contains("Failed to spawn socat process")
+                    {
+                        permission_errors.push(alloc.canonical_port);
+                    } else {
+                        bind_errors.push(format!("port {}: {error}", alloc.canonical_port));
+                    }
                 }
             }
         }
 
-        if !errors.is_empty() {
+        if !permission_errors.is_empty() || !bind_errors.is_empty() {
             // Clean up any socat processes that did succeed.
             for pid in &spawned_pids {
                 let _ = crate::port_manager::kill_socat(*pid);
@@ -234,13 +339,19 @@ pub async fn handle(req: CheckoutRequest, state: &AppState) -> Result<CheckoutRe
             for logical_name in &spawned_logical_names {
                 let _ = db.update_socat_pid(&req.project, &target_name, logical_name, None);
             }
-            return Err(CoastError::port(format!(
-                "Checkout of '{}' failed — could not start socat forwarder(s): {}. \
-                 Ensure socat is installed (e.g., `brew install socat` on macOS, \
-                 `apt-get install socat` on Ubuntu).",
-                target_name,
-                errors.join("; "),
-            )));
+            let mut messages = Vec::new();
+            if !permission_errors.is_empty() {
+                permission_errors.sort_unstable();
+                permission_errors.dedup();
+                messages.push(format_linux_permission_error(
+                    &target_name,
+                    &permission_errors,
+                ));
+            }
+            if !bind_errors.is_empty() {
+                messages.push(format_checkout_bind_failure(&target_name, &bind_errors));
+            }
+            return Err(CoastError::port(messages.join(" ")));
         }
     }
 
@@ -264,6 +375,13 @@ mod tests {
     use super::*;
     use crate::state::StateDb;
     use coast_core::types::{CoastInstance, RuntimeType};
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
     fn test_state() -> AppState {
         AppState::new_for_testing(StateDb::open_in_memory().unwrap())
     }
@@ -329,6 +447,33 @@ mod tests {
             build_id: None,
             coastfile_type: None,
         }
+    }
+
+    #[test]
+    fn test_check_canonical_ports_permission_denied_is_deferred_for_verified_bind() {
+        let denied = check_canonical_ports_available_with(&[80, 443], "linux-low-ports", |_| {
+            crate::port_manager::PortBindStatus::PermissionDenied
+        })
+        .unwrap();
+
+        assert_eq!(denied, vec![80, 443]);
+    }
+
+    #[test]
+    fn test_check_canonical_ports_mixed_occupied_and_permission_denied_reports_both() {
+        let err =
+            check_canonical_ports_available_with(&[80, 443, 3000], "mixed", |port| match port {
+                80 | 443 => crate::port_manager::PortBindStatus::PermissionDenied,
+                3000 => crate::port_manager::PortBindStatus::InUse,
+                _ => crate::port_manager::PortBindStatus::Available,
+            })
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("3000"));
+        assert!(err.contains("already in use"));
+        assert!(err.contains("80, 443"));
+        assert!(err.contains("ip_unprivileged_port_start"));
     }
 
     #[tokio::test]
@@ -962,17 +1107,9 @@ mod tests {
         }
     }
 
-    /// Test that if socat spawning fails (e.g. socat not installed), the
-    /// checkout handler reverts the instance back to Running and returns
-    /// an error. This test runs with docker=Some so the socat code path
-    /// is entered, and uses container_id=None to skip the health check.
-    ///
-    /// On machines WHERE socat IS installed, the spawn will succeed and
-    /// checkout completes normally (the test cleans up the spawned socat).
-    /// On machines where socat is NOT installed, the spawn fails and
-    /// the revert path is exercised.
     #[tokio::test]
-    async fn test_checkout_socat_spawn_failure_reverts_status() {
+    async fn test_checkout_verified_bind_failure_reverts_status() {
+        let _guard = env_lock().lock().unwrap();
         let state = test_state_with_docker();
 
         // Pick a free port so the pre-check passes.
@@ -980,44 +1117,58 @@ mod tests {
         let free_port = listener.local_addr().unwrap().port();
         drop(listener);
 
+        let dir = tempfile::tempdir().unwrap();
+        let fake_socat = dir.path().join("socat");
+        std::fs::write(&fake_socat, "#!/bin/sh\nsleep 1\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&fake_socat).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&fake_socat, perms).unwrap();
+        }
+
+        let old_path = std::env::var("PATH").unwrap_or_default();
+        unsafe {
+            std::env::set_var("PATH", format!("{}:{}", dir.path().display(), old_path));
+        }
+
         {
             let db = state.db.lock().await;
-            let mut inst = make_instance("socat-test", "my-app", InstanceStatus::Running);
+            let mut inst = make_instance("bind-failure", "my-app", InstanceStatus::Running);
             inst.container_id = None;
             db.insert_instance(&inst).unwrap();
-            add_test_port_on(&db, "my-app", "socat-test", free_port, 50400);
+            add_test_port_on(&db, "my-app", "bind-failure", free_port, 50400);
         }
 
         let req = CheckoutRequest {
-            name: Some("socat-test".to_string()),
+            name: Some("bind-failure".to_string()),
             project: "my-app".to_string(),
         };
         let result = handle(req, &state).await;
 
-        match result {
-            Ok(resp) => {
-                // socat is installed and succeeded — cleanup the spawned process.
-                assert_eq!(resp.checked_out, Some("socat-test".to_string()));
-                let db = state.db.lock().await;
-                let allocs = db.get_port_allocations("my-app", "socat-test").unwrap();
-                for alloc in &allocs {
-                    if let Some(pid) = alloc.socat_pid {
-                        let _ = crate::port_manager::kill_socat(pid as u32);
-                    }
-                }
-            }
-            Err(e) => {
-                // socat is NOT installed — the revert path was exercised.
-                let err = e.to_string();
-                assert!(err.contains("socat"), "error should mention socat: {err}");
-                let db = state.db.lock().await;
-                let inst = db.get_instance("my-app", "socat-test").unwrap().unwrap();
-                assert_eq!(
-                    inst.status,
-                    InstanceStatus::Running,
-                    "instance should be reverted to Running after socat failure"
-                );
-            }
+        unsafe {
+            std::env::set_var("PATH", old_path);
         }
+
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("could not bind canonical port forwarder"),
+            "error should mention bind failure: {err}"
+        );
+        assert!(
+            err.contains("did not bind the port in time"),
+            "error should mention verified bind timeout: {err}"
+        );
+
+        let db = state.db.lock().await;
+        let inst = db.get_instance("my-app", "bind-failure").unwrap().unwrap();
+        assert_eq!(
+            inst.status,
+            InstanceStatus::Running,
+            "instance should be reverted to Running after bind failure"
+        );
+        let allocs = db.get_port_allocations("my-app", "bind-failure").unwrap();
+        assert!(allocs.iter().all(|alloc| alloc.socat_pid.is_none()));
     }
 }
