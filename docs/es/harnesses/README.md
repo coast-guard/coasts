@@ -8,3 +8,4 @@ Cada página a continuación cubre la configuración del Coastfile y cualquier a
 |---------|-------------------|------|
 | Conductor | `~/conductor/workspaces/<project>` | [Conductor](CONDUCTOR.md) |
 | OpenAI Codex | `~/.codex/worktrees` | [Codex](CODEX.md) |
+| T3 Code | `~/.t3/worktrees/<project>` | [T3 Code](T3_CODE.md) |

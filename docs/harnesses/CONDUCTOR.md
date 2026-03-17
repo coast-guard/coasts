@@ -6,7 +6,7 @@ Because these worktrees live outside the project root, Coast needs explicit conf
 
 ## Setup
 
-Add `~/conductor/workspaces/<project-name>` to `worktree_dir`. Unlike Codex (which stores all projects under one flat directory), Conductor nests worktrees under a per-project subdirectory, so the path must include the project name:
+Add `~/conductor/workspaces/<project-name>` to `worktree_dir`. Unlike Codex (which stores all projects under one flat directory), Conductor nests worktrees under a per-project subdirectory, so the path must include the project name. In the example below, `my-app` must match the actual folder name under `~/conductor/workspaces/` for your repo.
 
 ```toml
 [coast]
@@ -60,7 +60,7 @@ api = "hot"
 - `.worktrees/` — Coast-managed worktrees
 - `.claude/worktrees/` — Claude Code (local, no special handling)
 - `~/.codex/worktrees/` — Codex (external, bind-mounted)
-- `~/conductor/workspaces/my-app/` — Conductor (external, bind-mounted)
+- `~/conductor/workspaces/my-app/` — Conductor (external, bind-mounted; replace `my-app` with your repo folder name)
 
 ## Conductor Env Vars
 

@@ -527,6 +527,7 @@
   "docs.nav.harnesses": "工具集成",
   "docs.nav.harnessCodex": "Codex",
   "docs.nav.harnessConductor": "Conductor",
+  "docs.nav.harnessT3Code": "T3 Code",
   "docs.nav.recipes": "配置示例",
   "docs.nav.recipesFullstackMonorepo": "全栈 Monorepo"
 }

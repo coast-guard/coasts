@@ -14,7 +14,7 @@ name = "my-app"
 worktree_dir = [".worktrees", "~/conductor/workspaces/my-app"]
 ```
 
-Conductor te permite configurar la ruta de los espacios de trabajo por repositorio, por lo que el valor predeterminado `~/conductor/workspaces` puede no coincidir con tu configuración. Revisa la configuración de tu repositorio de Conductor para encontrar la ruta real y ajustarla en consecuencia — el principio es el mismo sin importar dónde se encuentre el directorio.
+Conductor te permite configurar la ruta de los espacios de trabajo por repositorio, por lo que el valor predeterminado `~/conductor/workspaces` puede no coincidir con tu configuración. Revisa la configuración de tu repositorio de Conductor para encontrar la ruta real y ajústala en consecuencia — el principio es el mismo sin importar dónde se encuentre el directorio.
 
 Coast expande `~` en tiempo de ejecución y trata cualquier ruta que comience con `~/` o `/` como externa. Consulta [Directorios de Worktree](../coastfiles/WORKTREE_DIR.md) para más detalles.
 
@@ -32,7 +32,7 @@ La lista de worktrees se actualiza de inmediato (Coast lee el nuevo Coastfile), 
 
 - **Montaje bind** — Al crear el contenedor, Coast monta `~/conductor/workspaces/<project-name>` dentro del contenedor en `/host-external-wt/{index}`.
 - **Descubrimiento** — `git worktree list --porcelain` tiene alcance de repositorio, por lo que solo aparecen los worktrees que pertenecen al proyecto actual.
-- **Nombres** — Los worktrees de Conductor usan ramas con nombre, por lo que aparecen por nombre de rama en la UI y CLI de Coast (por ejemplo, `scroll-to-bottom-btn`). Una rama solo puede estar extraída en un espacio de trabajo de Conductor a la vez.
+- **Nombres** — Los worktrees de Conductor usan ramas con nombre, por lo que aparecen por nombre de rama en la interfaz y la CLI de Coast (por ejemplo, `scroll-to-bottom-btn`). Una rama solo puede estar extraída en un espacio de trabajo de Conductor a la vez.
 - **Asignación** — `coast assign` vuelve a montar `/workspace` desde la ruta de montaje bind externa.
 - **Sincronización de gitignored** — Se ejecuta en el sistema de archivos del host con rutas absolutas, funciona sin el montaje bind.
 - **Detección de huérfanos** — El observador de git escanea directorios externos de forma recursiva, filtrando por punteros `gitdir` de `.git`. Si Conductor archiva o elimina un espacio de trabajo, Coast desasigna automáticamente la instancia.

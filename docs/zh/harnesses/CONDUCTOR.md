@@ -6,7 +6,7 @@
 
 ## 设置
 
-将 `~/conductor/workspaces/<project-name>` 添加到 `worktree_dir`。与 Codex（它将所有项目存储在一个扁平目录下）不同，Conductor 将 worktree 嵌套在按项目划分的子目录中，因此路径必须包含项目名称:
+将 `~/conductor/workspaces/<project-name>` 添加到 `worktree_dir`。与 Codex（它将所有项目存储在一个扁平目录下）不同，Conductor 将 worktree 嵌套在按项目划分的子目录中，因此路径必须包含项目名称。在下面的示例中，`my-app` 必须与你的仓库在 `~/conductor/workspaces/` 下的实际文件夹名称一致。
 
 ```toml
 [coast]
@@ -60,7 +60,7 @@ api = "hot"
 - `.worktrees/` — Coast 管理的 worktree
 - `.claude/worktrees/` — Claude Code（本地，无需特殊处理）
 - `~/.codex/worktrees/` — Codex（外部，绑定挂载）
-- `~/conductor/workspaces/my-app/` — Conductor（外部，绑定挂载）
+- `~/conductor/workspaces/my-app/` — Conductor（外部，绑定挂载；将 `my-app` 替换为你的仓库文件夹名称）
 
 ## Conductor 环境变量
 

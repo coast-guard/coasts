@@ -6,7 +6,7 @@ Como esses worktrees ficam fora da raiz do projeto, o Coast precisa de configura
 
 ## Configuração
 
-Adicione `~/conductor/workspaces/<project-name>` a `worktree_dir`. Diferentemente do Codex (que armazena todos os projetos sob um único diretório plano), o Conductor aninha worktrees em um subdiretório por projeto, então o caminho deve incluir o nome do projeto:
+Adicione `~/conductor/workspaces/<project-name>` a `worktree_dir`. Diferentemente do Codex (que armazena todos os projetos em um único diretório plano), o Conductor aninha worktrees em um subdiretório por projeto, então o caminho deve incluir o nome do projeto. No exemplo abaixo, `my-app` deve corresponder ao nome real da pasta em `~/conductor/workspaces/` para o seu repositório.
 
 ```toml
 [coast]
@@ -34,7 +34,7 @@ A listagem de worktrees é atualizada imediatamente (o Coast lê o novo Coastfil
 - **Discovery** — `git worktree list --porcelain` tem escopo de repositório, então apenas worktrees pertencentes ao projeto atual aparecem.
 - **Naming** — Worktrees do Conductor usam branches nomeadas, então aparecem pelo nome da branch na UI e CLI do Coast (por exemplo, `scroll-to-bottom-btn`). Uma branch só pode estar em checkout em um workspace do Conductor por vez.
 - **Assign** — `coast assign` remonta `/workspace` a partir do caminho do bind mount externo.
-- **Gitignored sync** — É executado no sistema de arquivos do host com caminhos absolutos, funciona sem o bind mount.
+- **Gitignored sync** — É executado no sistema de arquivos do host com caminhos absolutos e funciona sem o bind mount.
 - **Orphan detection** — O watcher do git varre diretórios externos recursivamente, filtrando por ponteiros `.git` gitdir. Se o Conductor arquivar ou excluir um workspace, o Coast remove automaticamente a atribuição da instância.
 
 ## Exemplo
@@ -60,7 +60,7 @@ api = "hot"
 - `.worktrees/` — Worktrees gerenciados pelo Coast
 - `.claude/worktrees/` — Claude Code (local, sem tratamento especial)
 - `~/.codex/worktrees/` — Codex (externo, com bind mount)
-- `~/conductor/workspaces/my-app/` — Conductor (externo, com bind mount)
+- `~/conductor/workspaces/my-app/` — Conductor (externo, com bind mount; substitua `my-app` pelo nome da pasta do seu repositório)
 
 ## Variáveis de Ambiente do Conductor
 

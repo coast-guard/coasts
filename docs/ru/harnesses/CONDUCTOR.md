@@ -1,6 +1,6 @@
 # Conductor
 
-[Conductor](https://conductor.build/) запускает параллельные агенты Claude Code, каждый в своей изолированной рабочей области. Рабочие области — это git worktree, хранящиеся в `~/conductor/workspaces/<project-name>/`. Каждая рабочая область checkout'ится на именованной ветке.
+[Conductor](https://conductor.build/) запускает параллельных агентов Claude Code, каждый в своей изолированной рабочей области. Рабочие области — это git worktree, хранящиеся в `~/conductor/workspaces/<project-name>/`. Каждая рабочая область checkout'ится на именованной ветке.
 
 Поскольку эти worktree находятся вне корня проекта, Coast требуется явная конфигурация, чтобы обнаруживать и монтировать их.
 
@@ -33,7 +33,7 @@ coast run my-instance
 - **Bind mount** — При создании контейнера Coast монтирует `~/conductor/workspaces/<project-name>` в контейнер по пути `/host-external-wt/{index}`.
 - **Обнаружение** — `git worktree list --porcelain` ограничен репозиторием, поэтому отображаются только worktree, принадлежащие текущему проекту.
 - **Именование** — Worktree Conductor используют именованные ветки, поэтому они отображаются по имени ветки в UI и CLI Coast (например, `scroll-to-bottom-btn`). Ветка может быть checkout'нута только в одной рабочей области Conductor одновременно.
-- **Назначение** — `coast assign` перемонтирует `/workspace` из внешнего bind mount пути.
+- **Назначение** — `coast assign` перемонтирует `/workspace` из пути внешнего bind mount.
 - **Синхронизация gitignored** — Выполняется в файловой системе хоста с абсолютными путями, работает без bind mount.
 - **Обнаружение orphan** — Git watcher рекурсивно сканирует внешние каталоги, фильтруя по указателям `.git` gitdir. Если Conductor архивирует или удаляет рабочую область, Coast автоматически снимает назначение с инстанса.
 

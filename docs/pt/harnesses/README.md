@@ -6,5 +6,6 @@ Cada página abaixo cobre a configuração do Coastfile e quaisquer ressalvas es
 
 | Harness | Localização do worktree | Página |
 |---------|-------------------|------|
-| Conductor | `~/conductor/workspaces/<project>` | [Conductor](CONDUCTOR.md) |
 | OpenAI Codex | `~/.codex/worktrees` | [Codex](CODEX.md) |
+| Conductor | `~/conductor/workspaces/<project>` | [Conductor](CONDUCTOR.md) |
+| T3 Code | `~/.t3/worktrees/<project>` | [T3 Code](T3_CODE.md) |

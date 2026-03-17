@@ -211,9 +211,9 @@
       "translated_at": "2026-02-28T13:10:06Z"
     },
     "doc_ordering.txt": {
-      "commit": "0b43ab5",
-      "source_sha256": "17ed1760d187b50fd9293d7c0d197267e6b033c9c1f6c7051d1d5b2deb509d33",
-      "translated_at": "2026-03-16T21:30:03Z"
+      "commit": "4278ce3",
+      "source_sha256": "fa915520598ded542e0b3f17942861d36bb4f8e089a64cc1fa6cec67b8172ee1",
+      "translated_at": "2026-03-17T20:34:19Z"
     },
     "harnesses/CODEX.md": {
       "commit": "36c1f8f",
@@ -221,14 +221,19 @@
       "translated_at": "2026-03-16T08:47:07Z"
     },
     "harnesses/CONDUCTOR.md": {
-      "commit": "0b43ab5",
-      "source_sha256": "100e5ba8bcc278381c6e06686b02b3c8ded52d5dd8d6c82e101c51e1b1128365",
-      "translated_at": "2026-03-16T21:43:04Z"
+      "commit": "4278ce3",
+      "source_sha256": "ad8d83f5049c2ad80e04a1e3732eeee5a7b1108d3108363b3d87cd58277e13e4",
+      "translated_at": "2026-03-17T20:34:19Z"
     },
     "harnesses/README.md": {
-      "commit": "0b43ab5",
-      "source_sha256": "9a4be4a43b46469cfcefa52b15245d53cb210b79359d9cadbc128c6e2c60f92a",
-      "translated_at": "2026-03-16T21:30:03Z"
+      "commit": "4278ce3",
+      "source_sha256": "a6af1a9adfc85e022b0f918aa7071a9606361ab9f5efff7fb509fe28e5d387d8",
+      "translated_at": "2026-03-17T20:34:19Z"
+    },
+    "harnesses/T3_CODE.md": {
+      "commit": "4278ce3",
+      "source_sha256": "bd5405d867485d63583a563318b32cef0ff00af60405b7e707d29112914eb983",
+      "translated_at": "2026-03-17T20:34:19Z"
     },
     "installation_prompt.txt": {
       "commit": "b42c701",
@@ -508,9 +513,9 @@
       "translated_at": "2026-02-28T12:45:25Z"
     },
     "doc_ordering.txt": {
-      "commit": "0b43ab5",
-      "source_sha256": "17ed1760d187b50fd9293d7c0d197267e6b033c9c1f6c7051d1d5b2deb509d33",
-      "translated_at": "2026-03-16T21:28:35Z"
+      "commit": "4278ce3",
+      "source_sha256": "fa915520598ded542e0b3f17942861d36bb4f8e089a64cc1fa6cec67b8172ee1",
+      "translated_at": "2026-03-17T20:32:26Z"
     },
     "harnesses/CODEX.md": {
       "commit": "36c1f8f",
@@ -518,14 +523,19 @@
       "translated_at": "2026-03-16T08:42:26Z"
     },
     "harnesses/CONDUCTOR.md": {
-      "commit": "0b43ab5",
-      "source_sha256": "100e5ba8bcc278381c6e06686b02b3c8ded52d5dd8d6c82e101c51e1b1128365",
-      "translated_at": "2026-03-16T21:42:25Z"
+      "commit": "4278ce3",
+      "source_sha256": "ad8d83f5049c2ad80e04a1e3732eeee5a7b1108d3108363b3d87cd58277e13e4",
+      "translated_at": "2026-03-17T20:32:26Z"
     },
     "harnesses/README.md": {
-      "commit": "0b43ab5",
-      "source_sha256": "9a4be4a43b46469cfcefa52b15245d53cb210b79359d9cadbc128c6e2c60f92a",
-      "translated_at": "2026-03-16T21:28:35Z"
+      "commit": "4278ce3",
+      "source_sha256": "a6af1a9adfc85e022b0f918aa7071a9606361ab9f5efff7fb509fe28e5d387d8",
+      "translated_at": "2026-03-17T20:32:26Z"
+    },
+    "harnesses/T3_CODE.md": {
+      "commit": "4278ce3",
+      "source_sha256": "bd5405d867485d63583a563318b32cef0ff00af60405b7e707d29112914eb983",
+      "translated_at": "2026-03-17T20:32:26Z"
     },
     "installation_prompt.txt": {
       "commit": "b42c701",
@@ -805,9 +815,9 @@
       "translated_at": "2026-02-28T12:52:18Z"
     },
     "doc_ordering.txt": {
-      "commit": "0b43ab5",
-      "source_sha256": "17ed1760d187b50fd9293d7c0d197267e6b033c9c1f6c7051d1d5b2deb509d33",
-      "translated_at": "2026-03-16T21:28:59Z"
+      "commit": "4278ce3",
+      "source_sha256": "fa915520598ded542e0b3f17942861d36bb4f8e089a64cc1fa6cec67b8172ee1",
+      "translated_at": "2026-03-17T20:32:57Z"
     },
     "harnesses/CODEX.md": {
       "commit": "36c1f8f",
@@ -815,14 +825,19 @@
       "translated_at": "2026-03-16T08:43:46Z"
     },
     "harnesses/CONDUCTOR.md": {
-      "commit": "0b43ab5",
-      "source_sha256": "100e5ba8bcc278381c6e06686b02b3c8ded52d5dd8d6c82e101c51e1b1128365",
-      "translated_at": "2026-03-16T21:42:37Z"
+      "commit": "4278ce3",
+      "source_sha256": "ad8d83f5049c2ad80e04a1e3732eeee5a7b1108d3108363b3d87cd58277e13e4",
+      "translated_at": "2026-03-17T20:32:57Z"
     },
     "harnesses/README.md": {
-      "commit": "0b43ab5",
-      "source_sha256": "9a4be4a43b46469cfcefa52b15245d53cb210b79359d9cadbc128c6e2c60f92a",
-      "translated_at": "2026-03-16T21:28:59Z"
+      "commit": "4278ce3",
+      "source_sha256": "a6af1a9adfc85e022b0f918aa7071a9606361ab9f5efff7fb509fe28e5d387d8",
+      "translated_at": "2026-03-17T20:32:57Z"
+    },
+    "harnesses/T3_CODE.md": {
+      "commit": "4278ce3",
+      "source_sha256": "bd5405d867485d63583a563318b32cef0ff00af60405b7e707d29112914eb983",
+      "translated_at": "2026-03-17T20:32:57Z"
     },
     "installation_prompt.txt": {
       "commit": "b42c701",
@@ -1102,9 +1117,9 @@
       "translated_at": "2026-02-28T13:04:30Z"
     },
     "doc_ordering.txt": {
-      "commit": "0b43ab5",
-      "source_sha256": "17ed1760d187b50fd9293d7c0d197267e6b033c9c1f6c7051d1d5b2deb509d33",
-      "translated_at": "2026-03-16T21:29:42Z"
+      "commit": "4278ce3",
+      "source_sha256": "fa915520598ded542e0b3f17942861d36bb4f8e089a64cc1fa6cec67b8172ee1",
+      "translated_at": "2026-03-17T20:33:52Z"
     },
     "harnesses/CODEX.md": {
       "commit": "36c1f8f",
@@ -1112,14 +1127,19 @@
       "translated_at": "2026-03-16T08:46:06Z"
     },
     "harnesses/CONDUCTOR.md": {
-      "commit": "0b43ab5",
-      "source_sha256": "100e5ba8bcc278381c6e06686b02b3c8ded52d5dd8d6c82e101c51e1b1128365",
-      "translated_at": "2026-03-16T21:42:56Z"
+      "commit": "4278ce3",
+      "source_sha256": "ad8d83f5049c2ad80e04a1e3732eeee5a7b1108d3108363b3d87cd58277e13e4",
+      "translated_at": "2026-03-17T20:33:52Z"
     },
     "harnesses/README.md": {
-      "commit": "0b43ab5",
-      "source_sha256": "9a4be4a43b46469cfcefa52b15245d53cb210b79359d9cadbc128c6e2c60f92a",
-      "translated_at": "2026-03-16T21:29:42Z"
+      "commit": "4278ce3",
+      "source_sha256": "a6af1a9adfc85e022b0f918aa7071a9606361ab9f5efff7fb509fe28e5d387d8",
+      "translated_at": "2026-03-17T20:33:52Z"
+    },
+    "harnesses/T3_CODE.md": {
+      "commit": "4278ce3",
+      "source_sha256": "bd5405d867485d63583a563318b32cef0ff00af60405b7e707d29112914eb983",
+      "translated_at": "2026-03-17T20:33:52Z"
     },
     "installation_prompt.txt": {
       "commit": "b42c701",
@@ -1399,9 +1419,9 @@
       "translated_at": "2026-02-28T12:58:35Z"
     },
     "doc_ordering.txt": {
-      "commit": "0b43ab5",
-      "source_sha256": "17ed1760d187b50fd9293d7c0d197267e6b033c9c1f6c7051d1d5b2deb509d33",
-      "translated_at": "2026-03-16T21:29:21Z"
+      "commit": "4278ce3",
+      "source_sha256": "fa915520598ded542e0b3f17942861d36bb4f8e089a64cc1fa6cec67b8172ee1",
+      "translated_at": "2026-03-17T20:33:26Z"
     },
     "harnesses/CODEX.md": {
       "commit": "36c1f8f",
@@ -1409,14 +1429,19 @@
       "translated_at": "2026-03-16T08:45:01Z"
     },
     "harnesses/CONDUCTOR.md": {
-      "commit": "0b43ab5",
-      "source_sha256": "100e5ba8bcc278381c6e06686b02b3c8ded52d5dd8d6c82e101c51e1b1128365",
-      "translated_at": "2026-03-16T21:42:47Z"
+      "commit": "4278ce3",
+      "source_sha256": "ad8d83f5049c2ad80e04a1e3732eeee5a7b1108d3108363b3d87cd58277e13e4",
+      "translated_at": "2026-03-17T20:33:26Z"
     },
     "harnesses/README.md": {
-      "commit": "0b43ab5",
-      "source_sha256": "9a4be4a43b46469cfcefa52b15245d53cb210b79359d9cadbc128c6e2c60f92a",
-      "translated_at": "2026-03-16T21:29:21Z"
+      "commit": "4278ce3",
+      "source_sha256": "a6af1a9adfc85e022b0f918aa7071a9606361ab9f5efff7fb509fe28e5d387d8",
+      "translated_at": "2026-03-17T20:33:26Z"
+    },
+    "harnesses/T3_CODE.md": {
+      "commit": "4278ce3",
+      "source_sha256": "bd5405d867485d63583a563318b32cef0ff00af60405b7e707d29112914eb983",
+      "translated_at": "2026-03-17T20:33:26Z"
     },
     "installation_prompt.txt": {
       "commit": "b42c701",
@@ -1696,9 +1721,9 @@
       "translated_at": "2026-02-28T12:39:25Z"
     },
     "doc_ordering.txt": {
-      "commit": "0b43ab5",
-      "source_sha256": "17ed1760d187b50fd9293d7c0d197267e6b033c9c1f6c7051d1d5b2deb509d33",
-      "translated_at": "2026-03-16T21:28:12Z"
+      "commit": "4278ce3",
+      "source_sha256": "fa915520598ded542e0b3f17942861d36bb4f8e089a64cc1fa6cec67b8172ee1",
+      "translated_at": "2026-03-17T20:31:57Z"
     },
     "harnesses/CODEX.md": {
       "commit": "36c1f8f",
@@ -1706,14 +1731,19 @@
       "translated_at": "2026-03-16T08:41:17Z"
     },
     "harnesses/CONDUCTOR.md": {
-      "commit": "0b43ab5",
-      "source_sha256": "100e5ba8bcc278381c6e06686b02b3c8ded52d5dd8d6c82e101c51e1b1128365",
-      "translated_at": "2026-03-16T21:42:15Z"
+      "commit": "4278ce3",
+      "source_sha256": "ad8d83f5049c2ad80e04a1e3732eeee5a7b1108d3108363b3d87cd58277e13e4",
+      "translated_at": "2026-03-17T20:31:57Z"
     },
     "harnesses/README.md": {
-      "commit": "0b43ab5",
-      "source_sha256": "9a4be4a43b46469cfcefa52b15245d53cb210b79359d9cadbc128c6e2c60f92a",
-      "translated_at": "2026-03-16T21:28:12Z"
+      "commit": "4278ce3",
+      "source_sha256": "a6af1a9adfc85e022b0f918aa7071a9606361ab9f5efff7fb509fe28e5d387d8",
+      "translated_at": "2026-03-17T20:31:57Z"
+    },
+    "harnesses/T3_CODE.md": {
+      "commit": "4278ce3",
+      "source_sha256": "bd5405d867485d63583a563318b32cef0ff00af60405b7e707d29112914eb983",
+      "translated_at": "2026-03-17T20:31:57Z"
     },
     "installation_prompt.txt": {
       "commit": "b42c701",
