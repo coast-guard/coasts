@@ -141,22 +141,153 @@ pub async fn execute(args: &LookupArgs, project: &str) -> Result<()> {
     }
 }
 
-/// Detect which worktree the user is in by examining the cwd relative to
-/// the project root and its configured `worktree_dir` entries.
+/// Detect which worktree the user is in.
 ///
-/// Returns `Some(name)` if the cwd is inside `{project_root}/{worktree_dir}/{name}/...`,
-/// or `None` if the cwd is the project root (or not inside any worktree).
+/// First tries the path-based approach (cwd under `{project_root}/{worktree_dir}/{name}`).
+/// If that fails, falls back to git worktree detection via the `.git` file, which
+/// handles external worktrees (e.g., `~/.codex/worktrees/`, `~/.t3/worktrees/`).
 pub fn detect_worktree() -> Result<Option<String>> {
     let cwd = std::env::current_dir().context("Failed to get current directory")?;
-    let (project_root, worktree_dirs) = find_project_root_and_worktree_dirs(&cwd)?;
 
-    for dir in &worktree_dirs {
-        let wt_path = project_root.join(dir);
-        if let Some(name) = detect_worktree_from_paths(&cwd, &wt_path)? {
-            return Ok(Some(name));
+    if let Ok((project_root, worktree_dirs)) = find_project_root_and_worktree_dirs(&cwd) {
+        for dir in &worktree_dirs {
+            let resolved =
+                coast_core::coastfile::Coastfile::resolve_worktree_dir(&project_root, dir);
+            if let Some(name) = detect_worktree_from_paths(&cwd, &resolved)? {
+                return Ok(Some(name));
+            }
         }
     }
+
+    if let Some(name) = detect_worktree_via_git(&cwd)? {
+        return Ok(Some(name));
+    }
+
     Ok(None)
+}
+
+/// Detect the worktree name by tracing the `.git` file back to the main repo
+/// and matching cwd against `git worktree list --porcelain`.
+///
+/// This handles external worktrees where cwd is outside the project root.
+fn detect_worktree_via_git(cwd: &Path) -> Result<Option<String>> {
+    let real_project_root = resolve_project_root_from_git_file(cwd)?;
+
+    let output = std::process::Command::new("git")
+        .args(["worktree", "list", "--porcelain"])
+        .current_dir(&real_project_root)
+        .output()
+        .context("Failed to run git worktree list")?;
+
+    if !output.status.success() {
+        return Ok(None);
+    }
+
+    let canonical_cwd = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
+    let canonical_root = real_project_root
+        .canonicalize()
+        .unwrap_or_else(|_| real_project_root.clone());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    let worktree_dirs = load_worktree_dirs_from_project(&real_project_root);
+    let external_dirs: Vec<std::path::PathBuf> = worktree_dirs
+        .iter()
+        .filter(|d| coast_core::coastfile::Coastfile::is_external_worktree_dir(d))
+        .map(|d| coast_core::coastfile::Coastfile::resolve_worktree_dir(&real_project_root, d))
+        .collect();
+
+    let mut current_path: Option<std::path::PathBuf> = None;
+
+    for line in stdout.lines() {
+        if let Some(path_str) = line.strip_prefix("worktree ") {
+            current_path = Some(std::path::PathBuf::from(path_str));
+        } else if line.starts_with("branch ") || line == "detached" {
+            if let Some(ref wt_path) = current_path {
+                let wt_canonical = wt_path.canonicalize().unwrap_or_else(|_| wt_path.clone());
+                if wt_canonical == canonical_root {
+                    continue;
+                }
+                if !canonical_cwd.starts_with(&wt_canonical) {
+                    continue;
+                }
+
+                if let Some(branch_ref) = line.strip_prefix("branch ") {
+                    let name = branch_ref.strip_prefix("refs/heads/").unwrap_or(branch_ref);
+                    return Ok(Some(name.to_string()));
+                }
+
+                for ext_dir in &external_dirs {
+                    let canon_ext = ext_dir.canonicalize().unwrap_or_else(|_| ext_dir.clone());
+                    if let Ok(relative) = wt_canonical.strip_prefix(&canon_ext) {
+                        let name = relative.display().to_string();
+                        if !name.is_empty() {
+                            return Ok(Some(name));
+                        }
+                    }
+                }
+
+                if let Some(name) = wt_path.file_name().and_then(|n| n.to_str()) {
+                    return Ok(Some(name.to_string()));
+                }
+            }
+        } else if line.is_empty() {
+            current_path = None;
+        }
+    }
+
+    Ok(None)
+}
+
+/// Resolve the real project root by reading the `.git` file in cwd (or an ancestor)
+/// and following the `gitdir:` pointer back to the main repository.
+fn resolve_project_root_from_git_file(start: &Path) -> Result<std::path::PathBuf> {
+    let mut dir = start.to_path_buf();
+    loop {
+        let dot_git = dir.join(".git");
+        if dot_git.is_file() {
+            let content = std::fs::read_to_string(&dot_git)
+                .with_context(|| format!("Failed to read {}", dot_git.display()))?;
+            if let Some(gitdir_str) = content.lines().find_map(|l| l.strip_prefix("gitdir: ")) {
+                let gitdir_str = gitdir_str.trim();
+                let gitdir_path = if std::path::Path::new(gitdir_str).is_absolute() {
+                    std::path::PathBuf::from(gitdir_str)
+                } else {
+                    dir.join(gitdir_str)
+                };
+                let canonical = gitdir_path
+                    .canonicalize()
+                    .unwrap_or_else(|_| gitdir_path.clone());
+                let mut ancestor = canonical.as_path();
+                while let Some(parent) = ancestor.parent() {
+                    if parent.file_name().map(|n| n == ".git").unwrap_or(false) {
+                        if let Some(project_root) = parent.parent() {
+                            return Ok(project_root.to_path_buf());
+                        }
+                    }
+                    ancestor = parent;
+                }
+                bail!("Could not resolve project root from gitdir: {}", gitdir_str);
+            }
+        } else if dot_git.is_dir() {
+            return Ok(dir);
+        }
+        if !dir.pop() {
+            break;
+        }
+    }
+    bail!(
+        "No .git file or directory found walking up from {}",
+        start.display()
+    );
+}
+
+/// Load worktree_dirs from the Coastfile at the given project root.
+fn load_worktree_dirs_from_project(project_root: &Path) -> Vec<String> {
+    let coastfile_path = project_root.join("Coastfile");
+    if let Ok(cf) = coast_core::coastfile::Coastfile::from_file(&coastfile_path) {
+        return cf.worktree_dirs;
+    }
+    vec![".worktrees".to_string()]
 }
 
 /// Detect the worktree name given explicit paths (for testability).
@@ -366,5 +497,128 @@ mod tests {
 
         let result = detect_worktree_from_paths(&wt_dir, &wt_base).unwrap();
         assert_eq!(result, Some("team/feature/oauth".to_string()));
+    }
+
+    fn git_in(root: &std::path::Path, args: &[&str]) {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .env("GIT_AUTHOR_NAME", "test")
+            .env("GIT_AUTHOR_EMAIL", "test@test.com")
+            .env("GIT_COMMITTER_NAME", "test")
+            .env("GIT_COMMITTER_EMAIL", "test@test.com")
+            .output()
+            .expect("git command failed to start");
+        assert!(
+            out.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    #[test]
+    fn test_resolve_project_root_from_git_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        git_in(root, &["init", "-b", "main"]);
+        git_in(root, &["commit", "--allow-empty", "-m", "init"]);
+        git_in(root, &["branch", "feat"]);
+
+        let ext_dir = tempfile::tempdir().unwrap();
+        let wt_path = ext_dir.path().join("feat-wt");
+        git_in(
+            root,
+            &["worktree", "add", &wt_path.to_string_lossy(), "feat"],
+        );
+
+        let resolved = resolve_project_root_from_git_file(&wt_path).unwrap();
+        assert_eq!(
+            resolved.canonicalize().unwrap(),
+            root.canonicalize().unwrap()
+        );
+    }
+
+    #[test]
+    fn test_resolve_project_root_from_git_file_real_repo() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        git_in(root, &["init", "-b", "main"]);
+        git_in(root, &["commit", "--allow-empty", "-m", "init"]);
+
+        let resolved = resolve_project_root_from_git_file(root).unwrap();
+        assert_eq!(
+            resolved.canonicalize().unwrap(),
+            root.canonicalize().unwrap()
+        );
+    }
+
+    #[test]
+    fn test_resolve_project_root_from_git_file_no_git() {
+        let dir = tempfile::tempdir().unwrap();
+        let result = resolve_project_root_from_git_file(dir.path());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_detect_worktree_via_git_branch_worktree() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        git_in(root, &["init", "-b", "main"]);
+        git_in(root, &["commit", "--allow-empty", "-m", "init"]);
+        git_in(root, &["branch", "my-feature"]);
+
+        std::fs::write(root.join("Coastfile"), "[coast]\nname = \"test\"\n").unwrap();
+
+        let ext_dir = tempfile::tempdir().unwrap();
+        let wt_path = ext_dir.path().join("my-feature");
+        git_in(
+            root,
+            &["worktree", "add", &wt_path.to_string_lossy(), "my-feature"],
+        );
+
+        let result = detect_worktree_via_git(&wt_path).unwrap();
+        assert_eq!(result, Some("my-feature".to_string()));
+    }
+
+    #[test]
+    fn test_detect_worktree_via_git_detached_with_external_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        git_in(root, &["init", "-b", "main"]);
+        git_in(root, &["commit", "--allow-empty", "-m", "init"]);
+
+        let ext_base = tempfile::tempdir().unwrap();
+        let wt_path = ext_base.path().join("abc123").join("my-project");
+        std::fs::create_dir_all(wt_path.parent().unwrap()).unwrap();
+        git_in(
+            root,
+            &["worktree", "add", "--detach", &wt_path.to_string_lossy()],
+        );
+
+        std::fs::write(
+            root.join("Coastfile"),
+            format!(
+                "[coast]\nname = \"test\"\nworktree_dir = [\".worktrees\", \"{}\"]\n",
+                ext_base.path().display()
+            ),
+        )
+        .unwrap();
+
+        let result = detect_worktree_via_git(&wt_path).unwrap();
+        assert_eq!(result, Some("abc123/my-project".to_string()));
+    }
+
+    #[test]
+    fn test_detect_worktree_via_git_at_project_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        git_in(root, &["init", "-b", "main"]);
+        git_in(root, &["commit", "--allow-empty", "-m", "init"]);
+
+        std::fs::write(root.join("Coastfile"), "[coast]\nname = \"test\"\n").unwrap();
+
+        let result = detect_worktree_via_git(root).unwrap();
+        assert_eq!(result, None);
     }
 }
