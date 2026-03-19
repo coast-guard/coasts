@@ -43,15 +43,15 @@ Coasts абстрагируют конфигурацию среды выполн
 
 ## Требования
 
-- macOS
-- Docker Desktop
+- macOS или Linux
+- Docker Desktop на macOS или Docker Engine с плагином Compose на Linux
 - Проект, использующий Git
 - Node.js
-- `socat` *(устанавливается с `curl -fsSL https://coasts.dev/install | sh` как зависимость Homebrew `depends_on`)*
+- `socat` (`brew install socat` на macOS, `sudo apt install socat` на Ubuntu)
 
 ```text
-Примечание для Linux: Мы ещё не тестировали Coasts на Linux, но поддержка Linux планируется.
-Вы можете попытаться запустить Coasts на Linux уже сегодня, но мы не гарантируем, что всё будет работать корректно.
+Примечание для Linux: Динамические порты работают на Linux из коробки.
+Если вам нужны канонические порты ниже `1024`, см. документацию по checkout для необходимой конфигурации хоста.
 ```
 
 ## Контейнеризация агентов?

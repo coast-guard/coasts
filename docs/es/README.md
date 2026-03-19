@@ -2,7 +2,7 @@
 
 ```youtube
 MBGKSKau4sU
-Part of the [Coasts Video Course](learn-coasts/README.md).
+Part of the [Coasts Video Course](learn-coasts-videos/README.md).
 ```
 
 ## Instalación
@@ -43,15 +43,15 @@ Coasts abstraen la configuración del runtime en una capa modular simple encima 
 
 ## Requisitos
 
-- macOS
-- Docker Desktop
+- macOS o Linux
+- Docker Desktop en macOS, o Docker Engine con el plugin Compose en Linux
 - Un proyecto que use Git
 - Node.js
-- `socat` *(instalado con `curl -fsSL https://coasts.dev/install | sh` como una dependencia `depends_on` de Homebrew)*
+- `socat` (`brew install socat` en macOS, `sudo apt install socat` en Ubuntu)
 
 ```text
-Nota sobre Linux: Aún no hemos probado Coasts en Linux, pero el soporte para Linux está planificado.
-Puedes intentar ejecutar Coasts en Linux hoy, pero no ofrecemos garantías de que funcione correctamente.
+Nota sobre Linux: Los puertos dinámicos funcionan de inmediato en Linux.
+Si necesitas puertos canónicos por debajo de `1024`, consulta la documentación de checkout para la configuración de host necesaria.
 ```
 
 ## ¿Contenerizar agentes?
@@ -74,4 +74,4 @@ Si quieres un pequeño proyecto de ejemplo para probar con Coasts, empieza con e
 
 ## Coasts Video Course
 
-Si prefieres el video, el [Coasts Video Course](learn-coasts/README.md) cubre cada concepto central en menos de tres minutos cada uno.
+Si prefieres el video, el [Coasts Video Course](learn-coasts-videos/README.md) cubre cada concepto central en menos de tres minutos cada uno.

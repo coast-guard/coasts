@@ -16,15 +16,15 @@ coast daemon install
 
 ## 要件
 
-- macOS
-- Docker Desktop
+- macOS または Linux
+- macOS では Docker Desktop、Linux では Compose プラグイン付きの Docker Engine
 - Git を使用しているプロジェクト
 - Node.js
-- `socat`（macOS では `brew install socat`）
+- `socat`（macOS では `brew install socat`、Ubuntu では `sudo apt install socat`）
 
 ```text
-Linux note: We have not tested Coasts on Linux yet, but Linux support is planned.
-You can try to run Coasts on Linux today, but we do not provide guarantees that it will work correctly.
+Linux note: Dynamic ports work out of the box on Linux.
+If you need canonical ports below `1024`, see the checkout docs for the required host configuration.
 ```
 
 ## プロジェクトで Coasts をセットアップする

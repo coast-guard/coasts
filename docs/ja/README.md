@@ -43,15 +43,15 @@ Coasts はランタイム構成を worktree の上にあるシンプルでモジ
 
 ## 要件
 
-- macOS
-- Docker Desktop
+- macOS または Linux
+- macOS では Docker Desktop、Linux では Compose プラグイン付き Docker Engine
 - Git を使うプロジェクト
 - Node.js
-- `socat` *(Homebrew の `depends_on` 依存関係として `curl -fsSL https://coasts.dev/install | sh` でインストールされます)*
+- `socat`（macOS では `brew install socat`、Ubuntu では `sudo apt install socat`）
 
 ```text
-Linux 注記: Coasts はまだ Linux 上でテストしていませんが、Linux サポートは計画しています。
-現在でも Linux 上で Coasts を実行してみることはできますが、正しく動作する保証は提供しません。
+Linux note: Dynamic ports work out of the box on Linux.
+If you need canonical ports below `1024`, see the checkout docs for the required host configuration.
 ```
 
 ## エージェントをコンテナ化する？

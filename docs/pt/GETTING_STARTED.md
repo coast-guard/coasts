@@ -2,7 +2,7 @@
 
 ```youtube
 Je921fgJ4RY
-Part of the [Coasts Video Course](learn-coasts/README.md).
+Part of the [Coasts Video Course](learn-coasts-videos/README.md).
 ```
 
 ## Instalando
@@ -16,15 +16,15 @@ coast daemon install
 
 ## Requisitos
 
-- macOS
-- Docker Desktop
+- macOS ou Linux
+- Docker Desktop no macOS, ou Docker Engine com o plugin Compose no Linux
 - Um projeto usando Git
 - Node.js
-- `socat` (`brew install socat` no macOS)
+- `socat` (`brew install socat` no macOS, `sudo apt install socat` no Ubuntu)
 
 ```text
-Nota sobre Linux: Ainda não testamos o Coasts no Linux, mas o suporte a Linux está planejado.
-Você pode tentar executar o Coasts no Linux hoje, mas não fornecemos garantias de que ele funcionará corretamente.
+Nota sobre Linux: Portas dinâmicas funcionam imediatamente no Linux.
+Se você precisar de portas canônicas abaixo de `1024`, consulte a documentação de checkout para a configuração de host necessária.
 ```
 
 ## Configurando o Coasts em um Projeto

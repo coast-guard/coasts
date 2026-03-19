@@ -1,14 +1,14 @@
 {
   "es": {
     "GETTING_STARTED.md": {
-      "commit": "d7ed347",
-      "source_sha256": "336e3bfd5fe30e595581f444db7640b1ed12f0daa924a8ef86ed8f18da5dc37c",
-      "translated_at": "2026-03-10T20:35:46Z"
+      "commit": "a3e0d27",
+      "source_sha256": "610f232f15aaea46d3629a19c4715dfca322f9286743a47caa3258cba2c7bd65",
+      "translated_at": "2026-03-19T08:01:53Z"
     },
     "README.md": {
-      "commit": "d7ed347",
-      "source_sha256": "cc72e4a31bb0a7b6f321971ab3fd864511211fae1ae2835da4668dbad532477c",
-      "translated_at": "2026-03-10T20:35:46Z"
+      "commit": "a3e0d27",
+      "source_sha256": "0b991b6ff15b43bc16e26845d7e651af787732d045aa9b8c336cfcc0312a578e",
+      "translated_at": "2026-03-19T08:01:53Z"
     },
     "SKILLS_FOR_HOST_AGENTS.md": {
       "commit": "fa404df",
@@ -303,14 +303,14 @@
   },
   "ja": {
     "GETTING_STARTED.md": {
-      "commit": "d7ed347",
-      "source_sha256": "336e3bfd5fe30e595581f444db7640b1ed12f0daa924a8ef86ed8f18da5dc37c",
-      "translated_at": "2026-03-10T20:30:45Z"
+      "commit": "a3e0d27",
+      "source_sha256": "610f232f15aaea46d3629a19c4715dfca322f9286743a47caa3258cba2c7bd65",
+      "translated_at": "2026-03-19T08:00:26Z"
     },
     "README.md": {
-      "commit": "d7ed347",
-      "source_sha256": "cc72e4a31bb0a7b6f321971ab3fd864511211fae1ae2835da4668dbad532477c",
-      "translated_at": "2026-03-10T20:30:45Z"
+      "commit": "a3e0d27",
+      "source_sha256": "0b991b6ff15b43bc16e26845d7e651af787732d045aa9b8c336cfcc0312a578e",
+      "translated_at": "2026-03-19T08:00:26Z"
     },
     "SKILLS_FOR_HOST_AGENTS.md": {
       "commit": "fa404df",
@@ -605,14 +605,14 @@
   },
   "ko": {
     "GETTING_STARTED.md": {
-      "commit": "d7ed347",
-      "source_sha256": "336e3bfd5fe30e595581f444db7640b1ed12f0daa924a8ef86ed8f18da5dc37c",
-      "translated_at": "2026-03-10T20:32:07Z"
+      "commit": "a3e0d27",
+      "source_sha256": "610f232f15aaea46d3629a19c4715dfca322f9286743a47caa3258cba2c7bd65",
+      "translated_at": "2026-03-19T08:00:49Z"
     },
     "README.md": {
-      "commit": "d7ed347",
-      "source_sha256": "cc72e4a31bb0a7b6f321971ab3fd864511211fae1ae2835da4668dbad532477c",
-      "translated_at": "2026-03-10T20:32:07Z"
+      "commit": "a3e0d27",
+      "source_sha256": "0b991b6ff15b43bc16e26845d7e651af787732d045aa9b8c336cfcc0312a578e",
+      "translated_at": "2026-03-19T08:00:49Z"
     },
     "SKILLS_FOR_HOST_AGENTS.md": {
       "commit": "fa404df",
@@ -907,14 +907,14 @@
   },
   "pt": {
     "GETTING_STARTED.md": {
-      "commit": "d7ed347",
-      "source_sha256": "336e3bfd5fe30e595581f444db7640b1ed12f0daa924a8ef86ed8f18da5dc37c",
-      "translated_at": "2026-03-10T20:34:41Z"
+      "commit": "a3e0d27",
+      "source_sha256": "610f232f15aaea46d3629a19c4715dfca322f9286743a47caa3258cba2c7bd65",
+      "translated_at": "2026-03-19T08:01:34Z"
     },
     "README.md": {
-      "commit": "d7ed347",
-      "source_sha256": "cc72e4a31bb0a7b6f321971ab3fd864511211fae1ae2835da4668dbad532477c",
-      "translated_at": "2026-03-10T20:34:41Z"
+      "commit": "a3e0d27",
+      "source_sha256": "0b991b6ff15b43bc16e26845d7e651af787732d045aa9b8c336cfcc0312a578e",
+      "translated_at": "2026-03-19T08:01:34Z"
     },
     "SKILLS_FOR_HOST_AGENTS.md": {
       "commit": "fa404df",
@@ -1209,14 +1209,14 @@
   },
   "ru": {
     "GETTING_STARTED.md": {
-      "commit": "d7ed347",
-      "source_sha256": "336e3bfd5fe30e595581f444db7640b1ed12f0daa924a8ef86ed8f18da5dc37c",
-      "translated_at": "2026-03-10T20:33:19Z"
+      "commit": "a3e0d27",
+      "source_sha256": "610f232f15aaea46d3629a19c4715dfca322f9286743a47caa3258cba2c7bd65",
+      "translated_at": "2026-03-19T08:01:14Z"
     },
     "README.md": {
-      "commit": "d7ed347",
-      "source_sha256": "cc72e4a31bb0a7b6f321971ab3fd864511211fae1ae2835da4668dbad532477c",
-      "translated_at": "2026-03-10T20:33:19Z"
+      "commit": "a3e0d27",
+      "source_sha256": "0b991b6ff15b43bc16e26845d7e651af787732d045aa9b8c336cfcc0312a578e",
+      "translated_at": "2026-03-19T08:01:14Z"
     },
     "SKILLS_FOR_HOST_AGENTS.md": {
       "commit": "fa404df",
@@ -1511,14 +1511,14 @@
   },
   "zh": {
     "GETTING_STARTED.md": {
-      "commit": "d7ed347",
-      "source_sha256": "336e3bfd5fe30e595581f444db7640b1ed12f0daa924a8ef86ed8f18da5dc37c",
-      "translated_at": "2026-03-10T20:29:21Z"
+      "commit": "a3e0d27",
+      "source_sha256": "610f232f15aaea46d3629a19c4715dfca322f9286743a47caa3258cba2c7bd65",
+      "translated_at": "2026-03-19T08:00:06Z"
     },
     "README.md": {
-      "commit": "d7ed347",
-      "source_sha256": "cc72e4a31bb0a7b6f321971ab3fd864511211fae1ae2835da4668dbad532477c",
-      "translated_at": "2026-03-10T20:29:21Z"
+      "commit": "a3e0d27",
+      "source_sha256": "0b991b6ff15b43bc16e26845d7e651af787732d045aa9b8c336cfcc0312a578e",
+      "translated_at": "2026-03-19T08:00:06Z"
     },
     "SKILLS_FOR_HOST_AGENTS.md": {
       "commit": "fa404df",

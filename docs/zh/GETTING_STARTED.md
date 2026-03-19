@@ -2,7 +2,7 @@
 
 ```youtube
 Je921fgJ4RY
-Part of the [Coasts Video Course](learn-coasts/README.md).
+Part of the [Coasts Video Course](learn-coasts-videos/README.md).
 ```
 
 ## 安装
@@ -16,15 +16,15 @@ coast daemon install
 
 ## 要求
 
-- macOS
-- Docker Desktop
+- macOS 或 Linux
+- 在 macOS 上使用 Docker Desktop，或在 Linux 上使用带 Compose 插件的 Docker Engine
 - 使用 Git 的项目
 - Node.js
-- `socat`（在 macOS 上运行 `brew install socat`）
+- `socat`（在 macOS 上运行 `brew install socat`，在 Ubuntu 上运行 `sudo apt install socat`）
 
 ```text
-Linux note: We have not tested Coasts on Linux yet, but Linux support is planned.
-You can try to run Coasts on Linux today, but we do not provide guarantees that it will work correctly.
+Linux note: Dynamic ports work out of the box on Linux.
+If you need canonical ports below `1024`, see the checkout docs for the required host configuration.
 ```
 
 ## 在项目中设置 Coasts

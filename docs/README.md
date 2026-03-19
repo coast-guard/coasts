@@ -43,15 +43,15 @@ Coasts abstract runtime configuration into a simple modular layer on top of work
 
 ## Requirements
 
-- macOS
-- Docker Desktop
+- macOS or Linux
+- Docker Desktop on macOS, or Docker Engine with the Compose plugin on Linux
 - A project using Git
 - Node.js
-- `socat` *(installed with `curl -fsSL https://coasts.dev/install | sh` as a Homebrew `depends_on` dependency)*
+- `socat` (`brew install socat` on macOS, `sudo apt install socat` on Ubuntu)
 
 ```text
-Linux note: We have not tested Coasts on Linux yet, but Linux support is planned.
-You can try to run Coasts on Linux today, but we do not provide guarantees that it will work correctly.
+Linux note: Dynamic ports work out of the box on Linux.
+If you need canonical ports below `1024`, see the checkout docs for the required host configuration.
 ```
 
 ## Containerizing Agents?
