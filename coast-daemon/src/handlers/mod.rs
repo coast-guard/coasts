@@ -432,8 +432,11 @@ compose = "./infra/docker-compose.yml"
 
         let dir = tempfile::tempdir().unwrap();
         let fake_docker = dir.path().join("docker");
-        std::fs::write(&fake_docker, "#!/bin/sh\necho bridge-remove-failed >&2\nexit 1\n")
-            .unwrap();
+        std::fs::write(
+            &fake_docker,
+            "#!/bin/sh\necho bridge-remove-failed >&2\nexit 1\n",
+        )
+        .unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -466,7 +469,9 @@ compose = "./infra/docker-compose.yml"
             }
         }
 
-        assert!(err.to_string().contains("failed to remove WSL checkout bridge"));
+        assert!(err
+            .to_string()
+            .contains("failed to remove WSL checkout bridge"));
 
         let updated = db.get_instance("proj", "dev-1").unwrap().unwrap();
         assert_eq!(updated.status, InstanceStatus::CheckedOut);
