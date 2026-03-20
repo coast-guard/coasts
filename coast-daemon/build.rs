@@ -19,6 +19,12 @@ fn main() {
     println!("cargo:rerun-if-changed=../docs");
     println!("cargo:rerun-if-changed=../search-indexes");
 
+    // If the UI is already built (e.g. by a prior CI step), skip the npm build.
+    if guard_dir.join("dist/index.html").exists() {
+        println!("cargo:warning=coast-guard/dist/index.html already exists, skipping UI build");
+        return;
+    }
+
     // Skip the npm build in CI or when explicitly opted out.
     // Create a stub dist/ so rust-embed compiles even without a real UI build.
     if std::env::var("COAST_SKIP_UI_BUILD").is_ok() {

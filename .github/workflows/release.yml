@@ -121,6 +121,8 @@ jobs:
 
       - name: Build release binaries (cross)
         if: matrix.use_cross
+        env:
+          COAST_SKIP_UI_BUILD: "1"
         run: cross build --release --target ${{ matrix.target }} --workspace --exclude coast-integration-tests
 
       - name: Strip binaries
