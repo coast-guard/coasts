@@ -1,136 +1,181 @@
-Estás configurando habilidades de runtime de Coast para este proyecto. Coast (host en contenedores) ejecuta entornos de desarrollo aislados usando contenedores Docker-in-Docker. Este proyecto ya tiene un Coastfile — tu tarea es añadir la habilidad de runtime de Coast a la configuración de tu agente para que puedas interactuar con el entorno en ejecución.
-
-=== QUÉ HACER ===
-
-1. Determina qué archivo de configuración del agente usar según tu entorno:
-   - Claude Code: añadir a `CLAUDE.md` en la raíz del proyecto (créalo si no existe)
-   - Codex: añadir a `AGENTS.md` en la raíz del proyecto (créalo si no existe)
-   - Cursor: añadir a `.cursor/rules/coast.md` en la raíz del proyecto (crea los directorios si es necesario)
-   - Otros agentes: añadir a cualquier archivo de prompt o reglas a nivel de proyecto que tu agente lea al iniciar
-
-2. Añade el siguiente texto de habilidad a ese archivo bajo una sección "Coast Runtime". Si el archivo ya existe, añádelo al final como una nueva sección — no sobrescribas el contenido existente.
-
-=== TEXTO DE HABILIDAD (añade esto al archivo de configuración del agente) ===
-
 # Coast Runtime
 
-Este proyecto usa Coasts (host en contenedores) para entornos de desarrollo aislados.
-Tus ediciones de código son automáticamente visibles dentro del Coast en ejecución — el sistema de archivos
-se comparte entre el host y el contenedor.
+Este proyecto usa Coasts — runtimes en contenedores para ejecutar servicios, pruebas
+y otros comandos de runtime. El sistema de archivos se comparte entre el host y el
+contenedor, por lo que las ediciones de archivos en cualquiera de los dos lados son visibles
+para ambos de inmediato.
 
-## Orientación
+## Discovery
 
-Antes de ejecutar cualquier comando de runtime, descubre qué instancia de Coast coincide con tu
-directorio de trabajo actual:
+Antes del primer comando de runtime en una sesión, ejecuta:
 
-```
-coast lookup
-```
+  coast lookup
 
-Esto imprime el nombre de la instancia, puertos, URLs y comandos de ejemplo. Usa el nombre de la
-instancia de la salida para todos los comandos posteriores.
+Esto imprime el nombre de la instancia, los puertos y comandos de ejemplo. Usa el nombre
+de la instancia de la salida para todos los comandos posteriores.
 
-Si necesitas un contexto más profundo sobre cómo funcionan los Coasts, lee esta documentación:
+## What runs where
 
-```
-coast docs --path concepts_and_terminology/LOOKUP.md
-coast docs --path concepts_and_terminology/FILESYSTEM.md
-coast docs --path concepts_and_terminology/EXEC_AND_DOCKER.md
-coast docs --path concepts_and_terminology/LOGS.md
-```
+El sistema de archivos se comparte, así que usa `coast exec` solo para las cosas que necesitan
+el runtime del contenedor (bases de datos, servicios, pruebas de integración). Todo lo demás
+se ejecuta directamente en el host.
 
-## Ejecución de comandos
+Usa `coast exec` para:
+- Pruebas que necesitan servicios en ejecución (pruebas unitarias integradas con servicios o dbs, pruebas de integración, pruebas de API)
+- Reinicios de servicios u operaciones de compose
+- Cualquier cosa que se comunique con bases de datos, cachés u otros servicios del contenedor
 
-Usa `coast exec` para ejecutar comandos dentro del Coast. El shell comienza en la raíz del workspace
-(donde está el Coastfile). Primero haz cd al directorio de destino:
+Ejecuta directamente en el host:
+- Linting, verificación de tipos, formateo
+- Operaciones de Git
+- Playwright y pruebas de navegador
+- Instalar dependencias del lado del host (npm install, pip install)
+- Búsqueda de archivos, generación de código, análisis estático
 
-```
-coast exec <instance> -- sh -c "cd <dir> && <command>"
-```
+Ejemplo:
 
-Ejemplos:
+  coast exec <instance> -- sh -c "cd <dir> && npm test"    # needs DB
+  npm run lint                                              # host is fine
+  npx playwright test                                       # host is fine
 
-```
-coast exec dev-1 -- sh -c "cd src && npm test"
-coast exec dev-1 -- sh -c "cd backend && go test ./..."
-coast exec dev-1 -- sh -c "cd apps/web && npx playwright test"
-```
+## Runtime feedback
 
-## Retroalimentación del runtime
+  coast ps <instance>
+  coast logs <instance> --service <service>
+  coast logs <instance> --service <service> --tail 50
 
-Comprueba el estado del servicio:
+## Creating and assigning Coasts
 
-```
-coast ps <instance>
-```
+Si `coast lookup` no devuelve ninguna coincidencia, ejecuta `coast ls` para ver qué existe.
 
-Lee los logs del servicio:
+Si ya hay un Coast sin asignar en ejecución para este proyecto, prefiere asignarle
+tu worktree en lugar de crear uno nuevo:
 
-```
-coast logs <instance> --service <service>
-coast logs <instance> --service <service> --tail 50
-```
+  coast assign <existing> -w <worktree>
 
-## Resolución de problemas
+Un Coast ya ocupado también puede reasignarse con `coast assign`, pero primero consúltalo
+con el usuario porque eso interrumpirá el slot actual.
 
-Si encuentras errores o comportamientos desconocidos, busca en la documentación de Coast:
+Si no hay ningún Coast en ejecución, pregunta al usuario antes de crear uno — los Coasts
+pueden consumir mucha memoria:
 
-```
-coast search-docs "mensaje de error o descripción"
-```
+  coast run <name> -w <worktree>
 
-Esto usa búsqueda semántica — describe el problema en lenguaje natural y encontrará
-la documentación relevante.
+Un proyecto debe compilarse antes de que se puedan crear instancias. Si `coast run` falla
+porque no existe ninguna compilación, ejecuta primero `coast build`.
 
-## Conocimiento del worktree
+## Coastfile setup
 
-Cuando empieces a trabajar en un worktree — ya sea que lo hayas creado tú o una herramienta como
-Codex, Conductor o T3 Code lo haya creado por ti — comprueba si una instancia de Coast ya está
-asignada:
+Si el proyecto todavía no tiene un Coastfile, o si necesitas modificar el
+Coastfile, primero lee la documentación del Coastfile:
 
-```
-coast lookup
-```
+  coast docs --path coastfiles/README.md
 
-Si `coast lookup` encuentra una instancia, úsala para todos los comandos de runtime.
+## When confused
 
-Si no devuelve instancias, comprueba qué se está ejecutando actualmente:
+Antes de hacer suposiciones sobre el comportamiento de Coast, explora la documentación:
 
-```
-coast ls
-```
+  coast docs                                     # list all doc pages
+  coast docs --path concepts_and_terminology/RUN.md
+  coast docs --path concepts_and_terminology/ASSIGN.md
+  coast docs --path concepts_and_terminology/BUILDS.md
+  coast search-docs "your question here"         # semantic search
 
-Luego pregunta al usuario qué opción prefiere:
-
-**Opción 1 — Crear un nuevo Coast y asignar este worktree:**
-```
-coast run <new-name>
-coast assign <new-name> -w <worktree>
-```
-
-**Opción 2 — Reasignar un Coast existente a este worktree:**
-```
-coast assign <existing-name> -w <worktree>
-```
-
-**Opción 3 — Omitir Coast por completo:**
-Continúa sin un entorno de runtime. Puedes editar archivos pero no puedes ejecutar pruebas,
-compilaciones ni servicios dentro de un contenedor.
-
-El valor `<worktree>` es el nombre de la rama (ejecuta `git branch --show-current`) o
-el identificador de worktree mostrado en `coast ls`. Pregunta siempre al usuario antes de crear
-o reasignar — no lo hagas automáticamente.
-
-## Reglas
+## Rules
 
 - Ejecuta siempre `coast lookup` antes de tu primer comando de runtime en una sesión.
-- No ejecutes servicios directamente en el host. Usa `coast exec` para todas las tareas de runtime.
-- Las ediciones de archivos en el host son visibles instantáneamente dentro del Coast. No necesitas
-  copiar archivos ni reconstruir después de editar.
-- Si `coast lookup` no devuelve instancias, puede que el Coast no esté en ejecución. Sigue el flujo de
-  conocimiento del worktree anterior para resolver esto con el usuario.
+- Usa `coast exec` solo para las cosas que necesitan el runtime del contenedor.
+- Ejecuta linting, verificación de tipos, formateo y git directamente en el host.
+- Usa `coast docs` o `coast search-docs` antes de hacer suposiciones sobre el comportamiento de Coast.
+- No ejecutes servicios directamente en el host cuando el proyecto espera Coast.
 
-=== FIN DEL TEXTO DE HABILIDAD ===
+---
+name: coasts
+description: Inspect and control Coast instances for the current checkout. Use
+  when the user says "/coasts", asks to assign or reassign a Coast, wants to
+  run commands or read logs in the matching Coast, wants to create a new Coast,
+  or explicitly asks to open Coast UI.
+---
 
-3. Después de escribir el archivo, verifica que el Coastfile exista en este proyecto ejecutando `ls Coastfile`.
-4. Si un Coast ya está en ejecución, ejecuta `coast lookup` para confirmar que la habilidad funciona. Si no hay ningún Coast en ejecución, dile al usuario que puede iniciar uno con `coast run dev-1`.
+# Coasts
+
+Usa directamente el CLI de Coast. No añadas wrappers.
+
+## Orient Yourself
+
+Empieza explorando el CLI y la documentación:
+
+  coast                                             # see all available commands
+  coast docs                                        # list all doc pages
+  coast search-docs "your question"                 # semantic search
+
+Cuando algo sobre el comportamiento de Coast no esté claro, lee la documentación antes de hacer suposiciones:
+
+  coast docs --path concepts_and_terminology/RUN.md
+  coast docs --path concepts_and_terminology/BUILDS.md
+  coast docs --path concepts_and_terminology/ASSIGN.md
+  coast docs --path concepts_and_terminology/PORTS.md
+  coast docs --path coastfiles/README.md
+
+## Quick Start
+
+Enruta las solicitudes a uno de estos modos:
+
+1. **Usar Coast** — ejecuta `coast lookup`, luego usa `coast exec`, `coast ps`
+   o `coast logs` con la instancia correspondiente.
+2. **Crear o asignar** — ejecuta `coast ls`, luego `coast run` para crear un nuevo
+   Coast o `coast assign` para reapuntar uno existente.
+3. **Abrir UI** — ejecuta `coast ui`.
+
+## What Runs Where
+
+El host y el Coast comparten el sistema de archivos. Usa `coast exec` solo para las cosas
+que necesitan servicios en ejecución dentro del contenedor.
+
+**Usa `coast exec` para:**
+- Pruebas de integración, pruebas de API, cualquier cosa que necesite bases de datos o servicios
+- Reinicios de servicios, operaciones de compose
+- Comandos que se comuniquen con procesos solo disponibles en el contenedor
+
+**Ejecuta en el host:**
+- Linting (`eslint`, `rubocop`, `golangci-lint`)
+- Verificación de tipos (`tsc --noEmit`, `go vet`)
+- Formateo (`prettier`, `gofmt`)
+- Operaciones de Git
+- Playwright y pruebas de navegador
+- Análisis estático, generación de código
+- Instalación de paquetes (`npm install`, `pip install`)
+
+## Create and Assign
+
+Cuando `coast lookup` no devuelve ninguna coincidencia:
+
+1. Ejecuta `coast ls` para ver los slots disponibles.
+2. Prefiere `coast run <name> -w <worktree>` para crear y asignar en un solo paso.
+3. Si todavía no existe ninguna compilación, ejecuta primero `coast build`.
+4. Después de crear, vuelve a ejecutar `coast lookup` para confirmar.
+
+Cuando quieras cambiar un Coast existente a un worktree diferente:
+
+  coast assign <name> -w <worktree>
+
+Eso también funciona para un Coast ya asignado o ya checked-out, pero consulta primero
+con el usuario antes de reasignar un slot ocupado.
+
+## Coastfile Setup
+
+Si el proyecto necesita un Coastfile nuevo o modificado, primero lee la documentación:
+
+  coast docs --path coastfiles/README.md
+
+La documentación del Coastfile cubre la configuración de compose, puertos, volúmenes, secretos,
+servicios compartidos, servicios sin contenedor auxiliar y herencia.
+
+## Safety Rules
+
+- Ejecuta `coast lookup` antes de actuar y de nuevo después de cualquier cambio de topología.
+- Pregunta antes de `coast assign`, `coast unassign` o `coast checkout` si eso fuera a
+  interrumpir un slot existente.
+- Prefiere crear un nuevo Coast en lugar de reutilizar uno ya checked-out o ya asignado,
+  a menos que el usuario quiera explícitamente que se reasigne el slot existente.
+- Usa `coast docs` o `coast search-docs` antes de hacer suposiciones.

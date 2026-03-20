@@ -1,135 +1,163 @@
-你正在为此项目设置 Coast 运行时技能。Coast（容器化主机）使用 Docker-in-Docker 容器运行隔离的开发环境。该项目已经有一个 Coastfile —— 你的任务是将 Coast 运行时技能添加到你的代理配置中，以便你可以与正在运行的环境交互。
-
-=== 要做的事 ===
-
-1. 根据你的环境确定要使用哪个代理配置文件:
-   - Claude Code:添加到项目根目录中的 `CLAUDE.md`（如果不存在则创建）
-   - Codex:添加到项目根目录中的 `AGENTS.md`（如果不存在则创建）
-   - Cursor:添加到项目根目录中的 `.cursor/rules/coast.md`（如有需要请创建目录）
-   - 其他代理:添加到你的代理在启动时读取的任何项目级提示或规则文件中
-
-2. 将以下技能文本添加到该文件中的 "Coast Runtime" 部分下。如果该文件已存在，请将其作为新部分追加——不要覆盖现有内容。
-
-=== 技能文本（将此添加到代理配置文件中）===
-
 # Coast Runtime
 
-此项目使用 Coasts（容器化主机）来提供隔离的开发环境。
-你的代码编辑会自动在正在运行的 Coast 内可见——文件系统
-在主机和容器之间共享。
+此项目使用 Coasts——用于运行服务、测试和其他运行时命令的容器化运行时。主机与容器之间共享文件系统，因此任一侧的文件编辑都会立即对双方可见。
 
-## Orientation
+## Discovery
 
-在运行任何运行时命令之前，先发现哪个 Coast 实例与你的
-当前工作目录匹配:
+在会话中的第一个运行时命令之前，运行:
 
-```
-coast lookup
-```
+  coast lookup
 
-这会打印实例名称、端口、URL 和示例命令。对所有后续命令，
-都使用输出中的实例名称。
+这会打印实例名称、端口和示例命令。对所有后续命令，都使用输出中的实例名称。
 
-如果你需要更深入了解 Coasts 的工作方式，请阅读以下文档:
+## What runs where
 
-```
-coast docs --path concepts_and_terminology/LOOKUP.md
-coast docs --path concepts_and_terminology/FILESYSTEM.md
-coast docs --path concepts_and_terminology/EXEC_AND_DOCKER.md
-coast docs --path concepts_and_terminology/LOGS.md
-```
+文件系统是共享的，因此只有在需要容器运行时的情况下才使用 `coast exec`（数据库、服务、集成测试）。其他所有内容都直接在主机上运行。
 
-## Running Commands
+在以下情况下使用 `coast exec`:
+- 需要运行中服务的测试（与服务或数据库集成的单元测试、集成测试、API 测试）
+- 服务重启或 compose 操作
+- 任何与数据库、缓存或其他容器服务交互的内容
 
-使用 `coast exec` 在 Coast 内运行命令。shell 会从工作区
-根目录（即 Coastfile 所在位置）启动。请先 cd 到你的目标目录:
-
-```
-coast exec <instance> -- sh -c "cd <dir> && <command>"
-```
+直接在主机上运行:
+- Lint、类型检查、格式化
+- Git 操作
+- Playwright 和浏览器测试
+- 安装主机侧依赖（npm install、pip install）
+- 文件搜索、代码生成、静态分析
 
 示例:
 
-```
-coast exec dev-1 -- sh -c "cd src && npm test"
-coast exec dev-1 -- sh -c "cd backend && go test ./..."
-coast exec dev-1 -- sh -c "cd apps/web && npx playwright test"
-```
+  coast exec <instance> -- sh -c "cd <dir> && npm test"    # needs DB
+  npm run lint                                              # host is fine
+  npx playwright test                                       # host is fine
 
-## Runtime Feedback
+## Runtime feedback
 
-检查服务状态:
+  coast ps <instance>
+  coast logs <instance> --service <service>
+  coast logs <instance> --service <service> --tail 50
 
-```
-coast ps <instance>
-```
+## Creating and assigning Coasts
 
-读取服务日志:
+如果 `coast lookup` 没有返回匹配项，运行 `coast ls` 查看已有内容。
 
-```
-coast logs <instance> --service <service>
-coast logs <instance> --service <service> --tail 50
-```
+如果此项目已有一个未分配的 Coast 正在运行，优先将你的 worktree 分配给它，而不是创建新的:
 
-## Troubleshooting
+  coast assign <existing> -w <worktree>
 
-如果你遇到错误或不熟悉的行为，请搜索 Coast 文档:
+已被占用的 Coast 也可以使用 `coast assign` 重新分配，但要先与用户确认，因为这会扰乱当前槽位。
 
-```
-coast search-docs "error message or description"
-```
+如果当前没有运行中的 Coast，请在创建前先询问用户——Coasts 可能会占用大量内存:
 
-这会使用语义搜索——用自然语言描述问题，它会
-找到相关文档。
+  coast run <name> -w <worktree>
 
-## Worktree Awareness
+项目必须先构建，才能创建实例。如果 `coast run` 因为没有现有构建而失败，先运行 `coast build`。
 
-当你开始在某个 worktree 中工作时——无论是你创建的，还是像
-Codex、Conductor 或 T3 Code 这样的工具为你创建的——请检查是否
-已经分配了一个 Coast 实例:
+## Coastfile setup
 
-```
-coast lookup
-```
+如果项目还没有 Coastfile，或者你需要修改 Coastfile，请先阅读 Coastfile 文档:
 
-如果 `coast lookup` 找到了一个实例，请将其用于所有运行时命令。
+  coast docs --path coastfiles/README.md
 
-如果它没有返回任何实例，请检查当前正在运行的内容:
+## When confused
 
-```
-coast ls
-```
+在猜测 Coast 行为之前，先查看文档:
 
-然后询问用户他们更喜欢哪个选项:
-
-**选项 1 —— 创建一个新的 Coast 并分配此 worktree:**
-```
-coast run <new-name>
-coast assign <new-name> -w <worktree>
-```
-
-**选项 2 —— 将现有 Coast 重新分配给此 worktree:**
-```
-coast assign <existing-name> -w <worktree>
-```
-
-**选项 3 —— 完全跳过 Coast:**
-在没有运行时环境的情况下继续。你可以编辑文件，但不能在容器内运行测试、
-构建或服务。
-
-`<worktree>` 的值是分支名称（运行 `git branch --show-current`）或
-`coast ls` 中显示的 worktree 标识符。创建或重新分配前始终先询问用户——不要自动执行。
+  coast docs                                     # 列出所有文档页面
+  coast docs --path concepts_and_terminology/RUN.md
+  coast docs --path concepts_and_terminology/ASSIGN.md
+  coast docs --path concepts_and_terminology/BUILDS.md
+  coast search-docs "your question here"         # 语义搜索
 
 ## Rules
 
 - 在会话中的第一个运行时命令之前，始终运行 `coast lookup`。
-- 不要直接在主机上运行服务。所有运行时任务都使用 `coast exec`。
-- 在主机上的文件编辑会立即在 Coast 内可见。你不需要
-  在编辑后复制文件或重新构建。
-- 如果 `coast lookup` 没有返回任何实例，Coast 可能没有运行。请遵循
-  上面的 worktree awareness 流程，与用户一起解决此问题。
+- 仅对需要容器运行时的内容使用 `coast exec`。
+- 直接在主机上运行 lint、类型检查、格式化和 git。
+- 在猜测 Coast 行为之前，使用 `coast docs` 或 `coast search-docs`。
+- 当项目要求使用 Coast 时，不要直接在主机上运行服务。
 
-=== 技能文本结束 ===
+---
+name: coasts
+description: Inspect and control Coast instances for the current checkout. Use
+  when the user says "/coasts", asks to assign or reassign a Coast, wants to
+  run commands or read logs in the matching Coast, wants to create a new Coast,
+  or explicitly asks to open Coast UI.
+---
 
-3. 写入文件后，通过运行 `ls Coastfile` 来验证该项目中存在 Coastfile。
-4. 如果已经有一个 Coast 正在运行，运行 `coast lookup` 以确认该技能有效。如果没有 Coast 正在运行，告诉用户他们可以使用 `coast run dev-1` 启动一个。
+# Coasts
+
+直接使用 Coast CLI。不要添加包装器。
+
+## Orient Yourself
+
+先浏览 CLI 和文档:
+
+  coast                                             # 查看所有可用命令
+  coast docs                                        # 列出所有文档页面
+  coast search-docs "your question"                 # 语义搜索
+
+如果对 Coast 的行为有任何不清楚之处，请先阅读文档，不要猜测:
+
+  coast docs --path concepts_and_terminology/RUN.md
+  coast docs --path concepts_and_terminology/BUILDS.md
+  coast docs --path concepts_and_terminology/ASSIGN.md
+  coast docs --path concepts_and_terminology/PORTS.md
+  coast docs --path coastfiles/README.md
+
+## Quick Start
+
+将请求路由到以下模式之一:
+
+1. **Use Coast** —— 运行 `coast lookup`，然后对匹配的实例使用 `coast exec`、`coast ps` 或 `coast logs`。
+2. **Create or Assign** —— 运行 `coast ls`，然后使用 `coast run` 创建新的 Coast，或使用 `coast assign` 重新指向现有 Coast。
+3. **Open UI** —— 运行 `coast ui`。
+
+## What Runs Where
+
+主机与 Coast 共享文件系统。仅在需要容器内运行中的服务时才使用 `coast exec`。
+
+**在以下情况下使用 `coast exec`:**
+- 集成测试、API 测试，以及任何需要数据库或服务的内容
+- 服务重启、compose 操作
+- 与仅存在于容器中的进程交互的命令
+
+**在主机上运行:**
+- Lint (`eslint`, `rubocop`, `golangci-lint`)
+- 类型检查 (`tsc --noEmit`, `go vet`)
+- 格式化 (`prettier`, `gofmt`)
+- Git 操作
+- Playwright 和浏览器测试
+- 静态分析、代码生成
+- 安装包 (`npm install`, `pip install`)
+
+## Create and Assign
+
+当 `coast lookup` 没有返回匹配项时:
+
+1. 运行 `coast ls` 查看可用槽位。
+2. 优先使用 `coast run <name> -w <worktree>`，一步完成创建和分配。
+3. 如果还没有构建，先运行 `coast build`。
+4. 创建后，重新运行 `coast lookup` 进行确认。
+
+当你想将现有 Coast 切换到不同的 worktree 时:
+
+  coast assign <name> -w <worktree>
+
+这也适用于已经分配或已 checkout 的 Coast，但在重新分配已占用槽位前，先询问用户。
+
+## Coastfile Setup
+
+如果项目需要新的或修改后的 Coastfile，请先阅读文档:
+
+  coast docs --path coastfiles/README.md
+
+Coastfile 文档涵盖 compose 配置、端口、卷、密钥、共享服务、裸服务和继承。
+
+## Safety Rules
+
+- 在采取行动前运行 `coast lookup`，并在任何拓扑变更后再次运行。
+- 如果 `coast assign`、`coast unassign` 或 `coast checkout` 会扰乱现有槽位，先征求同意。
+- 除非用户明确希望重新分配现有槽位，否则优先创建新的 Coast，而不是复用已 checkout 或已分配的 Coast。
+- 在猜测之前，使用 `coast docs` 或 `coast search-docs`。

@@ -66,11 +66,11 @@ A build involves three kinds of Docker images:
 - **Pulled images** -- compose services with `image:` directives are pulled and saved as tarballs.
 - **Coast image** -- if `[coast.setup]` is configured, a custom Docker image is built on top of `docker:dind` with the specified packages, commands, and files. Tagged as `coast-image/{project}:{build_id}`.
 
-At runtime (`coast run`), these tarballs are loaded into the inner [DinD daemon](RUNTIMES_AND_SERVICES.md) via `docker load`. This is what makes Coast instances start quickly without needing to pull images from a registry.
+At runtime ([`coast run`](RUN.md)), these tarballs are loaded into the inner [DinD daemon](RUNTIMES_AND_SERVICES.md) via `docker load`. This is what makes Coast instances start quickly without needing to pull images from a registry.
 
 ## Builds and Instances
 
-When you run `coast run`, Coast resolves the latest build (or a specific `--build-id`) and uses its artifacts to create the instance. The build ID is recorded on the instance.
+When you run [`coast run`](RUN.md), Coast resolves the latest build (or a specific `--build-id`) and uses its artifacts to create the instance. The build ID is recorded on the instance.
 
 You do not need to rebuild to create more instances. One build can serve many Coast instances running in parallel.
 

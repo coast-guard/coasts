@@ -3,6 +3,8 @@
 本节涵盖贯穿 Coasts 的核心概念和词汇。如果你是 Coasts 新手，在深入配置或高级用法之前请先从这里开始。
 
 - [Coasts](COASTS.md) — 你项目的自包含运行时，每个都有自己的端口、卷以及 worktree 分配。
+- [Run](RUN.md) — 基于最新构建创建一个新的 Coast 实例，并可选择分配一个 worktree。
+- [Remove](REMOVE.md) — 拆除一个 Coast 实例及其隔离的运行时状态，适用于你需要干净地重新创建，或想要关闭 Coasts 的情况。
 - [Filesystem](FILESYSTEM.md) — 主机与 Coast 之间的共享挂载、主机侧代理，以及 worktree 切换。
 - [Coast Daemon](DAEMON.md) — 本地的 `coastd` 控制平面，用于执行生命周期操作。
 - [Coast CLI](CLI.md) — 用于命令、脚本和代理工作流的终端界面。

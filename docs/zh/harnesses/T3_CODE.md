@@ -1,12 +1,15 @@
 # T3 Code
 
-[T3 Code](https://github.com/pingdotgg/t3code) 是 Ping 提供的一个开源编码代理 harness。每个工作区都是一个 git worktree，存储在 `~/.t3/worktrees/<project-name>/` 中，并检出到一个命名分支上。
+[T3 Code](https://github.com/pingdotgg/t3code) 会在
+`~/.t3/worktrees/<project-name>/` 创建 git worktree，并检出到命名分支上。
 
-由于这些 worktree 位于项目根目录之外，Coast 需要显式配置才能发现并挂载它们。
+在 T3 Code 中，将始终开启的 Coast Runtime 规则放在 `AGENTS.md` 中，并将可复用的 `/coasts` 工作流放在 `.agents/skills/coasts/SKILL.md` 中。
 
-## 设置
+由于这些 worktree 位于项目根目录之外，Coasts 需要显式配置才能发现并挂载它们。
 
-将 `~/.t3/worktrees/<project-name>` 添加到 `worktree_dir`。T3 Code 会将 worktree 嵌套在每个项目对应的子目录下，因此路径必须包含项目名称。在下面的示例中，`my-app` 必须与您的仓库在 `~/.t3/worktrees/` 下的实际文件夹名称一致。
+## Setup
+
+将 `~/.t3/worktrees/<project-name>` 添加到 `worktree_dir`。T3 Code 会将 worktree 嵌套在每个项目对应的子目录下，因此该路径必须包含项目名称。在下面的示例中，`my-app` 必须与您的仓库在 `~/.t3/worktrees/` 下的实际文件夹名称一致。
 
 ```toml
 [coast]
@@ -14,7 +17,7 @@ name = "my-app"
 worktree_dir = [".worktrees", "~/.t3/worktrees/my-app"]
 ```
 
-Coast 会在运行时展开 `~`，并将任何以 `~/` 或 `/` 开头的路径视为外部路径。详情请参见 [Worktree Directories](../coastfiles/WORKTREE_DIR.md)。
+Coasts 会在运行时展开 `~`，并将任何以 `~/` 或 `/` 开头的路径视为外部路径。详情请参见 [Worktree Directories](../coastfiles/WORKTREE_DIR.md)。
 
 更改 `worktree_dir` 后，现有实例必须被**重新创建**，绑定挂载才能生效:
 
@@ -24,18 +27,32 @@ coast build
 coast run my-instance
 ```
 
-worktree 列表会立即更新（Coast 会读取新的 Coastfile），但要分配到 T3 Code 的 worktree，则需要容器内存在该绑定挂载。
+worktree 列表会立即更新（Coasts 会读取新的 Coastfile），但分配到 T3 Code worktree 需要容器内存在该绑定挂载。
 
-## Coast 的作用
+## Where Coasts guidance goes
 
-- **绑定挂载** — 在容器创建时，Coast 会将 `~/.t3/worktrees/<project-name>` 挂载到容器中的 `/host-external-wt/{index}`。
-- **发现** — `git worktree list --porcelain` 的作用域是仓库级别，因此只会显示属于当前项目的 worktree。
-- **命名** — T3 Code worktree 使用命名分支，因此它们会在 Coast UI 和 CLI 中以分支名显示。
-- **分配** — `coast assign` 会从外部绑定挂载路径重新挂载 `/workspace`。
-- **Gitignored 同步** — 在主机文件系统上使用绝对路径运行，无需绑定挂载即可工作。
-- **孤儿检测** — git watcher 会递归扫描外部目录，并通过 `.git` gitdir 指针进行过滤。如果 T3 Code 删除了某个工作区，Coast 会自动取消该实例的分配。
+对于 T3 Code，请使用以下布局:
 
-## 示例
+- 将简短的 Coast Runtime 规则放在 `AGENTS.md` 中
+- 将可复用的 `/coasts` 工作流放在 `.agents/skills/coasts/SKILL.md` 中
+- 不要为 Coasts 额外添加单独的 T3 专用项目命令或斜杠命令层
+- 如果此仓库使用多个 harness，请参阅
+  [Multiple Harnesses](MULTIPLE_HARNESSES.md) 和
+  [Skills for Host Agents](../SKILLS_FOR_HOST_AGENTS.md)。
+
+## What Coasts does
+
+- **Run** — `coast run <name>` 会基于最新构建创建一个新的 Coast 实例。使用 `coast run <name> -w <worktree>` 可一步完成创建并分配 T3 Code worktree。参见 [Run](../concepts_and_terminology/RUN.md)。
+- **Bind mount** — 在容器创建时，Coasts 会将
+  `~/.t3/worktrees/<project-name>` 挂载到容器中的
+  `/host-external-wt/{index}`。
+- **Discovery** — `git worktree list --porcelain` 的作用域是仓库级别，因此只会显示属于当前项目的 worktree。
+- **Naming** — T3 Code worktree 使用命名分支，因此它们会在 Coasts UI 和 CLI 中以分支名显示。
+- **Assign** — `coast assign` 会从外部绑定挂载路径重新挂载 `/workspace`。
+- **Gitignored sync** — 在主机文件系统上使用绝对路径运行，无需绑定挂载即可工作。
+- **Orphan detection** — git watcher 会递归扫描外部目录，并通过 `.git` gitdir 指针进行过滤。如果 T3 Code 删除了某个工作区，Coasts 会自动取消该实例的分配。
+
+## Example
 
 ```toml
 [coast]
@@ -55,13 +72,10 @@ web = "hot"
 api = "hot"
 ```
 
-- `.worktrees/` — Coast 管理的 worktree
 - `.claude/worktrees/` — Claude Code（本地，无需特殊处理）
 - `~/.codex/worktrees/` — Codex（外部，绑定挂载）
 - `~/.t3/worktrees/my-app/` — T3 Code（外部，绑定挂载；请将 `my-app` 替换为您的仓库文件夹名称）
 
-## 限制
+## Limitations
 
-- Coast 可以发现并挂载 T3 Code worktree，但不会创建或删除它们。
-- 由 `coast assign` 创建的新 worktree 始终位于本地 `default_worktree_dir` 中，而不会位于外部目录中。
-- 避免依赖 T3 Code 特定的环境变量来进行 Coasts 内部的运行时配置。Coast 会独立管理端口、工作区路径和服务发现——请改用 Coastfile `[ports]` 和 `coast exec`。
+- 避免依赖 T3 Code 特定的环境变量来进行 Coasts 内部的运行时配置。Coasts 会独立管理端口、工作区路径和服务发现——请改用 Coastfile `[ports]` 和 `coast exec`。

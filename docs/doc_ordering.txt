@@ -18,11 +18,16 @@ learn-coasts-videos/coast-ui.md
 harnesses/README.md
 harnesses/CODEX.md
 harnesses/CONDUCTOR.md
+harnesses/CLAUDE_CODE.md
+harnesses/CURSOR.md
 harnesses/T3_CODE.md
+harnesses/MULTIPLE_HARNESSES.md
 
 # Concepts and Terminology
 concepts_and_terminology/README.md
 concepts_and_terminology/COASTS.md
+concepts_and_terminology/RUN.md
+concepts_and_terminology/REMOVE.md
 concepts_and_terminology/FILESYSTEM.md
 concepts_and_terminology/DAEMON.md
 concepts_and_terminology/CLI.md

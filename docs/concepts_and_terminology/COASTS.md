@@ -44,4 +44,4 @@ localhost:6379  ──→  dev-2 redis
 
 Typically a Coast is [assigned to a specific worktree](ASSIGN.md). This is how you run multiple worktrees of the same project in parallel without port conflicts or volume collisions.
 
-It is up to you to spin Coasts up and down as you see fit. You probably would not want 20 Coasts of a memory-intensive project running at once, but to each their own.
+You create Coast instances with [`coast run`](RUN.md). It is up to you to spin Coasts up and down as you see fit. You probably would not want 20 Coasts of a memory-intensive project running at once, but to each their own.

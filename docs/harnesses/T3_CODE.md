@@ -1,8 +1,13 @@
 # T3 Code
 
-[T3 Code](https://github.com/pingdotgg/t3code) is an open-source coding agent harness from Ping. Each workspace is a git worktree stored at `~/.t3/worktrees/<project-name>/`, checked out on a named branch.
+[T3 Code](https://github.com/pingdotgg/t3code) creates git worktrees at
+`~/.t3/worktrees/<project-name>/`, checked out on named branches.
 
-Because these worktrees live outside the project root, Coast needs explicit configuration to discover and mount them.
+In T3 Code, put the always-on Coast Runtime rules in `AGENTS.md` and the
+reusable `/coasts` workflow in `.agents/skills/coasts/SKILL.md`.
+
+Because these worktrees live outside the project root, Coasts needs explicit
+configuration to discover and mount them.
 
 ## Setup
 
@@ -14,7 +19,9 @@ name = "my-app"
 worktree_dir = [".worktrees", "~/.t3/worktrees/my-app"]
 ```
 
-Coast expands `~` at runtime and treats any path starting with `~/` or `/` as external. See [Worktree Directories](../coastfiles/WORKTREE_DIR.md) for details.
+Coasts expands `~` at runtime and treats any path starting with `~/` or `/` as
+external. See [Worktree Directories](../coastfiles/WORKTREE_DIR.md) for
+details.
 
 After changing `worktree_dir`, existing instances must be **recreated** for the bind mount to take effect:
 
@@ -24,16 +31,35 @@ coast build
 coast run my-instance
 ```
 
-The worktree listing updates immediately (Coast reads the new Coastfile), but assigning to a T3 Code worktree requires the bind mount inside the container.
+The worktree listing updates immediately (Coasts reads the new Coastfile), but
+assigning to a T3 Code worktree requires the bind mount inside the container.
 
-## What Coast does
+## Where Coasts guidance goes
 
-- **Bind mount** — At container creation, Coast mounts `~/.t3/worktrees/<project-name>` into the container at `/host-external-wt/{index}`.
+Use this layout for T3 Code:
+
+- put the short Coast Runtime rules in `AGENTS.md`
+- put the reusable `/coasts` workflow in `.agents/skills/coasts/SKILL.md`
+- do not add a separate T3-specific project command or slash-command layer for
+  Coasts
+- if this repo uses multiple harnesses, see
+  [Multiple Harnesses](MULTIPLE_HARNESSES.md) and
+  [Skills for Host Agents](../SKILLS_FOR_HOST_AGENTS.md).
+
+## What Coasts does
+
+- **Run** — `coast run <name>` creates a new Coast instance from the latest build. Use `coast run <name> -w <worktree>` to create and assign a T3 Code worktree in one step. See [Run](../concepts_and_terminology/RUN.md).
+- **Bind mount** — At container creation, Coasts mounts
+  `~/.t3/worktrees/<project-name>` into the container at
+  `/host-external-wt/{index}`.
 - **Discovery** — `git worktree list --porcelain` is repo-scoped, so only worktrees belonging to the current project appear.
-- **Naming** — T3 Code worktrees use named branches, so they appear by branch name in the Coast UI and CLI.
+- **Naming** — T3 Code worktrees use named branches, so they appear by branch
+  name in the Coasts UI and CLI.
 - **Assign** — `coast assign` remounts `/workspace` from the external bind mount path.
 - **Gitignored sync** — Runs on the host filesystem with absolute paths, works without the bind mount.
-- **Orphan detection** — The git watcher scans external directories recursively, filtering by `.git` gitdir pointers. If T3 Code removes a workspace, Coast auto-unassigns the instance.
+- **Orphan detection** — The git watcher scans external directories
+  recursively, filtering by `.git` gitdir pointers. If T3 Code removes a
+  workspace, Coasts auto-unassigns the instance.
 
 ## Example
 
@@ -55,13 +81,13 @@ web = "hot"
 api = "hot"
 ```
 
-- `.worktrees/` — Coast-managed worktrees
 - `.claude/worktrees/` — Claude Code (local, no special handling)
 - `~/.codex/worktrees/` — Codex (external, bind-mounted)
 - `~/.t3/worktrees/my-app/` — T3 Code (external, bind-mounted; replace `my-app` with your repo folder name)
 
 ## Limitations
 
-- Coast discovers and mounts T3 Code worktrees but does not create or delete them.
-- New worktrees created by `coast assign` always go in the local `default_worktree_dir`, never in an external directory.
-- Avoid relying on T3 Code-specific environment variables for runtime configuration inside Coasts. Coast manages ports, workspace paths, and service discovery independently — use Coastfile `[ports]` and `coast exec` instead.
+- Avoid relying on T3 Code-specific environment variables for runtime
+  configuration inside Coasts. Coasts manages ports, workspace paths, and
+  service discovery independently — use Coastfile `[ports]` and `coast exec`
+  instead.

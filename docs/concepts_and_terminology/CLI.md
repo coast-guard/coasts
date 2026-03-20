@@ -8,7 +8,7 @@ Typical workflows are all driven from the CLI:
 
 ```bash
 coast build                                    # see Builds
-coast run dev-1                                # see Coasts
+coast run dev-1                                # see Run
 coast assign dev-1 --worktree feature/oauth    # see Assign
 coast ports dev-1                              # see Ports
 coast checkout dev-1                           # see Checkout

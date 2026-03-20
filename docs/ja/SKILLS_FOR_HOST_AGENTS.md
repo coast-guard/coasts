@@ -1,122 +1,147 @@
 # ホストエージェント向けスキル
 
-Coasts を使用するプロジェクトで AI コーディングエージェント（Claude Code、Codex、Conductor、Cursor など）を使っている場合、エージェントには Coast ランタイムとのやり取り方法を教えるスキルが必要です。これがないと、エージェントはファイルを編集できても、テストの実行方法、ログの確認方法、あるいは実行中の環境内で変更が正しく動作するかを検証する方法を理解できません。
+アプリが Coasts 内で動作している間にホスト上で AI コーディングエージェントを使う場合、通常、そのエージェントには Coast 固有のセットアップが 2 つ必要です。
 
-このガイドでは、そのスキルを設定する方法を説明します。
+1. ハーネスのプロジェクト指示ファイルまたはルールファイルにある、常時有効な Coast Runtime セクション
+2. ハーネスがプロジェクトスキルをサポートしている場合の、`/coasts` のような再利用可能な Coast ワークフロースキル
 
-## エージェントにこれが必要な理由
+1 つ目がないと、エージェントはファイルを編集しても `coast exec` を使うことを忘れます。
+2 つ目がないと、Coast の割り当て、ログ、UI フローを毎回チャットで説明し直す必要があります。
+
+このガイドでは、セットアップを具体的かつ Coast 固有のものに絞って説明します。つまり、どのファイルを作るか、そこにどんなテキストを入れるか、そしてそれがハーネスごとにどう変わるかを扱います。
+
+## なぜエージェントにこれが必要なのか
 
 Coasts は、ホストマシンと Coast コンテナの間で [filesystem](concepts_and_terminology/FILESYSTEM.md) を共有します。エージェントはホスト上でファイルを編集し、Coast 内で実行中のサービスはその変更を即座に認識します。しかし、エージェントは依然として次のことを行う必要があります。
 
-1. **どの Coast インスタンスで作業しているかを特定する** — `coast lookup` は、エージェントの現在のディレクトリからこれを解決します。
-2. **Coast 内でコマンドを実行する** — テスト、ビルド、その他のランタイムタスクは、`coast exec` を介してコンテナ内で実行されます。
-3. **ログを読み、サービスの状態を確認する** — `coast logs` と `coast ps` は、エージェントにランタイムのフィードバックを提供します。
+1. 現在のチェックアウトに対応する Coast インスタンスを見つける
+2. その Coast の中でテスト、ビルド、ランタイムコマンドを実行する
+3. Coast からログとサービス状態を読む
+4. まだ Coast がアタッチされていない場合に worktree の割り当てを安全に処理する
 
-以下のスキルは、この 3 つすべてをエージェントに教えます。
+## 何をどこに置くか
 
-## スキル
+- `AGENTS.md`、`CLAUDE.md`、または `.cursor/rules/coast.md` — スキルが呼び出されない場合でも、すべてのタスクに適用されるべき短い Coast ルール
+- skill (`.agents/skills/...`、`.claude/skills/...`、または `.cursor/skills/...`) — `/coasts` のような、再利用可能な Coast ワークフロー本体
+- command file (`.claude/commands/...` または `.cursor/commands/...`) — サポートするハーネス向けの任意の明示的エントリポイント。単純な選択肢の 1 つは、その command から skill を再利用することです
 
-以下を、エージェントの既存のスキル、ルール、またはプロンプトファイルに追加してください。エージェントにすでにテスト実行や開発環境とのやり取りに関する指示がある場合、これはそれらと並べて置くべきものです。これは、ランタイム操作のために Coasts を使用する方法をエージェントに教えます。
+1 つのリポジトリで複数のハーネスを使う場合は、正本となる Coast スキルを 1 か所に置き、必要な場所でそれを公開してください。詳しくは
+[Multiple Harnesses](harnesses/MULTIPLE_HARNESSES.md) を参照してください。
+
+## 1. 常時有効な Coast Runtime ルール
+
+次のブロックを、ハーネスの常時有効なプロジェクト指示ファイルまたはルールファイル（`AGENTS.md`、`CLAUDE.md`、`.cursor/rules/coast.md`、または同等のもの）に追加してください。
 
 ```text-copy
-This project uses Coasts (containerized host) for isolated development environments.
-Your code edits are automatically visible inside the running Coast — the filesystem
-is shared between the host and the container.
+# Coast Runtime
 
-=== ORIENTATION ===
+This project uses Coasts — containerized runtimes for running services, tests,
+and other runtime commands. The filesystem is shared between the host and the
+container, so file edits on either side are visible to both immediately.
 
-Before running any runtime commands, discover which Coast instance matches your
-current working directory:
+## Discovery
+
+Before the first runtime command in a session, run:
 
   coast lookup
 
-This prints the instance name, ports, URLs, and example commands. Use the instance
+This prints the instance name, ports, and example commands. Use the instance
 name from the output for all subsequent commands.
 
-If you need deeper context on how Coasts work, read these docs:
+## What runs where
 
-  coast docs --path concepts_and_terminology/LOOKUP.md
-  coast docs --path concepts_and_terminology/FILESYSTEM.md
-  coast docs --path concepts_and_terminology/EXEC_AND_DOCKER.md
-  coast docs --path concepts_and_terminology/LOGS.md
+The filesystem is shared, so only use `coast exec` for things that need the
+container runtime (databases, services, integration tests). Everything else
+runs directly on the host.
 
-=== RUNNING COMMANDS ===
+Use `coast exec` for:
+- Tests that need running services (integration tests, API tests)
+- Service restarts or compose operations
+- Anything that talks to databases, caches, or other container services
 
-Use `coast exec` to run commands inside the Coast. The shell starts at the workspace
-root (where the Coastfile is). cd to your target directory first:
+Run directly on the host:
+- Linting, typechecking, formatting
+- Git operations
+- Playwright and browser tests
+- Installing host-side dependencies (npm install, pip install)
+- File search, code generation, static analysis
 
-  coast exec <instance> -- sh -c "cd <dir> && <command>"
+Example:
 
-Examples:
+  coast exec <instance> -- sh -c "cd <dir> && npm test"    # needs DB
+  npm run lint                                              # host is fine
+  npx playwright test                                       # host is fine
 
-  coast exec dev-1 -- sh -c "cd src && npm test"
-  coast exec dev-1 -- sh -c "cd backend && go test ./..."
-  coast exec dev-1 -- sh -c "cd apps/web && npx playwright test"
-
-=== RUNTIME FEEDBACK ===
-
-Check service status:
+## Runtime feedback
 
   coast ps <instance>
-
-Read service logs:
-
   coast logs <instance> --service <service>
   coast logs <instance> --service <service> --tail 50
 
-=== TROUBLESHOOTING ===
+## Creating and assigning Coasts
 
-If you encounter errors or unfamiliar behavior, search the Coast docs:
+If `coast lookup` returns no match, run `coast ls` to see what exists.
 
-  coast search-docs "error message or description"
+If an unassigned Coast is already running for this project, prefer assigning
+your worktree to it rather than creating a new one:
 
-This uses semantic search — describe the problem in natural language and it will
-find the relevant documentation.
+  coast assign <existing> -w <worktree>
 
-=== WORKTREE AWARENESS ===
+If no Coast is running, ask the user before creating one — Coasts can be
+memory intensive:
 
-When you start working in a worktree — whether you created it or a tool like
-Codex, Conductor, or T3 Code created it for you — check if a Coast instance is
-already assigned:
+  coast run <name> -w <worktree>
 
-  coast lookup
+A project must be built before instances can be created. If `coast run` fails
+because no build exists, run `coast build` first.
 
-If `coast lookup` finds an instance, use it for all runtime commands.
+## Coastfile setup
 
-If it returns no instances, check what's currently running:
+If the project does not have a Coastfile yet, or if you need to modify the
+Coastfile, read the Coastfile docs first:
 
-  coast ls
+  coast docs --path coastfiles/README.md
 
-Then ask the user which option they prefer:
+## When confused
 
-Option 1 — Create a new Coast and assign this worktree:
-  coast run <new-name>
-  coast assign <new-name> -w <worktree>
+Before guessing about Coast behavior, explore the docs:
 
-Option 2 — Reassign an existing Coast to this worktree:
-  coast assign <existing-name> -w <worktree>
+  coast docs                                     # list all doc pages
+  coast docs --path concepts_and_terminology/RUN.md
+  coast docs --path concepts_and_terminology/ASSIGN.md
+  coast docs --path concepts_and_terminology/BUILDS.md
+  coast search-docs "your question here"         # semantic search
 
-Option 3 — Skip Coast entirely:
-Continue without a runtime environment. You can edit files but cannot run tests,
-builds, or services inside a container.
-
-The <worktree> value is the branch name (run `git branch --show-current`) or
-the worktree identifier shown in `coast ls`. Always ask the user before creating
-or reassigning — do not do it automatically.
-
-=== RULES ===
+## Rules
 
 - Always run `coast lookup` before your first runtime command in a session.
-- Do not run services directly on the host. Use `coast exec` for all runtime tasks.
-- File edits on the host are instantly visible inside the Coast. You do not need
-  to copy files or rebuild after editing.
-- If `coast lookup` returns no instances, the Coast may not be running. Follow the
-  worktree awareness flow above to resolve this with the user.
+- Use `coast exec` only for things that need the container runtime.
+- Run linting, typechecking, formatting, and git on the host directly.
+- Use `coast docs` or `coast search-docs` before guessing about Coast behavior.
+- Do not run services directly on the host when the project expects Coast.
 ```
 
-## スキルをエージェントに追加する
+このブロックは常時有効ファイルに置くべきです。なぜなら、これらのルールは、エージェントが明示的に `/coasts` ワークフローに入ったときだけでなく、すべてのタスクに適用されるべきだからです。
 
-最も手早い方法は、エージェント自身にセットアップさせることです。以下のプロンプトをエージェントのチャットにコピーしてください。これにはスキルテキストと、それを自身の設定ファイル（`CLAUDE.md`、`AGENTS.md`、`.cursor/rules/coast.md` など）に書き込むための指示が含まれています。
+## 2. 再利用可能な `/coasts` スキル
+
+ハーネスがプロジェクトスキルをサポートしている場合は、スキル内容をスキルディレクトリ内の `SKILL.md` として保存してください。完全なスキルテキストは [skills_prompt.txt](skills_prompt.txt) にあります（CLI モードでは `coast skills-prompt` を使ってください）。Coast Runtime ブロックの後ろ、`---` フロントマターから始まる部分がスキル内容です。
+
+Codex や OpenAI 固有のサーフェスを使っている場合は、表示メタデータや呼び出しポリシーのために、スキルの横に `agents/openai.yaml` を任意で追加できます。そのメタデータはスキルの横に置くべきであり、スキル自体の代わりにするべきではありません。
+
+## ハーネス別クイックスタート
+
+| Harness | Always-on file | Reusable Coast workflow | Notes |
+|---------|----------------|-------------------------|-------|
+| OpenAI Codex | `AGENTS.md` | `.agents/skills/coasts/SKILL.md` | Coast ドキュメント向けに推奨する別個のプロジェクト command file はありません。[Codex](harnesses/CODEX.md) を参照してください。 |
+| Claude Code | `CLAUDE.md` | `.claude/skills/coasts/SKILL.md` | `.claude/commands/coasts.md` は任意ですが、ロジックはスキル内に保ってください。[Claude Code](harnesses/CLAUDE_CODE.md) を参照してください。 |
+| Cursor | `AGENTS.md` or `.cursor/rules/coast.md` | `.cursor/skills/coasts/SKILL.md` or shared `.agents/skills/coasts/SKILL.md` | `.cursor/commands/coasts.md` は任意です。`.cursor/worktrees.json` は Cursor の worktree ブートストラップ用であり、Coast ポリシー用ではありません。[Cursor](harnesses/CURSOR.md) を参照してください。 |
+| Conductor | `CLAUDE.md` | Start with `CLAUDE.md`; use Conductor scripts and settings for Conductor-specific behavior | Claude Code の完全な project command 挙動を前提にしないでください。新しい command が表示されない場合は、Conductor を完全に閉じて再度開いてください。[Conductor](harnesses/CONDUCTOR.md) を参照してください。 |
+| T3 Code | `AGENTS.md` | `.agents/skills/coasts/SKILL.md` | これはここで扱う中で最も制限の多いハーネスです。Codex スタイルのレイアウトを使い、Coast ドキュメントのために T3 ネイティブな command レイヤーを作らないでください。[T3 Code](harnesses/T3_CODE.md) を参照してください。 |
+
+## エージェント自身にセットアップさせる
+
+最も手早い方法は、エージェント自身に正しいファイルを書かせることです。以下のプロンプトをエージェントのチャットにコピーしてください。これには Coast Runtime ブロック、`coasts` スキルブロック、および各要素をどこに置くべきかというハーネス別の指示が含まれています。
 
 ```prompt-copy
 skills_prompt.txt
@@ -124,18 +149,19 @@ skills_prompt.txt
 
 CLI から `coast skills-prompt` を実行しても、同じ出力を取得できます。
 
-### 手動セットアップ
+## 手動セットアップ
 
-自分でスキルを追加したい場合:
-
-- **Claude Code:** スキルテキストをプロジェクトの `CLAUDE.md` ファイルに追加してください。
-- **Codex:** スキルテキストをプロジェクトの `AGENTS.md` ファイルに追加してください。
-- **Cursor:** プロジェクトルートに `.cursor/rules/coast.md` を作成し、スキルテキストを貼り付けてください。
-- **Other agents:** エージェントが起動時に読み込むプロジェクトレベルのプロンプトまたはルールファイルに、スキルテキストを貼り付けてください。
+- **Codex:** Coast Runtime セクションを `AGENTS.md` に置き、その後、再利用可能な `coasts` スキルを `.agents/skills/coasts/SKILL.md` に置いてください。
+- **Claude Code:** Coast Runtime セクションを `CLAUDE.md` に置き、その後、再利用可能な `coasts` スキルを `.claude/skills/coasts/SKILL.md` に置いてください。`command file` が特に必要な場合にのみ `.claude/commands/coasts.md` を追加してください。
+- **Cursor:** 最も移植性の高い指示にしたいなら Coast Runtime セクションを `AGENTS.md` に置き、Cursor ネイティブなプロジェクトルールにしたいなら `.cursor/rules/coast.md` に置いてください。再利用可能な `coasts` ワークフローは、Cursor 専用のリポジトリなら `.cursor/skills/coasts/SKILL.md` に、他のハーネスと共有するリポジトリなら `.agents/skills/coasts/SKILL.md` に置いてください。明示的な command file が特に必要な場合にのみ `.cursor/commands/coasts.md` を追加してください。
+- **Conductor:** Coast Runtime セクションを `CLAUDE.md` に置いてください。Conductor 固有のブートストラップや実行挙動には、Conductor Repository Settings のスクリプトを使ってください。command を追加しても表示されない場合は、アプリを完全に閉じて再度開いてください。
+- **T3 Code:** Codex と同じレイアウト、つまり `AGENTS.md` と `.agents/skills/coasts/SKILL.md` を使ってください。ここでは T3 Code を別個の Coast command サーフェスとしてではなく、薄い Codex スタイルのハーネスとして扱ってください。
+- **Multiple harnesses:** 正本となるスキルは `.agents/skills/coasts/SKILL.md` に置いてください。Cursor はそれを直接読み込めます。必要であれば `.claude/skills/coasts/` 経由で Claude Code に公開してください。
 
 ## さらに読む
 
-- 完全な設定スキーマを学ぶには、[Coastfiles documentation](coastfiles/README.md) を読んでください
-- インスタンス管理用コマンドについては、[Coast CLI](concepts_and_terminology/CLI.md) を参照してください
+- ハーネスごとの対応表については [Harnesses guide](harnesses/README.md) を読んでください
+- 共有レイアウトパターンについては [Multiple Harnesses](harnesses/MULTIPLE_HARNESSES.md) を読んでください
+- 完全な設定スキーマを学ぶには [Coastfiles documentation](coastfiles/README.md) を読んでください
+- インスタンス管理用コマンドについては [Coast CLI](concepts_and_terminology/CLI.md) を参照してください
 - Coasts を観察および制御するための Web UI である [Coastguard](concepts_and_terminology/COASTGUARD.md) を確認してください
-- Coasts の仕組み全体を把握するには、[Concepts & Terminology](concepts_and_terminology/README.md) を参照してください

@@ -3,6 +3,8 @@
 Esta seção cobre os conceitos centrais e o vocabulário usados em todo o Coasts. Se você é novo no Coasts, comece aqui antes de mergulhar na configuração ou no uso avançado.
 
 - [Coasts](COASTS.md) — runtimes autocontidos do seu projeto, cada um com suas próprias portas, volumes e atribuição de worktree.
+- [Run](RUN.md) — criar uma nova instância de Coast a partir do build mais recente, opcionalmente atribuindo um worktree.
+- [Remove](REMOVE.md) — desmontar uma instância de Coast e seu estado de runtime isolado quando você precisa recriá-la do zero ou quer desativar o Coasts.
 - [Filesystem](FILESYSTEM.md) — a montagem compartilhada entre host e Coast, agentes no lado do host e troca de worktree.
 - [Coast Daemon](DAEMON.md) — o plano de controle local `coastd` que executa operações de ciclo de vida.
 - [Coast CLI](CLI.md) — a interface de terminal para comandos, scripts e fluxos de trabalho de agentes.

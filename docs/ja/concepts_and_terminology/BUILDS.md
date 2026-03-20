@@ -1,23 +1,23 @@
 # ビルド
 
-Coast のビルドは、追加の助けが付いた Docker イメージだと考えてください。ビルドはディレクトリベースの成果物で、Coast インスタンスを作成するために必要なものをすべて同梱します。解決済みの [Coastfile](COASTFILE_TYPES.md)、書き換えられた compose ファイル、事前にプルされた OCI イメージ tarball、注入されたホストファイルです。ビルド自体は Docker イメージではありませんが、Docker イメージ（tarball として）と、それらを連携させるために Coast が必要とするメタデータを含みます。
+coast のビルドは、追加の支援機能が付いた Docker イメージだと考えてください。ビルドはディレクトリベースの成果物で、Coast インスタンスを作成するために必要なものをすべてまとめています: 解決済みの [Coastfile](COASTFILE_TYPES.md)、書き換えられた compose ファイル、事前に pull された OCI イメージ tarball、そして注入されたホストファイルです。これは Docker イメージそのものではありませんが、Docker イメージ（tarball として）と、それらをつなぎ合わせるために Coast が必要とするメタデータを含んでいます。
 
-## What `coast build` Does
+## `coast build` が行うこと
 
-`coast build` を実行すると、デーモンは次の手順を順に実行します:
+`coast build` を実行すると、デーモンは次の手順を順番に実行します:
 
 1. Coastfile を解析して検証します。
-2. compose ファイルを読み込み、省略されたサービスをフィルタリングして除外します。
-3. 設定された extractor から [secrets](SECRETS.md) を抽出し、キーストアに暗号化して保存します。
+2. compose ファイルを読み取り、省略されたサービスを除外します。
+3. 設定された extractor から [secrets](SECRETS.md) を抽出し、keystore に暗号化して保存します。
 4. `build:` ディレクティブを持つ compose サービスの Docker イメージを（ホスト上で）ビルドします。
-5. `image:` ディレクティブを持つ compose サービスの Docker イメージをプルします。
+5. `image:` ディレクティブを持つ compose サービスの Docker イメージを pull します。
 6. すべてのイメージを `~/.coast/image-cache/` に OCI tarball としてキャッシュします。
-7. `[coast.setup]` が設定されている場合、指定されたパッケージ、コマンド、ファイルを含むカスタム DinD ベースイメージをビルドします。
-8. マニフェスト、解決済み coastfile、書き換えた compose、注入ファイルを含むビルド成果物ディレクトリを書き出します。
+7. `[coast.setup]` が設定されている場合、指定されたパッケージ、コマンド、ファイルを使ってカスタム DinD ベースイメージをビルドします。
+8. manifest、解決済み coastfile、書き換え済み compose、注入ファイルを含むビルド成果物ディレクトリを書き込みます。
 9. `latest` シンボリックリンクを更新して新しいビルドを指すようにします。
-10. 保持上限を超えた古いビルドを自動でプルーニングします。
+10. 保持上限を超えた古いビルドを自動的に削除します。
 
-## Where Builds Live
+## ビルドの保存場所
 
 ```text
 ~/.coast/
@@ -37,69 +37,69 @@ Coast のビルドは、追加の助けが付いた Docker イメージだと考
     coast-built_my-project_web_latest_...tar
 ```
 
-各ビルドには `{coastfile_hash}_{YYYYMMDDHHMMSS}` という形式の一意な **build ID** が割り当てられます。このハッシュには Coastfile の内容と解決済みの設定が含まれるため、Coastfile を変更すると新しい build ID が生成されます。
+各ビルドには、`{coastfile_hash}_{YYYYMMDDHHMMSS}` 形式の一意な **build ID** が付与されます。このハッシュには Coastfile の内容と解決済み設定が含まれるため、Coastfile を変更すると新しい build ID が生成されます。
 
-`latest` シンボリックリンクは、迅速に解決できるよう常に最新のビルドを指します。プロジェクトが型付き Coastfile（例: `Coastfile.light`）を使用する場合、各タイプごとにシンボリックリンクが作られます: `latest-light`。
+`latest` シンボリックリンクは、素早く解決できるよう常に最新のビルドを指します。プロジェクトで型付き Coastfile（例: `Coastfile.light`）を使用している場合、各タイプは独自のシンボリックリンクを持ちます: `latest-light`。
 
-`~/.coast/image-cache/` のイメージキャッシュは全プロジェクトで共有されます。2 つのプロジェクトが同じ Postgres イメージを使う場合、tarball は 1 回だけキャッシュされます。
+`~/.coast/image-cache/` にあるイメージキャッシュは、すべてのプロジェクトで共有されます。2 つのプロジェクトが同じ Postgres イメージを使っている場合、その tarball は 1 回だけキャッシュされます。
 
-## What a Build Contains
+## ビルドに含まれるもの
 
-各ビルドディレクトリには次が含まれます:
+各ビルドディレクトリには次のものが含まれます:
 
-- **`manifest.json`** -- 完全なビルドメタデータ: プロジェクト名、ビルド時刻、coastfile ハッシュ、キャッシュ/ビルドされたイメージ一覧、シークレット名、省略されたサービス、[ボリューム戦略](VOLUMES.md) など。
+- **`manifest.json`** -- プロジェクト名、ビルドタイムスタンプ、coastfile ハッシュ、キャッシュ済み/ビルド済みイメージの一覧、シークレット名、省略されたサービス、[volume strategies](VOLUMES.md) などを含む完全なビルドメタデータ。
 - **`coastfile.toml`** -- 解決済み Coastfile（`extends` を使用している場合は親とマージ済み）。
-- **`compose.yml`** -- compose ファイルの書き換え版。`build:` ディレクティブが事前ビルド済みイメージタグに置き換えられ、省略されたサービスは取り除かれます。
-- **`inject/`** -- `[inject].files` で指定したホストファイルのコピー（例: `~/.gitconfig`, `~/.npmrc`）。
+- **`compose.yml`** -- compose ファイルを書き換えたバージョンで、`build:` ディレクティブは事前ビルド済みイメージタグに置き換えられ、省略されたサービスは取り除かれます。
+- **`inject/`** -- `[inject].files` からのホストファイルのコピー（例: `~/.gitconfig`、`~/.npmrc`）。
 
-## Builds Do Not Contain Secrets
+## ビルドにはシークレットは含まれません
 
-シークレットはビルド手順中に抽出されますが、ビルド成果物ディレクトリの中ではなく、`~/.coast/keystore.db` にある別の暗号化キーストアに保存されます。マニフェストには抽出されたシークレットの **名前** だけが記録され、値は決して記録されません。
+シークレットはビルド手順中に抽出されますが、`~/.coast/keystore.db` にある別の暗号化された keystore に保存されます -- ビルド成果物ディレクトリの中には保存されません。manifest には、抽出されたシークレットの **名前** だけが記録され、値は決して記録されません。
 
-このため、ビルド成果物は機密データを露出させることなく安全に確認できます。シークレットは後で `coast run` で Coast インスタンスを作成する際に復号され、注入されます。
+これは、機密データを露出することなくビルド成果物を安全に確認できることを意味します。シークレットは後で、`coast run` で Coast インスタンスが作成されるときに復号化されて注入されます。
 
-## Builds and Docker
+## ビルドと Docker
 
-ビルドには 3 種類の Docker イメージが関係します:
+ビルドには 3 種類の Docker イメージが関わります:
 
-- **Built images** -- `build:` ディレクティブを持つ compose サービスはホスト上で `docker build` によりビルドされ、`coast-built/{project}/{service}:latest` としてタグ付けされ、イメージキャッシュに tarball として保存されます。
-- **Pulled images** -- `image:` ディレクティブを持つ compose サービスはプルされ、tarball として保存されます。
-- **Coast image** -- `[coast.setup]` が設定されている場合、指定されたパッケージ、コマンド、ファイルを含むカスタム Docker イメージが `docker:dind` の上にビルドされます。`coast-image/{project}:{build_id}` としてタグ付けされます。
+- **ビルド済みイメージ** -- `build:` ディレクティブを持つ compose サービスは、ホスト上で `docker build` によりビルドされ、`coast-built/{project}/{service}:latest` としてタグ付けされ、イメージキャッシュに tarball として保存されます。
+- **pull 済みイメージ** -- `image:` ディレクティブを持つ compose サービスは pull され、tarball として保存されます。
+- **Coast イメージ** -- `[coast.setup]` が設定されている場合、指定されたパッケージ、コマンド、ファイルを使って `docker:dind` の上にカスタム Docker イメージがビルドされます。`coast-image/{project}:{build_id}` としてタグ付けされます。
 
-実行時（`coast run`）には、これらの tarball は `docker load` により内側の [DinD daemon](RUNTIMES_AND_SERVICES.md) に読み込まれます。これにより、レジストリからイメージをプルする必要がなくなり、Coast インスタンスを素早く起動できます。
+ランタイム時（[`coast run`](RUN.md)）には、これらの tarball は `docker load` によって内部の [DinD daemon](RUNTIMES_AND_SERVICES.md) に読み込まれます。これにより、Coast インスタンスはレジストリからイメージを pull する必要なく高速に起動できます。
 
-## Builds and Instances
+## ビルドとインスタンス
 
-`coast run` を実行すると、Coast は最新のビルド（または特定の `--build-id`）を解決し、その成果物を使ってインスタンスを作成します。build ID はインスタンスに記録されます。
+[`coast run`](RUN.md) を実行すると、Coast は最新のビルド（または特定の `--build-id`）を解決し、その成果物を使ってインスタンスを作成します。build ID はそのインスタンスに記録されます。
 
-より多くのインスタンスを作成するために再ビルドする必要はありません。1 つのビルドを、並行して動作する多くの Coast インスタンスで共有できます。
+さらにインスタンスを作成するために再ビルドする必要はありません。1 つのビルドで、並列実行される複数の Coast インスタンスに対応できます。
 
-## When to Rebuild
+## 再ビルドするタイミング
 
-Coastfile、`docker-compose.yml`、またはインフラ設定が変更されたときにだけ再ビルドしてください。再ビルドはリソース消費が大きく、イメージの再プル、Docker イメージの再ビルド、シークレットの再抽出を行います。
+Coastfile、`docker-compose.yml`、またはインフラ構成が変更されたときだけ再ビルドしてください。再ビルドはリソース集約的です -- イメージを再 pull し、Docker イメージを再ビルドし、シークレットを再抽出します。
 
-コード変更は再ビルドを必要としません。Coast はプロジェクトディレクトリを各インスタンスに直接マウントするため、コード更新は即座に反映されます。
+コードの変更では再ビルドは必要ありません。Coast はプロジェクトディレクトリを各インスタンスに直接マウントするため、コードの更新は即座に反映されます。
 
-## Auto-Pruning
+## 自動削除
 
-Coast は Coastfile タイプごとに最大 5 つのビルドを保持します。`coast build` が成功するたびに、上限を超えた古いビルドは自動的に削除されます。
+Coast は Coastfile のタイプごとに最大 5 個のビルドを保持します。`coast build` が成功するたびに、上限を超えた古いビルドは自動的に削除されます。
 
-実行中インスタンスが使用しているビルドは、上限に関係なく決してプルーニングされません。7 つのビルドがあり、そのうち 3 つが稼働中インスタンスを支えている場合、その 3 つはすべて保護されます。
+実行中のインスタンスで使用されているビルドは、上限に関係なく決して削除されません。7 個のビルドがあり、そのうち 3 個がアクティブなインスタンスを支えている場合、その 3 個はすべて保護されます。
 
-## Manual Removal
+## 手動削除
 
-ビルドは `coast rm-build` で手動削除するか、Coastguard の Builds タブから削除できます。
+ビルドは `coast rm-build` または Coastguard の Builds タブから手動で削除できます。
 
-- **Full project removal**（`coast rm-build <project>`）は、まずすべてのインスタンスを停止して削除する必要があります。ビルドディレクトリ全体と、関連する Docker イメージ、ボリューム、コンテナを削除します。
-- **Selective removal**（build ID 指定、Coastguard UI で利用可能）は、稼働中インスタンスが使用しているビルドをスキップします。
+- **プロジェクト全体の削除** (`coast rm-build <project>`) は、まずすべてのインスタンスを停止して削除しておく必要があります。これはビルドディレクトリ全体、関連する Docker イメージ、volume、container を削除します。
+- **選択的削除**（build ID による削除。Coastguard UI で利用可能）は、実行中のインスタンスで使用中のビルドをスキップします。
 
-## Typed Builds
+## 型付きビルド
 
-プロジェクトが複数の Coastfile（例: デフォルト設定用の `Coastfile` と、スナップショットで初期化されたボリューム用の `Coastfile.snap`）を使用する場合、各タイプはそれぞれ独自の `latest-{type}` シンボリックリンクと、独自の 5 ビルドのプルーニングプールを維持します。
+プロジェクトが複数の Coastfile を使用している場合（例: デフォルト設定用の `Coastfile` と、スナップショットで seed された volume 用の `Coastfile.snap`）、各タイプは独自の `latest-{type}` シンボリックリンクと独自の 5 ビルド削除プールを維持します。
 
 ```bash
 coast build              # uses Coastfile, updates "latest"
 coast build --type snap  # uses Coastfile.snap, updates "latest-snap"
 ```
 
-`snap` ビルドのプルーニングが `default` ビルドに触れることはなく、その逆も同様です。
+`snap` ビルドの削除が `default` ビルドに影響することはなく、その逆も同様です。

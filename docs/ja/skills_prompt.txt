@@ -1,136 +1,163 @@
-このプロジェクト用に Coast ランタイムスキルを設定しています。Coast（containerized host）は、Docker-in-Docker コンテナを使用して分離された開発環境を実行します。このプロジェクトにはすでに Coastfile があります — あなたの仕事は、実行中の環境と対話できるように、エージェント設定に Coast ランタイムスキルを追加することです。
-
-=== WHAT TO DO ===
-
-1. 環境に応じて使用するエージェント設定ファイルを特定します:
-   - Claude Code: プロジェクトルートの `CLAUDE.md` に追加（存在しない場合は作成）
-   - Codex: プロジェクトルートの `AGENTS.md` に追加（存在しない場合は作成）
-   - Cursor: プロジェクトルートの `.cursor/rules/coast.md` に追加（必要に応じてディレクトリを作成）
-   - その他のエージェント: エージェントが起動時に読み込むプロジェクトレベルのプロンプトまたはルールファイルに追加
-
-2. 以下のスキルテキストを、そのファイルの "Coast Runtime" セクションの下に追加します。ファイルがすでに存在する場合は、新しいセクションとして追記してください — 既存の内容を上書きしないでください。
-
-=== SKILL TEXT (これをエージェント設定ファイルに追加) ===
-
 # Coast Runtime
 
-このプロジェクトでは、分離された開発環境のために Coasts（containerized host）を使用します。
-あなたのコード編集は、実行中の Coast 内に自動的に反映されます — ファイルシステムは
-ホストとコンテナの間で共有されています。
+このプロジェクトでは、サービス、テスト、その他のランタイムコマンドを実行するために Coasts（コンテナ化されたランタイム）を使用します。ファイルシステムはホストとコンテナの間で共有されるため、どちらか一方で行ったファイル編集も即座に両方から見えるようになります。
 
-## Orientation
+## Discovery
 
-ランタイムコマンドを実行する前に、現在の作業ディレクトリに一致する Coast インスタンスが
-どれかを確認してください:
+セッション内で最初のランタイムコマンドを実行する前に、次を実行してください:
 
-```
-coast lookup
-```
+  coast lookup
 
-これにより、インスタンス名、ポート、URL、およびコマンド例が表示されます。以降のすべてのコマンドでは、
-出力にあるインスタンス名を使用してください。
+これにより、インスタンス名、ポート、およびコマンド例が表示されます。以降のすべてのコマンドでは、出力にあるインスタンス名を使用してください。
 
-Coasts の仕組みについてより深い文脈が必要な場合は、以下のドキュメントを読んでください:
+## What runs where
 
-```
-coast docs --path concepts_and_terminology/LOOKUP.md
-coast docs --path concepts_and_terminology/FILESYSTEM.md
-coast docs --path concepts_and_terminology/EXEC_AND_DOCKER.md
-coast docs --path concepts_and_terminology/LOGS.md
-```
+ファイルシステムは共有されているため、`coast exec` はコンテナランタイムが必要なもの（データベース、サービス、統合テスト）にだけ使用してください。それ以外はすべてホスト上で直接実行します。
 
-## Running Commands
+`coast exec` を使うもの:
+- 実行中のサービスが必要なテスト（サービスや db と統合されたユニットテスト、統合テスト、API テスト）
+- サービスの再起動や compose 操作
+- データベース、キャッシュ、その他のコンテナサービスとやり取りするもの
 
-Coast 内でコマンドを実行するには `coast exec` を使用します。シェルはワークスペース
-ルート（Coastfile がある場所）で開始されます。まず対象ディレクトリに cd してください:
-
-```
-coast exec <instance> -- sh -c "cd <dir> && <command>"
-```
+ホスト上で直接実行するもの:
+- リント、型チェック、フォーマット
+- Git 操作
+- Playwright とブラウザテスト
+- ホスト側依存関係のインストール (`npm install`, `pip install`)
+- ファイル検索、コード生成、静的解析
 
 例:
 
-```
-coast exec dev-1 -- sh -c "cd src && npm test"
-coast exec dev-1 -- sh -c "cd backend && go test ./..."
-coast exec dev-1 -- sh -c "cd apps/web && npx playwright test"
-```
+  coast exec <instance> -- sh -c "cd <dir> && npm test"    # DB が必要
+  npm run lint                                              # ホストで問題なし
+  npx playwright test                                       # ホストで問題なし
 
-## Runtime Feedback
+## Runtime feedback
 
-サービスの状態を確認します:
+  coast ps <instance>
+  coast logs <instance> --service <service>
+  coast logs <instance> --service <service> --tail 50
 
-```
-coast ps <instance>
-```
+## Creating and assigning Coasts
 
-サービスログを読みます:
+`coast lookup` が一致を返さない場合は、`coast ls` を実行して何が存在するか確認してください。
 
-```
-coast logs <instance> --service <service>
-coast logs <instance> --service <service> --tail 50
-```
+このプロジェクト用の未割り当ての Coast がすでに実行中であれば、新しく作成するよりも、まずそれに自分の worktree を割り当てることを優先してください:
 
-## Troubleshooting
+  coast assign <existing> -w <worktree>
 
-エラーや見慣れない挙動に遭遇した場合は、Coast ドキュメントを検索してください:
+すでに使用中の Coast も `coast assign` で再割り当てできますが、現在のスロットを妨げることになるため、必ず先にユーザーへ確認してください。
 
-```
-coast search-docs "error message or description"
-```
+実行中の Coast がない場合は、作成前にユーザーへ確認してください — Coasts はメモリ消費が大きいことがあります:
 
-これはセマンティック検索を使用します — 問題を自然言語で説明すると、
-関連するドキュメントを見つけます。
+  coast run <name> -w <worktree>
 
-## Worktree Awareness
+インスタンスを作成する前に、プロジェクトはビルドされている必要があります。ビルドが存在しないために `coast run` が失敗した場合は、まず `coast build` を実行してください。
 
-worktree で作業を始めるときは — 自分で作成した場合でも、Codex、Conductor、または
-T3 Code のようなツールが作成した場合でも — すでに Coast インスタンスが割り当て
-られているか確認してください:
+## Coastfile setup
 
-```
-coast lookup
-```
+プロジェクトにまだ Coastfile がない場合、または Coastfile を変更する必要がある場合は、まず Coastfile のドキュメントを読んでください:
 
-`coast lookup` がインスタンスを見つけた場合は、すべてのランタイムコマンドでそれを使用してください。
+  coast docs --path coastfiles/README.md
 
-インスタンスが返されない場合は、現在実行中のものを確認してください:
+## When confused
 
-```
-coast ls
-```
+Coast の挙動を推測する前に、ドキュメントを確認してください:
 
-その後、どの選択肢を希望するかをユーザーに尋ねてください:
-
-**Option 1 — 新しい Coast を作成してこの worktree を割り当てる:**
-```
-coast run <new-name>
-coast assign <new-name> -w <worktree>
-```
-
-**Option 2 — 既存の Coast をこの worktree に再割り当てする:**
-```
-coast assign <existing-name> -w <worktree>
-```
-
-**Option 3 — Coast を完全に使わずに進める:**
-ランタイム環境なしで続行します。ファイルは編集できますが、コンテナ内でテスト、
-ビルド、またはサービスを実行することはできません。
-
-`<worktree>` の値はブランチ名（`git branch --show-current` を実行）または
-`coast ls` に表示される worktree 識別子です。作成または再割り当ての前には、
-必ずユーザーに確認してください — 自動では行わないでください。
+  coast docs                                     # すべてのドキュメントページを一覧表示
+  coast docs --path concepts_and_terminology/RUN.md
+  coast docs --path concepts_and_terminology/ASSIGN.md
+  coast docs --path concepts_and_terminology/BUILDS.md
+  coast search-docs "your question here"         # セマンティック検索
 
 ## Rules
 
 - セッション内で最初のランタイムコマンドを実行する前に、必ず `coast lookup` を実行してください。
-- ホスト上で直接サービスを実行しないでください。すべてのランタイムタスクには `coast exec` を使用してください。
-- ホスト上でのファイル編集は即座に Coast 内に反映されます。編集後にファイルをコピーしたり
-  再ビルドしたりする必要はありません。
-- `coast lookup` がインスタンスを返さない場合、Coast が実行されていない可能性があります。
-  これをユーザーと解決するために、上記の worktree awareness フローに従ってください。
+- `coast exec` はコンテナランタイムが必要なものにだけ使用してください。
+- リント、型チェック、フォーマット、および git はホスト上で直接実行してください。
+- Coast の挙動を推測する前に `coast docs` または `coast search-docs` を使ってください。
+- プロジェクトが Coast を前提としている場合、ホスト上でサービスを直接実行しないでください。
 
-=== END SKILL TEXT ===
+---
+name: coasts
+description: Inspect and control Coast instances for the current checkout. Use
+  when the user says "/coasts", asks to assign or reassign a Coast, wants to
+  run commands or read logs in the matching Coast, wants to create a new Coast,
+  or explicitly asks to open Coast UI.
+---
 
-3. ファイルを書き込んだ後、このプロジェクトに Coastfile が存在することを `ls Coastfile` を実行して確認します。
-4. すでに Coast が実行中の場合は、スキルが機能することを確認するために `coast lookup` を実行します。Coast が実行されていない場合は、`coast run dev-1` で開始できることをユーザーに伝えます。
+# Coasts
+
+Coast CLI を直接使用してください。ラッパーは追加しないでください。
+
+## Orient Yourself
+
+まず CLI とドキュメントを確認してください:
+
+  coast                                             # 使用可能なすべてのコマンドを表示
+  coast docs                                        # すべてのドキュメントページを一覧表示
+  coast search-docs "your question"                 # セマンティック検索
+
+Coast の挙動について不明な点があれば、推測する前にドキュメントを読んでください:
+
+  coast docs --path concepts_and_terminology/RUN.md
+  coast docs --path concepts_and_terminology/BUILDS.md
+  coast docs --path concepts_and_terminology/ASSIGN.md
+  coast docs --path concepts_and_terminology/PORTS.md
+  coast docs --path coastfiles/README.md
+
+## Quick Start
+
+リクエストを次のいずれかのモードに振り分けてください:
+
+1. **Use Coast** — `coast lookup` を実行し、その後、一致したインスタンスに対して `coast exec`、`coast ps`、または `coast logs` を使用します。
+2. **Create or Assign** — `coast ls` を実行し、その後 `coast run` で新しい Coast を作成するか、`coast assign` で既存のものの向き先を変更します。
+3. **Open UI** — `coast ui` を実行します。
+
+## What Runs Where
+
+ホストと Coast はファイルシステムを共有しています。`coast exec` は、コンテナ内で実行中のサービスが必要なものにだけ使用してください。
+
+**`coast exec` を使うもの:**
+- 統合テスト、API テスト、その他データベースやサービスが必要なもの
+- サービスの再起動、compose 操作
+- コンテナ内にしかないプロセスとやり取りするコマンド
+
+**ホスト上で実行するもの:**
+- リント (`eslint`, `rubocop`, `golangci-lint`)
+- 型チェック (`tsc --noEmit`, `go vet`)
+- フォーマット (`prettier`, `gofmt`)
+- Git 操作
+- Playwright とブラウザテスト
+- 静的解析、コード生成
+- パッケージのインストール (`npm install`, `pip install`)
+
+## Create and Assign
+
+`coast lookup` が一致を返さない場合:
+
+1. `coast ls` を実行して利用可能なスロットを確認します。
+2. 作成と割り当てを 1 ステップで行うために、`coast run <name> -w <worktree>` を優先してください。
+3. まだビルドが存在しない場合は、まず `coast build` を実行してください。
+4. 作成後、確認のために `coast lookup` を再実行してください。
+
+既存の Coast を別の worktree に切り替えたい場合:
+
+  coast assign <name> -w <worktree>
+
+これは、すでに割り当て済みまたはチェックアウト済みの Coast に対しても機能しますが、使用中のスロットを再割り当てする前には必ずユーザーへ確認してください。
+
+## Coastfile Setup
+
+プロジェクトで新規または変更された Coastfile が必要な場合は、まずドキュメントを読んでください:
+
+  coast docs --path coastfiles/README.md
+
+Coastfile のドキュメントでは、compose 設定、ポート、ボリューム、シークレット、共有サービス、bare services、および継承を扱っています。
+
+## Safety Rules
+
+- 何か行動を起こす前に `coast lookup` を実行し、トポロジー変更後にも再度実行してください。
+- 既存のスロットを妨げる可能性がある場合、`coast assign`、`coast unassign`、または `coast checkout` の前に確認してください。
+- ユーザーが既存スロットの再割り当てを明示的に望んでいない限り、チェックアウト済みまたはすでに割り当て済みのものを再利用するより、新しい Coast を作成することを優先してください。
+- 推測する前に `coast docs` または `coast search-docs` を使ってください。
