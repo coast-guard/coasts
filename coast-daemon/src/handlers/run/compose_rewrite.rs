@@ -522,7 +522,7 @@ fn volume_mount_target(volume: &serde_yaml::Value) -> Option<&str> {
     match volume {
         serde_yaml::Value::String(entry) => {
             let parts: Vec<&str> = entry.splitn(3, ':').collect();
-            (parts.len() >= 2).then_some(parts[1])
+            (parts.len() >= 2).then(|| parts[1])
         }
         serde_yaml::Value::Mapping(mapping) => mapping
             .get(serde_yaml::Value::String("target".into()))
@@ -1264,6 +1264,54 @@ services:
         assert!(
             result.contains("./api:/app/api:rslave"),
             "api should get rslave with default_hot"
+        );
+    }
+
+    #[test]
+    fn test_volume_mount_target_anonymous_volume_does_not_panic() {
+        let vol = serde_yaml::Value::String("/workspace/node_modules".into());
+        assert_eq!(volume_mount_target(&vol), None);
+    }
+
+    #[test]
+    fn test_volume_mount_target_bind_mount() {
+        let vol = serde_yaml::Value::String("./src:/app/src".into());
+        assert_eq!(volume_mount_target(&vol), Some("/app/src"));
+    }
+
+    #[test]
+    fn test_volume_mount_target_bind_mount_with_mode() {
+        let vol = serde_yaml::Value::String("./src:/app/src:rw".into());
+        assert_eq!(volume_mount_target(&vol), Some("/app/src"));
+    }
+
+    #[test]
+    fn test_rslave_rewrite_skips_anonymous_volumes() {
+        let compose = r#"
+services:
+  web:
+    image: node:20
+    volumes:
+      - ../apps/web:/workspace
+      - /workspace/node_modules
+"#;
+        let hot = vec!["web".to_string()];
+        let config = ComposeRewriteConfig {
+            hot_services: &hot,
+            ..base_config()
+        };
+        let result = rewrite_compose_yaml(compose, &config).unwrap();
+        assert!(
+            result.contains("../apps/web:/workspace:rslave"),
+            "bind mount should get rslave"
+        );
+        assert!(
+            result.contains("/workspace/node_modules"),
+            "anonymous volume should be preserved unchanged"
+        );
+        assert!(
+            !result.contains("/workspace/node_modules:rslave"),
+            "anonymous volume must not get rslave appended"
         );
     }
 }

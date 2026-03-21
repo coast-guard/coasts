@@ -15,8 +15,8 @@ use super::paths;
 use super::service_start::{start_and_wait_for_services, StartServicesRequest};
 use super::validate::ValidatedRun;
 use super::{
-    archive_build, compose_rewrite, emit, host_builds, image_loading, mcp_setup,
-    merge_dynamic_port_env_vars, secrets, shared_services_setup,
+    compose_rewrite, emit, host_builds, image_loading, mcp_setup, merge_dynamic_port_env_vars,
+    secrets, shared_services_setup,
 };
 
 pub(super) struct ProvisionResult {
@@ -43,11 +43,8 @@ pub(super) async fn provision_instance(
     progress: &tokio::sync::mpsc::Sender<BuildProgressEvent>,
 ) -> Result<ProvisionResult> {
     let code_path = resolve_code_path(&req.project, validated.build_id.as_deref());
-    let uses_archive_build =
-        detect_archive_build(validated.has_compose, req.branch.as_deref(), &code_path).await;
 
-    let per_instance_image_tags =
-        build_host_images(validated, uses_archive_build, &code_path, req, progress).await;
+    let per_instance_image_tags = build_host_images(validated, &code_path, req, progress).await;
 
     let artifact_dir = resolve_artifact_dir(&req.project, validated.build_id.as_deref());
     let coastfile_path = artifact_dir.join("coastfile.toml");
@@ -78,116 +75,151 @@ pub(super) async fn provision_instance(
 
     connect_shared_network(state, &resources.shared_network, &container_id).await;
 
-    let shared_service_routing = if resources.shared_services.is_empty() {
-        None
-    } else {
-        Some(
-            plan_shared_service_routing(
-                docker,
-                &container_id,
-                &resources.shared_services,
-                &resources.shared_service_targets,
-            )
-            .await?,
-        )
-    };
-
-    if !uses_archive_build {
-        let shared_service_hosts = shared_service_routing.as_ref().map_or_else(
-            HashMap::new,
-            super::super::shared_service_routing::SharedServiceRoutingPlan::host_map,
-        );
-
-        rewrite_compose(
-            &artifact_dir,
-            &code_path,
-            &coastfile_path,
-            &shared_service_hosts,
-            &per_instance_image_tags,
-            has_volume_mounts,
-            &secret_container_paths,
-            Some(paths::SHARED_CADDY_PKI_CONTAINER_PATH),
-            &req.project,
-            &req.name,
-        );
-    }
-
-    if let Some(ref routing) = shared_service_routing {
-        ensure_shared_service_proxies(docker, &container_id, routing).await?;
-    }
-
-    load_cached_images(docker, &container_id, &req.project, validated, progress).await;
-
-    if uses_archive_build {
-        emit(
-            progress,
-            BuildProgressEvent::started("Building images", 2, validated.total_steps),
-        );
-        let _archive_tags = archive_build::run_archive_build(
-            docker,
-            archive_build::ArchiveBuildRequest {
-                container_id: &container_id,
-                code_path: &code_path,
-                branch: req.branch.as_deref().unwrap(),
-                project: &req.project,
-                instance_name: &req.name,
-                artifact_dir: &artifact_dir,
-                coastfile_path: &coastfile_path,
-                has_volume_mounts,
-                secret_container_paths: &secret_container_paths,
-                progress,
-            },
-        )
-        .await?;
-    } else {
-        image_loading::pipe_host_images_to_inner_daemon(&per_instance_image_tags, &container_id)
-            .await;
-    }
-
-    bind_workspace(docker, &container_id, &req.name).await;
-
-    if !resources.mcp_servers.is_empty() || !resources.mcp_clients.is_empty() {
-        mcp_setup::install_mcp_servers(
-            &container_id,
-            &resources.mcp_servers,
-            &resources.mcp_clients,
-            docker,
-            progress,
-        )
-        .await?;
-    }
-
-    secrets::write_secret_files_via_exec(&secret_files_for_exec, &container_id, docker).await;
-
-    let artifact_dir_opt = if artifact_dir.exists() {
-        Some(artifact_dir.as_path())
-    } else {
-        None
-    };
-    start_and_wait_for_services(
+    let ctx = InstanceConfig {
         docker,
-        StartServicesRequest {
-            container_id: &container_id,
-            instance_name: &req.name,
-            project: &req.project,
-            has_compose: validated.has_compose,
-            has_services: validated.has_services,
-            uses_archive_build,
-            compose_rel_dir: validated.compose_rel_dir.as_deref(),
-            artifact_dir_opt,
-            bare_services: &validated.bare_services,
-            total_steps: validated.total_steps,
-            progress,
-        },
-    )
-    .await?;
+        validated,
+        req,
+        code_path: &code_path,
+        artifact_dir: &artifact_dir,
+        coastfile_path: &coastfile_path,
+        container_id: &container_id,
+        resources: &resources,
+        per_instance_image_tags: &per_instance_image_tags,
+        has_volume_mounts,
+        secret_container_paths: &secret_container_paths,
+        secret_files_for_exec: &secret_files_for_exec,
+        progress,
+    };
 
-    normalize_shared_caddy_pki_permissions(docker, &container_id).await;
+    setup_shared_services(&ctx).await?;
+    prepare_images(&ctx).await;
+    prepare_runtime(&ctx).await?;
+    start_services(&ctx).await?;
 
     Ok(ProvisionResult {
         container_id,
         pre_allocated_ports: resources.pre_allocated_ports,
     })
+}
+
+struct InstanceConfig<'a> {
+    docker: &'a bollard::Docker,
+    validated: &'a ValidatedRun,
+    req: &'a RunRequest,
+    code_path: &'a std::path::Path,
+    artifact_dir: &'a std::path::Path,
+    coastfile_path: &'a std::path::Path,
+    container_id: &'a str,
+    resources: &'a CoastfileResources,
+    per_instance_image_tags: &'a [(String, String)],
+    has_volume_mounts: bool,
+    secret_container_paths: &'a [String],
+    secret_files_for_exec: &'a [(String, Vec<u8>)],
+    progress: &'a tokio::sync::mpsc::Sender<BuildProgressEvent>,
+}
+
+async fn setup_shared_services(ctx: &InstanceConfig<'_>) -> Result<()> {
+    info!(instance = %ctx.req.name, "provision: setting up shared services");
+    let shared_service_routing = if ctx.resources.shared_services.is_empty() {
+        None
+    } else {
+        Some(
+            plan_shared_service_routing(
+                ctx.docker,
+                ctx.container_id,
+                &ctx.resources.shared_services,
+                &ctx.resources.shared_service_targets,
+            )
+            .await?,
+        )
+    };
+
+    let shared_service_hosts = shared_service_routing.as_ref().map_or_else(
+        HashMap::new,
+        super::super::shared_service_routing::SharedServiceRoutingPlan::host_map,
+    );
+
+    rewrite_compose(
+        ctx.artifact_dir,
+        ctx.code_path,
+        ctx.coastfile_path,
+        &shared_service_hosts,
+        ctx.per_instance_image_tags,
+        ctx.has_volume_mounts,
+        ctx.secret_container_paths,
+        Some(paths::SHARED_CADDY_PKI_CONTAINER_PATH),
+        &ctx.req.project,
+        &ctx.req.name,
+    );
+
+    if let Some(ref routing) = shared_service_routing {
+        ensure_shared_service_proxies(ctx.docker, ctx.container_id, routing).await?;
+    }
+
+    info!(instance = %ctx.req.name, "provision: shared services configured");
+    Ok(())
+}
+
+async fn prepare_images(ctx: &InstanceConfig<'_>) {
+    info!(instance = %ctx.req.name, "provision: preparing images");
+    load_cached_images(
+        ctx.docker,
+        ctx.container_id,
+        &ctx.req.project,
+        ctx.validated,
+        ctx.progress,
+    )
+    .await;
+    image_loading::pipe_host_images_to_inner_daemon(ctx.per_instance_image_tags, ctx.container_id)
+        .await;
+    info!(instance = %ctx.req.name, "provision: images ready");
+}
+
+async fn prepare_runtime(ctx: &InstanceConfig<'_>) -> Result<()> {
+    info!(instance = %ctx.req.name, "provision: preparing runtime");
+    bind_workspace(ctx.docker, ctx.container_id, &ctx.req.name).await;
+    install_mcp_if_configured(ctx).await?;
+    secrets::write_secret_files_via_exec(ctx.secret_files_for_exec, ctx.container_id, ctx.docker)
+        .await;
+    info!(instance = %ctx.req.name, "provision: runtime ready");
+    Ok(())
+}
+
+async fn install_mcp_if_configured(ctx: &InstanceConfig<'_>) -> Result<()> {
+    if ctx.resources.mcp_servers.is_empty() && ctx.resources.mcp_clients.is_empty() {
+        return Ok(());
+    }
+    mcp_setup::install_mcp_servers(
+        ctx.container_id,
+        &ctx.resources.mcp_servers,
+        &ctx.resources.mcp_clients,
+        ctx.docker,
+        ctx.progress,
+    )
+    .await
+}
+
+async fn start_services(ctx: &InstanceConfig<'_>) -> Result<()> {
+    let artifact_dir_opt = ctx.artifact_dir.exists().then_some(ctx.artifact_dir);
+    start_and_wait_for_services(
+        ctx.docker,
+        StartServicesRequest {
+            container_id: ctx.container_id,
+            instance_name: &ctx.req.name,
+            project: &ctx.req.project,
+            has_compose: ctx.validated.has_compose,
+            has_services: ctx.validated.has_services,
+            compose_rel_dir: ctx.validated.compose_rel_dir.as_deref(),
+            artifact_dir_opt,
+            bare_services: &ctx.validated.bare_services,
+            total_steps: ctx.validated.total_steps,
+            progress: ctx.progress,
+        },
+    )
+    .await?;
+
+    normalize_shared_caddy_pki_permissions(ctx.docker, ctx.container_id).await;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -229,46 +261,13 @@ fn resolve_artifact_dir(project: &str, build_id: Option<&str>) -> std::path::Pat
     }
 }
 
-async fn detect_archive_build(
-    has_compose: bool,
-    branch: Option<&str>,
-    code_path: &std::path::Path,
-) -> bool {
-    if !has_compose {
-        return false;
-    }
-    let Some(branch) = branch else {
-        return false;
-    };
-    let host_branch_output = tokio::process::Command::new("git")
-        .args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .current_dir(code_path)
-        .output()
-        .await;
-    let host_branch = host_branch_output
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
-    match host_branch {
-        Some(ref hb) if hb != branch => {
-            info!(
-                host_branch = %hb, requested_branch = %branch,
-                "branch differs from host — will use git archive build inside DinD"
-            );
-            true
-        }
-        _ => false,
-    }
-}
-
 async fn build_host_images(
     validated: &ValidatedRun,
-    uses_archive_build: bool,
     code_path: &std::path::Path,
     req: &RunRequest,
     progress: &tokio::sync::mpsc::Sender<BuildProgressEvent>,
 ) -> Vec<(String, String)> {
-    if uses_archive_build || !validated.has_compose {
+    if !validated.has_compose {
         return Vec::new();
     }
     emit(
@@ -910,18 +909,6 @@ mod tests {
         assert!(script.contains("\"$base/authorities/local/root.key\""));
         assert!(script.contains("\"$base/authorities/local/intermediate.key\""));
         assert!(script.contains("chmod 600"));
-    }
-
-    #[tokio::test]
-    async fn test_detect_archive_build_no_compose() {
-        let result = detect_archive_build(false, Some("main"), std::path::Path::new(".")).await;
-        assert!(!result, "should be false when has_compose is false");
-    }
-
-    #[tokio::test]
-    async fn test_detect_archive_build_no_branch() {
-        let result = detect_archive_build(true, None, std::path::Path::new(".")).await;
-        assert!(!result, "should be false when no branch specified");
     }
 
     #[tokio::test]

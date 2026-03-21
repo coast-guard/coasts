@@ -813,7 +813,12 @@ mod tests {
     #[test]
     fn test_socket_path() {
         let path = socket_path();
-        assert!(path.ends_with(".coast/coastd.sock"));
+        assert_eq!(
+            path.file_name().and_then(|f| f.to_str()),
+            Some("coastd.sock"),
+        );
+        let expected_parent = coast_core::artifact::coast_home().unwrap();
+        assert_eq!(path.parent().unwrap(), expected_parent);
     }
 
     #[test]
