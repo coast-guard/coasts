@@ -146,6 +146,46 @@ impl Coastfile {
 
     /// Recursively parse a Coastfile, resolving `extends` and `includes`.
     fn from_file_with_ancestry(path: &Path, ancestors: &mut HashSet<PathBuf>) -> Result<Self> {
+        /// If `dir` is inside a git worktree, follow the `.git` file's gitdir
+        /// pointer back to the real repository root. Returns `dir` unchanged when
+        /// `.git` is a directory (normal repo) or absent (not a git repo).
+        fn resolve_repo_root(dir: &Path) -> PathBuf {
+            let dot_git = dir.join(".git");
+
+            if dot_git.is_dir() || !dot_git.exists() {
+                return dir.to_path_buf();
+            }
+
+            let Ok(content) = std::fs::read_to_string(&dot_git) else {
+                return dir.to_path_buf();
+            };
+            let Some(gitdir_str) = content
+                .lines()
+                .find_map(|line| line.strip_prefix("gitdir: "))
+                .map(str::trim)
+            else {
+                return dir.to_path_buf();
+            };
+
+            let gitdir = if Path::new(gitdir_str).is_absolute() {
+                PathBuf::from(gitdir_str)
+            } else {
+                dir.join(gitdir_str)
+            };
+
+            // gitdir is typically <repo>/.git/worktrees/<name>.
+            // Walk up to find the .git directory, then its parent is the repo root.
+            if let Some(git_dir) = gitdir.parent().and_then(|p| p.parent()) {
+                if git_dir.file_name().map(|n| n == ".git").unwrap_or(false) {
+                    if let Some(repo_root) = git_dir.parent() {
+                        return repo_root.to_path_buf();
+                    }
+                }
+            }
+
+            dir.to_path_buf()
+        }
+
         let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
 
         if !ancestors.insert(canonical.clone()) {
@@ -157,9 +197,10 @@ impl Coastfile {
 
         let coastfile_type = Self::coastfile_type_from_path(path)?;
 
-        let project_root = path
+        let project_root_raw = path
             .parent()
             .ok_or_else(|| CoastError::coastfile("Coastfile path has no parent directory"))?;
+        let project_root = &resolve_repo_root(project_root_raw);
 
         let content = std::fs::read_to_string(path).map_err(|e| CoastError::Io {
             message: format!("Failed to read Coastfile: {e}"),

@@ -1723,3 +1723,134 @@ worktree_dir = [".worktrees", "~/.codex/worktrees"]
         vec![".worktrees", "~/.codex/worktrees"]
     );
 }
+
+// ---------------------------------------------------------------------------
+// Worktree project_root resolution tests
+// ---------------------------------------------------------------------------
+
+fn git_in(root: &std::path::Path, args: &[&str]) {
+    let out = std::process::Command::new("git")
+        .args(args)
+        .current_dir(root)
+        .env("GIT_AUTHOR_NAME", "test")
+        .env("GIT_AUTHOR_EMAIL", "test@test.com")
+        .env("GIT_COMMITTER_NAME", "test")
+        .env("GIT_COMMITTER_EMAIL", "test@test.com")
+        .output()
+        .expect("git command failed to start");
+    assert!(
+        out.status.success(),
+        "git {:?} failed: {}",
+        args,
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn test_from_file_in_nested_worktree_resolves_repo_root() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    git_in(root, &["init", "-b", "main"]);
+
+    let coastfile_content = "[coast]\nname = \"test-app\"\n";
+    std::fs::write(root.join("Coastfile"), coastfile_content).unwrap();
+    git_in(root, &["add", "Coastfile"]);
+    git_in(root, &["commit", "-m", "init"]);
+    git_in(root, &["branch", "feat"]);
+
+    let wt_path = root.join(".worktrees").join("feat");
+    std::fs::create_dir_all(wt_path.parent().unwrap()).unwrap();
+    git_in(
+        root,
+        &["worktree", "add", &wt_path.to_string_lossy(), "feat"],
+    );
+
+    let wt_coastfile = wt_path.join("Coastfile");
+    assert!(
+        wt_coastfile.exists(),
+        "worktree should contain tracked Coastfile"
+    );
+
+    let cf = Coastfile::from_file(&wt_coastfile).unwrap();
+    let canonical_root = root.canonicalize().unwrap();
+    let canonical_project = cf.project_root.canonicalize().unwrap();
+    assert_eq!(
+        canonical_project, canonical_root,
+        "project_root should resolve to the repo root, not the worktree"
+    );
+}
+
+#[test]
+fn test_from_file_in_normal_repo_unchanged() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    git_in(root, &["init", "-b", "main"]);
+
+    let coastfile_content = "[coast]\nname = \"test-app\"\n";
+    std::fs::write(root.join("Coastfile"), coastfile_content).unwrap();
+
+    let cf = Coastfile::from_file(&root.join("Coastfile")).unwrap();
+    let canonical_root = root.canonicalize().unwrap();
+    let canonical_project = cf.project_root.canonicalize().unwrap();
+    assert_eq!(
+        canonical_project, canonical_root,
+        "project_root should be the Coastfile's parent in a normal repo"
+    );
+}
+
+#[test]
+fn test_from_file_no_git_dir_unchanged() {
+    let dir = tempfile::tempdir().unwrap();
+
+    let coastfile_content = "[coast]\nname = \"test-app\"\n";
+    std::fs::write(dir.path().join("Coastfile"), coastfile_content).unwrap();
+
+    let cf = Coastfile::from_file(&dir.path().join("Coastfile")).unwrap();
+    assert_eq!(
+        cf.project_root,
+        dir.path(),
+        "project_root should fall back to the Coastfile's parent when no .git exists"
+    );
+}
+
+#[test]
+fn test_from_file_in_claude_worktree_resolves_repo_root() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    git_in(root, &["init", "-b", "main"]);
+
+    let coastfile_content = "[coast]\nname = \"test-app\"\n";
+    std::fs::write(root.join("Coastfile"), coastfile_content).unwrap();
+    git_in(root, &["add", "Coastfile"]);
+    git_in(root, &["commit", "-m", "init"]);
+    git_in(root, &["branch", "redo-website"]);
+
+    let wt_path = root.join(".claude").join("worktrees").join("redo-website");
+    std::fs::create_dir_all(wt_path.parent().unwrap()).unwrap();
+    git_in(
+        root,
+        &[
+            "worktree",
+            "add",
+            &wt_path.to_string_lossy(),
+            "redo-website",
+        ],
+    );
+
+    let wt_coastfile = wt_path.join("Coastfile");
+    assert!(
+        wt_coastfile.exists(),
+        "worktree should contain tracked Coastfile"
+    );
+
+    let cf = Coastfile::from_file(&wt_coastfile).unwrap();
+    let canonical_root = root.canonicalize().unwrap();
+    let canonical_project = cf.project_root.canonicalize().unwrap();
+    assert_eq!(
+        canonical_project, canonical_root,
+        "project_root should resolve to the repo root from .claude/worktrees/"
+    );
+}
