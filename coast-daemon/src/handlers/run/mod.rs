@@ -3,7 +3,6 @@
 /// Creates a new coast instance: records it in the state DB,
 /// creates the coast container with project root bind-mounted,
 /// loads cached images, starts the inner compose stack, and allocates ports.
-mod archive_build;
 mod compose_rewrite;
 mod finalize;
 mod host_builds;

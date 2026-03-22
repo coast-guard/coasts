@@ -9,7 +9,6 @@ use coast_docker::runtime::{ExecResult, Runtime};
 
 use super::emit;
 
-const ARCHIVE_BUILD_DIR: &str = "/tmp/coast-build";
 const ARTIFACT_COMPOSE_PATH: &str = "/coast-artifact/compose.yml";
 const MERGED_COMPOSE_PATH: &str = "/coast-override/docker-compose.coast.yml";
 
@@ -29,7 +28,6 @@ pub(super) struct StartServicesRequest<'a> {
     pub project: &'a str,
     pub has_compose: bool,
     pub has_services: bool,
-    pub uses_archive_build: bool,
     pub compose_rel_dir: Option<&'a str>,
     pub artifact_dir_opt: Option<&'a Path>,
     pub bare_services: &'a [BareServiceConfig],
@@ -83,10 +81,8 @@ fn health_poll_interval(elapsed: tokio::time::Duration) -> tokio::time::Duration
     }
 }
 
-fn compose_project_dir(uses_archive_build: bool, compose_rel_dir: Option<&str>) -> String {
-    if uses_archive_build {
-        ARCHIVE_BUILD_DIR.to_string()
-    } else if let Some(dir) = compose_rel_dir {
+fn compose_project_dir(compose_rel_dir: Option<&str>) -> String {
+    if let Some(dir) = compose_rel_dir {
         format!("/workspace/{dir}")
     } else {
         "/workspace".to_string()
@@ -100,23 +96,11 @@ fn compose_project_name(project: &str, compose_rel_dir: Option<&str>) -> String 
 }
 
 fn compose_base_args(
-    uses_archive_build: bool,
     has_merged_override: bool,
     artifact_compose_exists: bool,
     compose_project_name: &str,
     project_dir: &str,
 ) -> Vec<String> {
-    if uses_archive_build {
-        return vec![
-            "docker".into(),
-            "compose".into(),
-            "-p".into(),
-            compose_project_name.to_string(),
-            "--project-directory".into(),
-            project_dir.to_string(),
-        ];
-    }
-
     if has_merged_override {
         return vec![
             "docker".into(),
@@ -155,16 +139,11 @@ async fn build_compose_base_args<R: ExecRuntime>(
     runtime: &R,
     request: &StartServicesRequest<'_>,
 ) -> Vec<String> {
-    let project_dir = compose_project_dir(request.uses_archive_build, request.compose_rel_dir);
+    let project_dir = compose_project_dir(request.compose_rel_dir);
     let project_name = compose_project_name(request.project, request.compose_rel_dir);
-    let has_merged_override = if request.uses_archive_build {
-        false
-    } else {
-        has_merged_override(runtime, request.container_id).await
-    };
+    let has_merged_override = has_merged_override(runtime, request.container_id).await;
 
     compose_base_args(
-        request.uses_archive_build,
         has_merged_override,
         request.artifact_dir_opt.is_some(),
         &project_name,
@@ -265,12 +244,6 @@ async fn wait_for_compose_health_with_timeout<R: ExecRuntime>(
     Ok(())
 }
 
-async fn cleanup_archive_build_dir<R: ExecRuntime>(runtime: &R, container_id: &str) {
-    let _ = runtime
-        .exec_in_coast(container_id, &["rm", "-rf", ARCHIVE_BUILD_DIR])
-        .await;
-}
-
 async fn run_compose_services<R: ExecRuntime>(
     runtime: &R,
     request: &StartServicesRequest<'_>,
@@ -297,10 +270,6 @@ async fn run_compose_services<R: ExecRuntime>(
         request.instance_name,
     )
     .await?;
-
-    if request.uses_archive_build {
-        cleanup_archive_build_dir(runtime, request.container_id).await;
-    }
 
     emit(
         request.progress,
@@ -461,7 +430,6 @@ mod tests {
             project: "proj",
             has_compose: false,
             has_services: false,
-            uses_archive_build: false,
             compose_rel_dir: None,
             artifact_dir_opt: None,
             bare_services,
@@ -503,16 +471,13 @@ mod tests {
     }
 
     #[test]
-    fn test_compose_project_dir_prefers_archive_build() {
-        assert_eq!(
-            compose_project_dir(true, Some("apps/web")),
-            ARCHIVE_BUILD_DIR.to_string()
-        );
-        assert_eq!(
-            compose_project_dir(false, Some("apps/web")),
-            "/workspace/apps/web".to_string()
-        );
-        assert_eq!(compose_project_dir(false, None), "/workspace".to_string());
+    fn test_compose_project_dir_no_rel_dir() {
+        assert_eq!(compose_project_dir(None), "/workspace");
+    }
+
+    #[test]
+    fn test_compose_project_dir_with_rel_dir() {
+        assert_eq!(compose_project_dir(Some("apps/web")), "/workspace/apps/web");
     }
 
     #[test]
@@ -523,7 +488,7 @@ mod tests {
 
     #[test]
     fn test_compose_base_args_with_merged_override() {
-        let args = compose_base_args(false, true, false, "apps/web", "/workspace/apps/web");
+        let args = compose_base_args(true, false, "apps/web", "/workspace/apps/web");
         assert_eq!(
             args,
             vec![
@@ -541,7 +506,7 @@ mod tests {
 
     #[test]
     fn test_compose_base_args_with_artifact_compose() {
-        let args = compose_base_args(false, false, true, "coast-proj", "/workspace");
+        let args = compose_base_args(false, true, "coast-proj", "/workspace");
         assert_eq!(
             args,
             vec![
@@ -558,25 +523,33 @@ mod tests {
     }
 
     #[test]
+    fn test_compose_base_args_merged_override_wins_over_artifact() {
+        let args = compose_base_args(true, true, "coast-proj", "/workspace");
+        assert!(
+            args.contains(&MERGED_COMPOSE_PATH.to_string()),
+            "merged override should take priority when both exist"
+        );
+        assert!(
+            !args.contains(&ARTIFACT_COMPOSE_PATH.to_string()),
+            "artifact compose should not appear when merged override exists"
+        );
+    }
+
+    #[test]
     fn test_compose_base_args_plain_workspace() {
-        let args = compose_base_args(false, false, false, "coast-proj", "/workspace");
+        let args = compose_base_args(false, false, "coast-proj", "/workspace");
         assert_eq!(args, vec!["docker", "compose", "-p", "coast-proj"]);
     }
 
     #[test]
-    fn test_compose_base_args_for_archive_build() {
-        let args = compose_base_args(true, false, false, "apps/web", ARCHIVE_BUILD_DIR);
-        assert_eq!(
-            args,
-            vec![
-                "docker",
-                "compose",
-                "-p",
-                "apps/web",
-                "--project-directory",
-                ARCHIVE_BUILD_DIR,
-            ]
-        );
+    fn test_compose_project_dir_never_returns_tmp() {
+        for rel_dir in [None, Some("apps/web"), Some("sub/dir")] {
+            let dir = compose_project_dir(rel_dir);
+            assert!(
+                dir.starts_with("/workspace"),
+                "compose project dir must always be under /workspace, got: {dir}"
+            );
+        }
     }
 
     #[test]
@@ -739,7 +712,7 @@ mod tests {
     #[tokio::test]
     async fn test_wait_for_compose_health_timeout_includes_recent_logs() {
         let runtime = FakeRuntime::with_responses(vec![Ok(success_result("service logs", ""))]);
-        let compose_base_args = compose_base_args(false, false, false, "coast-proj", "/workspace");
+        let compose_base_args = compose_base_args(false, false, "coast-proj", "/workspace");
 
         let error = wait_for_compose_health_with_timeout(
             &runtime,
@@ -767,62 +740,6 @@ mod tests {
                 "50".to_string(),
             ]]
         );
-    }
-
-    #[tokio::test]
-    async fn test_start_services_archive_build_cleans_up_tmp_dir() {
-        let (progress, mut receiver) = progress_channel();
-        let mut request = sample_request(&progress, &[]);
-        request.has_compose = true;
-        request.uses_archive_build = true;
-        request.compose_rel_dir = Some("apps/web");
-        let runtime = FakeRuntime::with_responses(vec![
-            Ok(success_result("", "")),
-            Ok(success_result(r#"{"State":"running"}"#, "")),
-            Ok(success_result("", "")),
-        ]);
-
-        start_and_wait_for_services_with_runtime(&runtime, &request)
-            .await
-            .unwrap();
-
-        assert_eq!(
-            runtime.commands(),
-            vec![
-                vec![
-                    "docker".to_string(),
-                    "compose".to_string(),
-                    "-p".to_string(),
-                    "apps/web".to_string(),
-                    "--project-directory".to_string(),
-                    ARCHIVE_BUILD_DIR.to_string(),
-                    "up".to_string(),
-                    "-d".to_string(),
-                    "--remove-orphans".to_string(),
-                ],
-                vec![
-                    "docker".to_string(),
-                    "compose".to_string(),
-                    "-p".to_string(),
-                    "apps/web".to_string(),
-                    "--project-directory".to_string(),
-                    ARCHIVE_BUILD_DIR.to_string(),
-                    "ps".to_string(),
-                    "--format".to_string(),
-                    "json".to_string(),
-                ],
-                vec![
-                    "rm".to_string(),
-                    "-rf".to_string(),
-                    ARCHIVE_BUILD_DIR.to_string()
-                ],
-            ]
-        );
-
-        let events = collect_progress(&mut receiver);
-        assert_eq!(events.len(), 2);
-        assert_eq!(events[0].status, "started");
-        assert_eq!(events[1].status, "ok");
     }
 
     #[tokio::test]

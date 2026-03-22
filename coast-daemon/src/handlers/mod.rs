@@ -101,6 +101,11 @@ mod compose_context_tests {
 
     #[test]
     fn test_clear_checked_out_state_clears_pids_and_updates_status() {
+        let _guard = env_lock().lock().unwrap();
+        unsafe {
+            std::env::remove_var("WSL_DISTRO_NAME");
+            std::env::remove_var("WSL_INTEROP");
+        }
         let db = crate::state::StateDb::open_in_memory().unwrap();
         let instance = coast_core::types::CoastInstance {
             name: "dev-1".to_string(),
@@ -127,7 +132,7 @@ mod compose_context_tests {
             },
         )
         .unwrap();
-        db.update_socat_pid("proj", "dev-1", "web", Some(4_194_304))
+        db.update_socat_pid("proj", "dev-1", "web", Some(i32::MAX))
             .unwrap();
 
         let changed =
@@ -169,6 +174,11 @@ mod compose_context_tests {
 
     #[test]
     fn test_clear_checked_out_state_succeeds_with_stale_zombie_pid() {
+        let _guard = env_lock().lock().unwrap();
+        unsafe {
+            std::env::remove_var("WSL_DISTRO_NAME");
+            std::env::remove_var("WSL_INTEROP");
+        }
         let db = crate::state::StateDb::open_in_memory().unwrap();
         let instance = coast_core::types::CoastInstance {
             name: "dev-1".to_string(),
@@ -195,7 +205,7 @@ mod compose_context_tests {
             },
         )
         .unwrap();
-        db.update_socat_pid("proj", "dev-1", "web", Some(4_194_304))
+        db.update_socat_pid("proj", "dev-1", "web", Some(i32::MAX))
             .unwrap();
 
         let changed =

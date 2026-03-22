@@ -1,0 +1,50 @@
+You are setting up the Coasts skill for Cursor in this project. Run all
+commands from the project root.
+
+## Step 1: Check for Coast CLI
+
+Run this command:
+
+  coast --version
+
+If the `coast` command is not found, stop here and tell the user:
+
+  "The Coast CLI is not installed. Install it first: https://coasts.dev/docs/getting-started"
+
+Do not continue until the CLI is available.
+
+## Step 2: Get the skill content
+
+Run this command:
+
+  coast skills-prompt
+
+The output has two parts:
+
+- **Coast Runtime rules** — everything from the start up to (but not including) the line that begins with `---`
+- **Coasts skill** — everything from the `---` frontmatter block onward (including the `---` lines and everything after them)
+
+Save both parts for the steps below.
+
+## Step 3: Ask the user
+
+Ask the user: should I set this up **globally** (available in every project on this machine) or **for this project only**?
+
+## Step 4: Place files
+
+If a target file already exists, append the Coast Runtime section rather than overwriting — but check first whether a `# Coast Runtime` section is already present and skip if so.
+
+**Global setup:**
+- Append the Coast Runtime rules to the user's global Cursor rules
+- Write the Coasts skill to `~/.cursor/skills/coasts/SKILL.md`
+
+**Project setup:**
+- Append the Coast Runtime rules to `AGENTS.md` at the project root (or `.cursor/rules/coast.md` if the user prefers Cursor-native rules — ask them)
+- Write the Coasts skill to `.cursor/skills/coasts/SKILL.md`
+
+## Step 5: Confirm
+
+After placing files, show the user a summary of what was created and where.
+
+Tell the user: **Restart Cursor** for the skill and rules changes to take
+effect.

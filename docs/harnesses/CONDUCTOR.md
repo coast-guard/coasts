@@ -1,9 +1,23 @@
 # Conductor
 
-[Conductor](https://conductor.build/) runs parallel Claude Code agents, each in its own isolated workspace. Workspaces are git worktrees stored at `~/conductor/workspaces/<project-name>/`. Each workspace is checked out on a named branch.
+## Quick setup
 
-Because these worktrees live outside the project root, Coasts needs explicit
-configuration to discover and mount them.
+Requires the [Coast CLI](../GETTING_STARTED.md). Copy this prompt into your
+agent's chat to set up Coasts automatically:
+
+```prompt-copy
+conductor_setup_prompt.txt
+```
+
+You can also get the skill content from the CLI: `coast skills-prompt`.
+
+> **Important:** Conductor runs each session in an isolated git worktree. The
+> setup prompt creates files that only exist in the current workspace — commit
+> and merge them into your main branch or they won't be available in new
+> sessions.
+
+After setup, **fully close and reopen Conductor** for changes to take effect. If
+the `/coasts` command does not appear, close and reopen again.
 
 ## Setup
 

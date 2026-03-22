@@ -1,0 +1,80 @@
+You are setting up the Coasts skill for Conductor in this project. Run all
+commands from the project root.
+
+## Step 1: Check for Coast CLI
+
+Run this command:
+
+  coast --version
+
+If the `coast` command is not found, stop here and tell the user:
+
+  "The Coast CLI is not installed. Install it first: https://coasts.dev/docs/getting-started"
+
+Do not continue until the CLI is available.
+
+## Step 2: Get the skill content
+
+Run this command:
+
+  coast skills-prompt
+
+The output has two parts:
+
+- **Coast Runtime rules** — everything from the start up to (but not including) the line that begins with `---`
+- **Coasts skill** — everything from the `---` frontmatter block onward (including the `---` lines and everything after them)
+
+Save both parts for the steps below.
+
+## Step 3: Ask the user
+
+Ask the user: which providers do you use in Conductor?
+
+- **Claude** (Anthropic)
+- **Codex** (OpenAI)
+- **Both**
+- **Other** — if the user names a different provider, run
+  `coast docs --path SKILLS_FOR_HOST_AGENTS.md` and
+  `coast docs --path harnesses/README.md` to determine where that provider
+  expects project instructions and skills, then follow the same pattern
+
+## Step 4: Place files
+
+Conductor setup is always project-level. If a target file already exists, append
+the Coast Runtime section rather than overwriting — but check first whether a
+`# Coast Runtime` section is already present and skip if so.
+
+**If the user selected Claude (or both):**
+- Append the Coast Runtime rules to `CLAUDE.md` at the project root
+- Write the Coasts skill to `.claude/skills/coasts/SKILL.md`
+
+**If the user selected Codex (or both):**
+- Append the Coast Runtime rules to `AGENTS.md` at the project root
+- Write the Coasts skill to `.agents/skills/coasts/SKILL.md`
+- Create `.agents/skills/coasts/agents/openai.yaml` with this content:
+
+interface:
+  display_name: "Coasts"
+  short_description: "Inspect, assign, and open Coasts for this repo"
+  default_prompt: "Use this skill when the user wants help finding, assigning, or opening a Coast."
+
+policy:
+  allow_implicit_invocation: false
+
+## Step 5: Confirm
+
+After placing files, show the user a summary of what was created and where.
+
+Tell the user: **Fully close and reopen Conductor** for changes to take effect.
+If the `/coasts` command does not appear immediately, close and reopen again.
+
+## Step 6: Commit the new files
+
+Conductor runs each session in an isolated git worktree. Uncommitted files will
+not carry over to new sessions. Commit the files you just created so they are
+available in every future workspace:
+
+  git add CLAUDE.md .claude/ AGENTS.md .agents/ 2>/dev/null; git status
+
+Show the user which files are staged and ask them to confirm before committing.
+Use a commit message like `[dh] feat: add Coasts skill for Conductor`.

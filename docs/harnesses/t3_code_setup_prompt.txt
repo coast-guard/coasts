@@ -1,0 +1,81 @@
+You are setting up the Coasts skill for T3 Code in this project. Run all
+commands from the project root.
+
+## Step 1: Check for Coast CLI
+
+Run this command:
+
+  coast --version
+
+If the `coast` command is not found, stop here and tell the user:
+
+  "The Coast CLI is not installed. Install it first: https://coasts.dev/docs/getting-started"
+
+Do not continue until the CLI is available.
+
+## Step 2: Get the skill content
+
+Run this command:
+
+  coast skills-prompt
+
+The output has two parts:
+
+- **Coast Runtime rules** — everything from the start up to (but not including) the line that begins with `---`
+- **Coasts skill** — everything from the `---` frontmatter block onward (including the `---` lines and everything after them)
+
+Save both parts for the steps below.
+
+## Step 3: Ask the user
+
+T3 Code supports multiple providers. Ask the user: which providers do you use
+in T3 Code?
+
+- **Codex** (OpenAI)
+- **Claude** (Anthropic)
+- **Both**
+- **Other** — if the user names a different provider, run
+  `coast docs --path SKILLS_FOR_HOST_AGENTS.md` and
+  `coast docs --path harnesses/README.md` to determine where that provider
+  expects project instructions and skills, then follow the same pattern
+
+## Step 4: Place files
+
+T3 Code setup is always project-level. If a target file already exists, append
+the Coast Runtime section rather than overwriting — but check first whether a
+`# Coast Runtime` section is already present and skip if so.
+
+**If the user selected Codex (or both):**
+- Append the Coast Runtime rules to `AGENTS.md` at the project root
+- Write the Coasts skill to `.agents/skills/coasts/SKILL.md` (project-level)
+- Also write the Coasts skill to `~/.codex/skills/coasts/SKILL.md` (global
+  fallback — T3 Code may not scan project-level `.agents/skills/` yet)
+- Create `.agents/skills/coasts/agents/openai.yaml` with this content:
+
+interface:
+  display_name: "Coasts"
+  short_description: "Inspect, assign, and open Coasts for this repo"
+  default_prompt: "Use this skill when the user wants help finding, assigning, or opening a Coast."
+
+policy:
+  allow_implicit_invocation: false
+
+**If the user selected Claude (or both):**
+- Append the Coast Runtime rules to `CLAUDE.md` at the project root
+- Write the Coasts skill to `.claude/skills/coasts/SKILL.md` (project-level)
+- Also write the Coasts skill to `~/.claude/skills/coasts/SKILL.md` (global
+  fallback — T3 Code may not scan project-level `.claude/skills/` reliably)
+
+**Note:** T3 Code may not load project-level skills from `.agents/skills/` or
+`.claude/skills/` yet. The `AGENTS.md` and `CLAUDE.md` rules still apply on
+every task regardless. The global `~/.codex/skills/coasts/` fallback ensures
+the Codex provider can find the skill.
+
+## Step 5: Confirm
+
+After placing files, show the user a summary of what was created and where.
+Explain that the global `~/.codex/skills/coasts/` copy is a workaround for
+T3 Code not loading project-level skills yet.
+
+Tell the user: **Restart T3 Code** for the skill and rules changes to take
+effect.
