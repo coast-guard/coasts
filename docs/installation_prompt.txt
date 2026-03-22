@@ -37,7 +37,7 @@ Use the docs to make informed decisions about this project's Coastfile configura
   compose       (string, optional)  Path to docker-compose.yml relative to the Coastfile.
   runtime       (string, optional)  "dind" (default), "sysbox", or "podman".
   root          (string, optional)  Project root override (relative or absolute).
-  worktree_dir  (string, optional)  Directory for git worktrees (default: ".worktrees"). Auto-detected from existing worktrees at runtime.
+  worktree_dir  (string or array, optional)  Directory or directories for git worktrees (default: ".worktrees"). Accepts a single string or an array of strings. Auto-detected from existing worktrees at runtime.
 
 [coast.setup] — Optional. Customize the DinD container itself.
 
@@ -222,10 +222,17 @@ Assign strategy — what happens when switching a Coast between worktrees:
    - If worktrees exist, examine their paths to determine the common parent directory (e.g., if worktrees are at `../.worktrees/feat-a` and `../.worktrees/feat-b`, the worktree_dir is `"../.worktrees"`).
    - Set `worktree_dir` in the Coastfile to match the detected directory.
    - If no worktrees exist, omit `worktree_dir` (Coast defaults to ".worktrees"). Do NOT use ".coasts" — that pollutes the project with a Coast-branded directory.
-3. Read the relevant Coast docs (use `coast docs` and `coast search-docs`) to understand volume strategies, assign behavior, and any configuration options that apply to this project's stack.
-4. Ask the user about any ambiguous configuration choices (see tradeoffs above). Do not guess — explain the options and let them decide.
-5. Generate a Coastfile at the project root based on the project analysis and user input.
-6. If the project has no docker-compose.yml, use [services.*] for bare process definitions or [coast.setup] to install dependencies.
-7. Run `coast build`. If it fails, check the error and consult the docs (`coast search-docs "<error description>"`) to troubleshoot.
-8. Run `coast run dev-1`. If it fails, check the error and consult the docs.
-9. Run `coast ui` to open the Coastguard dashboard (this is for the user when you are done).
+3. Ask the user if they use any of these coding harnesses with this project:
+   - **Claude Code** — worktrees at `.claude/worktrees`
+   - **OpenAI Codex** — worktrees at `~/.codex/worktrees`
+   - **Cursor** — worktrees at `~/.cursor/worktrees/<name>` (where `<name>` is the coast name from `[coast] name`)
+   - **Conductor** — worktrees at `~/conductor/workspaces/<name>`
+   - **T3 Code** — worktrees at `~/.t3/worktrees/<name>`
+   For each harness the user selects, include its worktree directory in the `worktree_dir` array. Combine these with any directory detected in step 2. If the user selects none and no worktrees were detected in step 2, omit `worktree_dir` (Coast defaults to ".worktrees").
+4. Read the relevant Coast docs (use `coast docs` and `coast search-docs`) to understand volume strategies, assign behavior, and any configuration options that apply to this project's stack.
+5. Ask the user about any ambiguous configuration choices (see tradeoffs above). Do not guess — explain the options and let them decide.
+6. Generate a Coastfile at the project root based on the project analysis and user input.
+7. If the project has no docker-compose.yml, use [services.*] for bare process definitions or [coast.setup] to install dependencies.
+8. Run `coast build`. If it fails, check the error and consult the docs (`coast search-docs "<error description>"`) to troubleshoot.
+9. Run `coast run dev-1`. If it fails, check the error and consult the docs.
+10. Run `coast ui` to open the Coastguard dashboard (this is for the user when you are done).
