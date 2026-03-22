@@ -475,20 +475,17 @@ async fn create_container(
     let mut env_vars = secret_plan.env_vars;
     merge_dynamic_port_env_vars(&mut env_vars, pre_allocated_ports);
 
-    let mut config = coast_docker::dind::build_dind_config(
-        &req.project,
-        &req.name,
-        code_path,
+    let mut config = coast_docker::dind::build_dind_config(coast_docker::dind::DindConfigParams {
         env_vars,
-        secret_plan.bind_mounts,
-        resources.volume_mounts.clone(),
-        Vec::new(),
+        bind_mounts: secret_plan.bind_mounts,
+        volume_mounts: resources.volume_mounts.clone(),
         image_cache_path,
-        artifact_dir_opt,
-        coast_image.as_deref(),
-        override_dir_opt,
-        dind_extra_hosts,
-    );
+        artifact_dir: artifact_dir_opt,
+        coast_image: coast_image.as_deref(),
+        override_dir: override_dir_opt,
+        extra_hosts: dind_extra_hosts,
+        ..coast_docker::dind::DindConfigParams::new(&req.project, &req.name, code_path)
+    });
     append_shared_caddy_pki_bind_mount(&mut config, &shared_caddy_pki_host_dir);
 
     if let Ok(cf) =

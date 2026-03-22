@@ -403,6 +403,23 @@ pub fn checkout_bridge_container_name(project: &str, instance: &str) -> String {
     format!("{PREFIX}{base}-{hash}")
 }
 
+/// Abstraction over Docker CLI execution, enabling test injection.
+///
+/// Production code uses [`SystemDockerCli`] which calls the real `docker`
+/// binary. Tests supply a [`MockDockerCli`] with pre-programmed responses.
+trait DockerCli {
+    fn run(&self, args: &[String]) -> std::io::Result<std::process::Output>;
+}
+
+/// Real Docker CLI executor — delegates to `Command::new("docker")`.
+struct SystemDockerCli;
+
+impl DockerCli for SystemDockerCli {
+    fn run(&self, args: &[String]) -> std::io::Result<std::process::Output> {
+        Command::new("docker").args(args).output()
+    }
+}
+
 fn run_docker_command(args: &[String]) -> Result<std::process::Output> {
     Command::new("docker").args(args).output().map_err(|error| {
         CoastError::port(format!(
@@ -458,41 +475,51 @@ pub fn remove_checkout_bridge(project: &str, instance: &str) -> Result<()> {
     )))
 }
 
-#[allow(clippy::cognitive_complexity)]
 pub fn cleanup_orphaned_checkout_bridges() {
-    let Ok(output) = Command::new("docker")
-        .args([
-            "ps",
-            "-aq",
-            "--filter",
-            &format!("label={CHECKOUT_BRIDGE_LABEL}"),
-        ])
-        .output()
-    else {
-        debug!("docker not available, skipping checkout bridge cleanup");
+    let docker = SystemDockerCli;
+    let Some(ids) = list_orphaned_bridge_ids(&docker) else {
         return;
     };
+    force_remove_bridge_containers(&docker, &ids);
+}
+
+/// List container IDs of orphaned checkout bridge containers, or `None` if
+/// Docker is unavailable or no orphaned bridges exist.
+fn list_orphaned_bridge_ids(docker: &dyn DockerCli) -> Option<Vec<String>> {
+    let output = docker
+        .run(&[
+            "ps".to_string(),
+            "-aq".to_string(),
+            "--filter".to_string(),
+            format!("label={CHECKOUT_BRIDGE_LABEL}"),
+        ])
+        .ok()?;
 
     if !output.status.success() {
         debug!("failed to list checkout bridge containers, skipping cleanup");
-        return;
+        return None;
     }
 
-    let ids = String::from_utf8_lossy(&output.stdout)
+    let ids: Vec<String> = String::from_utf8_lossy(&output.stdout)
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .map(ToOwned::to_owned)
-        .collect::<Vec<_>>();
+        .collect();
 
     if ids.is_empty() {
         debug!("no orphaned checkout bridge containers found");
-        return;
+        return None;
     }
 
+    Some(ids)
+}
+
+/// Force-remove checkout bridge containers by ID.
+fn force_remove_bridge_containers(docker: &dyn DockerCli, ids: &[String]) {
     let mut args = vec!["rm".to_string(), "-f".to_string()];
-    args.extend(ids);
-    match run_docker_command(&args) {
+    args.extend(ids.iter().cloned());
+    match docker.run(&args) {
         Ok(result) if result.status.success() => {
             info!("Cleaned up orphaned checkout bridge containers from previous session");
         }
@@ -1552,5 +1579,95 @@ mod tests {
 
         assert_eq!(cmds[0].logical_name, "web");
         assert_eq!(cmds[1].logical_name, "postgres");
+    }
+
+    // --- MockDockerCli and checkout bridge cleanup tests ---
+
+    /// Mock Docker CLI that returns pre-programmed responses in order.
+    struct MockDockerCli {
+        responses: Mutex<Vec<std::io::Result<std::process::Output>>>,
+    }
+
+    impl MockDockerCli {
+        fn new(responses: Vec<std::io::Result<std::process::Output>>) -> Self {
+            Self {
+                responses: Mutex::new(responses),
+            }
+        }
+    }
+
+    impl DockerCli for MockDockerCli {
+        fn run(&self, _args: &[String]) -> std::io::Result<std::process::Output> {
+            self.responses.lock().unwrap().remove(0)
+        }
+    }
+
+    /// Build a fake `std::process::Output` with the given exit code, stdout, and stderr.
+    fn fake_output(exit_code: i32, stdout: &str, stderr: &str) -> std::process::Output {
+        use std::os::unix::process::ExitStatusExt;
+        std::process::Output {
+            status: std::process::ExitStatus::from_raw(exit_code << 8),
+            stdout: stdout.as_bytes().to_vec(),
+            stderr: stderr.as_bytes().to_vec(),
+        }
+    }
+
+    #[test]
+    fn test_list_orphaned_bridge_ids_docker_unavailable() {
+        let docker = MockDockerCli::new(vec![Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "docker not found",
+        ))]);
+        assert!(list_orphaned_bridge_ids(&docker).is_none());
+    }
+
+    #[test]
+    fn test_list_orphaned_bridge_ids_docker_ps_fails() {
+        let docker = MockDockerCli::new(vec![Ok(fake_output(1, "", "error"))]);
+        assert!(list_orphaned_bridge_ids(&docker).is_none());
+    }
+
+    #[test]
+    fn test_list_orphaned_bridge_ids_no_containers() {
+        let docker = MockDockerCli::new(vec![Ok(fake_output(0, "", ""))]);
+        assert!(list_orphaned_bridge_ids(&docker).is_none());
+    }
+
+    #[test]
+    fn test_list_orphaned_bridge_ids_returns_ids() {
+        let docker = MockDockerCli::new(vec![Ok(fake_output(0, "abc123\ndef456\n", ""))]);
+        let ids = list_orphaned_bridge_ids(&docker).unwrap();
+        assert_eq!(ids, vec!["abc123", "def456"]);
+    }
+
+    #[test]
+    fn test_list_orphaned_bridge_ids_trims_whitespace() {
+        let docker = MockDockerCli::new(vec![Ok(fake_output(0, "  abc123  \n\n  def456  \n", ""))]);
+        let ids = list_orphaned_bridge_ids(&docker).unwrap();
+        assert_eq!(ids, vec!["abc123", "def456"]);
+    }
+
+    #[test]
+    fn test_force_remove_bridge_containers_success() {
+        // docker rm -f succeeds — should not panic
+        let docker = MockDockerCli::new(vec![Ok(fake_output(0, "", ""))]);
+        force_remove_bridge_containers(&docker, &["abc123".to_string()]);
+    }
+
+    #[test]
+    fn test_force_remove_bridge_containers_docker_rm_fails() {
+        // docker rm -f returns non-zero — should not panic
+        let docker = MockDockerCli::new(vec![Ok(fake_output(1, "", "no such container"))]);
+        force_remove_bridge_containers(&docker, &["abc123".to_string()]);
+    }
+
+    #[test]
+    fn test_force_remove_bridge_containers_docker_unavailable() {
+        // docker command fails to execute — should not panic
+        let docker = MockDockerCli::new(vec![Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "docker not found",
+        ))]);
+        force_remove_bridge_containers(&docker, &["abc123".to_string()]);
     }
 }

@@ -42,7 +42,24 @@ If a target file already exists, append the Coast Runtime section rather than ov
 - Append the Coast Runtime rules to `CLAUDE.md` at the project root
 - Write the Coasts skill to `.claude/skills/coasts/SKILL.md`
 
-## Step 5: Confirm
+## Step 5: Update the Coastfile
+
+Read the `Coastfile` at the project root. Look at the `worktree_dir` field in the
+`[coast]` section.
+
+If `.claude/worktrees` is **not** already listed in `worktree_dir`:
+
+- If `worktree_dir` is a single string, convert it to an array and append
+  `.claude/worktrees`. For example, `worktree_dir = ".worktrees"` becomes
+  `worktree_dir = [".worktrees", ".claude/worktrees"]`.
+- If `worktree_dir` is already an array, append `.claude/worktrees` to it.
+- If `worktree_dir` is not present at all, add
+  `worktree_dir = [".worktrees", ".claude/worktrees"]`.
+
+This is a relative path (inside the project root), so no container recreation is
+needed — changes take effect immediately for worktree listing.
+
+## Step 6: Confirm
 
 After placing files, show the user a summary of what was created and where.
 

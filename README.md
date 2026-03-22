@@ -240,6 +240,7 @@ coast rm feature-x
 - [@clarkerican](https://github.com/clarkerican)
 - [@mukeshblackhat](https://github.com/mukeshblackhat)
 - [@gregpeden](https://github.com/GregPeden)
+- [@vaibhavsing](https://github.com/vaibhavsing)
 
 ## Original History
 

@@ -42,7 +42,25 @@ interface:
 policy:
   allow_implicit_invocation: false
 
-## Step 4: Confirm
+## Step 4: Update the Coastfile
+
+Read the `Coastfile` at the project root. Look at the `worktree_dir` field in the
+`[coast]` section.
+
+If `~/.codex/worktrees` is **not** already listed in `worktree_dir`:
+
+- If `worktree_dir` is a single string, convert it to an array and append
+  `~/.codex/worktrees`. For example, `worktree_dir = ".worktrees"` becomes
+  `worktree_dir = [".worktrees", "~/.codex/worktrees"]`.
+- If `worktree_dir` is already an array, append `~/.codex/worktrees` to it.
+- If `worktree_dir` is not present at all, add
+  `worktree_dir = [".worktrees", "~/.codex/worktrees"]`.
+
+This is an external path, so if a Coast instance is already running for this
+project it must be recreated with `coast run` for the new bind mount to take
+effect. Tell the user this.
+
+## Step 5: Confirm
 
 After placing files, show the user a summary of what was created and where.
 

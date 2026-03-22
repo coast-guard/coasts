@@ -68,7 +68,30 @@ After placing files, show the user a summary of what was created and where.
 Tell the user: **Fully close and reopen Conductor** for changes to take effect.
 If the `/coasts` command does not appear immediately, close and reopen again.
 
-## Step 6: Commit the new files
+## Step 6: Update the Coastfile
+
+Read the `Coastfile` at the project root. Look at the `worktree_dir` field in the
+`[coast]` section. Also read the `name` field — you will need it to construct the
+worktree path.
+
+The Conductor worktree directory is `~/conductor/workspaces/<name>`, where
+`<name>` is the value of the `name` field in the Coastfile.
+
+If that path is **not** already listed in `worktree_dir`:
+
+- If `worktree_dir` is a single string, convert it to an array and append the
+  Conductor path. For example, `worktree_dir = ".worktrees"` becomes
+  `worktree_dir = [".worktrees", "~/conductor/workspaces/my-app"]`.
+- If `worktree_dir` is already an array, append the Conductor path to it.
+- If `worktree_dir` is not present at all, add
+  `worktree_dir = [".worktrees", "~/conductor/workspaces/<name>"]` using the
+  actual project name.
+
+This is an external path, so if a Coast instance is already running for this
+project it must be recreated with `coast run` for the new bind mount to take
+effect. Tell the user this.
+
+## Step 7: Commit the new files
 
 Conductor runs each session in an isolated git worktree. Uncommitted files will
 not carry over to new sessions. Commit the files you just created so they are

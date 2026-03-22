@@ -22,6 +22,55 @@ use crate::runtime::{BindMount, ContainerConfig, ExecResult, Runtime, VolumeMoun
 /// The default Docker image used for DinD coast containers.
 pub const DIND_IMAGE: &str = "docker:dind";
 
+/// Parameters used to build a DinD `ContainerConfig`.
+#[derive(Debug)]
+pub struct DindConfigParams<'a> {
+    /// Project name from the Coastfile.
+    pub project: &'a str,
+    /// Instance name for this coast environment.
+    pub instance_name: &'a str,
+    /// Host path to the project root.
+    pub code_path: &'a std::path::Path,
+    /// Environment variables to inject into the DinD container.
+    pub env_vars: HashMap<String, String>,
+    /// Host bind mounts to pass through to the container.
+    pub bind_mounts: Vec<BindMount>,
+    /// Named Docker volumes to mount into the container.
+    pub volume_mounts: Vec<VolumeMount>,
+    /// Tmpfs mounts to create inside the container.
+    pub tmpfs_mounts: Vec<String>,
+    /// Optional read-only image cache mount.
+    pub image_cache_path: Option<&'a std::path::Path>,
+    /// Optional read-only artifact directory mount.
+    pub artifact_dir: Option<&'a std::path::Path>,
+    /// Optional override for the default DinD image.
+    pub coast_image: Option<&'a str>,
+    /// Optional read-only compose override directory mount.
+    pub override_dir: Option<&'a std::path::Path>,
+    /// Extra `/etc/hosts` entries to add to the container.
+    pub extra_hosts: Vec<String>,
+}
+
+impl<'a> DindConfigParams<'a> {
+    /// Create DinD config params with required fields and empty defaults.
+    pub fn new(project: &'a str, instance_name: &'a str, code_path: &'a std::path::Path) -> Self {
+        Self {
+            project,
+            instance_name,
+            code_path,
+            env_vars: HashMap::new(),
+            bind_mounts: Vec::new(),
+            volume_mounts: Vec::new(),
+            tmpfs_mounts: Vec::new(),
+            image_cache_path: None,
+            artifact_dir: None,
+            coast_image: None,
+            override_dir: None,
+            extra_hosts: Vec::new(),
+        }
+    }
+}
+
 /// Docker-in-Docker runtime.
 ///
 /// Runs coast containers with `--privileged` flag, using the `docker:dind`
@@ -541,41 +590,27 @@ impl Runtime for DindRuntime {
 ///
 /// If `coast_image` is provided (from `[coast.setup]` in the Coastfile),
 /// it will be used instead of the default `docker:dind` image.
-#[allow(clippy::too_many_arguments)]
-pub fn build_dind_config(
-    project: &str,
-    instance_name: &str,
-    code_path: &std::path::Path,
-    env_vars: HashMap<String, String>,
-    bind_mounts: Vec<BindMount>,
-    volume_mounts: Vec<VolumeMount>,
-    tmpfs_mounts: Vec<String>,
-    image_cache_path: Option<&std::path::Path>,
-    artifact_dir: Option<&std::path::Path>,
-    coast_image: Option<&str>,
-    override_dir: Option<&std::path::Path>,
-    extra_hosts: Vec<String>,
-) -> ContainerConfig {
-    let image = coast_image.unwrap_or(DIND_IMAGE);
-    let mut config = ContainerConfig::new(project, instance_name, image);
-    config.env_vars = env_vars;
-    config.bind_mounts = bind_mounts;
-    config.volume_mounts = volume_mounts;
-    config.tmpfs_mounts = tmpfs_mounts;
-    config.extra_hosts = extra_hosts;
+pub fn build_dind_config(params: DindConfigParams<'_>) -> ContainerConfig {
+    let image = params.coast_image.unwrap_or(DIND_IMAGE);
+    let mut config = ContainerConfig::new(params.project, params.instance_name, image);
+    config.env_vars = params.env_vars;
+    config.bind_mounts = params.bind_mounts;
+    config.volume_mounts = params.volume_mounts;
+    config.tmpfs_mounts = params.tmpfs_mounts;
+    config.extra_hosts = params.extra_hosts;
 
     // Bind-mount the project root at /host-project. The run/start handlers
     // create a switchable `mount --bind /host-project /workspace` (or a
     // worktree subdirectory) inside the container after it starts.
     config.bind_mounts.push(BindMount {
-        host_path: code_path.to_path_buf(),
+        host_path: params.code_path.to_path_buf(),
         container_path: "/host-project".to_string(),
         read_only: false,
         propagation: None,
     });
 
     // Mount image cache read-only if available
-    if let Some(cache_path) = image_cache_path {
+    if let Some(cache_path) = params.image_cache_path {
         config.bind_mounts.push(BindMount {
             host_path: cache_path.to_path_buf(),
             container_path: "/image-cache".to_string(),
@@ -585,7 +620,7 @@ pub fn build_dind_config(
     }
 
     // Mount artifact directory read-only if available (contains rewritten compose, etc.)
-    if let Some(artifact_path) = artifact_dir {
+    if let Some(artifact_path) = params.artifact_dir {
         config.bind_mounts.push(BindMount {
             host_path: artifact_path.to_path_buf(),
             container_path: "/coast-artifact".to_string(),
@@ -595,7 +630,7 @@ pub fn build_dind_config(
     }
 
     // Mount compose override directory if available (written to ~/.coast/overrides/)
-    if let Some(ovr_path) = override_dir {
+    if let Some(ovr_path) = params.override_dir {
         config.bind_mounts.push(BindMount {
             host_path: ovr_path.to_path_buf(),
             container_path: "/coast-override".to_string(),
@@ -609,7 +644,7 @@ pub fn build_dind_config(
     // container removal (coast rm + coast run), dramatically speeding up
     // subsequent runs for the same instance name (~21s → ~8s) by avoiding
     // the expensive `docker load` of OCI tarballs into the inner daemon.
-    let dind_volume_name = dind_cache_volume_name(project, instance_name);
+    let dind_volume_name = dind_cache_volume_name(params.project, params.instance_name);
     config.volume_mounts.push(VolumeMount {
         volume_name: dind_volume_name,
         container_path: "/var/lib/docker".to_string(),
@@ -822,20 +857,8 @@ mod tests {
     #[test]
     fn test_build_dind_config_basic() {
         let code_path = PathBuf::from("/home/user/project");
-        let config = build_dind_config(
-            "my-app",
-            "feature-oauth",
-            &code_path,
-            HashMap::new(),
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            None,
-            None,
-            None,
-            None,
-            Vec::new(),
-        );
+        let config =
+            build_dind_config(DindConfigParams::new("my-app", "feature-oauth", &code_path));
 
         assert_eq!(config.project, "my-app");
         assert_eq!(config.instance_name, "feature-oauth");
@@ -872,20 +895,10 @@ mod tests {
     fn test_build_dind_config_with_image_cache() {
         let code_path = PathBuf::from("/home/user/project");
         let cache_path = PathBuf::from("/home/user/.coast/image-cache");
-        let config = build_dind_config(
-            "my-app",
-            "test",
-            &code_path,
-            HashMap::new(),
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            Some(&cache_path),
-            None,
-            None,
-            None,
-            Vec::new(),
-        );
+        let config = build_dind_config(DindConfigParams {
+            image_cache_path: Some(&cache_path),
+            ..DindConfigParams::new("my-app", "test", &code_path)
+        });
 
         // Should have both code and cache bind mounts
         assert_eq!(config.bind_mounts.len(), 2);
@@ -906,20 +919,10 @@ mod tests {
     fn test_build_dind_config_with_artifact_dir() {
         let code_path = PathBuf::from("/home/user/project");
         let artifact_path = PathBuf::from("/home/user/.coast/images/my-app");
-        let config = build_dind_config(
-            "my-app",
-            "test",
-            &code_path,
-            HashMap::new(),
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            None,
-            Some(&artifact_path),
-            None,
-            None,
-            Vec::new(),
-        );
+        let config = build_dind_config(DindConfigParams {
+            artifact_dir: Some(&artifact_path),
+            ..DindConfigParams::new("my-app", "test", &code_path)
+        });
 
         // Should have code + artifact bind mounts
         assert_eq!(config.bind_mounts.len(), 2);
@@ -955,22 +958,15 @@ mod tests {
             read_only: false,
         }];
 
-        let tmpfs = vec!["/run/secrets".to_string()];
+        let tmpfs_mounts = vec!["/run/secrets".to_string()];
 
-        let config = build_dind_config(
-            "my-app",
-            "test",
-            &code_path,
-            env,
+        let config = build_dind_config(DindConfigParams {
+            env_vars: env,
             bind_mounts,
             volume_mounts,
-            tmpfs,
-            None,
-            None,
-            None,
-            None,
-            Vec::new(),
-        );
+            tmpfs_mounts,
+            ..DindConfigParams::new("my-app", "test", &code_path)
+        });
 
         // Env should include both user env and DOCKER_TLS_CERTDIR
         assert_eq!(
@@ -999,6 +995,97 @@ mod tests {
     #[test]
     fn test_dind_image_constant() {
         assert_eq!(DIND_IMAGE, "docker:dind");
+    }
+
+    #[test]
+    fn test_build_dind_config_with_all_optional_fields() {
+        let code_path = PathBuf::from("/home/user/project");
+        let image_cache_path = PathBuf::from("/home/user/.coast/image-cache");
+        let artifact_dir = PathBuf::from("/home/user/.coast/images/my-app");
+        let override_dir = PathBuf::from("/home/user/.coast/overrides/my-app/test");
+
+        let mut env_vars = HashMap::new();
+        env_vars.insert("PGPASSWORD".to_string(), "secret".to_string());
+
+        let bind_mounts = vec![BindMount {
+            host_path: PathBuf::from("/home/user/.ssh"),
+            container_path: "/root/.ssh".to_string(),
+            read_only: true,
+            propagation: None,
+        }];
+
+        let volume_mounts = vec![VolumeMount {
+            volume_name: "coast--test--pg".to_string(),
+            container_path: "/volumes/pg".to_string(),
+            read_only: false,
+        }];
+
+        let tmpfs_mounts = vec!["/run/secrets".to_string()];
+        let extra_host = "host.docker.internal:host-gateway".to_string();
+
+        let config = build_dind_config(DindConfigParams {
+            env_vars,
+            bind_mounts,
+            volume_mounts,
+            tmpfs_mounts,
+            image_cache_path: Some(&image_cache_path),
+            artifact_dir: Some(&artifact_dir),
+            coast_image: Some("coast-image/my-app:latest"),
+            override_dir: Some(&override_dir),
+            extra_hosts: vec![extra_host.clone()],
+            ..DindConfigParams::new("my-app", "test", &code_path)
+        });
+
+        assert_eq!(config.image, "coast-image/my-app:latest");
+        assert_eq!(config.bind_mounts.len(), 5);
+        assert!(config.bind_mounts.iter().any(|mount| {
+            mount.host_path == PathBuf::from("/home/user/.ssh")
+                && mount.container_path == "/root/.ssh"
+                && mount.read_only
+        }));
+        assert!(config.bind_mounts.iter().any(|mount| {
+            mount.host_path == PathBuf::from("/home/user/project")
+                && mount.container_path == "/host-project"
+                && !mount.read_only
+        }));
+        assert!(config.bind_mounts.iter().any(|mount| {
+            mount.host_path == PathBuf::from("/home/user/.coast/image-cache")
+                && mount.container_path == "/image-cache"
+                && mount.read_only
+        }));
+        assert!(config.bind_mounts.iter().any(|mount| {
+            mount.host_path == PathBuf::from("/home/user/.coast/images/my-app")
+                && mount.container_path == "/coast-artifact"
+                && mount.read_only
+        }));
+        assert!(config.bind_mounts.iter().any(|mount| {
+            mount.host_path == PathBuf::from("/home/user/.coast/overrides/my-app/test")
+                && mount.container_path == "/coast-override"
+                && mount.read_only
+        }));
+
+        assert_eq!(config.volume_mounts.len(), 2);
+        assert!(config.volume_mounts.iter().any(|mount| {
+            mount.volume_name == "coast--test--pg"
+                && mount.container_path == "/volumes/pg"
+                && !mount.read_only
+        }));
+        assert!(config.volume_mounts.iter().any(|mount| {
+            mount.volume_name == "coast-dind--my-app--test"
+                && mount.container_path == "/var/lib/docker"
+                && !mount.read_only
+        }));
+
+        assert_eq!(config.tmpfs_mounts, vec!["/run/secrets".to_string()]);
+        assert_eq!(config.extra_hosts, vec![extra_host]);
+        assert_eq!(
+            config.env_vars.get("PGPASSWORD"),
+            Some(&"secret".to_string())
+        );
+        assert_eq!(
+            config.env_vars.get("DOCKER_TLS_CERTDIR"),
+            Some(&String::new())
+        );
     }
 
     #[test]
@@ -1095,20 +1182,10 @@ mod tests {
     #[test]
     fn test_build_dind_config_with_custom_coast_image() {
         let code_path = PathBuf::from("/home/user/project");
-        let config = build_dind_config(
-            "my-app",
-            "test",
-            &code_path,
-            HashMap::new(),
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            None,
-            None,
-            Some("coast-image/my-app:latest"),
-            None,
-            Vec::new(),
-        );
+        let config = build_dind_config(DindConfigParams {
+            coast_image: Some("coast-image/my-app:latest"),
+            ..DindConfigParams::new("my-app", "test", &code_path)
+        });
 
         assert_eq!(config.image, "coast-image/my-app:latest");
     }
@@ -1116,20 +1193,7 @@ mod tests {
     #[test]
     fn test_build_dind_config_without_custom_coast_image() {
         let code_path = PathBuf::from("/home/user/project");
-        let config = build_dind_config(
-            "my-app",
-            "test",
-            &code_path,
-            HashMap::new(),
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            None,
-            None,
-            None,
-            None,
-            Vec::new(),
-        );
+        let config = build_dind_config(DindConfigParams::new("my-app", "test", &code_path));
 
         assert_eq!(config.image, DIND_IMAGE);
     }
@@ -1138,20 +1202,7 @@ mod tests {
     fn test_build_dind_config_published_ports_passthrough() {
         use crate::runtime::PortPublish;
         let code_path = PathBuf::from("/home/user/project");
-        let mut config = build_dind_config(
-            "my-app",
-            "test",
-            &code_path,
-            HashMap::new(),
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            None,
-            None,
-            None,
-            None,
-            Vec::new(),
-        );
+        let mut config = build_dind_config(DindConfigParams::new("my-app", "test", &code_path));
 
         // Simulate what run.rs does: add published ports after build_dind_config
         config.published_ports.push(PortPublish {
@@ -1180,20 +1231,10 @@ mod tests {
     #[test]
     fn test_build_dind_config_with_extra_hosts() {
         let code_path = PathBuf::from("/home/user/project");
-        let config = build_dind_config(
-            "my-app",
-            "test",
-            &code_path,
-            HashMap::new(),
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            None,
-            None,
-            None,
-            None,
-            vec!["host.docker.internal:host-gateway".to_string()],
-        );
+        let config = build_dind_config(DindConfigParams {
+            extra_hosts: vec!["host.docker.internal:host-gateway".to_string()],
+            ..DindConfigParams::new("my-app", "test", &code_path)
+        });
 
         assert_eq!(config.extra_hosts.len(), 1);
         assert_eq!(config.extra_hosts[0], "host.docker.internal:host-gateway");
@@ -1212,20 +1253,10 @@ mod tests {
     }
 
     fn build_test_config() -> ContainerConfig {
-        build_dind_config(
-            "my-app",
-            "test",
-            &PathBuf::from("/home/user/project"),
-            HashMap::new(),
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            Some(&PathBuf::from("/home/user/.coast/image-cache")),
-            None,
-            None,
-            None,
-            Vec::new(),
-        )
+        build_dind_config(DindConfigParams {
+            image_cache_path: Some(std::path::Path::new("/home/user/.coast/image-cache")),
+            ..DindConfigParams::new("my-app", "test", std::path::Path::new("/home/user/project"))
+        })
     }
 
     #[test]
