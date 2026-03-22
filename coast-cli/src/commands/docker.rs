@@ -38,20 +38,6 @@ fn resolve_docker_command(args: &[String]) -> Vec<String> {
     cmd
 }
 
-/// Resolve host uid:gid for docker exec user mapping.
-fn host_uid_gid() -> Option<String> {
-    #[cfg(unix)]
-    {
-        let uid = unsafe { nix::libc::getuid() };
-        let gid = unsafe { nix::libc::getgid() };
-        Some(format!("{uid}:{gid}"))
-    }
-    #[cfg(not(unix))]
-    {
-        None
-    }
-}
-
 /// Build arguments for interactive `docker exec`.
 fn build_interactive_docker_exec_args(
     container: &str,
@@ -68,17 +54,102 @@ fn build_interactive_docker_exec_args(
     args
 }
 
+/// Find the index of the container/service name in a `docker exec` command.
+///
+/// Skips past `"docker"`, `"exec"`, and any flags (with or without values)
+/// to find the first positional argument — the target name.
+/// Returns `None` if the command isn't a docker exec or has no target.
+fn find_exec_target_index(command: &[String]) -> Option<usize> {
+    let mut iter = command.iter().enumerate();
+
+    // Expect "docker"
+    match iter.next() {
+        Some((_, s)) if s == "docker" => {}
+        _ => return None,
+    }
+    // Expect "exec"
+    match iter.next() {
+        Some((_, s)) if s == "exec" => {}
+        _ => return None,
+    }
+
+    // Skip flags. Flags that consume the next arg as a value:
+    const VALUE_FLAGS: &[&str] = &[
+        "-u",
+        "--user",
+        "-w",
+        "--workdir",
+        "-e",
+        "--env",
+        "--env-file",
+        "--detach-keys",
+    ];
+
+    while let Some((idx, arg)) = iter.next() {
+        if arg.starts_with('-') {
+            if VALUE_FLAGS.iter().any(|f| arg == *f) {
+                iter.next(); // consume the value
+            }
+            continue;
+        }
+        return Some(idx);
+    }
+    None
+}
+
+/// Query the DinD via the daemon to resolve a compose service name to its
+/// Docker container name. Returns `None` if the name isn't a compose service.
+async fn resolve_service_name(instance: &str, project: &str, service: &str) -> Option<String> {
+    let filter = format!("label=com.docker.compose.service={}", service);
+    let command = vec![
+        "docker".to_string(),
+        "ps".to_string(),
+        "-q".to_string(),
+        "--filter".to_string(),
+        filter,
+        "--format".to_string(),
+        "{{.Names}}".to_string(),
+    ];
+
+    let request = Request::Exec(ExecRequest {
+        name: instance.to_string(),
+        project: project.to_string(),
+        command,
+    });
+
+    let response = super::send_request(request).await.ok()?;
+    match response {
+        Response::Exec(resp) if resp.exit_code == 0 => {
+            let name = resp.stdout.trim().to_string();
+            if name.is_empty() {
+                None
+            } else {
+                // Take the first line in case of multiple matches
+                Some(name.lines().next().unwrap_or(&name).to_string())
+            }
+        }
+        _ => None,
+    }
+}
+
 /// Execute the `coast docker` command.
 pub async fn execute(args: &DockerArgs, project: &str) -> Result<()> {
-    let command = resolve_docker_command(&args.command);
+    let mut command = resolve_docker_command(&args.command);
+
+    // If this is a `docker exec` targeting a compose service name, resolve
+    // it to the actual container name so the raw `docker exec` succeeds.
+    if let Some(idx) = find_exec_target_index(&command) {
+        let target = &command[idx];
+        if let Some(container) = resolve_service_name(&args.name, project, target).await {
+            command[idx] = container;
+        }
+    }
 
     // Interactive mode: stdin is a TTY → spawn docker exec -it directly
     // for full TTY passthrough without going through the daemon.
     if std::io::stdin().is_terminal() {
         let container = container_name(project, &args.name);
-        let user_spec = host_uid_gid();
-        let docker_args =
-            build_interactive_docker_exec_args(&container, &command, user_spec.as_deref());
+        let docker_args = build_interactive_docker_exec_args(&container, &command, None);
         let mut cmd = std::process::Command::new("docker");
         cmd.args(&docker_args);
         let status = cmd.status()?;
@@ -231,5 +302,57 @@ mod tests {
             args,
             vec!["exec", "-it", "my-app-coasts-main", "docker", "ps"]
         );
+    }
+
+    fn s(vals: &[&str]) -> Vec<String> {
+        vals.iter().map(|v| v.to_string()).collect()
+    }
+
+    #[test]
+    fn test_find_exec_target_simple() {
+        let cmd = s(&["docker", "exec", "backend", "sh"]);
+        assert_eq!(find_exec_target_index(&cmd), Some(2));
+    }
+
+    #[test]
+    fn test_find_exec_target_with_it_flags() {
+        let cmd = s(&["docker", "exec", "-it", "backend", "sh"]);
+        assert_eq!(find_exec_target_index(&cmd), Some(3));
+    }
+
+    #[test]
+    fn test_find_exec_target_with_separate_flags() {
+        let cmd = s(&["docker", "exec", "-i", "-t", "backend", "sh"]);
+        assert_eq!(find_exec_target_index(&cmd), Some(4));
+    }
+
+    #[test]
+    fn test_find_exec_target_with_user_flag() {
+        let cmd = s(&["docker", "exec", "-it", "-u", "root", "backend", "sh"]);
+        assert_eq!(find_exec_target_index(&cmd), Some(5));
+    }
+
+    #[test]
+    fn test_find_exec_target_with_workdir() {
+        let cmd = s(&["docker", "exec", "-w", "/app", "backend", "ls"]);
+        assert_eq!(find_exec_target_index(&cmd), Some(4));
+    }
+
+    #[test]
+    fn test_find_exec_target_not_exec_command() {
+        let cmd = s(&["docker", "ps"]);
+        assert_eq!(find_exec_target_index(&cmd), None);
+    }
+
+    #[test]
+    fn test_find_exec_target_empty() {
+        let cmd = s(&["docker", "exec"]);
+        assert_eq!(find_exec_target_index(&cmd), None);
+    }
+
+    #[test]
+    fn test_find_exec_target_not_docker() {
+        let cmd = s(&["podman", "exec", "backend", "sh"]);
+        assert_eq!(find_exec_target_index(&cmd), None);
     }
 }
