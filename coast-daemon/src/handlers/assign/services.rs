@@ -221,6 +221,7 @@ async fn discover_and_classify(
     (actions, all_hot)
 }
 
+#[allow(clippy::cognitive_complexity)] // Linear phase chain — reads clearly top to bottom.
 async fn detect_worktree_path(
     project_root: &Option<std::path::PathBuf>,
     worktree_dirs: &[String],
@@ -230,26 +231,39 @@ async fn detect_worktree_path(
     let root = project_root.as_ref()?;
     let step_t = std::time::Instant::now();
 
+    // Phase 1: Directory name match in local worktree dirs.
+    if let Some(loc) = find_worktree_in_local_dirs(root, worktree_dirs, worktree_name) {
+        info!(elapsed_ms = step_t.elapsed().as_millis() as u64, wt_dir = %loc.wt_dir, "resolved worktree by directory name (local)");
+        return Some(loc);
+    }
+
+    // Phase 2: Directory name + branch name match in external dirs (directory preferred).
+    if let Some(loc) = find_worktree_in_external_dirs(root, worktree_dirs, worktree_name).await {
+        info!(elapsed_ms = step_t.elapsed().as_millis() as u64, wt_dir = %loc.wt_dir, "found worktree in external dir");
+        return Some(loc);
+    }
+
+    // Phase 3: Branch name match in local worktree dirs.
+    if let Some(loc) =
+        find_worktree_by_branch_in_local_dirs(root, worktree_dirs, worktree_name).await
+    {
+        info!(elapsed_ms = step_t.elapsed().as_millis() as u64, wt_dir = %loc.wt_dir, "found worktree by branch name (local)");
+        return Some(loc);
+    }
+
+    // Phase 4: Auto-detected git worktree dir (for new worktree creation).
     let root_clone = root.clone();
     let git_detected =
         tokio::task::spawn_blocking(move || detect_worktree_dir_from_git(&root_clone))
             .await
             .ok()
             .flatten();
-
-    let loc = try_git_detected(root, git_detected.as_deref(), worktree_name)
-        .or_else(|| find_worktree_in_local_dirs(root, worktree_dirs, worktree_name));
-
-    if let Some(loc) = loc {
-        info!(elapsed_ms = step_t.elapsed().as_millis() as u64, wt_dir = %loc.wt_dir, "resolved worktree location");
+    if let Some(loc) = try_git_detected(root, git_detected.as_deref(), worktree_name) {
+        info!(elapsed_ms = step_t.elapsed().as_millis() as u64, wt_dir = %loc.wt_dir, "using git-detected worktree directory");
         return Some(loc);
     }
 
-    if let Some(loc) = find_worktree_in_external_dirs(root, worktree_dirs, worktree_name).await {
-        info!(elapsed_ms = step_t.elapsed().as_millis() as u64, wt_dir = %loc.wt_dir, "found worktree in external dir");
-        return Some(loc);
-    }
-
+    // Phase 5: Default fallback.
     let path = root.join(default_wt_dir).join(worktree_name);
     let mount_src = format!("/host-project/{default_wt_dir}/{worktree_name}");
     info!(elapsed_ms = step_t.elapsed().as_millis() as u64, wt_dir = %default_wt_dir, "using default worktree directory");
@@ -346,24 +360,135 @@ async fn find_worktree_in_external_dirs(
     match_porcelain_to_external(&stdout, worktree_name, &external_dirs)
 }
 
-fn match_porcelain_to_external(
-    porcelain: &str,
+/// Find an existing worktree by branch name in local (non-external) worktree dirs.
+async fn find_worktree_by_branch_in_local_dirs(
+    project_root: &std::path::Path,
+    worktree_dirs: &[String],
     worktree_name: &str,
-    external_dirs: &[(usize, String, std::path::PathBuf)],
 ) -> Option<WorktreeLocation> {
+    use coast_core::coastfile::Coastfile;
+
+    let local_dirs: Vec<&String> = worktree_dirs
+        .iter()
+        .filter(|d| !Coastfile::is_external_worktree_dir(d))
+        .collect();
+    if local_dirs.is_empty() {
+        return None;
+    }
+
+    let output = tokio::process::Command::new("git")
+        .args(["worktree", "list", "--porcelain"])
+        .current_dir(project_root)
+        .output()
+        .await
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let canonical_root = project_root.canonicalize().ok()?;
+    let entries = parse_porcelain_entries(&stdout);
+
+    for entry in &entries {
+        let branch_name = if let Some(branch_ref) = entry.branch_line.strip_prefix("branch ") {
+            branch_ref.strip_prefix("refs/heads/").unwrap_or(branch_ref)
+        } else {
+            continue;
+        };
+
+        if branch_name != worktree_name {
+            continue;
+        }
+
+        let canonical = entry
+            .path
+            .canonicalize()
+            .unwrap_or_else(|_| entry.path.clone());
+        if let Ok(relative) = canonical.strip_prefix(&canonical_root) {
+            let rel_str = relative.display().to_string();
+            for dir in &local_dirs {
+                let dir_prefix = format!("{}/", dir);
+                if rel_str.starts_with(&dir_prefix) {
+                    return Some(WorktreeLocation {
+                        wt_dir: (*dir).clone(),
+                        host_path: canonical,
+                        container_mount_src: format!("/host-project/{rel_str}"),
+                    });
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Parsed entry from `git worktree list --porcelain`.
+struct PorcelainEntry {
+    path: std::path::PathBuf,
+    /// The "branch refs/heads/..." or "detached" line.
+    branch_line: String,
+}
+
+fn parse_porcelain_entries(porcelain: &str) -> Vec<PorcelainEntry> {
+    let mut entries = Vec::new();
     let mut current_path: Option<std::path::PathBuf> = None;
 
     for line in porcelain.lines() {
         if let Some(path_str) = line.strip_prefix("worktree ") {
             current_path = Some(std::path::PathBuf::from(path_str));
         } else if line.starts_with("branch ") || line == "detached" {
-            if let Some(loc) =
-                try_match_external_worktree(line, &current_path, worktree_name, external_dirs)
-            {
-                return Some(loc);
+            if let Some(path) = current_path.take() {
+                entries.push(PorcelainEntry {
+                    path,
+                    branch_line: line.to_string(),
+                });
             }
         } else if line.is_empty() {
             current_path = None;
+        }
+    }
+
+    entries
+}
+
+/// Whether to match by directory name (relative path) or branch name.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MatchMode {
+    DirOnly,
+    BranchOnly,
+}
+
+fn match_porcelain_to_external(
+    porcelain: &str,
+    worktree_name: &str,
+    external_dirs: &[(usize, String, std::path::PathBuf)],
+) -> Option<WorktreeLocation> {
+    let entries = parse_porcelain_entries(porcelain);
+
+    // First pass: directory name (relative path) match — more specific.
+    for entry in &entries {
+        if let Some(loc) = try_match_external_worktree(
+            &entry.branch_line,
+            &entry.path,
+            worktree_name,
+            external_dirs,
+            MatchMode::DirOnly,
+        ) {
+            return Some(loc);
+        }
+    }
+
+    // Second pass: branch name match.
+    for entry in &entries {
+        if let Some(loc) = try_match_external_worktree(
+            &entry.branch_line,
+            &entry.path,
+            worktree_name,
+            external_dirs,
+            MatchMode::BranchOnly,
+        ) {
+            return Some(loc);
         }
     }
 
@@ -372,14 +497,14 @@ fn match_porcelain_to_external(
 
 fn try_match_external_worktree(
     line: &str,
-    current_path: &Option<std::path::PathBuf>,
+    wt_path: &std::path::Path,
     worktree_name: &str,
     external_dirs: &[(usize, String, std::path::PathBuf)],
+    mode: MatchMode,
 ) -> Option<WorktreeLocation> {
     use coast_core::coastfile::Coastfile;
 
-    let wt_path = current_path.as_ref()?;
-    let wt_canonical = wt_path.canonicalize().unwrap_or_else(|_| wt_path.clone());
+    let wt_canonical = wt_path.canonicalize().unwrap_or_else(|_| wt_path.to_path_buf());
 
     let branch_name = if let Some(branch_ref) = line.strip_prefix("branch ") {
         branch_ref.strip_prefix("refs/heads/").unwrap_or(branch_ref)
@@ -396,7 +521,11 @@ fn try_match_external_worktree(
             .strip_prefix(&canon_ext)
             .unwrap_or(&wt_canonical);
         let relative_str = relative.display().to_string();
-        if branch_name == worktree_name || relative_str == worktree_name {
+        let matches = match mode {
+            MatchMode::DirOnly => relative_str == worktree_name,
+            MatchMode::BranchOnly => branch_name == worktree_name,
+        };
+        if matches {
             let ext_mount = Coastfile::external_mount_path(*idx);
             let mount_src = format!("{ext_mount}/{relative_str}");
             return Some(WorktreeLocation {
@@ -1807,5 +1936,202 @@ mod tests {
             !internal_marker.exists(),
             "failed syncs must not leave behind a success marker"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Worktree matching tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_find_worktree_in_local_dirs_by_dirname() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+
+        git_in(root, &["init", "-b", "main"]);
+        git_in(root, &["commit", "--allow-empty", "-m", "init"]);
+
+        // Create worktree with mismatched branch name (simulates Claude Code).
+        let wt_parent = root.join(".claude").join("worktrees");
+        std::fs::create_dir_all(&wt_parent).unwrap();
+        git_in(root, &["branch", "worktree-foo"]);
+        git_in(
+            root,
+            &[
+                "worktree",
+                "add",
+                &wt_parent.join("foo").to_string_lossy(),
+                "worktree-foo",
+            ],
+        );
+
+        let dirs = vec![".claude/worktrees".to_string(), ".worktrees".to_string()];
+        // Directory name "foo" should match even though branch is "worktree-foo".
+        let loc = find_worktree_in_local_dirs(root, &dirs, "foo");
+        assert!(loc.is_some(), "should find worktree by directory name");
+        let loc = loc.unwrap();
+        assert_eq!(loc.wt_dir, ".claude/worktrees");
+        assert!(loc.host_path.ends_with(".claude/worktrees/foo"));
+        assert_eq!(loc.container_mount_src, "/host-project/.claude/worktrees/foo");
+    }
+
+    #[test]
+    fn test_find_worktree_in_local_dirs_branch_name_does_not_match() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+
+        git_in(root, &["init", "-b", "main"]);
+        git_in(root, &["commit", "--allow-empty", "-m", "init"]);
+
+        let wt_parent = root.join(".claude").join("worktrees");
+        std::fs::create_dir_all(&wt_parent).unwrap();
+        git_in(root, &["branch", "worktree-foo"]);
+        git_in(
+            root,
+            &[
+                "worktree",
+                "add",
+                &wt_parent.join("foo").to_string_lossy(),
+                "worktree-foo",
+            ],
+        );
+
+        let dirs = vec![".claude/worktrees".to_string()];
+        // Branch name "worktree-foo" should NOT match via directory name lookup.
+        let loc = find_worktree_in_local_dirs(root, &dirs, "worktree-foo");
+        assert!(loc.is_none(), "branch name should not match in directory-name lookup");
+    }
+
+    #[tokio::test]
+    async fn test_find_worktree_by_branch_in_local_dirs_matches() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+
+        git_in(root, &["init", "-b", "main"]);
+        git_in(root, &["commit", "--allow-empty", "-m", "init"]);
+
+        let wt_parent = root.join(".claude").join("worktrees");
+        std::fs::create_dir_all(&wt_parent).unwrap();
+        git_in(root, &["branch", "worktree-foo"]);
+        git_in(
+            root,
+            &[
+                "worktree",
+                "add",
+                &wt_parent.join("foo").to_string_lossy(),
+                "worktree-foo",
+            ],
+        );
+
+        let dirs = vec![".claude/worktrees".to_string()];
+        // Branch name "worktree-foo" should match via branch lookup.
+        let loc = find_worktree_by_branch_in_local_dirs(root, &dirs, "worktree-foo").await;
+        assert!(loc.is_some(), "should find worktree by branch name");
+        let loc = loc.unwrap();
+        assert_eq!(loc.wt_dir, ".claude/worktrees");
+        assert!(loc.host_path.ends_with(".claude/worktrees/foo"));
+    }
+
+    #[tokio::test]
+    async fn test_find_worktree_by_branch_skips_external_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+
+        git_in(root, &["init", "-b", "main"]);
+        git_in(root, &["commit", "--allow-empty", "-m", "init"]);
+
+        let wt_parent = root.join(".worktrees");
+        std::fs::create_dir_all(&wt_parent).unwrap();
+        git_in(root, &["branch", "feat-a"]);
+        git_in(
+            root,
+            &[
+                "worktree",
+                "add",
+                &wt_parent.join("feat-a").to_string_lossy(),
+                "feat-a",
+            ],
+        );
+
+        // Only external dirs configured — should not find via local branch scan.
+        let dirs = vec!["~/external/worktrees".to_string()];
+        let loc = find_worktree_by_branch_in_local_dirs(root, &dirs, "feat-a").await;
+        assert!(loc.is_none(), "should not match worktrees in external-only config");
+    }
+
+    #[test]
+    fn test_match_porcelain_prefers_dirname_over_branch() {
+        // Worktree A: relative path "foo", branch "bar"
+        // Worktree B: relative path "baz", branch "foo"
+        // Searching for "foo" should prefer A (directory match) over B (branch match).
+        let ext_dir = tempfile::tempdir().unwrap();
+        let ext_path = ext_dir.path().to_path_buf();
+
+        let wt_a = ext_path.join("foo");
+        let wt_b = ext_path.join("baz");
+        std::fs::create_dir_all(&wt_a).unwrap();
+        std::fs::create_dir_all(&wt_b).unwrap();
+
+        let porcelain = format!(
+            "worktree {}\nbranch refs/heads/bar\n\nworktree {}\nbranch refs/heads/foo\n\n",
+            wt_a.display(),
+            wt_b.display(),
+        );
+
+        let external_dirs = vec![(0_usize, "~/ext".to_string(), ext_path)];
+
+        let loc = match_porcelain_to_external(&porcelain, "foo", &external_dirs);
+        assert!(loc.is_some(), "should find a match");
+        let loc = loc.unwrap();
+        // Should match worktree A by directory name, not worktree B by branch name.
+        assert!(
+            loc.host_path.ends_with("foo"),
+            "should prefer directory match: got {:?}",
+            loc.host_path
+        );
+    }
+
+    #[test]
+    fn test_match_porcelain_falls_back_to_branch() {
+        let ext_dir = tempfile::tempdir().unwrap();
+        let ext_path = ext_dir.path().to_path_buf();
+
+        let wt = ext_path.join("some-dir");
+        std::fs::create_dir_all(&wt).unwrap();
+
+        let porcelain = format!(
+            "worktree {}\nbranch refs/heads/my-branch\n\n",
+            wt.display(),
+        );
+
+        let external_dirs = vec![(0_usize, "~/ext".to_string(), ext_path)];
+
+        // No directory match for "my-branch", but branch matches.
+        let loc = match_porcelain_to_external(&porcelain, "my-branch", &external_dirs);
+        assert!(loc.is_some(), "should fall back to branch name match");
+    }
+
+    #[test]
+    fn test_parse_porcelain_entries() {
+        let porcelain = "/root\nbranch refs/heads/main\n\n/root/.worktrees/feat\nbranch refs/heads/feat\n\n";
+        // Prefix "worktree " is required.
+        let porcelain = "worktree /root\nbranch refs/heads/main\n\nworktree /root/.worktrees/feat\nbranch refs/heads/feat\n\n";
+        let entries = parse_porcelain_entries(porcelain);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].path, std::path::PathBuf::from("/root"));
+        assert_eq!(entries[0].branch_line, "branch refs/heads/main");
+        assert_eq!(
+            entries[1].path,
+            std::path::PathBuf::from("/root/.worktrees/feat")
+        );
+        assert_eq!(entries[1].branch_line, "branch refs/heads/feat");
+    }
+
+    #[test]
+    fn test_parse_porcelain_entries_detached() {
+        let porcelain =
+            "worktree /root/.worktrees/abc\ndetached\n\n";
+        let entries = parse_porcelain_entries(porcelain);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].branch_line, "detached");
     }
 }
