@@ -115,3 +115,11 @@ Key points:
 - Different repos = different hashes
 - Path separators are normalized to `/` before hashing
 - The hash can be found via `shep feat show <feature-id>` or `ls ~/.shep/repos`
+
+## Troubleshooting
+
+- **Worktree not found** — If Coasts expects a worktree to exist but cannot
+  find it, verify that the Coastfile's `worktree_dir` includes
+  `~/.shep/repos/*/wt`. The glob pattern must match Shep's directory structure.
+  See [Worktree Directories](../coastfiles/WORKTREE_DIR.md) for syntax and
+  path types.

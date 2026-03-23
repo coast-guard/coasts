@@ -127,6 +127,19 @@ Before guessing about Coast behavior, explore the docs:
   coast docs --path concepts_and_terminology/BUILDS.md
   coast search-docs "your question here"         # semantic search
 
+## Troubleshooting
+
+If you run into issues with harness configuration (e.g. worktrees not being
+found, `coast lookup` not matching), read the troubleshooting section of the
+relevant harness doc:
+
+  coast docs --path harnesses/CLAUDE_CODE.md
+  coast docs --path harnesses/CODEX.md
+  coast docs --path harnesses/CONDUCTOR.md
+  coast docs --path harnesses/CURSOR.md
+  coast docs --path harnesses/T3_CODE.md
+  coast docs --path harnesses/SHEP.md
+
 ## Rules
 
 - Always run `coast lookup` before your first runtime command in a session.

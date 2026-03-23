@@ -121,6 +121,13 @@ api = "hot"
 - `.claude/worktrees/` -- Claude Code (local, no special handling)
 - `~/.codex/worktrees/` -- Codex (external, bind-mounted)
 
+## Troubleshooting
+
+- **Worktree not found** — If Coasts expects a worktree to exist but cannot
+  find it, verify that the Coastfile's `worktree_dir` includes
+  `~/.codex/worktrees`. See [Worktree Directories](../coastfiles/WORKTREE_DIR.md)
+  for syntax and path types.
+
 ## Limitations
 
 - Codex may clean up worktrees at any time. The orphan detection in Coasts

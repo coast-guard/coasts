@@ -106,6 +106,15 @@ api = "hot"
 - `~/.codex/worktrees/` — Codex (external, bind-mounted)
 - `~/.t3/worktrees/my-app/` — T3 Code (external, bind-mounted; replace `my-app` with your repo folder name)
 
+## Troubleshooting
+
+- **Worktree not found** — If Coasts expects a worktree to exist but cannot
+  find it, verify that the Coastfile's `worktree_dir` includes
+  `~/.t3/worktrees/<project-name>` and that `<project-name>` matches the
+  actual folder name under `~/.t3/worktrees/`. See
+  [Worktree Directories](../coastfiles/WORKTREE_DIR.md) for syntax and path
+  types.
+
 ## Limitations
 
 - Avoid relying on T3 Code-specific environment variables for runtime

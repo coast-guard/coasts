@@ -170,6 +170,15 @@ api = "hot"
 - `~/.codex/worktrees/` — Codex worktrees
 - `~/.cursor/worktrees/my-app/` — Cursor Parallel Agent worktrees
 
+## Troubleshooting
+
+- **Worktree not found** — If Coasts expects a worktree to exist but cannot
+  find it, verify that the Coastfile's `worktree_dir` includes
+  `~/.cursor/worktrees/<project-name>` and that `<project-name>` matches the
+  actual folder name under `~/.cursor/worktrees/`. See
+  [Worktree Directories](../coastfiles/WORKTREE_DIR.md) for syntax and path
+  types.
+
 ## Limitations
 
 - If you are not using Cursor Parallel Agents, do not add

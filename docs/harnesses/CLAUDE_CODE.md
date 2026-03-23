@@ -131,6 +131,13 @@ api = "hot"
 - `.claude/worktrees/` — Claude Code worktrees
 - `~/.codex/worktrees/` — Codex worktrees if you also use Codex in this repo
 
+## Troubleshooting
+
+- **Worktree not found** — If Coasts expects a worktree to exist but cannot
+  find it, verify that the Coastfile's `worktree_dir` includes
+  `.claude/worktrees`. See [Worktree Directories](../coastfiles/WORKTREE_DIR.md)
+  for syntax and path types.
+
 ## Limitations
 
 - If you duplicate the same `/coasts` workflow across `CLAUDE.md`,

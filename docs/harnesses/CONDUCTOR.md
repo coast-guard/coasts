@@ -31,6 +31,8 @@ worktree_dir = [".worktrees", "~/conductor/workspaces/my-app"]
 
 Conductor allows you to configure the workspaces path per-repository, so the default `~/conductor/workspaces` may not match your setup. Check your Conductor repository settings to find the actual path and adjust accordingly — the principle is the same regardless of where the directory lives.
 
+If you have more than one Conductor project configured for the same repository, each project creates workspaces under its own subdirectory (e.g. `~/conductor/workspaces/my-app-frontend`, `~/conductor/workspaces/my-app-backend`). The `worktree_dir` entry must match the directory name Conductor actually creates, so you may need multiple entries or need to update the path when switching between projects.
+
 Coasts expands `~` at runtime and treats any path starting with `~/` or `/` as
 external. See [Worktree Directories](../coastfiles/WORKTREE_DIR.md) for
 details.
@@ -98,6 +100,21 @@ api = "hot"
 ```
 
 - `~/conductor/workspaces/my-app/` — Conductor (external, bind-mounted; replace `my-app` with your repo folder name)
+
+## Troubleshooting
+
+- **Worktree not found** — If Coasts expects a worktree to exist but cannot
+  find it, verify that the Coastfile's `worktree_dir` includes the correct
+  `~/conductor/workspaces/<project-name>` path. The `<project-name>` segment
+  must match the actual folder name Conductor creates under
+  `~/conductor/workspaces/`. See
+  [Worktree Directories](../coastfiles/WORKTREE_DIR.md) for syntax and path
+  types.
+- **Multiple projects for the same repo** — If more than one Conductor project
+  is configured for the same repository, each project creates workspaces under
+  a different subdirectory. The `worktree_dir` must be updated to match the
+  directory Conductor dynamically creates for the active project. If you switch
+  between projects, the path changes and the Coastfile needs to reflect that.
 
 ## Conductor Env Vars
 
