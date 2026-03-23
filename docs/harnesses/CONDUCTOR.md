@@ -19,6 +19,10 @@ You can also get the skill content from the CLI: `coast skills-prompt`.
 After setup, **fully close and reopen Conductor** for changes to take effect. If
 the `/coasts` command does not appear, close and reopen again.
 
+```youtube
+mbwilJHlanQ
+```
+
 ## Setup
 
 Add `~/conductor/workspaces/<project-name>` to `worktree_dir`. Unlike Codex (which stores all projects under one flat directory), Conductor nests worktrees under a per-project subdirectory, so the path must include the project name. In the example below, `my-app` must match the actual folder name under `~/conductor/workspaces/` for your repo.

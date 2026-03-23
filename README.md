@@ -32,6 +32,14 @@ For the full user-facing documentation, see the [Coasts docs](https://coasts.dev
 
 Want a concrete example to explore? Check out the [`coasts-demo` repository](https://github.com/coast-guard/coasts-demo) for a small demo project you can use to try Coasts end to end.
 
+## Harness Demos
+
+[![Coasts + Claude Code](https://img.youtube.com/vi/yjMFVoOiAW0/maxresdefault.jpg)](https://www.youtube.com/watch?v=yjMFVoOiAW0)
+
+[![Coasts + Codex](https://img.youtube.com/vi/MDidmMQtaqU/maxresdefault.jpg)](https://www.youtube.com/watch?v=MDidmMQtaqU)
+
+[![Coasts + Conductor](https://img.youtube.com/vi/mbwilJHlanQ/maxresdefault.jpg)](https://www.youtube.com/watch?v=mbwilJHlanQ)
+
 ## Contributing
 
 To contribute, read the [contributing guide](CONTRIBUTING.md) for PR guidelines.

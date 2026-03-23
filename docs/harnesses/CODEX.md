@@ -26,6 +26,10 @@ From the [Codex docs](https://developers.openai.com/codex/app/worktrees/):
 Because these worktrees live outside the project root, Coasts needs explicit
 configuration to discover and mount them.
 
+```youtube
+MDidmMQtaqU
+```
+
 ## Setup
 
 Add `~/.codex/worktrees` to `worktree_dir`:

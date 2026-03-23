@@ -29,6 +29,10 @@ layers for Coasts:
 - `.claude/commands/coasts.md` only when you want a command file as an extra
   entrypoint
 
+```youtube
+yjMFVoOiAW0
+```
+
 ## Setup
 
 Add `.claude/worktrees` to `worktree_dir`:
