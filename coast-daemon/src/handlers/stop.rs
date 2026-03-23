@@ -21,6 +21,54 @@ fn emit(tx: &Option<tokio::sync::mpsc::Sender<BuildProgressEvent>>, event: Build
 
 const TOTAL_STOP_STEPS: u32 = 3;
 
+/// Check whether the given instance status allows stopping.
+///
+/// Returns `Ok(())` for `Running`, `CheckedOut`, and `Idle`. Returns an error
+/// for `Stopped` (already stopped) and transitional states (`Provisioning`,
+/// `Assigning`, `Starting`, `Stopping`, `Unassigning`). `Enqueued` is handled
+/// separately by the caller (removed instead of stopped).
+fn validate_stoppable(status: &InstanceStatus, name: &str) -> Result<()> {
+    match status {
+        InstanceStatus::Running | InstanceStatus::CheckedOut | InstanceStatus::Idle => Ok(()),
+        InstanceStatus::Stopped => Err(CoastError::state(format!(
+            "Instance '{name}' is already stopped. Run `coast start {name}` to start it."
+        ))),
+        InstanceStatus::Provisioning
+        | InstanceStatus::Assigning
+        | InstanceStatus::Starting
+        | InstanceStatus::Stopping
+        | InstanceStatus::Unassigning => Err(CoastError::state(format!(
+            "Instance '{name}' is currently {status}. Wait for the operation to complete."
+        ))),
+        InstanceStatus::Enqueued => Err(CoastError::state(format!(
+            "Instance '{name}' is {status} and cannot be stopped directly."
+        ))),
+    }
+}
+
+/// Kill all socat processes for an instance and clear their PIDs in the DB.
+fn kill_instance_socat_processes(
+    db: &crate::state::StateDb,
+    project: &str,
+    name: &str,
+) -> Result<()> {
+    let port_allocs = db.get_port_allocations(project, name)?;
+    for alloc in &port_allocs {
+        if let Some(pid) = alloc.socat_pid {
+            if let Err(e) = crate::port_manager::kill_socat(pid as u32) {
+                warn!(pid = pid, error = %e, "failed to kill socat process");
+            } else if let Err(e) = db.update_socat_pid(project, name, &alloc.logical_name, None) {
+                warn!(
+                    logical_name = %alloc.logical_name,
+                    error = %e,
+                    "failed to clear socat pid after killing process"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Handle a stop request with optional progress streaming.
 ///
 /// Steps:
@@ -70,22 +118,7 @@ pub async fn handle(
             });
             return Ok(StopResponse { name: req.name });
         }
-        if inst.status == InstanceStatus::Stopped {
-            return Err(CoastError::state(format!(
-                "Instance '{}' is already stopped. Run `coast start {}` to start it.",
-                req.name, req.name
-            )));
-        }
-        if inst.status == InstanceStatus::Provisioning
-            || inst.status == InstanceStatus::Assigning
-            || inst.status == InstanceStatus::Starting
-            || inst.status == InstanceStatus::Stopping
-        {
-            return Err(CoastError::state(format!(
-                "Instance '{}' is currently {}. Wait for the operation to complete.",
-                req.name, inst.status
-            )));
-        }
+        validate_stoppable(&inst.status, &req.name)?;
         if inst.status == InstanceStatus::CheckedOut {
             super::clear_checked_out_state(
                 &db,
@@ -198,22 +231,7 @@ pub async fn handle(
         BuildProgressEvent::started("Killing socat processes", 3, TOTAL_STOP_STEPS),
     );
     let db = state.db.lock().await;
-    let port_allocs = db.get_port_allocations(&req.project, &req.name)?;
-    for alloc in &port_allocs {
-        if let Some(pid) = alloc.socat_pid {
-            if let Err(e) = crate::port_manager::kill_socat(pid as u32) {
-                warn!(pid = pid, error = %e, "failed to kill socat process");
-            } else if let Err(e) =
-                db.update_socat_pid(&req.project, &req.name, &alloc.logical_name, None)
-            {
-                warn!(
-                    logical_name = %alloc.logical_name,
-                    error = %e,
-                    "failed to clear socat pid after killing process"
-                );
-            }
-        }
-    }
+    kill_instance_socat_processes(&db, &req.project, &req.name)?;
     emit(
         &progress,
         BuildProgressEvent::item("Killing socat processes", "socat", "ok"),
@@ -422,5 +440,146 @@ mod tests {
         let db = state.db.lock().await;
         let instance = db.get_instance("my-app", "queued-inst").unwrap();
         assert!(instance.is_none());
+    }
+
+    // --- validate_stoppable tests ---
+
+    #[test]
+    fn test_validate_stoppable_running_ok() {
+        assert!(validate_stoppable(&InstanceStatus::Running, "inst").is_ok());
+    }
+
+    #[test]
+    fn test_validate_stoppable_checked_out_ok() {
+        assert!(validate_stoppable(&InstanceStatus::CheckedOut, "inst").is_ok());
+    }
+
+    #[test]
+    fn test_validate_stoppable_idle_ok() {
+        assert!(validate_stoppable(&InstanceStatus::Idle, "inst").is_ok());
+    }
+
+    #[test]
+    fn test_validate_stoppable_stopped_errors() {
+        let err = validate_stoppable(&InstanceStatus::Stopped, "inst")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("already stopped"));
+    }
+
+    #[test]
+    fn test_validate_stoppable_provisioning_errors() {
+        let err = validate_stoppable(&InstanceStatus::Provisioning, "inst")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("currently"));
+    }
+
+    #[test]
+    fn test_validate_stoppable_assigning_errors() {
+        let err = validate_stoppable(&InstanceStatus::Assigning, "inst")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("currently"));
+    }
+
+    #[test]
+    fn test_validate_stoppable_starting_errors() {
+        let err = validate_stoppable(&InstanceStatus::Starting, "inst")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("currently"));
+    }
+
+    #[test]
+    fn test_validate_stoppable_stopping_errors() {
+        let err = validate_stoppable(&InstanceStatus::Stopping, "inst")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("currently"));
+    }
+
+    // --- kill_instance_socat_processes tests ---
+
+    #[tokio::test]
+    async fn test_kill_socat_clears_pids() {
+        let state = test_state();
+        let db = state.db.lock().await;
+        db.insert_instance(&make_instance("inst", "proj", InstanceStatus::Running))
+            .unwrap();
+        db.insert_port_allocation(
+            "proj",
+            "inst",
+            &coast_core::types::PortMapping {
+                logical_name: "web".to_string(),
+                canonical_port: 3000,
+                dynamic_port: 50000,
+                is_primary: false,
+            },
+        )
+        .unwrap();
+        db.insert_port_allocation(
+            "proj",
+            "inst",
+            &coast_core::types::PortMapping {
+                logical_name: "api".to_string(),
+                canonical_port: 8080,
+                dynamic_port: 50001,
+                is_primary: false,
+            },
+        )
+        .unwrap();
+        // Use PID values that won't exist (ESRCH → treated as success by kill_socat)
+        db.update_socat_pid("proj", "inst", "web", Some(4_194_304))
+            .unwrap();
+        db.update_socat_pid("proj", "inst", "api", Some(4_194_305))
+            .unwrap();
+
+        kill_instance_socat_processes(&db, "proj", "inst").unwrap();
+
+        let allocs = db.get_port_allocations("proj", "inst").unwrap();
+        for alloc in &allocs {
+            assert!(
+                alloc.socat_pid.is_none(),
+                "pid should be cleared for {}",
+                alloc.logical_name
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_kill_socat_no_pids_is_noop() {
+        let state = test_state();
+        let db = state.db.lock().await;
+        db.insert_instance(&make_instance("inst", "proj", InstanceStatus::Running))
+            .unwrap();
+        db.insert_port_allocation(
+            "proj",
+            "inst",
+            &coast_core::types::PortMapping {
+                logical_name: "web".to_string(),
+                canonical_port: 3000,
+                dynamic_port: 50000,
+                is_primary: false,
+            },
+        )
+        .unwrap();
+
+        // No socat PIDs set — should be a no-op
+        kill_instance_socat_processes(&db, "proj", "inst").unwrap();
+
+        let allocs = db.get_port_allocations("proj", "inst").unwrap();
+        assert!(allocs[0].socat_pid.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_kill_socat_no_allocations_is_noop() {
+        let state = test_state();
+        let db = state.db.lock().await;
+        db.insert_instance(&make_instance("inst", "proj", InstanceStatus::Running))
+            .unwrap();
+
+        // No port allocations at all — should be a no-op
+        kill_instance_socat_processes(&db, "proj", "inst").unwrap();
     }
 }
