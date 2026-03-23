@@ -1,0 +1,73 @@
+Você está configurando a skill Coasts para o Cursor neste projeto. Execute todos
+os comandos a partir da raiz do projeto.
+
+## Etapa 1: Verificar o Coast CLI
+
+Execute este comando:
+
+  coast --version
+
+Se o comando `coast` não for encontrado, pare aqui e diga ao usuário:
+
+  "O Coast CLI não está instalado. Instale-o primeiro: https://coasts.dev/docs/getting-started"
+
+Não continue até que o CLI esteja disponível.
+
+## Etapa 2: Obter o conteúdo da skill
+
+Execute este comando:
+
+  coast skills-prompt
+
+A saída tem duas partes:
+
+- **Regras do Coast Runtime** — tudo desde o início até (mas sem incluir) a linha que começa com `---`
+- **Skill Coasts** — tudo a partir do bloco de frontmatter `---` em diante (incluindo as linhas `---` e tudo após elas)
+
+Salve ambas as partes para as etapas abaixo.
+
+## Etapa 3: Perguntar ao usuário
+
+Pergunte ao usuário: devo configurar isso **globalmente** (disponível em todos os projetos nesta máquina) ou **apenas para este projeto**?
+
+## Etapa 4: Colocar os arquivos
+
+Se um arquivo de destino já existir, acrescente a seção Coast Runtime em vez de sobrescrever — mas verifique primeiro se uma seção `# Coast Runtime` já está presente e, nesse caso, ignore.
+
+**Configuração global:**
+- Acrescente as regras do Coast Runtime às regras globais do Cursor do usuário
+- Grave a skill Coasts em `~/.cursor/skills/coasts/SKILL.md`
+
+**Configuração do projeto:**
+- Acrescente as regras do Coast Runtime a `AGENTS.md` na raiz do projeto (ou `.cursor/rules/coast.md` se o usuário preferir regras nativas do Cursor — pergunte a ele)
+- Grave a skill Coasts em `.cursor/skills/coasts/SKILL.md`
+
+## Etapa 5: Atualizar o Coastfile
+
+Leia o `Coastfile` na raiz do projeto. Observe o campo `worktree_dir` na
+seção `[coast]`. Leia também o campo `name` — você precisará dele para construir o
+caminho da worktree.
+
+O diretório de worktree do Cursor é `~/.cursor/worktrees/<name>`, onde `<name>` é
+o valor do campo `name` no Coastfile.
+
+Se esse caminho **ainda não** estiver listado em `worktree_dir`:
+
+- Se `worktree_dir` for uma única string, converta-o em um array e acrescente o
+  caminho do Cursor. Por exemplo, `worktree_dir = ".worktrees"` torna-se
+  `worktree_dir = [".worktrees", "~/.cursor/worktrees/my-app"]`.
+- Se `worktree_dir` já for um array, acrescente o caminho do Cursor a ele.
+- Se `worktree_dir` não estiver presente, adicione
+  `worktree_dir = [".worktrees", "~/.cursor/worktrees/<name>"]` usando o
+  nome real do projeto.
+
+Este é um caminho externo, então, se uma instância do Coast já estiver em execução para este
+projeto, ela deverá ser recriada com `coast run` para que a nova montagem de bind
+entre em vigor. Informe isso ao usuário.
+
+## Etapa 6: Confirmar
+
+Após colocar os arquivos, mostre ao usuário um resumo do que foi criado e onde.
+
+Diga ao usuário: **Reinicie o Cursor** para que as alterações na skill e nas regras
+entrem em vigor.

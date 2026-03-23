@@ -1,0 +1,103 @@
+このプロジェクトで Conductor 用の Coasts スキルをセットアップします。すべての
+コマンドはプロジェクトルートから実行してください。
+
+## Step 1: Coast CLI の確認
+
+このコマンドを実行します:
+
+  coast --version
+
+`coast` コマンドが見つからない場合は、ここで停止し、ユーザーに次のように伝えてください:
+
+  "The Coast CLI is not installed. Install it first: https://coasts.dev/docs/getting-started"
+
+CLI が利用可能になるまで続行しないでください。
+
+## Step 2: スキル内容の取得
+
+このコマンドを実行します:
+
+  coast skills-prompt
+
+出力には 2 つの部分があります:
+
+- **Coast Runtime ルール** — 先頭から、`---` で始まる行の直前までのすべて
+- **Coasts スキル** — `---` の frontmatter ブロック以降のすべて（`---` の行およびその後のすべてを含む）
+
+以下の手順のために、両方の部分を保存してください。
+
+## Step 3: ユーザーに確認
+
+ユーザーに質問してください: Conductor ではどのプロバイダーを使っていますか？
+
+- **Claude** (Anthropic)
+- **Codex** (OpenAI)
+- **Both**
+- **Other** — ユーザーが別のプロバイダー名を挙げた場合は、
+  `coast docs --path SKILLS_FOR_HOST_AGENTS.md` および
+  `coast docs --path harnesses/README.md` を実行して、そのプロバイダーが
+  プロジェクト指示とスキルをどこに置くことを期待しているかを確認し、その後は同じパターンに従ってください
+
+## Step 4: ファイルの配置
+
+Conductor のセットアップは常にプロジェクトレベルです。対象ファイルがすでに存在する場合は、上書きするのではなく
+Coast Runtime セクションを追記してください。ただし最初に
+`# Coast Runtime` セクションがすでに存在するか確認し、存在する場合はスキップしてください。
+
+**ユーザーが Claude（または両方）を選択した場合:**
+- プロジェクトルートの `CLAUDE.md` に Coast Runtime ルールを追記
+- Coasts スキルを `.claude/skills/coasts/SKILL.md` に書き込む
+
+**ユーザーが Codex（または両方）を選択した場合:**
+- プロジェクトルートの `AGENTS.md` に Coast Runtime ルールを追記
+- Coasts スキルを `.agents/skills/coasts/SKILL.md` に書き込む
+- `.agents/skills/coasts/agents/openai.yaml` を次の内容で作成する:
+
+interface:
+  display_name: "Coasts"
+  short_description: "Inspect, assign, and open Coasts for this repo"
+  default_prompt: "Use this skill when the user wants help finding, assigning, or opening a Coast."
+
+policy:
+  allow_implicit_invocation: false
+
+## Step 5: 確認
+
+ファイルを配置した後、何が作成され、どこに配置されたかの要約をユーザーに表示してください。
+
+変更を反映させるために、ユーザーに次のように伝えてください: **Conductor を完全に閉じてから再度開いてください**。
+`/coasts` コマンドがすぐに表示されない場合は、もう一度閉じて再度開いてください。
+
+## Step 6: Coastfile の更新
+
+プロジェクトルートにある `Coastfile` を読んでください。`[coast]` セクション内の
+`worktree_dir` フィールドを確認します。また、worktree パスの構築に必要なので
+`name` フィールドも読んでください。
+
+Conductor の worktree ディレクトリは `~/conductor/workspaces/<name>` です。ここで
+`<name>` は Coastfile の `name` フィールドの値です。
+
+そのパスがまだ `worktree_dir` に記載されて**いない**場合:
+
+- `worktree_dir` が単一の文字列であれば、配列に変換して
+  Conductor のパスを追加します。たとえば、`worktree_dir = ".worktrees"` は
+  `worktree_dir = [".worktrees", "~/conductor/workspaces/my-app"]` になります。
+- `worktree_dir` がすでに配列であれば、そこに Conductor のパスを追加します。
+- `worktree_dir` がまったく存在しない場合は、
+  実際のプロジェクト名を使って
+  `worktree_dir = [".worktrees", "~/conductor/workspaces/<name>"]` を追加します。
+
+これは外部パスであるため、このプロジェクト用の Coast インスタンスがすでに実行中の場合は、
+新しいバインドマウントを有効にするために `coast run` で再作成する必要があります。
+このことをユーザーに伝えてください。
+
+## Step 7: 新しいファイルをコミット
+
+Conductor は各セッションを分離された git worktree で実行します。コミットされていないファイルは
+新しいセッションに引き継がれません。今作成したファイルをコミットして、今後のすべてのワークスペースで
+利用できるようにしてください:
+
+  git add CLAUDE.md .claude/ AGENTS.md .agents/ 2>/dev/null; git status
+
+どのファイルがステージされているかをユーザーに表示し、コミット前に確認を求めてください。
+コミットメッセージには `[dh] feat: add Coasts skill for Conductor` のようなものを使用してください。

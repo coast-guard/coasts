@@ -1,5 +1,21 @@
 # Claude Code
 
+## Quick setup
+
+[Coast CLI](../GETTING_STARTED.md) が必要です。Coasts を自動的にセットアップするには、
+このプロンプトをエージェントのチャットにコピーしてください:
+
+```prompt-copy
+claude_code_setup_prompt.txt
+```
+
+CLI から skill の内容を取得することもできます: `coast skills-prompt`。
+
+セットアップ後、**新しい Claude Code セッションを開始してください** — skill と
+`CLAUDE.md` の変更はセッション開始時に読み込まれます。
+
+---
+
 [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) は
 `.claude/worktrees/` にあるプロジェクト内で worktree を作成します。そのディレクトリは
 リポジトリ内に存在するため、Coasts は外部の bind mount なしで Claude Code の worktree を

@@ -38,6 +38,26 @@ coast checkout dev-2   # instant swap
 
 WSL では、Coast は Docker によって公開された checkout bridge を使用するため、Windows のブラウザやツールは Sail のような Docker Desktop ワークフローと同様に、`127.0.0.1` を通じてチェックアウトされた canonical port に到達できます。
 
+Caddy を使うローカル HTTPS プロジェクトでは、Coast は Coast のインストールごとに 1 つの Caddy ローカル CA を再利用します。そのルートを一度信頼すれば、同じインストール配下で再作成されたワークスペースでも引き続きそれが使われます。
+
+ルート証明書の場所は次のとおりです。
+
+- 通常のインストールでは `~/.coast/caddy/pki/authorities/local/root.crt`
+- `coast-dev` では `~/.coast-dev/caddy/pki/authorities/local/root.crt`
+
+これらは意図的に分離されているため、`coast-dev` を信頼しても通常の `coast` インストールまで信頼されることはなく、その逆も同様です。
+
+アクティブなインストールのルート証明書を確認またはエクスポートするには:
+
+```bash
+coast cert info
+coast cert path
+coast cert fingerprint
+coast cert export --to ~/Downloads/coast-root.crt
+```
+
+Coast は信頼ストアへのインストール自体はユーザーに委ねています。証明書をエクスポートし、必要に応じて OS またはブラウザの信頼ストアにインポートしてください。
+
 ## Do You Need to Check Out?
 
 必ずしもそうではありません。実行中の各 Coast は常にそれぞれ独自の動的ポートを持っており、何もチェックアウトしなくても、いつでもそれらのポートを通じて任意の Coast にアクセスできます。

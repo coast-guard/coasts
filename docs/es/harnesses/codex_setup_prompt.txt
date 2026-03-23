@@ -1,0 +1,68 @@
+Estás configurando la skill Coasts para OpenAI Codex en este proyecto. Ejecuta todos
+los comandos desde la raíz del proyecto.
+
+## Step 1: Verificar Coast CLI
+
+Ejecuta este comando:
+
+  coast --version
+
+Si no se encuentra el comando `coast`, detente aquí y dile al usuario:
+
+  "The Coast CLI is not installed. Install it first: https://coasts.dev/docs/getting-started"
+
+No continúes hasta que el CLI esté disponible.
+
+## Step 2: Obtener el contenido de la skill
+
+Ejecuta este comando:
+
+  coast skills-prompt
+
+La salida tiene dos partes:
+
+- **Reglas de Coast Runtime** — todo desde el inicio hasta (pero sin incluir) la línea que comienza con `---`
+- **Skill Coasts** — todo desde el bloque de frontmatter `---` en adelante (incluyendo las líneas `---` y todo lo que sigue después de ellas)
+
+Guarda ambas partes para los pasos siguientes.
+
+## Step 3: Colocar archivos
+
+La configuración de Codex siempre es a nivel de proyecto. Si un archivo de destino ya existe, agrega la sección de Coast Runtime en lugar de sobrescribirla, pero primero verifica si ya hay una sección `# Coast Runtime` presente y omítela si es así.
+
+- Agrega las reglas de Coast Runtime a `AGENTS.md` en la raíz del proyecto
+- Escribe la skill Coasts en `.agents/skills/coasts/SKILL.md`
+- Crea `.agents/skills/coasts/agents/openai.yaml` con este contenido:
+
+interface:
+  display_name: "Coasts"
+  short_description: "Inspect, assign, and open Coasts for this repo"
+  default_prompt: "Use this skill when the user wants help finding, assigning, or opening a Coast."
+
+policy:
+  allow_implicit_invocation: false
+
+## Step 4: Actualizar el Coastfile
+
+Lee el `Coastfile` en la raíz del proyecto. Revisa el campo `worktree_dir` en la
+sección `[coast]`.
+
+Si `~/.codex/worktrees` **aún no** aparece en `worktree_dir`:
+
+- Si `worktree_dir` es una sola cadena, conviértela en un arreglo y agrega
+  `~/.codex/worktrees`. Por ejemplo, `worktree_dir = ".worktrees"` se convierte en
+  `worktree_dir = [".worktrees", "~/.codex/worktrees"]`.
+- Si `worktree_dir` ya es un arreglo, agrega `~/.codex/worktrees` a él.
+- Si `worktree_dir` no está presente en absoluto, agrega
+  `worktree_dir = [".worktrees", "~/.codex/worktrees"]`.
+
+Esta es una ruta externa, por lo que si ya hay una instancia de Coast en ejecución para este
+proyecto, debe recrearse con `coast run` para que el nuevo bind mount surta
+efecto. Díselo al usuario.
+
+## Step 5: Confirmar
+
+Después de colocar los archivos, muestra al usuario un resumen de qué se creó y dónde.
+
+Dile al usuario: **Salir y volver a abrir Codex** para que la skill y los cambios en AGENTS.md
+surtan efecto.

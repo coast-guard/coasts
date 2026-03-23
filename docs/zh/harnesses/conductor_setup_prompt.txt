@@ -1,0 +1,102 @@
+你正在为此项目中的 Conductor 设置 Coasts 技能。请从项目根目录运行所有
+命令。
+
+## 步骤 1:检查 Coast CLI
+
+运行此命令:
+
+  coast --version
+
+如果找不到 `coast` 命令，请在此停止并告知用户:
+
+  "The Coast CLI is not installed. Install it first: https://coasts.dev/docs/getting-started"
+
+在 CLI 可用之前，不要继续。
+
+## 步骤 2:获取技能内容
+
+运行此命令:
+
+  coast skills-prompt
+
+输出包含两个部分:
+
+- **Coast Runtime 规则** — 从开头到以 `---` 开头的那一行之前的所有内容（但不包括该行）
+- **Coasts 技能** — 从 `---` frontmatter 块开始的所有内容（包括 `---` 行以及其后的所有内容）
+
+请保存这两个部分，以供下面的步骤使用。
+
+## 步骤 3:询问用户
+
+询问用户:你在 Conductor 中使用哪些提供商？
+
+- **Claude**（Anthropic）
+- **Codex**（OpenAI）
+- **两者都用**
+- **其他** — 如果用户说的是不同的提供商，请运行
+  `coast docs --path SKILLS_FOR_HOST_AGENTS.md` 和
+  `coast docs --path harnesses/README.md`，以确定该提供商
+  期望将项目说明和技能放在哪里，然后遵循相同的模式
+
+## 步骤 4:放置文件
+
+Conductor 的设置始终是项目级别的。如果目标文件已存在，请追加
+Coast Runtime 部分而不是覆盖——但首先检查是否已存在
+`# Coast Runtime` 部分，如果存在则跳过。
+
+**如果用户选择了 Claude（或两者都用）:**
+- 将 Coast Runtime 规则追加到项目根目录的 `CLAUDE.md`
+- 将 Coasts 技能写入 `.claude/skills/coasts/SKILL.md`
+
+**如果用户选择了 Codex（或两者都用）:**
+- 将 Coast Runtime 规则追加到项目根目录的 `AGENTS.md`
+- 将 Coasts 技能写入 `.agents/skills/coasts/SKILL.md`
+- 使用以下内容创建 `.agents/skills/coasts/agents/openai.yaml`:
+
+interface:
+  display_name: "Coasts"
+  short_description: "Inspect, assign, and open Coasts for this repo"
+  default_prompt: "Use this skill when the user wants help finding, assigning, or opening a Coast."
+
+policy:
+  allow_implicit_invocation: false
+
+## 步骤 5:确认
+
+放置文件后，向用户展示已创建内容及其位置的摘要。
+
+告诉用户:**完全关闭并重新打开 Conductor** 以使更改生效。
+如果 `/coasts` 命令没有立即出现，请再次关闭并重新打开。
+
+## 步骤 6:更新 Coastfile
+
+读取项目根目录下的 `Coastfile`。查看
+`[coast]` 部分中的 `worktree_dir` 字段。还要读取 `name` 字段——你将需要它来构造
+worktree 路径。
+
+Conductor 的 worktree 目录是 `~/conductor/workspaces/<name>`，其中
+`<name>` 是 Coastfile 中 `name` 字段的值。
+
+如果该路径**尚未**列在 `worktree_dir` 中:
+
+- 如果 `worktree_dir` 是单个字符串，请将其转换为数组并追加
+  Conductor 路径。例如，`worktree_dir = ".worktrees"` 变为
+  `worktree_dir = [".worktrees", "~/conductor/workspaces/my-app"]`。
+- 如果 `worktree_dir` 已经是数组，请将 Conductor 路径追加到其中。
+- 如果根本不存在 `worktree_dir`，请添加
+  `worktree_dir = [".worktrees", "~/conductor/workspaces/<name>"]`，其中使用
+  实际的项目名称。
+
+这是一个外部路径，因此如果该项目的 Coast 实例已经在运行，
+则必须使用 `coast run` 重新创建它，以使新的绑定挂载生效。
+请将此事告知用户。
+
+## 步骤 7:提交新文件
+
+Conductor 会在隔离的 git worktree 中运行每个会话。未提交的文件
+不会带到新的会话中。请提交你刚创建的文件，以便它们在未来的每个工作区中都可用:
+
+  git add CLAUDE.md .claude/ AGENTS.md .agents/ 2>/dev/null; git status
+
+向用户展示哪些文件已暂存，并在提交前请求他们确认。
+使用类似 `[dh] feat: add Coasts skill for Conductor` 的提交消息。

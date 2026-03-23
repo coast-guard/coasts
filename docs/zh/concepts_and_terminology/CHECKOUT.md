@@ -27,8 +27,6 @@ coast checkout dev-2   # instant swap
 
 ## Linux Note
 
-Linux 说明
-
 动态端口在 Linux 上始终可用，不需要特殊权限。
 
 低于 `1024` 的规范端口则不同。如果你的 Coastfile 声明了像 `80` 或 `443` 这样的端口，在你配置主机之前，Linux 可能会阻止 `coast checkout` 绑定这些端口。常见的修复方式有:
@@ -40,9 +38,27 @@ Linux 说明
 
 在 WSL 上，Coast 使用 Docker 发布的 checkout bridge，因此 Windows 浏览器和工具可以通过 `127.0.0.1` 访问已 checkout 的规范端口，这类似于 Docker Desktop 工作流（如 Sail）。
 
-## Do You Need to Check Out?
+对于使用 Caddy 的本地 HTTPS 项目，Coast 会为每个 Coast 安装复用同一个 Caddy 本地 CA。你只需信任一次该根证书，在同一安装下重新创建的工作区就会继续使用它。
 
-你需要执行 Check Out 吗？
+根证书位于:
+
+- 常规安装为 `~/.coast/caddy/pki/authorities/local/root.crt`
+- `coast-dev` 为 `~/.coast-dev/caddy/pki/authorities/local/root.crt`
+
+它们是有意分开的，因此信任 `coast-dev` 不会同时信任常规的 `coast` 安装，反之亦然。
+
+要查看或导出当前安装的根证书:
+
+```bash
+coast cert info
+coast cert path
+coast cert fingerprint
+coast cert export --to ~/Downloads/coast-root.crt
+```
+
+Coast 将信任安装交由你自己处理。导出证书后，再按需将其导入你的操作系统或浏览器信任存储中。
+
+## Do You Need to Check Out?
 
 不一定。每个正在运行的 Coast 始终都有自己的动态端口，而且你随时都可以通过这些端口访问任意 Coast，而无需 checkout 任何内容。
 
@@ -58,8 +74,6 @@ coast ports dev-1
 
 ## When Checkout Is Useful
 
-什么时候 Checkout 有用
-
 在某些情况下，动态端口并不够用，你需要规范端口:
 
 - **硬编码为规范端口的客户端应用。** 如果你有一个运行在 Coast 外部的客户端——比如主机上的前端开发服务器、手机上的移动应用，或者桌面应用——它期望使用 `localhost:3000` 或 `localhost:8080`，那么到处修改端口号会很不现实。checkout 该 Coast 后，你就可以在不更改任何配置的情况下使用真实端口。
@@ -70,8 +84,6 @@ coast ports dev-1
 
 ## Releasing Checkout
 
-释放 Checkout
-
 如果你想释放规范端口，而不是 checkout 到另一个 Coast:
 
 ```bash
@@ -81,8 +93,6 @@ coast checkout --none
 执行后，将不会有任何 Coast 拥有这些规范端口。所有 Coast 仍然可以通过它们各自的动态端口访问。
 
 ## Only One at a Time
-
-一次只能有一个
 
 任意时刻只能有一个 Coast 被 checkout。如果 `dev-1` 已被 checkout，而你运行 `coast checkout dev-2`，规范端口会立即切换到 `dev-2`。中间不会有空档——旧的转发器会被终止，新的转发器会在同一次操作中生成。
 

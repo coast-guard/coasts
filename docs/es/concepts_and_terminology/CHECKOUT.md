@@ -38,6 +38,26 @@ Coast informa esto explícitamente cuando el host niega la asociación.
 
 En WSL, Coast usa bridges de checkout publicados por Docker para que los navegadores y herramientas de Windows puedan alcanzar los puertos canónicos seleccionados a través de `127.0.0.1`, de forma similar a flujos de trabajo de Docker Desktop como Sail.
 
+Para proyectos HTTPS locales que usan Caddy, Coast reutiliza una CA local de Caddy por instalación de Coast. Después de confiar en esa raíz una vez, los workspaces recreados bajo la misma instalación siguen usándola.
+
+El certificado raíz se encuentra en:
+
+- `~/.coast/caddy/pki/authorities/local/root.crt` para la instalación normal
+- `~/.coast-dev/caddy/pki/authorities/local/root.crt` para `coast-dev`
+
+Estos están separados intencionalmente, así que confiar en `coast-dev` no implica también confiar en una instalación normal de `coast`, y viceversa.
+
+Para inspeccionar o exportar el certificado raíz de la instalación activa:
+
+```bash
+coast cert info
+coast cert path
+coast cert fingerprint
+coast cert export --to ~/Downloads/coast-root.crt
+```
+
+Coast deja la instalación de confianza en tus manos. Exporta el certificado y luego impórtalo en el almacén de confianza de tu sistema operativo o navegador según sea necesario.
+
 ## ¿Necesitas hacer checkout?
 
 No necesariamente. Cada Coast en ejecución siempre tiene sus propios puertos dinámicos, y puedes acceder a cualquier Coast a través de esos puertos en cualquier momento sin hacer checkout de nada.

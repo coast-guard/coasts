@@ -35,6 +35,7 @@ Ejecuta directamente en el host:
 Ejemplo:
 
   coast exec <instance> -- sh -c "cd <dir> && npm test"    # needs DB
+  coast exec <instance> --service <service>                # service shell
   npm run lint                                              # host is fine
   npx playwright test                                       # host is fine
 
@@ -85,6 +86,7 @@ Antes de hacer suposiciones sobre el comportamiento de Coast, explora la documen
 
 - Ejecuta siempre `coast lookup` antes de tu primer comando de runtime en una sesión.
 - Usa `coast exec` solo para las cosas que necesitan el runtime del contenedor.
+- Usa `coast exec --service <service>` cuando necesites ejecutar algo dentro de un contenedor de app/servicio.
 - Ejecuta linting, verificación de tipos, formateo y git directamente en el host.
 - Usa `coast docs` o `coast search-docs` antes de hacer suposiciones sobre el comportamiento de Coast.
 - No ejecutes servicios directamente en el host cuando el proyecto espera Coast.
@@ -121,7 +123,7 @@ Cuando algo sobre el comportamiento de Coast no esté claro, lee la documentaci�
 
 Enruta las solicitudes a uno de estos modos:
 
-1. **Usar Coast** — ejecuta `coast lookup`, luego usa `coast exec`, `coast ps`
+1. **Usar Coast** — ejecuta `coast lookup`, luego usa `coast exec`, `coast ps`,
    o `coast logs` con la instancia correspondiente.
 2. **Crear o asignar** — ejecuta `coast ls`, luego `coast run` para crear un nuevo
    Coast o `coast assign` para reapuntar uno existente.

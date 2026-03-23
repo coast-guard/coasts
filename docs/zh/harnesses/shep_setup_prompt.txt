@@ -1,0 +1,64 @@
+你正在为该项目中的 Shep 设置 Coasts skill。请从项目根目录运行所有
+命令。
+
+## 第 1 步:检查 Coast CLI
+
+运行此命令:
+
+  coast --version
+
+如果找不到 `coast` 命令，请在此停止并告知用户:
+
+  "The Coast CLI is not installed. Install it first: https://coasts.dev/docs/getting-started"
+
+在 CLI 可用之前不要继续。
+
+## 第 2 步:获取 skill 内容
+
+运行此命令:
+
+  coast skills-prompt
+
+输出包含两部分:
+
+- **Coast Runtime 规则** —— 从开头直到（但不包括）以 `---` 开头的那一行的所有内容
+- **Coasts skill** —— 从 `---` frontmatter 块开始的所有内容（包括 `---` 行以及其后的所有内容）
+
+保存这两部分内容，以供下面的步骤使用。
+
+## 第 3 步:放置文件
+
+Shep 封装了 Claude Code，因此请使用 Claude Code 的文件布局。如果目标文件
+已存在，请追加 Coast Runtime 部分而不是覆盖——但
+先检查是否已经存在 `# Coast Runtime` 部分，如已存在则跳过。
+
+- 将 Coast Runtime 规则追加到项目根目录的 `CLAUDE.md`
+- 将 Coasts skill 写入 `.agents/skills/coasts/SKILL.md`（如果项目已经使用该布局，则为
+  `.claude/skills/coasts/SKILL.md`）
+
+## 第 4 步:更新 Coastfile
+
+读取项目根目录中的 `Coastfile`。查看 `worktree_dir` 字段，它位于
+`[coast]` 部分中。
+
+如果 `~/.shep/repos/*/wt` **尚未**列在 `worktree_dir` 中:
+
+- 如果 `worktree_dir` 是单个字符串，将其转换为数组并追加
+  `~/.shep/repos/*/wt`。例如，`worktree_dir = ".worktrees"` 会变成
+  `worktree_dir = [".worktrees", "~/.shep/repos/*/wt"]`。
+- 如果 `worktree_dir` 已经是数组，则向其中追加 `~/.shep/repos/*/wt`。
+- 如果根本不存在 `worktree_dir`，则添加
+  `worktree_dir = [".worktrees", "~/.shep/repos/*/wt"]`。
+
+其中的 `*` 是一个 glob 模式，用于匹配每个仓库对应的哈希目录。Coasts
+会在运行时展开它。
+
+这是一个外部路径，因此如果该项目的 Coast 实例已经在运行，则必须使用 `coast run` 重新创建它，新的绑定挂载才能生效。
+请将此情况告知用户。
+
+## 第 5 步:确认
+
+放置文件后，向用户展示已创建内容及其位置的摘要。
+
+告知用户:**退出并重新打开你的编辑器**，这样 skill 和 CLAUDE.md
+的更改才会生效。

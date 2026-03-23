@@ -37,7 +37,7 @@ Usa la documentación para tomar decisiones informadas sobre la configuración d
   compose       (string, opcional)  Ruta a docker-compose.yml relativa al Coastfile.
   runtime       (string, opcional)  "dind" (predeterminado), "sysbox" o "podman".
   root          (string, opcional)  Anulación de la raíz del proyecto (relativa o absoluta).
-  worktree_dir  (string, opcional)  Directorio para git worktrees (predeterminado: ".worktrees"). Se detecta automáticamente a partir de worktrees existentes en tiempo de ejecución.
+  worktree_dir  (string o array, opcional)  Directorio o directorios para git worktrees (predeterminado: ".worktrees"). Acepta un único string o un array de strings. Se detecta automáticamente a partir de worktrees existentes en tiempo de ejecución.
 
 [coast.setup] — Opcional. Personaliza el contenedor DinD en sí.
 
@@ -222,10 +222,17 @@ Estrategia de assign — qué ocurre al cambiar un Coast entre worktrees:
    - Si existen worktrees, examina sus rutas para determinar el directorio padre común (p. ej., si los worktrees están en `../.worktrees/feat-a` y `../.worktrees/feat-b`, el worktree_dir es `"../.worktrees"`).
    - Establece `worktree_dir` en el Coastfile para que coincida con el directorio detectado.
    - Si no existen worktrees, omite `worktree_dir` (Coast usa por defecto ".worktrees"). NO uses ".coasts" — eso contamina el proyecto con un directorio con marca de Coast.
-3. Lee la documentación relevante de Coast (usa `coast docs` y `coast search-docs`) para entender estrategias de volúmenes, comportamiento de assign y cualquier opción de configuración que aplique al stack de este proyecto.
-4. Pregunta al usuario sobre cualquier elección de configuración ambigua (ver puntos clave arriba). No adivines — explica las opciones y deja que decidan.
-5. Genera un Coastfile en la raíz del proyecto basado en el análisis del proyecto y la entrada del usuario.
-6. Si el proyecto no tiene docker-compose.yml, usa [services.*] para definiciones de procesos “bare” o [coast.setup] para instalar dependencias.
-7. Ejecuta `coast build`. Si falla, revisa el error y consulta la documentación (`coast search-docs "<error description>"`) para solucionar problemas.
-8. Ejecuta `coast run dev-1`. Si falla, revisa el error y consulta la documentación.
-9. Ejecuta `coast ui` para abrir el panel de Coastguard (esto es para el usuario cuando hayas terminado).
+3. Pregunta al usuario si usa alguno de estos harnesses de programación con este proyecto:
+   - **Claude Code** — worktrees en `.claude/worktrees`
+   - **OpenAI Codex** — worktrees en `~/.codex/worktrees`
+   - **Cursor** — worktrees en `~/.cursor/worktrees/<name>` (donde `<name>` es el nombre de coast de `[coast] name`)
+   - **Conductor** — worktrees en `~/conductor/workspaces/<name>`
+   - **T3 Code** — worktrees en `~/.t3/worktrees/<name>`
+   Para cada harness que el usuario seleccione, incluye su directorio de worktrees en el array `worktree_dir`. Combínalos con cualquier directorio detectado en el paso 2. Si el usuario no selecciona ninguno y no se detectaron worktrees en el paso 2, omite `worktree_dir` (Coast usa por defecto ".worktrees").
+4. Lee la documentación relevante de Coast (usa `coast docs` y `coast search-docs`) para entender estrategias de volúmenes, comportamiento de assign y cualquier opción de configuración que aplique al stack de este proyecto.
+5. Pregunta al usuario sobre cualquier elección de configuración ambigua (ver puntos clave arriba). No adivines — explica las opciones y deja que decidan.
+6. Genera un Coastfile en la raíz del proyecto basado en el análisis del proyecto y la entrada del usuario.
+7. Si el proyecto no tiene docker-compose.yml, usa [services.*] para definiciones de procesos “bare” o [coast.setup] para instalar dependencias.
+8. Ejecuta `coast build`. Si falla, revisa el error y consulta la documentación (`coast search-docs "<error description>"`) para solucionar problemas.
+9. Ejecuta `coast run dev-1`. Si falla, revisa el error y consulta la documentación.
+10. Ejecuta `coast ui` para abrir el panel de Coastguard (esto es para el usuario cuando hayas terminado).

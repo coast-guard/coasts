@@ -1,5 +1,21 @@
 # Claude Code
 
+## Configuração rápida
+
+Requer a [Coast CLI](../GETTING_STARTED.md). Copie este prompt para o chat do seu
+agente para configurar o Coasts automaticamente:
+
+```prompt-copy
+claude_code_setup_prompt.txt
+```
+
+Você também pode obter o conteúdo da skill pela CLI: `coast skills-prompt`.
+
+Após a configuração, **inicie uma nova sessão do Claude Code** — as skills e as alterações em `CLAUDE.md`
+são carregadas no início da sessão.
+
+---
+
 [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) cria
 worktrees dentro do projeto em `.claude/worktrees/`. Como esse diretório
 fica dentro do repositório, o Coasts pode descobrir e atribuir worktrees do

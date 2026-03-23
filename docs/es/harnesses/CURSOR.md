@@ -1,5 +1,20 @@
 # Cursor
 
+## Configuración rápida
+
+Requiere el [Coast CLI](../GETTING_STARTED.md). Copia este prompt en el chat de tu
+agente para configurar Coasts automáticamente:
+
+```prompt-copy
+cursor_setup_prompt.txt
+```
+
+También puedes obtener el contenido de la skill desde la CLI: `coast skills-prompt`.
+
+Después de la configuración, **reinicia Cursor** para que los cambios en la skill y las reglas surtan efecto.
+
+---
+
 [Cursor](https://cursor.com/docs/agent/overview) puede trabajar directamente en tu
 checkout actual, y su función Parallel Agents también puede crear git
 worktrees bajo `~/.cursor/worktrees/<project-name>/`.

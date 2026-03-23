@@ -1,0 +1,72 @@
+このプロジェクトで Cursor 用の Coasts スキルを設定しています。すべての
+コマンドはプロジェクトルートから実行してください。
+
+## Step 1: Coast CLI を確認する
+
+このコマンドを実行してください:
+
+  coast --version
+
+`coast` コマンドが見つからない場合は、ここで停止してユーザーに次のように伝えてください:
+
+  "The Coast CLI is not installed. Install it first: https://coasts.dev/docs/getting-started"
+
+CLI が利用可能になるまで続行しないでください。
+
+## Step 2: スキルの内容を取得する
+
+このコマンドを実行してください:
+
+  coast skills-prompt
+
+出力には 2 つの部分があります:
+
+- **Coast Runtime ルール** — 先頭から `---` で始まる行の直前までのすべて
+- **Coasts スキル** — `---` の frontmatter ブロック以降のすべて（`---` の行とそれ以降のすべてを含む）
+
+以下の手順のために、両方の部分を保存してください。
+
+## Step 3: ユーザーに尋ねる
+
+ユーザーに尋ねてください: これを **グローバルに**（このマシン上のすべてのプロジェクトで利用可能）設定しますか、それとも **このプロジェクトのみ** に設定しますか？
+
+## Step 4: ファイルを配置する
+
+対象ファイルがすでに存在する場合は、上書きするのではなく Coast Runtime セクションを追記してください。ただし、最初に `# Coast Runtime` セクションがすでに存在するか確認し、存在する場合はスキップしてください。
+
+**グローバル設定:**
+- Coast Runtime ルールをユーザーのグローバル Cursor ルールに追記する
+- Coasts スキルを `~/.cursor/skills/coasts/SKILL.md` に書き込む
+
+**プロジェクト設定:**
+- Coast Runtime ルールをプロジェクトルートの `AGENTS.md` に追記する（または、ユーザーが Cursor ネイティブのルールを希望する場合は `.cursor/rules/coast.md` に追記する — ユーザーに尋ねてください）
+- Coasts スキルを `.cursor/skills/coasts/SKILL.md` に書き込む
+
+## Step 5: Coastfile を更新する
+
+プロジェクトルートにある `Coastfile` を読んでください。`[coast]` セクションの
+`worktree_dir` フィールドを確認してください。また、`name` フィールドも読んでください — これを
+worktree パスの構築に使用します。
+
+Cursor の worktree ディレクトリは `~/.cursor/worktrees/<name>` で、`<name>` は
+Coastfile 内の `name` フィールドの値です。
+
+そのパスが `worktree_dir` に**まだ**記載されていない場合:
+
+- `worktree_dir` が単一の文字列である場合は、配列に変換して
+  Cursor のパスを追記してください。たとえば、`worktree_dir = ".worktrees"` は
+  `worktree_dir = [".worktrees", "~/.cursor/worktrees/my-app"]` になります。
+- `worktree_dir` がすでに配列である場合は、Cursor のパスをそれに追記してください。
+- `worktree_dir` がまったく存在しない場合は、
+  `worktree_dir = [".worktrees", "~/.cursor/worktrees/<name>"]` を
+  実際のプロジェクト名で追加してください。
+
+これは外部パスなので、この
+プロジェクト用の Coast インスタンスがすでに実行中である場合は、新しい bind mount を有効にするために
+`coast run` で再作成する必要があります。これをユーザーに伝えてください。
+
+## Step 6: 確認する
+
+ファイルを配置した後、何が作成され、どこに作成されたかの要約をユーザーに表示してください。
+
+スキルとルールの変更を有効にするために、ユーザーに次のように伝えてください: **Cursor を再起動してください**。

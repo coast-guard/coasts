@@ -29,6 +29,7 @@
 示例:
 
   coast exec <instance> -- sh -c "cd <dir> && npm test"    # needs DB
+  coast exec <instance> --service <service>                # service shell
   npm run lint                                              # host is fine
   npx playwright test                                       # host is fine
 
@@ -74,6 +75,7 @@
 
 - 在会话中的第一个运行时命令之前，始终运行 `coast lookup`。
 - 仅对需要容器运行时的内容使用 `coast exec`。
+- 当你需要在应用/服务容器内运行时，使用 `coast exec --service <service>`。
 - 直接在主机上运行 lint、类型检查、格式化和 git。
 - 在猜测 Coast 行为之前，使用 `coast docs` 或 `coast search-docs`。
 - 当项目要求使用 Coast 时，不要直接在主机上运行服务。

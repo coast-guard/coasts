@@ -45,6 +45,27 @@ worktree_dir = ["~/.codex/worktrees", ".worktrees"]
 worktree_dir = ["/shared/worktrees", ".worktrees"]
 ```
 
+### Glob 패턴(외부)
+
+외부 경로에는 glob 메타문자(`*`, `?`, `[...]`)가 포함될 수 있습니다. Coast는 이를 런타임에 호스트 파일시스템에 대해 확장하여, 일치하는 각 디렉터리에 대해 바인드 마운트를 생성합니다.
+
+```toml
+worktree_dir = [".worktrees", "~/.shep/repos/*/wt"]
+```
+
+이는 도구가 프로젝트마다 달라지는 경로 구성 요소(예: 해시) 아래에 워크트리를 생성할 때 유용합니다. `*`는 임의의 단일 디렉터리 이름과 일치하므로, `~/.shep/repos/*/wt`는 `~/.shep/repos/a21f0cda9ab9d456/wt` 및 `wt` 하위 디렉터리를 포함하는 다른 모든 해시 디렉터리와 일치합니다.
+
+지원되는 glob 문법:
+
+- `*` — 단일 경로 구성 요소 내의 임의 길이 문자 시퀀스와 일치
+- `?` — 임의의 단일 문자와 일치
+- `[abc]` — 집합에 포함된 임의의 문자와 일치
+- `[!abc]` — 집합에 포함되지 않은 임의의 문자와 일치
+
+Glob 확장은 워크트리 디렉터리를 해석하는 모든 곳에서 발생합니다: 컨테이너 생성, assign, start, lookup, 그리고 git watcher. 일치 결과는 결정적 순서를 위해 정렬됩니다. glob이 어떤 디렉터리와도 일치하지 않으면 조용히 건너뜁니다.
+
+다른 외부 경로와 마찬가지로, glob 패턴을 추가한 뒤 바인드 마운트가 적용되려면 컨테이너를 다시 생성해야 합니다(`coast run`).
+
 ## 외부 디렉터리가 작동하는 방식
 
 Coast가 외부 워크트리 디렉터리(물결표 또는 절대 경로)를 만나면 세 가지 일이 발생합니다:
@@ -100,12 +121,22 @@ name = "my-app"
 worktree_dir = [".worktrees", ".claude/worktrees"]
 ```
 
-### 세 가지를 모두 함께 사용
+### Shep 통합
+
+Shep는 `~/.shep/repos/{hash}/wt/{branch-slug}`에 워크트리를 생성하며, 해시는 저장소별로 달라집니다. 해시 디렉터리와 일치시키기 위해 glob 패턴을 사용하세요:
 
 ```toml
 [coast]
 name = "my-app"
-worktree_dir = [".worktrees", ".claude/worktrees", "~/.codex/worktrees"]
+worktree_dir = [".worktrees", "~/.shep/repos/*/wt"]
+```
+
+### 모든 harness를 함께 사용
+
+```toml
+[coast]
+name = "my-app"
+worktree_dir = [".worktrees", ".claude/worktrees", "~/.codex/worktrees", "~/.shep/repos/*/wt"]
 ```
 
 ## 라이브 Coastfile 읽기

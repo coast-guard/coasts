@@ -1,10 +1,32 @@
 # T3 Code
 
+## Quick setup
+
+Требуется [Coast CLI](../GETTING_STARTED.md). Скопируйте этот prompt в чат
+вашего агента, чтобы автоматически настроить Coasts:
+
+```prompt-copy
+t3_code_setup_prompt.txt
+```
+
+Вы также можете получить содержимое skill из CLI: `coast skills-prompt`.
+
+После настройки **перезапустите T3 Code**, чтобы изменения skill и правил вступили в силу.
+
+**Примечание:** T3 Code может ещё не загружать skills уровня проекта из `.agents/skills/` или
+`.claude/skills/`. Prompt для настройки также помещает skill в
+`~/.codex/skills/coasts/`, чтобы он был доступен глобально для провайдера Codex.
+Правила Coast Runtime в `AGENTS.md` и `CLAUDE.md` по-прежнему применяются к каждой
+задаче в любом случае.
+
+---
+
 [T3 Code](https://github.com/pingdotgg/t3code) создаёт git worktree в
 `~/.t3/worktrees/<project-name>/`, переключённые на именованные ветки.
 
-В T3 Code поместите всегда активные правила Coast Runtime в `AGENTS.md`, а
-переиспользуемый workflow `/coasts` — в `.agents/skills/coasts/SKILL.md`.
+T3 Code является обёрткой над Codex, поэтому использует `AGENTS.md` для
+всегда активных правил и `.agents/skills/coasts/SKILL.md` для
+переиспользуемого workflow `/coasts`.
 
 Поскольку эти worktree находятся вне корня проекта, Coasts требуется явная
 конфигурация, чтобы обнаруживать и монтировать их.

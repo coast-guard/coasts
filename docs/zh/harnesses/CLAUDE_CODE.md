@@ -1,5 +1,21 @@
 # Claude Code
 
+## Quick setup
+
+需要 [Coast CLI](../GETTING_STARTED.md)。将此提示复制到你的
+agent 聊天中，以自动设置 Coasts:
+
+```prompt-copy
+claude_code_setup_prompt.txt
+```
+
+你也可以从 CLI 获取技能内容:`coast skills-prompt`。
+
+设置完成后，**启动一个新的 Claude Code 会话** —— 技能和 `CLAUDE.md` 的更改
+会在会话开始时加载。
+
+---
+
 [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) 会在项目内的 `.claude/worktrees/` 中创建
 worktree。由于该目录位于仓库内部，Coasts 可以发现并分配 Claude Code worktree，
 而无需任何外部绑定挂载。
@@ -74,7 +90,7 @@ CLAUDE.md
 - **Run** — `coast run <name>` 从最新构建创建一个新的 Coast 实例。使用 `coast run <name> -w <worktree>` 可一步创建并分配 Claude Code worktree。参见 [Run](../concepts_and_terminology/RUN.md)。
 - **Discovery** — Coasts 会像读取任何其他本地 worktree 目录一样读取 `.claude/worktrees`。
 - **Naming** — Claude Code worktree 在 Coasts UI 和 CLI 中遵循与其他仓库内 worktree 相同的本地 worktree 命名行为。
-- **Assign** — `coast assign` 可以将 `/workspace` 切换到 Claude Code worktree，而无需任何外部绑定挂载间接层。
+- **Assign** — `coast assign` 可以将 `/workspace` 切换到 Claude Code worktree，而无需任何外部 bind-mount 间接层。
 - **Gitignored sync** — 由于 worktree 位于仓库树内，因此可正常工作。
 - **Orphan detection** — 如果 Claude Code 删除了某个 worktree，Coasts 可以检测到缺失的 gitdir，并在需要时取消其分配。
 

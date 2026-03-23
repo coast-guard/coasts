@@ -1,5 +1,21 @@
 # Codex
 
+## Quick setup
+
+需要 [Coast CLI](../GETTING_STARTED.md)。将此提示复制到你的
+agent 聊天中，以自动设置 Coasts:
+
+```prompt-copy
+codex_setup_prompt.txt
+```
+
+你也可以从 CLI 获取 skill 内容:`coast skills-prompt`。
+
+设置完成后，**退出并重新打开 Codex**，以使新的 skill 和 `AGENTS.md`
+生效。
+
+---
+
 [Codex](https://developers.openai.com/codex/app/worktrees/) 会在 `$CODEX_HOME/worktrees`（通常是 `~/.codex/worktrees`）创建 worktree。每个 worktree 都位于一个不透明的哈希目录下，例如 `~/.codex/worktrees/a0db/project-name`，以 detached HEAD 状态开始，并会根据 Codex 的保留策略自动清理。
 
 摘自 [Codex docs](https://developers.openai.com/codex/app/worktrees/):

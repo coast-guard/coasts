@@ -38,6 +38,26 @@ coast checkout dev-2   # instant swap
 
 WSL에서는 Coast가 Docker에 의해 게시된 체크아웃 브리지를 사용하므로, Windows 브라우저와 도구가 Sail 같은 Docker Desktop 워크플로와 유사하게 `127.0.0.1`을 통해 체크아웃된 canonical port에 접근할 수 있습니다.
 
+Caddy를 사용하는 로컬 HTTPS 프로젝트의 경우, Coast는 Coast 설치마다 하나의 Caddy 로컬 CA를 재사용합니다. 해당 루트를 한 번 신뢰하면, 같은 설치 아래에서 다시 생성된 워크스페이스도 계속 그것을 사용합니다.
+
+루트 인증서는 다음 위치에 있습니다:
+
+- 일반 설치의 경우 `~/.coast/caddy/pki/authorities/local/root.crt`
+- `coast-dev`의 경우 `~/.coast-dev/caddy/pki/authorities/local/root.crt`
+
+이 둘은 의도적으로 분리되어 있으므로, `coast-dev`를 신뢰한다고 해서 일반 `coast` 설치까지 함께 신뢰되는 것은 아니며, 그 반대도 마찬가지입니다.
+
+활성 설치의 루트 인증서를 확인하거나 내보내려면:
+
+```bash
+coast cert info
+coast cert path
+coast cert fingerprint
+coast cert export --to ~/Downloads/coast-root.crt
+```
+
+Coast는 신뢰 설치를 사용자가 직접 하도록 둡니다. 인증서를 내보낸 다음, 필요에 따라 OS 또는 브라우저의 신뢰 저장소로 가져오세요.
+
 ## 체크아웃이 꼭 필요한가요?
 
 반드시 그렇지는 않습니다. 실행 중인 모든 Coast는 항상 자체 동적 포트를 가지며, 무엇이든 체크아웃하지 않아도 언제든지 그 포트를 통해 어떤 Coast에도 접근할 수 있습니다.

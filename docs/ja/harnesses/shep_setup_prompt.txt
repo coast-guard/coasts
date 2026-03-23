@@ -1,0 +1,65 @@
+このプロジェクトで Shep 用の Coasts スキルをセットアップしています。すべての
+コマンドはプロジェクトルートから実行してください。
+
+## Step 1: Coast CLI を確認する
+
+このコマンドを実行します:
+
+  coast --version
+
+`coast` コマンドが見つからない場合は、ここで停止してユーザーに次のように伝えてください:
+
+  "The Coast CLI is not installed. Install it first: https://coasts.dev/docs/getting-started"
+
+CLI が利用可能になるまで続行しないでください。
+
+## Step 2: スキルの内容を取得する
+
+このコマンドを実行します:
+
+  coast skills-prompt
+
+出力は 2 つの部分に分かれています:
+
+- **Coast Runtime ルール** — 先頭から、`---` で始まる行の直前までのすべて
+- **Coasts スキル** — `---` の frontmatter ブロック以降のすべて（`---` の行とその後のすべてを含む）
+
+以下の手順のために、両方の部分を保存してください。
+
+## Step 3: ファイルを配置する
+
+Shep は Claude Code をラップしているため、Claude Code のファイルレイアウトを使用してください。対象ファイルが
+すでに存在する場合は、上書きするのではなく Coast Runtime セクションを追記してください。ただし、
+最初に `# Coast Runtime` セクションがすでに存在するか確認し、存在する場合はスキップしてください。
+
+- Coast Runtime ルールをプロジェクトルートの `CLAUDE.md` に追記する
+- Coasts スキルを `.agents/skills/coasts/SKILL.md` に書き込む（または、
+  プロジェクトがすでにそのレイアウトを使用している場合は `.claude/skills/coasts/SKILL.md`）
+
+## Step 4: Coastfile を更新する
+
+プロジェクトルートの `Coastfile` を読み取ってください。`[coast]` セクション内の
+`worktree_dir` フィールドを確認します。
+
+`~/.shep/repos/*/wt` が `worktree_dir` に**まだ**含まれていない場合:
+
+- `worktree_dir` が単一の文字列である場合は、配列に変換して
+  `~/.shep/repos/*/wt` を追加します。たとえば、`worktree_dir = ".worktrees"` は
+  `worktree_dir = [".worktrees", "~/.shep/repos/*/wt"]` になります。
+- `worktree_dir` がすでに配列である場合は、そこに `~/.shep/repos/*/wt` を追加します。
+- `worktree_dir` がまったく存在しない場合は、
+  `worktree_dir = [".worktrees", "~/.shep/repos/*/wt"]` を追加します。
+
+`*` はリポジトリごとのハッシュディレクトリに一致する glob パターンです。Coasts は
+実行時にこれを展開します。
+
+これは外部パスであるため、この
+プロジェクト用の Coast インスタンスがすでに実行中の場合、新しいバインドマウントを有効にするには
+`coast run` で再作成する必要があります。これをユーザーに伝えてください。
+
+## Step 5: 確認する
+
+ファイルを配置した後、何が作成され、どこに配置されたかの要約をユーザーに表示します。
+
+スキルと CLAUDE.md の
+変更を有効にするには、ユーザーに次のように伝えてください: **エディタを終了して再度開いてください**。

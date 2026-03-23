@@ -1,5 +1,19 @@
 # Cursor
 
+## Quick setup
+
+[Coast CLI](../GETTING_STARTED.md) が必要です。Coasts を自動的にセットアップするには、このプロンプトをエージェントのチャットにコピーしてください:
+
+```prompt-copy
+cursor_setup_prompt.txt
+```
+
+CLI から skill の内容を取得することもできます: `coast skills-prompt`。
+
+セットアップ後、skill とルールの変更を反映するために、**Cursor を再起動**してください。
+
+---
+
 [Cursor](https://cursor.com/docs/agent/overview) は現在のチェックアウト内で直接作業でき、さらにその Parallel Agents 機能は `~/.cursor/worktrees/<project-name>/` 配下に git
 worktree を作成することもできます。
 

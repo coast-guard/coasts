@@ -1,5 +1,21 @@
 # Codex
 
+## Quick setup
+
+Requer a [Coast CLI](../GETTING_STARTED.md). Copie este prompt para o chat do seu
+agente para configurar o Coasts automaticamente:
+
+```prompt-copy
+codex_setup_prompt.txt
+```
+
+Você também pode obter o conteúdo da skill pela CLI: `coast skills-prompt`.
+
+Após a configuração, **feche e reabra o Codex** para que a nova skill e `AGENTS.md` passem a
+fazer efeito.
+
+---
+
 [Codex](https://developers.openai.com/codex/app/worktrees/) cria worktrees em `$CODEX_HOME/worktrees` (normalmente `~/.codex/worktrees`). Cada worktree fica sob um diretório de hash opaco como `~/.codex/worktrees/a0db/project-name`, começa em um HEAD destacado e é limpo automaticamente com base na política de retenção do Codex.
 
 Da [documentação do Codex](https://developers.openai.com/codex/app/worktrees/):

@@ -45,6 +45,27 @@ Caminhos que começam com `/` também são tratados como externos e recebem seu 
 worktree_dir = ["/shared/worktrees", ".worktrees"]
 ```
 
+### Padrões glob (externos)
+
+Caminhos externos podem conter metacaracteres glob (`*`, `?`, `[...]`). O Coast os expande em tempo de execução contra o sistema de arquivos do host, criando um bind mount para cada diretório correspondente.
+
+```toml
+worktree_dir = [".worktrees", "~/.shep/repos/*/wt"]
+```
+
+Isso é útil quando uma ferramenta gera worktrees sob um componente de caminho que varia por projeto (como um hash). O `*` corresponde a qualquer nome de diretório único, então `~/.shep/repos/*/wt` corresponde a `~/.shep/repos/a21f0cda9ab9d456/wt` e a qualquer outro diretório de hash que contenha um subdiretório `wt`.
+
+Sintaxe glob suportada:
+
+- `*` — corresponde a qualquer sequência de caracteres dentro de um único componente de caminho
+- `?` — corresponde a qualquer caractere único
+- `[abc]` — corresponde a qualquer caractere do conjunto
+- `[!abc]` — corresponde a qualquer caractere que não esteja no conjunto
+
+A expansão de glob acontece em todos os lugares onde os diretórios de worktree são resolvidos: criação do contêiner, assign, start, lookup e o monitor do git. As correspondências são ordenadas para garantir uma ordem determinística. Se um glob não corresponder a nenhum diretório, ele será ignorado silenciosamente.
+
+Como outros caminhos externos, o contêiner deve ser recriado (`coast run`) após adicionar um padrão glob para que o bind mount entre em vigor.
+
 ## Como os diretórios externos funcionam
 
 Quando o Coast encontra um diretório de worktree externo (caminho com til ou absoluto), três coisas acontecem:
@@ -100,12 +121,22 @@ name = "my-app"
 worktree_dir = [".worktrees", ".claude/worktrees"]
 ```
 
-### Os três juntos
+### Integração com Shep
+
+O Shep cria worktrees em `~/.shep/repos/{hash}/wt/{branch-slug}`, onde o hash é por repositório. Use um padrão glob para corresponder ao diretório de hash:
 
 ```toml
 [coast]
 name = "my-app"
-worktree_dir = [".worktrees", ".claude/worktrees", "~/.codex/worktrees"]
+worktree_dir = [".worktrees", "~/.shep/repos/*/wt"]
+```
+
+### Todos os harnesses juntos
+
+```toml
+[coast]
+name = "my-app"
+worktree_dir = [".worktrees", ".claude/worktrees", "~/.codex/worktrees", "~/.shep/repos/*/wt"]
 ```
 
 ## Leitura dinâmica do Coastfile

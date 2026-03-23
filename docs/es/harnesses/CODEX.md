@@ -1,5 +1,21 @@
 # Codex
 
+## Quick setup
+
+Requiere la [Coast CLI](../GETTING_STARTED.md). Copia este prompt en el chat de tu
+agente para configurar Coasts automáticamente:
+
+```prompt-copy
+codex_setup_prompt.txt
+```
+
+También puedes obtener el contenido de la skill desde la CLI: `coast skills-prompt`.
+
+Después de la configuración, **cierra y vuelve a abrir Codex** para que la nueva skill y `AGENTS.md` surtan
+efecto.
+
+---
+
 [Codex](https://developers.openai.com/codex/app/worktrees/) crea worktrees en `$CODEX_HOME/worktrees` (normalmente `~/.codex/worktrees`). Cada worktree vive bajo un directorio con hash opaco como `~/.codex/worktrees/a0db/project-name`, comienza en un HEAD desacoplado y se limpia automáticamente según la política de retención de Codex.
 
 De la [documentación de Codex](https://developers.openai.com/codex/app/worktrees/):
@@ -9,7 +25,7 @@ De la [documentación de Codex](https://developers.openai.com/codex/app/worktree
 
 Debido a que estos worktrees viven fuera de la raíz del proyecto, Coasts necesita una configuración explícita para descubrirlos y montarlos.
 
-## Configuración
+## Setup
 
 Agrega `~/.codex/worktrees` a `worktree_dir`:
 
@@ -97,6 +113,6 @@ api = "hot"
 - `.claude/worktrees/` -- Claude Code (local, sin manejo especial)
 - `~/.codex/worktrees/` -- Codex (externo, montado con bind)
 
-## Limitaciones
+## Limitations
 
 - Codex puede limpiar worktrees en cualquier momento. La detección de huérfanos en Coasts maneja esto correctamente.

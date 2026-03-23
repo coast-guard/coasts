@@ -1,0 +1,67 @@
+このプロジェクトで Claude Code 用の Coasts スキルをセットアップしています。すべての
+コマンドはプロジェクトルートから実行してください。
+
+## Step 1: Coast CLI を確認する
+
+次のコマンドを実行します:
+
+  coast --version
+
+`coast` コマンドが見つからない場合は、ここで停止してユーザーに次のように伝えてください:
+
+  "The Coast CLI is not installed. Install it first: https://coasts.dev/docs/getting-started"
+
+CLI が利用可能になるまで続行しないでください。
+
+## Step 2: スキル内容を取得する
+
+次のコマンドを実行します:
+
+  coast skills-prompt
+
+出力には 2 つの部分があります:
+
+- **Coast Runtime rules** — 先頭から `---` で始まる行の直前までのすべて
+- **Coasts skill** — `---` のフロントマターブロック以降のすべて（`---` の行とその後のすべてを含む）
+
+以下の手順のために、両方の部分を保存してください。
+
+## Step 3: ユーザーに確認する
+
+ユーザーに尋ねてください: これを **グローバルに**（このマシン上のすべてのプロジェクトで利用可能）設定しますか、それとも **このプロジェクトのみ** に設定しますか？
+
+## Step 4: ファイルを配置する
+
+対象ファイルがすでに存在する場合は、上書きするのではなく Coast Runtime セクションを追記してください。ただし、最初に `# Coast Runtime` セクションがすでに存在するか確認し、存在する場合はスキップしてください。
+
+**Global setup:**
+- Coast Runtime rules を `~/.claude/CLAUDE.md` に追記する
+- Coasts skill を `~/.claude/skills/coasts/SKILL.md` に書き込む
+
+**Project setup:**
+- Coast Runtime rules をプロジェクトルートの `CLAUDE.md` に追記する
+- Coasts skill を `.claude/skills/coasts/SKILL.md` に書き込む
+
+## Step 5: Coastfile を更新する
+
+プロジェクトルートの `Coastfile` を読み取ってください。`[coast]` セクション内の
+`worktree_dir` フィールドを確認します。
+
+`.claude/worktrees` がまだ `worktree_dir` に含まれて**いない**場合:
+
+- `worktree_dir` が単一の文字列であれば、配列に変換して
+  `.claude/worktrees` を追加します。たとえば、`worktree_dir = ".worktrees"` は
+  `worktree_dir = [".worktrees", ".claude/worktrees"]` になります。
+- `worktree_dir` がすでに配列であれば、`.claude/worktrees` をそれに追加します。
+- `worktree_dir` がまったく存在しない場合は、
+  `worktree_dir = [".worktrees", ".claude/worktrees"]` を追加します。
+
+これは相対パス（プロジェクトルート内）なので、コンテナの再作成は
+不要です — 変更は worktree の一覧表示に即時反映されます。
+
+## Step 6: 確認する
+
+ファイルを配置した後、何が作成され、どこに作成されたかの要約をユーザーに示してください。
+
+ユーザーに伝えてください: スキルと CLAUDE.md の
+変更を反映させるには、**新しい Claude Code セッションを開始してください**。

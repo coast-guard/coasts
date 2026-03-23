@@ -1,0 +1,67 @@
+你正在为此项目中的 Claude Code 设置 Coasts 技能。从项目根目录运行所有
+命令。
+
+## 步骤 1:检查 Coast CLI
+
+运行此命令:
+
+  coast --version
+
+如果找不到 `coast` 命令，请在此停止并告诉用户:
+
+  "The Coast CLI is not installed. Install it first: https://coasts.dev/docs/getting-started"
+
+在 CLI 可用之前，不要继续。
+
+## 步骤 2:获取技能内容
+
+运行此命令:
+
+  coast skills-prompt
+
+输出包含两部分:
+
+- **Coast Runtime 规则** — 从开始到以 `---` 开头的那一行之前（但不包括该行）的所有内容
+- **Coasts 技能** — 从 `---` frontmatter 块开始的所有内容（包括 `---` 行及其后的所有内容）
+
+保存这两部分内容，以供下面的步骤使用。
+
+## 步骤 3:询问用户
+
+询问用户:我应该将其设置为**全局**（此机器上的每个项目都可用）还是**仅用于此项目**？
+
+## 步骤 4:放置文件
+
+如果目标文件已存在，请追加 Coast Runtime 部分而不是覆盖——但首先检查是否已存在 `# Coast Runtime` 部分，如果存在则跳过。
+
+**全局设置:**
+- 将 Coast Runtime 规则追加到 `~/.claude/CLAUDE.md`
+- 将 Coasts 技能写入 `~/.claude/skills/coasts/SKILL.md`
+
+**项目设置:**
+- 将 Coast Runtime 规则追加到项目根目录下的 `CLAUDE.md`
+- 将 Coasts 技能写入 `.claude/skills/coasts/SKILL.md`
+
+## 步骤 5:更新 Coastfile
+
+读取项目根目录下的 `Coastfile`。查看
+`[coast]` 部分中的 `worktree_dir` 字段。
+
+如果 `.claude/worktrees` **尚未**列在 `worktree_dir` 中:
+
+- 如果 `worktree_dir` 是单个字符串，将其转换为数组并追加
+  `.claude/worktrees`。例如，`worktree_dir = ".worktrees"` 变为
+  `worktree_dir = [".worktrees", ".claude/worktrees"]`。
+- 如果 `worktree_dir` 已经是数组，则向其中追加 `.claude/worktrees`。
+- 如果根本不存在 `worktree_dir`，则添加
+  `worktree_dir = [".worktrees", ".claude/worktrees"]`。
+
+这是一个相对路径（位于项目根目录内），因此不需要重建容器——对于 worktree 列表，
+更改会立即生效。
+
+## 步骤 6:确认
+
+放置文件后，向用户显示创建了什么以及创建位置的摘要。
+
+告诉用户:**启动一个新的 Claude Code 会话**，以使技能和 CLAUDE.md
+更改生效。

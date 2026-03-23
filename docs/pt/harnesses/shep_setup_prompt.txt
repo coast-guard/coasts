@@ -1,0 +1,66 @@
+Você está configurando a skill Coasts para o Shep neste projeto. Execute todos
+os comandos a partir da raiz do projeto.
+
+## Etapa 1: Verificar se o Coast CLI está instalado
+
+Execute este comando:
+
+  coast --version
+
+Se o comando `coast` não for encontrado, pare aqui e informe ao usuário:
+
+  "O Coast CLI não está instalado. Instale-o primeiro: https://coasts.dev/docs/getting-started"
+
+Não continue até que o CLI esteja disponível.
+
+## Etapa 2: Obter o conteúdo da skill
+
+Execute este comando:
+
+  coast skills-prompt
+
+A saída tem duas partes:
+
+- **Regras do Coast Runtime** — tudo desde o início até (mas não incluindo) a linha que começa com `---`
+- **Skill Coasts** — tudo a partir do bloco de frontmatter `---` em diante (incluindo as linhas `---` e tudo o que vem depois delas)
+
+Salve ambas as partes para as etapas abaixo.
+
+## Etapa 3: Colocar os arquivos
+
+O Shep encapsula o Claude Code, então use o layout de arquivos do Claude Code. Se um arquivo de destino
+já existir, anexe a seção Coast Runtime em vez de sobrescrever — mas
+verifique primeiro se uma seção `# Coast Runtime` já está presente e ignore se
+estiver.
+
+- Anexe as regras do Coast Runtime a `CLAUDE.md` na raiz do projeto
+- Grave a skill Coasts em `.agents/skills/coasts/SKILL.md` (ou
+  `.claude/skills/coasts/SKILL.md` se o projeto já usar esse layout)
+
+## Etapa 4: Atualizar o Coastfile
+
+Leia o `Coastfile` na raiz do projeto. Observe o campo `worktree_dir` na
+seção `[coast]`.
+
+Se `~/.shep/repos/*/wt` **ainda não** estiver listado em `worktree_dir`:
+
+- Se `worktree_dir` for uma única string, converta-o em um array e anexe
+  `~/.shep/repos/*/wt`. Por exemplo, `worktree_dir = ".worktrees"` torna-se
+  `worktree_dir = [".worktrees", "~/.shep/repos/*/wt"]`.
+- Se `worktree_dir` já for um array, anexe `~/.shep/repos/*/wt` a ele.
+- Se `worktree_dir` não estiver presente, adicione
+  `worktree_dir = [".worktrees", "~/.shep/repos/*/wt"]`.
+
+O `*` é um padrão glob que corresponde ao diretório de hash por repositório. O Coasts
+o expande em tempo de execução.
+
+Este é um caminho externo, portanto, se uma instância do Coast já estiver em execução para este
+projeto, ela deverá ser recriada com `coast run` para que a nova montagem de bind tenha efeito.
+Informe isso ao usuário.
+
+## Etapa 5: Confirmar
+
+Depois de colocar os arquivos, mostre ao usuário um resumo do que foi criado e onde.
+
+Diga ao usuário: **Feche e reabra seu editor** para que a skill e as alterações em CLAUDE.md
+tenham efeito.

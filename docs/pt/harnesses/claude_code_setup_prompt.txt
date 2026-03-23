@@ -1,0 +1,66 @@
+Você está configurando a skill Coasts para o Claude Code neste projeto. Execute todos
+os comandos a partir da raiz do projeto.
+
+## Etapa 1: Verificar a CLI do Coast
+
+Execute este comando:
+
+  coast --version
+
+Se o comando `coast` não for encontrado, pare aqui e diga ao usuário:
+
+  "A CLI do Coast não está instalada. Instale-a primeiro: https://coasts.dev/docs/getting-started"
+
+Não continue até que a CLI esteja disponível.
+
+## Etapa 2: Obter o conteúdo da skill
+
+Execute este comando:
+
+  coast skills-prompt
+
+A saída tem duas partes:
+
+- **Regras do Runtime do Coast** — tudo desde o início até (mas não incluindo) a linha que começa com `---`
+- **Skill Coasts** — tudo a partir do bloco de frontmatter `---` em diante (incluindo as linhas `---` e tudo depois delas)
+
+Salve ambas as partes para as etapas abaixo.
+
+## Etapa 3: Perguntar ao usuário
+
+Pergunte ao usuário: devo configurar isso **globalmente** (disponível em todos os projetos nesta máquina) ou **apenas para este projeto**?
+
+## Etapa 4: Colocar os arquivos
+
+Se um arquivo de destino já existir, anexe a seção Coast Runtime em vez de sobrescrever — mas verifique primeiro se uma seção `# Coast Runtime` já está presente e pule se estiver.
+
+**Configuração global:**
+- Anexe as regras do Coast Runtime a `~/.claude/CLAUDE.md`
+- Grave a skill Coasts em `~/.claude/skills/coasts/SKILL.md`
+
+**Configuração do projeto:**
+- Anexe as regras do Coast Runtime a `CLAUDE.md` na raiz do projeto
+- Grave a skill Coasts em `.claude/skills/coasts/SKILL.md`
+
+## Etapa 5: Atualizar o Coastfile
+
+Leia o `Coastfile` na raiz do projeto. Observe o campo `worktree_dir` na
+seção `[coast]`.
+
+Se `.claude/worktrees` **ainda não** estiver listado em `worktree_dir`:
+
+- Se `worktree_dir` for uma única string, converta-o em um array e anexe
+  `.claude/worktrees`. Por exemplo, `worktree_dir = ".worktrees"` torna-se
+  `worktree_dir = [".worktrees", ".claude/worktrees"]`.
+- Se `worktree_dir` já for um array, anexe `.claude/worktrees` a ele.
+- Se `worktree_dir` não estiver presente, adicione
+  `worktree_dir = [".worktrees", ".claude/worktrees"]`.
+
+Este é um caminho relativo (dentro da raiz do projeto), então não é necessária
+nenhuma recriação do contêiner — as alterações entram em vigor imediatamente para a listagem de worktrees.
+
+## Etapa 6: Confirmar
+
+Após colocar os arquivos, mostre ao usuário um resumo do que foi criado e onde.
+
+Diga ao usuário: **Inicie uma nova sessão do Claude Code** para que a skill e as alterações no CLAUDE.md entrem em vigor.

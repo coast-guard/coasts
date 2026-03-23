@@ -1,8 +1,22 @@
 # Conductor
 
-[Conductor](https://conductor.build/) 运行并行的 Claude Code 代理，每个代理都在其各自隔离的工作区中。工作区是存储在 `~/conductor/workspaces/<project-name>/` 的 git worktree。每个工作区都会检出到一个命名分支上。
+## 快速设置
 
-由于这些 worktree 位于项目根目录之外，Coasts 需要显式配置才能发现并挂载它们。
+需要 [Coast CLI](../GETTING_STARTED.md)。将此提示复制到你的
+代理聊天中，以自动设置 Coasts:
+
+```prompt-copy
+conductor_setup_prompt.txt
+```
+
+你也可以通过 CLI 获取 skill 内容:`coast skills-prompt`。
+
+> **重要:** Conductor 会在隔离的 git worktree 中运行每个会话。该
+> 设置提示会创建仅存在于当前工作区中的文件——请将它们提交并合并到你的主分支，
+> 否则它们在新会话中将不可用。
+
+设置完成后，**彻底关闭并重新打开 Conductor** 以使更改生效。如果
+`/coasts` 命令没有出现，请再次关闭并重新打开。
 
 ## 设置
 

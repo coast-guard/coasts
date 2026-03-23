@@ -1,13 +1,35 @@
 # T3 Code
 
+## Configuración rápida
+
+Requiere la [Coast CLI](../GETTING_STARTED.md). Copia este prompt en el chat de tu
+agente para configurar Coasts automáticamente:
+
+```prompt-copy
+t3_code_setup_prompt.txt
+```
+
+También puedes obtener el contenido de la skill desde la CLI: `coast skills-prompt`.
+
+Después de la configuración, **reinicia T3 Code** para que los cambios en la skill y las reglas surtan efecto.
+
+**Nota:** Es posible que T3 Code todavía no cargue skills a nivel de proyecto desde `.agents/skills/` o
+`.claude/skills/`. El prompt de configuración también coloca la skill en
+`~/.codex/skills/coasts/` para que esté disponible globalmente para el proveedor Codex.
+Las reglas de Coast Runtime en `AGENTS.md` y `CLAUDE.md` siguen aplicándose en cada
+tarea de todos modos.
+
+---
+
 [T3 Code](https://github.com/pingdotgg/t3code) crea git worktrees en
 `~/.t3/worktrees/<project-name>/`, extraídos en ramas con nombre.
 
-En T3 Code, coloca las reglas de Coast Runtime que siempre están activas en `AGENTS.md` y el flujo de trabajo reutilizable `/coasts` en `.agents/skills/coasts/SKILL.md`.
+T3 Code envuelve a Codex, por lo que usa `AGENTS.md` para reglas siempre activas y
+`.agents/skills/coasts/SKILL.md` para el flujo de trabajo reutilizable `/coasts`.
 
 Debido a que estos worktrees viven fuera de la raíz del proyecto, Coasts necesita una configuración explícita para descubrirlos y montarlos.
 
-## Configuración
+## Setup
 
 Agrega `~/.t3/worktrees/<project-name>` a `worktree_dir`. T3 Code anida los worktrees bajo un subdirectorio por proyecto, por lo que la ruta debe incluir el nombre del proyecto. En el ejemplo a continuación, `my-app` debe coincidir con el nombre real de la carpeta bajo `~/.t3/worktrees/` para tu repositorio.
 
@@ -35,7 +57,8 @@ Usa esta disposición para T3 Code:
 
 - coloca las reglas breves de Coast Runtime en `AGENTS.md`
 - coloca el flujo de trabajo reutilizable `/coasts` en `.agents/skills/coasts/SKILL.md`
-- no agregues una capa separada de comando de proyecto o slash-command específica de T3 para Coasts
+- no agregues una capa separada de comando de proyecto o slash-command específica de T3 para
+  Coasts
 - si este repositorio usa múltiples harnesses, consulta
   [Multiple Harnesses](MULTIPLE_HARNESSES.md) y
   [Skills for Host Agents](../SKILLS_FOR_HOST_AGENTS.md).

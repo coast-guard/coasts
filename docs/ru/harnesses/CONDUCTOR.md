@@ -1,11 +1,26 @@
 # Conductor
 
-[Conductor](https://conductor.build/) запускает параллельных агентов Claude Code, каждый в своей изолированной рабочей области. Рабочие области — это git worktree, хранящиеся в `~/conductor/workspaces/<project-name>/`. Каждая рабочая область checkout'ится на именованной ветке.
+## Быстрая настройка
 
-Поскольку эти worktree находятся вне корня проекта, Coasts требуется явная
-конфигурация, чтобы обнаруживать и монтировать их.
+Требуется [Coast CLI](../GETTING_STARTED.md). Скопируйте этот prompt в чат
+вашего агента, чтобы настроить Coasts автоматически:
 
-## Настройка
+```prompt-copy
+conductor_setup_prompt.txt
+```
+
+Вы также можете получить содержимое skill через CLI: `coast skills-prompt`.
+
+> **Важно:** Conductor запускает каждую сессию в изолированном git worktree.
+> Prompt настройки создаёт файлы, которые существуют только в текущем рабочем
+> пространстве — закоммитьте их и влейте в основную ветку, иначе они не будут
+> доступны в новых сессиях.
+
+После настройки **полностью закройте и заново откройте Conductor**, чтобы
+изменения вступили в силу. Если команда `/coasts` не появляется, снова
+закройте и откройте Conductor.
+
+## Setup
 
 Добавьте `~/conductor/workspaces/<project-name>` в `worktree_dir`. В отличие от Codex (который хранит все проекты в одном плоском каталоге), Conductor размещает worktree во вложенном подкаталоге для каждого проекта, поэтому путь должен включать имя проекта. В примере ниже `my-app` должно совпадать с фактическим именем папки вашего репозитория в `~/conductor/workspaces/`.
 
@@ -30,7 +45,7 @@ coast run my-instance
 Список worktree обновляется сразу (Coasts читает новый Coastfile), но
 назначение на worktree Conductor требует bind mount внутри контейнера.
 
-## Куда помещать указания для Coasts
+## Where Coasts guidance goes
 
 Рассматривайте Conductor как отдельный harness для работы с Coasts:
 
@@ -46,7 +61,7 @@ coast run my-instance
   [Skills for Host Agents](../SKILLS_FOR_HOST_AGENTS.md), чтобы сохранить
   общий workflow `/coasts` в одном месте
 
-## Что делает Coasts
+## What Coasts does
 
 - **Запуск** — `coast run <name>` создаёт новый инстанс Coast из последней сборки. Используйте `coast run <name> -w <worktree>`, чтобы за один шаг создать и назначить worktree Conductor. См. [Run](../concepts_and_terminology/RUN.md).
 - **Bind mount** — При создании контейнера Coasts монтирует
@@ -63,7 +78,7 @@ coast run my-instance
   фильтруя по указателям `.git` gitdir. Если Conductor архивирует или
   удаляет рабочую область, Coasts автоматически снимает назначение с инстанса.
 
-## Пример
+## Example
 
 ```toml
 [coast]
@@ -85,7 +100,7 @@ api = "hot"
 
 - `~/conductor/workspaces/my-app/` — Conductor (внешний, с bind mount; замените `my-app` на имя папки вашего репозитория)
 
-## Переменные окружения Conductor
+## Conductor Env Vars
 
 - Избегайте зависимости от специфичных для Conductor переменных окружения (например,
   `CONDUCTOR_PORT`, `CONDUCTOR_WORKSPACE_PATH`) для конфигурации времени

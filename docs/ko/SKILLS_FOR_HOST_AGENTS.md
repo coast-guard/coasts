@@ -83,6 +83,7 @@ Run directly on the host:
 Example:
 
   coast exec <instance> -- sh -c "cd <dir> && npm test"    # needs DB
+  coast exec <instance> --service <service>                # service shell
   npm run lint                                              # host is fine
   npx playwright test                                       # host is fine
 
@@ -130,6 +131,7 @@ Before guessing about Coast behavior, explore the docs:
 
 - Always run `coast lookup` before your first runtime command in a session.
 - Use `coast exec` only for things that need the container runtime.
+- Use `coast exec --service <service>` when you need to run inside an app/service container.
 - Run linting, typechecking, formatting, and git on the host directly.
 - Use `coast docs` or `coast search-docs` before guessing about Coast behavior.
 - Do not run services directly on the host when the project expects Coast.

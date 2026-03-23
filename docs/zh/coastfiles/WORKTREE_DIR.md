@@ -45,6 +45,27 @@ worktree_dir = ["~/.codex/worktrees", ".worktrees"]
 worktree_dir = ["/shared/worktrees", ".worktrees"]
 ```
 
+### Glob 模式（外部）
+
+外部路径可以包含 glob 元字符（`*`、`?`、`[...]`）。Coast 会在运行时根据主机文件系统展开它们，并为每个匹配的目录创建一个绑定挂载。
+
+```toml
+worktree_dir = [".worktrees", "~/.shep/repos/*/wt"]
+```
+
+当某个工具把 worktree 生成在一个会因项目而变化的路径组件下（例如哈希值）时，这会非常有用。`*` 可匹配任意单个目录名，因此 `~/.shep/repos/*/wt` 会匹配 `~/.shep/repos/a21f0cda9ab9d456/wt` 以及任何其他包含 `wt` 子目录的哈希目录。
+
+支持的 glob 语法:
+
+- `*` — 匹配单个路径组件内的任意字符序列
+- `?` — 匹配任意单个字符
+- `[abc]` — 匹配集合中的任意字符
+- `[!abc]` — 匹配不在集合中的任意字符
+
+凡是解析 worktree 目录的地方都会进行 glob 展开:容器创建、assign、start、lookup，以及 git watcher。匹配结果会被排序以确保顺序确定。如果某个 glob 没有匹配到任何目录，则会被静默跳过。
+
+与其他外部路径一样，添加 glob 模式后，必须重新创建容器（`coast run`）绑定挂载才会生效。
+
 ## 外部目录的工作方式
 
 当 Coast 遇到外部 worktree 目录（波浪线路径或绝对路径）时，会发生三件事:
@@ -100,12 +121,22 @@ name = "my-app"
 worktree_dir = [".worktrees", ".claude/worktrees"]
 ```
 
-### 三者一起使用
+### Shep 集成
+
+Shep 会在 `~/.shep/repos/{hash}/wt/{branch-slug}` 创建 worktree，其中哈希值对每个仓库都不同。使用 glob 模式来匹配该哈希目录:
 
 ```toml
 [coast]
 name = "my-app"
-worktree_dir = [".worktrees", ".claude/worktrees", "~/.codex/worktrees"]
+worktree_dir = [".worktrees", "~/.shep/repos/*/wt"]
+```
+
+### 所有 harness 一起使用
+
+```toml
+[coast]
+name = "my-app"
+worktree_dir = [".worktrees", ".claude/worktrees", "~/.codex/worktrees", "~/.shep/repos/*/wt"]
 ```
 
 ## 实时读取 Coastfile

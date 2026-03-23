@@ -1,0 +1,68 @@
+このプロジェクトで OpenAI Codex 向けの Coasts スキルを設定しています。すべての
+コマンドはプロジェクトルートから実行してください。
+
+## Step 1: Coast CLI を確認する
+
+次のコマンドを実行してください:
+
+  coast --version
+
+`coast` コマンドが見つからない場合は、ここで停止し、ユーザーに次のように伝えてください:
+
+  "The Coast CLI is not installed. Install it first: https://coasts.dev/docs/getting-started"
+
+CLI が利用可能になるまで続行しないでください。
+
+## Step 2: スキルの内容を取得する
+
+次のコマンドを実行してください:
+
+  coast skills-prompt
+
+出力には 2 つの部分があります:
+
+- **Coast Runtime rules** — 先頭から `---` で始まる行の直前までのすべて
+- **Coasts skill** — `---` の frontmatter ブロック以降のすべて（`---` の行とそれ以降のすべてを含む）
+
+以下の手順のために、両方の部分を保存してください。
+
+## Step 3: ファイルを配置する
+
+Codex の設定は常にプロジェクトレベルです。対象ファイルがすでに存在する場合は、上書きするのではなく Coast Runtime セクションを追記してください。ただし、まず `# Coast Runtime` セクションがすでに存在するか確認し、存在する場合はスキップしてください。
+
+- プロジェクトルートの `AGENTS.md` に Coast Runtime rules を追記する
+- Coasts skill を `.agents/skills/coasts/SKILL.md` に書き込む
+- 次の内容で `.agents/skills/coasts/agents/openai.yaml` を作成する:
+
+interface:
+  display_name: "Coasts"
+  short_description: "Inspect, assign, and open Coasts for this repo"
+  default_prompt: "Use this skill when the user wants help finding, assigning, or opening a Coast."
+
+policy:
+  allow_implicit_invocation: false
+
+## Step 4: Coastfile を更新する
+
+プロジェクトルートにある `Coastfile` を読んでください。`[coast]` セクションの
+`worktree_dir` フィールドを確認します。
+
+`~/.codex/worktrees` が `worktree_dir` に**まだ**含まれていない場合:
+
+- `worktree_dir` が単一の文字列である場合は、配列に変換して
+  `~/.codex/worktrees` を追加してください。たとえば、`worktree_dir = ".worktrees"` は
+  `worktree_dir = [".worktrees", "~/.codex/worktrees"]` になります。
+- `worktree_dir` がすでに配列である場合は、そこに `~/.codex/worktrees` を追加してください。
+- `worktree_dir` がまったく存在しない場合は、
+  `worktree_dir = [".worktrees", "~/.codex/worktrees"]` を追加してください。
+
+これは外部パスであるため、このプロジェクトですでに Coast インスタンスが実行中の場合、
+新しいバインドマウントを有効にするには `coast run` で再作成する必要があります。
+このことをユーザーに伝えてください。
+
+## Step 5: 確認
+
+ファイルを配置した後、何がどこに作成されたかの要約をユーザーに示してください。
+
+スキルと AGENTS.md の変更を有効にするには、**Codex を終了して再度開く**よう
+ユーザーに伝えてください。

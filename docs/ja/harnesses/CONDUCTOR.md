@@ -1,9 +1,18 @@
 # Conductor
 
-[Conductor](https://conductor.build/) は、並列の Claude Code エージェントを実行し、それぞれが独自の分離されたワークスペースを持ちます。ワークスペースは `~/conductor/workspaces/<project-name>/` に保存された git worktree です。各ワークスペースは名前付きブランチでチェックアウトされます。
+## Quick setup
 
-これらの worktree はプロジェクトルートの外側に存在するため、Coasts がそれらを検出してマウントするには明示的な
-設定が必要です。
+[Coast CLI](../GETTING_STARTED.md) が必要です。Coasts を自動的にセットアップするには、このプロンプトをエージェントのチャットにコピーしてください:
+
+```prompt-copy
+conductor_setup_prompt.txt
+```
+
+CLI から skill の内容を取得することもできます: `coast skills-prompt`。
+
+> **Important:** Conductor は各セッションを分離された git worktree で実行します。セットアッププロンプトは現在のワークスペースにしか存在しないファイルを作成するため、それらをメインブランチにコミットしてマージしないと、新しいセッションでは利用できません。
+
+セットアップ後、変更を反映するには **Conductor を完全に閉じて再度開いてください**。`/coasts` コマンドが表示されない場合は、もう一度閉じて開き直してください。
 
 ## Setup
 

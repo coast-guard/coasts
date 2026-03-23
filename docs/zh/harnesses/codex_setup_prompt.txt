@@ -1,0 +1,64 @@
+你正在为此项目中的 OpenAI Codex 设置 Coasts 技能。请从项目根目录运行所有命令。
+
+## 第 1 步:检查 Coast CLI
+
+运行此命令:
+
+  coast --version
+
+如果找不到 `coast` 命令，请在此停止并告知用户:
+
+  "The Coast CLI is not installed. Install it first: https://coasts.dev/docs/getting-started"
+
+在 CLI 可用之前，不要继续。
+
+## 第 2 步:获取技能内容
+
+运行此命令:
+
+  coast skills-prompt
+
+输出包含两部分:
+
+- **Coast Runtime 规则** — 从开头直到（但不包括）以 `---` 开头的那一行之间的所有内容
+- **Coasts 技能** — 从 `---` frontmatter 块开始的所有内容（包括 `---` 行以及其后的所有内容）
+
+将这两部分都保存下来，以供下面的步骤使用。
+
+## 第 3 步:放置文件
+
+Codex 设置始终是项目级别的。如果目标文件已存在，请追加 Coast Runtime 部分而不是覆盖——但首先检查是否已存在 `# Coast Runtime` 部分，如果存在则跳过。
+
+- 将 Coast Runtime 规则追加到项目根目录下的 `AGENTS.md`
+- 将 Coasts 技能写入 `.agents/skills/coasts/SKILL.md`
+- 使用以下内容创建 `.agents/skills/coasts/agents/openai.yaml`:
+
+interface:
+  display_name: "Coasts"
+  short_description: "Inspect, assign, and open Coasts for this repo"
+  default_prompt: "Use this skill when the user wants help finding, assigning, or opening a Coast."
+
+policy:
+  allow_implicit_invocation: false
+
+## 第 4 步:更新 Coastfile
+
+读取项目根目录下的 `Coastfile`。查看
+`[coast]` 部分中的 `worktree_dir` 字段。
+
+如果 `~/.codex/worktrees` **尚未** 列在 `worktree_dir` 中:
+
+- 如果 `worktree_dir` 是单个字符串，将其转换为数组并追加
+  `~/.codex/worktrees`。例如，`worktree_dir = ".worktrees"` 变为
+  `worktree_dir = [".worktrees", "~/.codex/worktrees"]`。
+- 如果 `worktree_dir` 已经是数组，则向其中追加 `~/.codex/worktrees`。
+- 如果根本不存在 `worktree_dir`，则添加
+  `worktree_dir = [".worktrees", "~/.codex/worktrees"]`。
+
+这是一个外部路径，因此如果此项目的 Coast 实例已经在运行，则必须使用 `coast run` 重新创建它，新绑定挂载才会生效。请将此事告知用户。
+
+## 第 5 步:确认
+
+放置文件后，向用户显示已创建内容及其位置的摘要。
+
+告知用户:**退出并重新打开 Codex**，以使技能和 AGENTS.md 的更改生效。

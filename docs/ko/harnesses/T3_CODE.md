@@ -1,8 +1,25 @@
 # T3 코드
 
+## 빠른 설정
+
+[Coast CLI](../GETTING_STARTED.md)가 필요합니다. Coasts를 자동으로 설정하려면 이 프롬프트를 에이전트의 채팅에 복사하세요:
+
+```prompt-copy
+t3_code_setup_prompt.txt
+```
+
+CLI에서 스킬 내용을 가져올 수도 있습니다: `coast skills-prompt`.
+
+설정 후에는 스킬 및 규칙 변경 사항이 적용되도록 **T3 Code를 재시작**하세요.
+
+**참고:** T3 Code는 아직 `.agents/skills/` 또는 `.claude/skills/`의 프로젝트 수준 스킬을 불러오지 못할 수 있습니다. 설정 프롬프트는 또한 스킬을 `~/.codex/skills/coasts/`에 배치하므로 Codex provider에서 전역적으로 사용할 수 있습니다.
+`AGENTS.md`와 `CLAUDE.md`의 Coast Runtime 규칙은 그와 관계없이 모든 작업에 계속 적용됩니다.
+
+---
+
 [T3 Code](https://github.com/pingdotgg/t3code)는 `~/.t3/worktrees/<project-name>/`에 git worktree를 생성하고, 이름이 지정된 브랜치로 체크아웃합니다.
 
-T3 Code에서는 항상 활성화되는 Coast Runtime 규칙을 `AGENTS.md`에 두고, 재사용 가능한 `/coasts` 워크플로를 `.agents/skills/coasts/SKILL.md`에 두세요.
+T3 Code는 Codex를 래핑하므로, 항상 적용되는 규칙에는 `AGENTS.md`를 사용하고 재사용 가능한 `/coasts` 워크플로에는 `.agents/skills/coasts/SKILL.md`를 사용합니다.
 
 이러한 worktree는 프로젝트 루트 외부에 위치하므로, Coasts가 이를 발견하고 마운트하려면 명시적인 구성이 필요합니다.
 

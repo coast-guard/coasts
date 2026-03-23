@@ -1,0 +1,103 @@
+Estás configurando la skill de Coasts para Conductor en este proyecto. Ejecuta todos
+los comandos desde la raíz del proyecto.
+
+## Paso 1: Comprobar Coast CLI
+
+Ejecuta este comando:
+
+  coast --version
+
+Si no se encuentra el comando `coast`, detente aquí y dile al usuario:
+
+  "The Coast CLI is not installed. Install it first: https://coasts.dev/docs/getting-started"
+
+No continúes hasta que el CLI esté disponible.
+
+## Paso 2: Obtener el contenido de la skill
+
+Ejecuta este comando:
+
+  coast skills-prompt
+
+La salida tiene dos partes:
+
+- **Reglas de Coast Runtime** — todo desde el inicio hasta (pero sin incluir) la línea que comienza con `---`
+- **Skill de Coasts** — todo desde el bloque de frontmatter `---` en adelante (incluyendo las líneas `---` y todo lo que sigue después de ellas)
+
+Guarda ambas partes para los pasos siguientes.
+
+## Paso 3: Preguntar al usuario
+
+Pregúntale al usuario: ¿qué proveedores usas en Conductor?
+
+- **Claude** (Anthropic)
+- **Codex** (OpenAI)
+- **Ambos**
+- **Otro** — si el usuario menciona un proveedor diferente, ejecuta
+  `coast docs --path SKILLS_FOR_HOST_AGENTS.md` y
+  `coast docs --path harnesses/README.md` para determinar dónde espera ese proveedor
+  las instrucciones del proyecto y las skills, luego sigue el mismo patrón
+
+## Paso 4: Colocar archivos
+
+La configuración de Conductor siempre es a nivel de proyecto. Si un archivo de destino ya existe, agrega
+la sección de Coast Runtime en lugar de sobrescribir — pero primero comprueba si una
+sección `# Coast Runtime` ya está presente y omítela si es así.
+
+**Si el usuario seleccionó Claude (o ambos):**
+- Agrega las reglas de Coast Runtime a `CLAUDE.md` en la raíz del proyecto
+- Escribe la skill de Coasts en `.claude/skills/coasts/SKILL.md`
+
+**Si el usuario seleccionó Codex (o ambos):**
+- Agrega las reglas de Coast Runtime a `AGENTS.md` en la raíz del proyecto
+- Escribe la skill de Coasts en `.agents/skills/coasts/SKILL.md`
+- Crea `.agents/skills/coasts/agents/openai.yaml` con este contenido:
+
+interface:
+  display_name: "Coasts"
+  short_description: "Inspect, assign, and open Coasts for this repo"
+  default_prompt: "Use this skill when the user wants help finding, assigning, or opening a Coast."
+
+policy:
+  allow_implicit_invocation: false
+
+## Paso 5: Confirmar
+
+Después de colocar los archivos, muéstrale al usuario un resumen de qué se creó y dónde.
+
+Dile al usuario: **Cierra completamente y vuelve a abrir Conductor** para que los cambios surtan efecto.
+Si el comando `/coasts` no aparece de inmediato, cierra y vuelve a abrir otra vez.
+
+## Paso 6: Actualizar el Coastfile
+
+Lee el `Coastfile` en la raíz del proyecto. Observa el campo `worktree_dir` en la
+sección `[coast]`. Lee también el campo `name` — lo necesitarás para construir la
+ruta del worktree.
+
+El directorio de worktree de Conductor es `~/conductor/workspaces/<name>`, donde
+`<name>` es el valor del campo `name` en el Coastfile.
+
+Si esa ruta **no** ya está listada en `worktree_dir`:
+
+- Si `worktree_dir` es una sola cadena, conviértela en un arreglo y agrega la
+  ruta de Conductor. Por ejemplo, `worktree_dir = ".worktrees"` se convierte en
+  `worktree_dir = [".worktrees", "~/conductor/workspaces/my-app"]`.
+- Si `worktree_dir` ya es un arreglo, agrégale la ruta de Conductor.
+- Si `worktree_dir` no está presente en absoluto, agrega
+  `worktree_dir = [".worktrees", "~/conductor/workspaces/<name>"]` usando el
+  nombre real del proyecto.
+
+Esta es una ruta externa, así que si ya hay una instancia de Coast en ejecución para este
+proyecto debe recrearse con `coast run` para que el nuevo bind mount surta
+efecto. Díselo al usuario.
+
+## Paso 7: Confirmar los nuevos archivos
+
+Conductor ejecuta cada sesión en un git worktree aislado. Los archivos sin confirmar
+no se trasladarán a las nuevas sesiones. Haz commit de los archivos que acabas de crear para que estén
+disponibles en todos los futuros workspaces:
+
+  git add CLAUDE.md .claude/ AGENTS.md .agents/ 2>/dev/null; git status
+
+Muéstrale al usuario qué archivos están en staging y pídele que confirme antes de hacer commit.
+Usa un mensaje de commit como `[dh] feat: add Coasts skill for Conductor`.

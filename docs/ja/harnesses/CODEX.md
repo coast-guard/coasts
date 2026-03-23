@@ -1,5 +1,19 @@
 # Codex
 
+## Quick setup
+
+[Coast CLI](../GETTING_STARTED.md) が必要です。このプロンプトをエージェントのチャットにコピーすると、Coasts を自動的にセットアップできます:
+
+```prompt-copy
+codex_setup_prompt.txt
+```
+
+CLI からスキル内容を取得することもできます: `coast skills-prompt`。
+
+セットアップ後、新しいスキルと `AGENTS.md` を有効にするために、**Codex を終了して再度開いてください**。
+
+---
+
 [Codex](https://developers.openai.com/codex/app/worktrees/) は `$CODEX_HOME/worktrees`（通常は `~/.codex/worktrees`）に worktree を作成します。各 worktree は `~/.codex/worktrees/a0db/project-name` のような不透明なハッシュのディレクトリ配下に存在し、detached HEAD で開始され、Codex の保持ポリシーに基づいて自動的にクリーンアップされます。
 
 [Codex docs](https://developers.openai.com/codex/app/worktrees/) より:

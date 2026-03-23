@@ -21,6 +21,7 @@ harnesses/CONDUCTOR.md
 harnesses/CLAUDE_CODE.md
 harnesses/CURSOR.md
 harnesses/T3_CODE.md
+harnesses/SHEP.md
 harnesses/MULTIPLE_HARNESSES.md
 
 # 概念と用語

@@ -45,6 +45,27 @@ worktree_dir = ["~/.codex/worktrees", ".worktrees"]
 worktree_dir = ["/shared/worktrees", ".worktrees"]
 ```
 
+### グロブパターン（外部）
+
+外部パスにはグロブのメタ文字（`*`、`?`、`[...]`）を含めることができます。Coast はこれらを実行時にホストのファイルシステムに対して展開し、一致した各ディレクトリごとにバインドマウントを作成します。
+
+```toml
+worktree_dir = [".worktrees", "~/.shep/repos/*/wt"]
+```
+
+これは、ツールがプロジェクトごとに変化するパス要素（ハッシュのようなもの）の下に worktree を生成する場合に便利です。`*` は任意の単一ディレクトリ名に一致するため、`~/.shep/repos/*/wt` は `~/.shep/repos/a21f0cda9ab9d456/wt` や、`wt` サブディレクトリを含む他の任意のハッシュディレクトリに一致します。
+
+サポートされるグロブ構文:
+
+- `*` — 単一のパス要素内の任意の文字列に一致
+- `?` — 任意の 1 文字に一致
+- `[abc]` — 集合内の任意の 1 文字に一致
+- `[!abc]` — 集合に含まれない任意の 1 文字に一致
+
+グロブ展開は、worktree ディレクトリが解決されるすべての場所で行われます: コンテナ作成、assign、start、lookup、および git watcher。結果は決定的な順序になるようソートされます。グロブがどのディレクトリにも一致しない場合は、黙ってスキップされます。
+
+他の外部パスと同様に、グロブパターンを追加した後でバインドマウントを有効にするには、コンテナを再作成する必要があります（`coast run`）。
+
 ## 外部ディレクトリの動作
 
 Coast が外部 worktree ディレクトリ（チルダパスまたは絶対パス）を検出すると、3 つのことが起こります:
@@ -100,12 +121,22 @@ name = "my-app"
 worktree_dir = [".worktrees", ".claude/worktrees"]
 ```
 
-### 3 つすべてを組み合わせる
+### Shep 統合
+
+Shep は `~/.shep/repos/{hash}/wt/{branch-slug}` に worktree を作成し、このハッシュはリポジトリごとに異なります。ハッシュディレクトリに一致させるにはグロブパターンを使用します:
 
 ```toml
 [coast]
 name = "my-app"
-worktree_dir = [".worktrees", ".claude/worktrees", "~/.codex/worktrees"]
+worktree_dir = [".worktrees", "~/.shep/repos/*/wt"]
+```
+
+### すべてのハーネスをまとめて使用
+
+```toml
+[coast]
+name = "my-app"
+worktree_dir = [".worktrees", ".claude/worktrees", "~/.codex/worktrees", "~/.shep/repos/*/wt"]
 ```
 
 ## Live Coastfile 読み取り

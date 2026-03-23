@@ -1,0 +1,66 @@
+Estás configurando la habilidad Coasts para Claude Code en este proyecto. Ejecuta todos
+los comandos desde la raíz del proyecto.
+
+## Paso 1: Verificar Coast CLI
+
+Ejecuta este comando:
+
+  coast --version
+
+Si no se encuentra el comando `coast`, detente aquí y dile al usuario:
+
+  "The Coast CLI is not installed. Install it first: https://coasts.dev/docs/getting-started"
+
+No continúes hasta que el CLI esté disponible.
+
+## Paso 2: Obtener el contenido de la habilidad
+
+Ejecuta este comando:
+
+  coast skills-prompt
+
+La salida tiene dos partes:
+
+- **Reglas de Coast Runtime** — todo desde el inicio hasta (pero sin incluir) la línea que comienza con `---`
+- **Habilidad Coasts** — todo desde el bloque de frontmatter `---` en adelante (incluyendo las líneas `---` y todo lo que viene después)
+
+Guarda ambas partes para los pasos siguientes.
+
+## Paso 3: Preguntar al usuario
+
+Pregunta al usuario: ¿debo configurar esto **globalmente** (disponible en todos los proyectos de esta máquina) o **solo para este proyecto**?
+
+## Paso 4: Colocar archivos
+
+Si un archivo de destino ya existe, agrega la sección Coast Runtime en lugar de sobrescribirla, pero primero verifica si ya hay una sección `# Coast Runtime` presente y, de ser así, omítela.
+
+**Configuración global:**
+- Agrega las reglas de Coast Runtime a `~/.claude/CLAUDE.md`
+- Escribe la habilidad Coasts en `~/.claude/skills/coasts/SKILL.md`
+
+**Configuración del proyecto:**
+- Agrega las reglas de Coast Runtime a `CLAUDE.md` en la raíz del proyecto
+- Escribe la habilidad Coasts en `.claude/skills/coasts/SKILL.md`
+
+## Paso 5: Actualizar el Coastfile
+
+Lee el `Coastfile` en la raíz del proyecto. Observa el campo `worktree_dir` en la
+sección `[coast]`.
+
+Si `.claude/worktrees` **no** aparece ya en `worktree_dir`:
+
+- Si `worktree_dir` es una sola cadena, conviértela en un arreglo y agrega
+  `.claude/worktrees`. Por ejemplo, `worktree_dir = ".worktrees"` se convierte en
+  `worktree_dir = [".worktrees", ".claude/worktrees"]`.
+- Si `worktree_dir` ya es un arreglo, agrega `.claude/worktrees` a él.
+- Si `worktree_dir` no está presente en absoluto, agrega
+  `worktree_dir = [".worktrees", ".claude/worktrees"]`.
+
+Esta es una ruta relativa (dentro de la raíz del proyecto), por lo que no es
+necesario recrear el contenedor: los cambios surten efecto inmediatamente para el listado de worktrees.
+
+## Paso 6: Confirmar
+
+Después de colocar los archivos, muestra al usuario un resumen de lo que se creó y dónde.
+
+Dile al usuario: **Inicia una nueva sesión de Claude Code** para que la habilidad y los cambios en CLAUDE.md surtan efecto.

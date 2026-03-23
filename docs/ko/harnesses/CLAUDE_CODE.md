@@ -1,5 +1,21 @@
 # Claude Code
 
+## Quick setup
+
+[Coast CLI](../GETTING_STARTED.md)가 필요합니다. Coasts를 자동으로 설정하려면
+이 프롬프트를 에이전트의 채팅에 복사하세요:
+
+```prompt-copy
+claude_code_setup_prompt.txt
+```
+
+CLI에서도 skill 내용을 가져올 수 있습니다: `coast skills-prompt`.
+
+설정 후에는 **새 Claude Code 세션을 시작하세요** — skill과 `CLAUDE.md`
+변경 사항은 세션 시작 시 로드됩니다.
+
+---
+
 [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview)는
 프로젝트 내부의 `.claude/worktrees/`에 worktree를 생성합니다. 그 디렉터리는
 리포지토리 내부에 있으므로, Coasts는 외부 bind mount 없이도 Claude Code worktree를

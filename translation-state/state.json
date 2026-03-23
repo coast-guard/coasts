@@ -11,9 +11,9 @@
       "translated_at": "2026-03-19T08:01:53Z"
     },
     "SKILLS_FOR_HOST_AGENTS.md": {
-      "commit": "dc5d0c8",
-      "source_sha256": "1463d8eb4ab9c56d79601b90c6b560c54ef2ae420724bcb297deeda6effbc9ea",
-      "translated_at": "2026-03-20T08:34:06Z"
+      "commit": "7605a21",
+      "source_sha256": "1b547cf2ab113169e5d18af29bec97eb3764551ed96f3cf99a6de8a30a000e0c",
+      "translated_at": "2026-03-23T06:59:53Z"
     },
     "VIDEO_TUTORIALS.md": {
       "commit": "85b1396",
@@ -81,9 +81,9 @@
       "translated_at": "2026-02-28T13:10:06Z"
     },
     "coastfiles/WORKTREE_DIR.md": {
-      "commit": "36c1f8f",
-      "source_sha256": "900ea1a98080d2d6700c598ccdccb82b080b8db4fe4af7d69e853b6b9d919030",
-      "translated_at": "2026-03-16T08:47:07Z"
+      "commit": "7605a21",
+      "source_sha256": "22f71103253ae3582f79a6900580d950a3457a8910f9e7e8f314d157c24a3424",
+      "translated_at": "2026-03-23T06:59:53Z"
     },
     "concepts_and_terminology/AGENT_SHELLS.md": {
       "commit": "3357381",
@@ -106,9 +106,9 @@
       "translated_at": "2026-03-20T08:34:06Z"
     },
     "concepts_and_terminology/CHECKOUT.md": {
-      "commit": "fa404df",
-      "source_sha256": "dbe2365211536c016980e92782c4dc7e5816d39fbdddfcc4b4497358f475afc4",
-      "translated_at": "2026-03-19T07:30:03Z"
+      "commit": "7605a21",
+      "source_sha256": "67b7ba8b7e0c2d043c18e325601359a1037090612ac0cace6304b7c5fe767f99",
+      "translated_at": "2026-03-23T06:59:53Z"
     },
     "concepts_and_terminology/CLI.md": {
       "commit": "dc5d0c8",
@@ -136,9 +136,9 @@
       "translated_at": "2026-02-28T13:10:06Z"
     },
     "concepts_and_terminology/EXEC_AND_DOCKER.md": {
-      "commit": "3357381",
-      "source_sha256": "0a3cd96523abd611f740f8c151754d4eeea049f1dcaa7a91ef45488c2705a1c5",
-      "translated_at": "2026-02-28T13:10:06Z"
+      "commit": "7605a21",
+      "source_sha256": "2ff1995174b48fc767b1880e80a980a2992fe6e958af12c47d154b112faeb934",
+      "translated_at": "2026-03-23T06:59:53Z"
     },
     "concepts_and_terminology/FILESYSTEM.md": {
       "commit": "85b1396",
@@ -221,29 +221,29 @@
       "translated_at": "2026-02-28T13:10:06Z"
     },
     "doc_ordering.txt": {
-      "commit": "dc5d0c8",
-      "source_sha256": "b80fa2c8f3cfb92b3c6ea6240072dd3153713b1cc3c74b746cfdb3787358573a",
-      "translated_at": "2026-03-20T08:34:06Z"
+      "commit": "7605a21",
+      "source_sha256": "f67f01eedb34ef7607c0918729e72c09650d4353c633c36c694275983d34ffa2",
+      "translated_at": "2026-03-23T06:59:53Z"
     },
     "harnesses/CLAUDE_CODE.md": {
-      "commit": "dc5d0c8",
-      "source_sha256": "6ce13e1a6b001baa6c2c46bc85ee06a35588943e00e3ad4b0678d08af1ae4410",
-      "translated_at": "2026-03-20T08:34:06Z"
+      "commit": "7605a21",
+      "source_sha256": "da053fd37ccc2068f640d33e808070c28a2ec9b1773b93d16a71e025e84f3250",
+      "translated_at": "2026-03-23T06:59:53Z"
     },
     "harnesses/CODEX.md": {
-      "commit": "dc5d0c8",
-      "source_sha256": "49e7004a50baba38901f899aacf794e8700e8ed1229ead7bb54fb8c375cb9b92",
-      "translated_at": "2026-03-20T08:34:06Z"
+      "commit": "7605a21",
+      "source_sha256": "6d4bb1a1fdef8db207effc33fcab821802499b7d1c52d3e19ae69ec0e38988c3",
+      "translated_at": "2026-03-23T06:59:53Z"
     },
     "harnesses/CONDUCTOR.md": {
-      "commit": "dc5d0c8",
-      "source_sha256": "82e9baf2eec8e0e866d2f345d568ceb5582b8fd26af0e204650800a4a39ef3f4",
-      "translated_at": "2026-03-20T08:34:06Z"
+      "commit": "7605a21",
+      "source_sha256": "da906dbdced7029cd926efc8a69019663ceb11f5fe12c3e7c135678e57a90318",
+      "translated_at": "2026-03-23T06:59:53Z"
     },
     "harnesses/CURSOR.md": {
-      "commit": "dc5d0c8",
-      "source_sha256": "9d7d3a519b30212f34f53c991fcb527eec4ac5b2974e803791cb5daeddadac82",
-      "translated_at": "2026-03-20T08:34:06Z"
+      "commit": "7605a21",
+      "source_sha256": "fd5e77e54699f1abe6bef5de02601680a0142d159992c1549f1199e95129c033",
+      "translated_at": "2026-03-23T06:59:53Z"
     },
     "harnesses/MULTIPLE_HARNESSES.md": {
       "commit": "dc5d0c8",
@@ -251,19 +251,54 @@
       "translated_at": "2026-03-20T08:34:06Z"
     },
     "harnesses/README.md": {
-      "commit": "dc5d0c8",
-      "source_sha256": "50a37cab347b4ae3b76147f5b535a0b0935c17962ee9ee08ac47310dc1e0e85f",
-      "translated_at": "2026-03-20T08:34:06Z"
+      "commit": "7605a21",
+      "source_sha256": "2834c6df1d0434d0b3cd19ee96e866ecf9cb5bea9bb4fb05de562ce1f674166f",
+      "translated_at": "2026-03-23T06:59:53Z"
+    },
+    "harnesses/SHEP.md": {
+      "commit": "7605a21",
+      "source_sha256": "97d671ab62e88f6fbe6573bb171b4f547b84ec04827b99afee2b0211206a1a27",
+      "translated_at": "2026-03-23T06:59:53Z"
     },
     "harnesses/T3_CODE.md": {
-      "commit": "dc5d0c8",
-      "source_sha256": "cf21e6477eca8809d1bda19dc99146ee6f343bad00985ab59ee81c183070fbe5",
-      "translated_at": "2026-03-20T08:34:06Z"
+      "commit": "7605a21",
+      "source_sha256": "074b73a447c98ed322404956f1f01189eded8e5c9dd4261556e68e45316dfa6f",
+      "translated_at": "2026-03-23T06:59:53Z"
+    },
+    "harnesses/claude_code_setup_prompt.txt": {
+      "commit": "7605a21",
+      "source_sha256": "5fb391196805358f5e5bbf4629a1ff9a94aee6251cf311fbdf9772ade4fa40aa",
+      "translated_at": "2026-03-23T06:59:53Z"
+    },
+    "harnesses/codex_setup_prompt.txt": {
+      "commit": "7605a21",
+      "source_sha256": "71e0e3ce06ec7745b70982212e80ebc53adecf2d3715a3c7b07d312bf402c0e4",
+      "translated_at": "2026-03-23T06:59:53Z"
+    },
+    "harnesses/conductor_setup_prompt.txt": {
+      "commit": "7605a21",
+      "source_sha256": "4aee9852028accd11f146418572014780b1155b7fddeef3f33c24e193bf22797",
+      "translated_at": "2026-03-23T06:59:53Z"
+    },
+    "harnesses/cursor_setup_prompt.txt": {
+      "commit": "7605a21",
+      "source_sha256": "bba0fa3315863f58dd6dee4e8444a6ae20b995edb72d3b9b38df3ff16dfc9ac8",
+      "translated_at": "2026-03-23T06:59:53Z"
+    },
+    "harnesses/shep_setup_prompt.txt": {
+      "commit": "7605a21",
+      "source_sha256": "0c2b8b36c5cd8c33d9edc82cca6c10c52ba2f443563182c55cf8b58bd9f384fd",
+      "translated_at": "2026-03-23T06:59:53Z"
+    },
+    "harnesses/t3_code_setup_prompt.txt": {
+      "commit": "7605a21",
+      "source_sha256": "88f406b49ae5be8610b382c4abf18ca375ea4e0712de975772efead70089371d",
+      "translated_at": "2026-03-23T06:59:53Z"
     },
     "installation_prompt.txt": {
-      "commit": "b42c701",
-      "source_sha256": "1848d3fcc131c11fb00caaed79fd8861bba7bef7696472275240d221d6cef046",
-      "translated_at": "2026-03-05T00:12:10Z"
+      "commit": "7605a21",
+      "source_sha256": "0f24c57905911ccf17fe33d2600227c3739933ef9e570e0226a83d0600dc232c",
+      "translated_at": "2026-03-23T06:59:53Z"
     },
     "learn-coasts-videos/README.md": {
       "commit": "d7ed347",
@@ -321,9 +356,9 @@
       "translated_at": "2026-03-05T00:12:10Z"
     },
     "skills_prompt.txt": {
-      "commit": "dc5d0c8",
-      "source_sha256": "93a4bc2f90663261477d4aa99b075a9d53b2fb3c269e530fc92e896219cfad39",
-      "translated_at": "2026-03-20T08:34:06Z"
+      "commit": "7605a21",
+      "source_sha256": "05af224d96284132a901248ec76961143531cba38c34b54078383fa16e3f2b1f",
+      "translated_at": "2026-03-23T06:59:53Z"
     }
   },
   "ja": {
@@ -338,9 +373,9 @@
       "translated_at": "2026-03-19T08:00:26Z"
     },
     "SKILLS_FOR_HOST_AGENTS.md": {
-      "commit": "dc5d0c8",
-      "source_sha256": "1463d8eb4ab9c56d79601b90c6b560c54ef2ae420724bcb297deeda6effbc9ea",
-      "translated_at": "2026-03-20T07:36:10Z"
+      "commit": "7605a21",
+      "source_sha256": "1b547cf2ab113169e5d18af29bec97eb3764551ed96f3cf99a6de8a30a000e0c",
+      "translated_at": "2026-03-23T06:42:32Z"
     },
     "VIDEO_TUTORIALS.md": {
       "commit": "85b1396",
@@ -408,9 +443,9 @@
       "translated_at": "2026-02-28T12:45:25Z"
     },
     "coastfiles/WORKTREE_DIR.md": {
-      "commit": "36c1f8f",
-      "source_sha256": "900ea1a98080d2d6700c598ccdccb82b080b8db4fe4af7d69e853b6b9d919030",
-      "translated_at": "2026-03-16T08:42:26Z"
+      "commit": "7605a21",
+      "source_sha256": "22f71103253ae3582f79a6900580d950a3457a8910f9e7e8f314d157c24a3424",
+      "translated_at": "2026-03-23T06:42:32Z"
     },
     "concepts_and_terminology/AGENT_SHELLS.md": {
       "commit": "3357381",
@@ -433,9 +468,9 @@
       "translated_at": "2026-03-20T07:36:10Z"
     },
     "concepts_and_terminology/CHECKOUT.md": {
-      "commit": "fa404df",
-      "source_sha256": "dbe2365211536c016980e92782c4dc7e5816d39fbdddfcc4b4497358f475afc4",
-      "translated_at": "2026-03-19T07:26:45Z"
+      "commit": "7605a21",
+      "source_sha256": "67b7ba8b7e0c2d043c18e325601359a1037090612ac0cace6304b7c5fe767f99",
+      "translated_at": "2026-03-23T06:42:32Z"
     },
     "concepts_and_terminology/CLI.md": {
       "commit": "dc5d0c8",
@@ -463,9 +498,9 @@
       "translated_at": "2026-02-28T12:45:25Z"
     },
     "concepts_and_terminology/EXEC_AND_DOCKER.md": {
-      "commit": "3357381",
-      "source_sha256": "0a3cd96523abd611f740f8c151754d4eeea049f1dcaa7a91ef45488c2705a1c5",
-      "translated_at": "2026-02-28T12:45:25Z"
+      "commit": "7605a21",
+      "source_sha256": "2ff1995174b48fc767b1880e80a980a2992fe6e958af12c47d154b112faeb934",
+      "translated_at": "2026-03-23T06:42:32Z"
     },
     "concepts_and_terminology/FILESYSTEM.md": {
       "commit": "85b1396",
@@ -548,29 +583,29 @@
       "translated_at": "2026-02-28T12:45:25Z"
     },
     "doc_ordering.txt": {
-      "commit": "dc5d0c8",
-      "source_sha256": "b80fa2c8f3cfb92b3c6ea6240072dd3153713b1cc3c74b746cfdb3787358573a",
-      "translated_at": "2026-03-20T07:36:10Z"
+      "commit": "7605a21",
+      "source_sha256": "f67f01eedb34ef7607c0918729e72c09650d4353c633c36c694275983d34ffa2",
+      "translated_at": "2026-03-23T06:42:32Z"
     },
     "harnesses/CLAUDE_CODE.md": {
-      "commit": "dc5d0c8",
-      "source_sha256": "6ce13e1a6b001baa6c2c46bc85ee06a35588943e00e3ad4b0678d08af1ae4410",
-      "translated_at": "2026-03-20T07:36:10Z"
+      "commit": "7605a21",
+      "source_sha256": "da053fd37ccc2068f640d33e808070c28a2ec9b1773b93d16a71e025e84f3250",
+      "translated_at": "2026-03-23T06:42:32Z"
     },
     "harnesses/CODEX.md": {
-      "commit": "dc5d0c8",
-      "source_sha256": "49e7004a50baba38901f899aacf794e8700e8ed1229ead7bb54fb8c375cb9b92",
-      "translated_at": "2026-03-20T07:36:10Z"
+      "commit": "7605a21",
+      "source_sha256": "6d4bb1a1fdef8db207effc33fcab821802499b7d1c52d3e19ae69ec0e38988c3",
+      "translated_at": "2026-03-23T06:42:32Z"
     },
     "harnesses/CONDUCTOR.md": {
-      "commit": "dc5d0c8",
-      "source_sha256": "82e9baf2eec8e0e866d2f345d568ceb5582b8fd26af0e204650800a4a39ef3f4",
-      "translated_at": "2026-03-20T07:36:10Z"
+      "commit": "7605a21",
+      "source_sha256": "da906dbdced7029cd926efc8a69019663ceb11f5fe12c3e7c135678e57a90318",
+      "translated_at": "2026-03-23T06:42:32Z"
     },
     "harnesses/CURSOR.md": {
-      "commit": "dc5d0c8",
-      "source_sha256": "9d7d3a519b30212f34f53c991fcb527eec4ac5b2974e803791cb5daeddadac82",
-      "translated_at": "2026-03-20T07:36:10Z"
+      "commit": "7605a21",
+      "source_sha256": "fd5e77e54699f1abe6bef5de02601680a0142d159992c1549f1199e95129c033",
+      "translated_at": "2026-03-23T06:42:32Z"
     },
     "harnesses/MULTIPLE_HARNESSES.md": {
       "commit": "dc5d0c8",
@@ -578,19 +613,54 @@
       "translated_at": "2026-03-20T07:36:10Z"
     },
     "harnesses/README.md": {
-      "commit": "dc5d0c8",
-      "source_sha256": "50a37cab347b4ae3b76147f5b535a0b0935c17962ee9ee08ac47310dc1e0e85f",
-      "translated_at": "2026-03-20T07:36:10Z"
+      "commit": "7605a21",
+      "source_sha256": "2834c6df1d0434d0b3cd19ee96e866ecf9cb5bea9bb4fb05de562ce1f674166f",
+      "translated_at": "2026-03-23T06:42:32Z"
+    },
+    "harnesses/SHEP.md": {
+      "commit": "7605a21",
+      "source_sha256": "97d671ab62e88f6fbe6573bb171b4f547b84ec04827b99afee2b0211206a1a27",
+      "translated_at": "2026-03-23T06:42:32Z"
     },
     "harnesses/T3_CODE.md": {
-      "commit": "dc5d0c8",
-      "source_sha256": "cf21e6477eca8809d1bda19dc99146ee6f343bad00985ab59ee81c183070fbe5",
-      "translated_at": "2026-03-20T07:36:10Z"
+      "commit": "7605a21",
+      "source_sha256": "074b73a447c98ed322404956f1f01189eded8e5c9dd4261556e68e45316dfa6f",
+      "translated_at": "2026-03-23T06:42:32Z"
+    },
+    "harnesses/claude_code_setup_prompt.txt": {
+      "commit": "7605a21",
+      "source_sha256": "5fb391196805358f5e5bbf4629a1ff9a94aee6251cf311fbdf9772ade4fa40aa",
+      "translated_at": "2026-03-23T06:42:32Z"
+    },
+    "harnesses/codex_setup_prompt.txt": {
+      "commit": "7605a21",
+      "source_sha256": "71e0e3ce06ec7745b70982212e80ebc53adecf2d3715a3c7b07d312bf402c0e4",
+      "translated_at": "2026-03-23T06:42:32Z"
+    },
+    "harnesses/conductor_setup_prompt.txt": {
+      "commit": "7605a21",
+      "source_sha256": "4aee9852028accd11f146418572014780b1155b7fddeef3f33c24e193bf22797",
+      "translated_at": "2026-03-23T06:42:32Z"
+    },
+    "harnesses/cursor_setup_prompt.txt": {
+      "commit": "7605a21",
+      "source_sha256": "bba0fa3315863f58dd6dee4e8444a6ae20b995edb72d3b9b38df3ff16dfc9ac8",
+      "translated_at": "2026-03-23T06:42:32Z"
+    },
+    "harnesses/shep_setup_prompt.txt": {
+      "commit": "7605a21",
+      "source_sha256": "0c2b8b36c5cd8c33d9edc82cca6c10c52ba2f443563182c55cf8b58bd9f384fd",
+      "translated_at": "2026-03-23T06:42:32Z"
+    },
+    "harnesses/t3_code_setup_prompt.txt": {
+      "commit": "7605a21",
+      "source_sha256": "88f406b49ae5be8610b382c4abf18ca375ea4e0712de975772efead70089371d",
+      "translated_at": "2026-03-23T06:42:32Z"
     },
     "installation_prompt.txt": {
-      "commit": "b42c701",
-      "source_sha256": "1848d3fcc131c11fb00caaed79fd8861bba7bef7696472275240d221d6cef046",
-      "translated_at": "2026-03-05T00:03:15Z"
+      "commit": "7605a21",
+      "source_sha256": "0f24c57905911ccf17fe33d2600227c3739933ef9e570e0226a83d0600dc232c",
+      "translated_at": "2026-03-23T06:42:32Z"
     },
     "learn-coasts-videos/README.md": {
       "commit": "d7ed347",
@@ -648,9 +718,9 @@
       "translated_at": "2026-03-05T00:03:15Z"
     },
     "skills_prompt.txt": {
-      "commit": "dc5d0c8",
-      "source_sha256": "93a4bc2f90663261477d4aa99b075a9d53b2fb3c269e530fc92e896219cfad39",
-      "translated_at": "2026-03-20T07:36:10Z"
+      "commit": "7605a21",
+      "source_sha256": "05af224d96284132a901248ec76961143531cba38c34b54078383fa16e3f2b1f",
+      "translated_at": "2026-03-23T06:42:32Z"
     }
   },
   "ko": {
@@ -665,9 +735,9 @@
       "translated_at": "2026-03-19T08:00:49Z"
     },
     "SKILLS_FOR_HOST_AGENTS.md": {
-      "commit": "dc5d0c8",
-      "source_sha256": "1463d8eb4ab9c56d79601b90c6b560c54ef2ae420724bcb297deeda6effbc9ea",
-      "translated_at": "2026-03-20T07:40:29Z"
+      "commit": "7605a21",
+      "source_sha256": "1b547cf2ab113169e5d18af29bec97eb3764551ed96f3cf99a6de8a30a000e0c",
+      "translated_at": "2026-03-23T06:47:35Z"
     },
     "VIDEO_TUTORIALS.md": {
       "commit": "85b1396",
@@ -735,9 +805,9 @@
       "translated_at": "2026-02-28T12:52:18Z"
     },
     "coastfiles/WORKTREE_DIR.md": {
-      "commit": "36c1f8f",
-      "source_sha256": "900ea1a98080d2d6700c598ccdccb82b080b8db4fe4af7d69e853b6b9d919030",
-      "translated_at": "2026-03-16T08:43:46Z"
+      "commit": "7605a21",
+      "source_sha256": "22f71103253ae3582f79a6900580d950a3457a8910f9e7e8f314d157c24a3424",
+      "translated_at": "2026-03-23T06:47:35Z"
     },
     "concepts_and_terminology/AGENT_SHELLS.md": {
       "commit": "3357381",
@@ -760,9 +830,9 @@
       "translated_at": "2026-03-20T07:40:29Z"
     },
     "concepts_and_terminology/CHECKOUT.md": {
-      "commit": "fa404df",
-      "source_sha256": "dbe2365211536c016980e92782c4dc7e5816d39fbdddfcc4b4497358f475afc4",
-      "translated_at": "2026-03-19T07:27:41Z"
+      "commit": "7605a21",
+      "source_sha256": "67b7ba8b7e0c2d043c18e325601359a1037090612ac0cace6304b7c5fe767f99",
+      "translated_at": "2026-03-23T06:47:35Z"
     },
     "concepts_and_terminology/CLI.md": {
       "commit": "dc5d0c8",
@@ -790,9 +860,9 @@
       "translated_at": "2026-02-28T12:52:18Z"
     },
     "concepts_and_terminology/EXEC_AND_DOCKER.md": {
-      "commit": "3357381",
-      "source_sha256": "0a3cd96523abd611f740f8c151754d4eeea049f1dcaa7a91ef45488c2705a1c5",
-      "translated_at": "2026-02-28T12:52:18Z"
+      "commit": "7605a21",
+      "source_sha256": "2ff1995174b48fc767b1880e80a980a2992fe6e958af12c47d154b112faeb934",
+      "translated_at": "2026-03-23T06:47:35Z"
     },
     "concepts_and_terminology/FILESYSTEM.md": {
       "commit": "85b1396",
@@ -875,29 +945,29 @@
       "translated_at": "2026-02-28T12:52:18Z"
     },
     "doc_ordering.txt": {
-      "commit": "dc5d0c8",
-      "source_sha256": "b80fa2c8f3cfb92b3c6ea6240072dd3153713b1cc3c74b746cfdb3787358573a",
-      "translated_at": "2026-03-20T07:40:29Z"
+      "commit": "7605a21",
+      "source_sha256": "f67f01eedb34ef7607c0918729e72c09650d4353c633c36c694275983d34ffa2",
+      "translated_at": "2026-03-23T06:47:35Z"
     },
     "harnesses/CLAUDE_CODE.md": {
-      "commit": "dc5d0c8",
-      "source_sha256": "6ce13e1a6b001baa6c2c46bc85ee06a35588943e00e3ad4b0678d08af1ae4410",
-      "translated_at": "2026-03-20T07:40:29Z"
+      "commit": "7605a21",
+      "source_sha256": "da053fd37ccc2068f640d33e808070c28a2ec9b1773b93d16a71e025e84f3250",
+      "translated_at": "2026-03-23T06:47:35Z"
     },
     "harnesses/CODEX.md": {
-      "commit": "dc5d0c8",
-      "source_sha256": "49e7004a50baba38901f899aacf794e8700e8ed1229ead7bb54fb8c375cb9b92",
-      "translated_at": "2026-03-20T07:40:29Z"
+      "commit": "7605a21",
+      "source_sha256": "6d4bb1a1fdef8db207effc33fcab821802499b7d1c52d3e19ae69ec0e38988c3",
+      "translated_at": "2026-03-23T06:47:35Z"
     },
     "harnesses/CONDUCTOR.md": {
-      "commit": "dc5d0c8",
-      "source_sha256": "82e9baf2eec8e0e866d2f345d568ceb5582b8fd26af0e204650800a4a39ef3f4",
-      "translated_at": "2026-03-20T07:40:29Z"
+      "commit": "7605a21",
+      "source_sha256": "da906dbdced7029cd926efc8a69019663ceb11f5fe12c3e7c135678e57a90318",
+      "translated_at": "2026-03-23T06:47:35Z"
     },
     "harnesses/CURSOR.md": {
-      "commit": "dc5d0c8",
-      "source_sha256": "9d7d3a519b30212f34f53c991fcb527eec4ac5b2974e803791cb5daeddadac82",
-      "translated_at": "2026-03-20T07:40:29Z"
+      "commit": "7605a21",
+      "source_sha256": "fd5e77e54699f1abe6bef5de02601680a0142d159992c1549f1199e95129c033",
+      "translated_at": "2026-03-23T06:47:35Z"
     },
     "harnesses/MULTIPLE_HARNESSES.md": {
       "commit": "dc5d0c8",
@@ -905,19 +975,54 @@
       "translated_at": "2026-03-20T07:40:29Z"
     },
     "harnesses/README.md": {
-      "commit": "dc5d0c8",
-      "source_sha256": "50a37cab347b4ae3b76147f5b535a0b0935c17962ee9ee08ac47310dc1e0e85f",
-      "translated_at": "2026-03-20T07:40:29Z"
+      "commit": "7605a21",
+      "source_sha256": "2834c6df1d0434d0b3cd19ee96e866ecf9cb5bea9bb4fb05de562ce1f674166f",
+      "translated_at": "2026-03-23T06:47:35Z"
+    },
+    "harnesses/SHEP.md": {
+      "commit": "7605a21",
+      "source_sha256": "97d671ab62e88f6fbe6573bb171b4f547b84ec04827b99afee2b0211206a1a27",
+      "translated_at": "2026-03-23T06:47:35Z"
     },
     "harnesses/T3_CODE.md": {
-      "commit": "dc5d0c8",
-      "source_sha256": "cf21e6477eca8809d1bda19dc99146ee6f343bad00985ab59ee81c183070fbe5",
-      "translated_at": "2026-03-20T07:40:29Z"
+      "commit": "7605a21",
+      "source_sha256": "074b73a447c98ed322404956f1f01189eded8e5c9dd4261556e68e45316dfa6f",
+      "translated_at": "2026-03-23T06:47:35Z"
+    },
+    "harnesses/claude_code_setup_prompt.txt": {
+      "commit": "7605a21",
+      "source_sha256": "5fb391196805358f5e5bbf4629a1ff9a94aee6251cf311fbdf9772ade4fa40aa",
+      "translated_at": "2026-03-23T06:47:35Z"
+    },
+    "harnesses/codex_setup_prompt.txt": {
+      "commit": "7605a21",
+      "source_sha256": "71e0e3ce06ec7745b70982212e80ebc53adecf2d3715a3c7b07d312bf402c0e4",
+      "translated_at": "2026-03-23T06:47:35Z"
+    },
+    "harnesses/conductor_setup_prompt.txt": {
+      "commit": "7605a21",
+      "source_sha256": "4aee9852028accd11f146418572014780b1155b7fddeef3f33c24e193bf22797",
+      "translated_at": "2026-03-23T06:47:35Z"
+    },
+    "harnesses/cursor_setup_prompt.txt": {
+      "commit": "7605a21",
+      "source_sha256": "bba0fa3315863f58dd6dee4e8444a6ae20b995edb72d3b9b38df3ff16dfc9ac8",
+      "translated_at": "2026-03-23T06:47:35Z"
+    },
+    "harnesses/shep_setup_prompt.txt": {
+      "commit": "7605a21",
+      "source_sha256": "0c2b8b36c5cd8c33d9edc82cca6c10c52ba2f443563182c55cf8b58bd9f384fd",
+      "translated_at": "2026-03-23T06:47:35Z"
+    },
+    "harnesses/t3_code_setup_prompt.txt": {
+      "commit": "7605a21",
+      "source_sha256": "88f406b49ae5be8610b382c4abf18ca375ea4e0712de975772efead70089371d",
+      "translated_at": "2026-03-23T06:47:35Z"
     },
     "installation_prompt.txt": {
-      "commit": "b42c701",
-      "source_sha256": "1848d3fcc131c11fb00caaed79fd8861bba7bef7696472275240d221d6cef046",
-      "translated_at": "2026-03-05T00:05:49Z"
+      "commit": "7605a21",
+      "source_sha256": "0f24c57905911ccf17fe33d2600227c3739933ef9e570e0226a83d0600dc232c",
+      "translated_at": "2026-03-23T06:47:35Z"
     },
     "learn-coasts-videos/README.md": {
       "commit": "d7ed347",
@@ -975,9 +1080,9 @@
       "translated_at": "2026-03-05T00:05:49Z"
     },
     "skills_prompt.txt": {
-      "commit": "dc5d0c8",
-      "source_sha256": "93a4bc2f90663261477d4aa99b075a9d53b2fb3c269e530fc92e896219cfad39",
-      "translated_at": "2026-03-20T07:40:29Z"
+      "commit": "7605a21",
+      "source_sha256": "05af224d96284132a901248ec76961143531cba38c34b54078383fa16e3f2b1f",
+      "translated_at": "2026-03-23T06:47:35Z"
     }
   },
   "pt": {
@@ -992,9 +1097,9 @@
       "translated_at": "2026-03-19T08:01:34Z"
     },
     "SKILLS_FOR_HOST_AGENTS.md": {
-      "commit": "dc5d0c8",
-      "source_sha256": "1463d8eb4ab9c56d79601b90c6b560c54ef2ae420724bcb297deeda6effbc9ea",
-      "translated_at": "2026-03-20T07:46:55Z"
+      "commit": "7605a21",
+      "source_sha256": "1b547cf2ab113169e5d18af29bec97eb3764551ed96f3cf99a6de8a30a000e0c",
+      "translated_at": "2026-03-23T06:55:56Z"
     },
     "VIDEO_TUTORIALS.md": {
       "commit": "85b1396",
@@ -1062,9 +1167,9 @@
       "translated_at": "2026-02-28T13:04:30Z"
     },
     "coastfiles/WORKTREE_DIR.md": {
-      "commit": "36c1f8f",
-      "source_sha256": "900ea1a98080d2d6700c598ccdccb82b080b8db4fe4af7d69e853b6b9d919030",
-      "translated_at": "2026-03-16T08:46:06Z"
+      "commit": "7605a21",
+      "source_sha256": "22f71103253ae3582f79a6900580d950a3457a8910f9e7e8f314d157c24a3424",
+      "translated_at": "2026-03-23T06:55:56Z"
     },
     "concepts_and_terminology/AGENT_SHELLS.md": {
       "commit": "3357381",
@@ -1087,9 +1192,9 @@
       "translated_at": "2026-03-20T07:46:55Z"
     },
     "concepts_and_terminology/CHECKOUT.md": {
-      "commit": "fa404df",
-      "source_sha256": "dbe2365211536c016980e92782c4dc7e5816d39fbdddfcc4b4497358f475afc4",
-      "translated_at": "2026-03-19T07:29:17Z"
+      "commit": "7605a21",
+      "source_sha256": "67b7ba8b7e0c2d043c18e325601359a1037090612ac0cace6304b7c5fe767f99",
+      "translated_at": "2026-03-23T06:55:56Z"
     },
     "concepts_and_terminology/CLI.md": {
       "commit": "dc5d0c8",
@@ -1117,9 +1222,9 @@
       "translated_at": "2026-02-28T13:04:30Z"
     },
     "concepts_and_terminology/EXEC_AND_DOCKER.md": {
-      "commit": "3357381",
-      "source_sha256": "0a3cd96523abd611f740f8c151754d4eeea049f1dcaa7a91ef45488c2705a1c5",
-      "translated_at": "2026-02-28T13:04:30Z"
+      "commit": "7605a21",
+      "source_sha256": "2ff1995174b48fc767b1880e80a980a2992fe6e958af12c47d154b112faeb934",
+      "translated_at": "2026-03-23T06:55:56Z"
     },
     "concepts_and_terminology/FILESYSTEM.md": {
       "commit": "85b1396",
@@ -1202,29 +1307,29 @@
       "translated_at": "2026-02-28T13:04:30Z"
     },
     "doc_ordering.txt": {
-      "commit": "dc5d0c8",
-      "source_sha256": "b80fa2c8f3cfb92b3c6ea6240072dd3153713b1cc3c74b746cfdb3787358573a",
-      "translated_at": "2026-03-20T08:32:12Z"
+      "commit": "7605a21",
+      "source_sha256": "f67f01eedb34ef7607c0918729e72c09650d4353c633c36c694275983d34ffa2",
+      "translated_at": "2026-03-23T06:55:56Z"
     },
     "harnesses/CLAUDE_CODE.md": {
-      "commit": "dc5d0c8",
-      "source_sha256": "6ce13e1a6b001baa6c2c46bc85ee06a35588943e00e3ad4b0678d08af1ae4410",
-      "translated_at": "2026-03-20T08:32:12Z"
+      "commit": "7605a21",
+      "source_sha256": "da053fd37ccc2068f640d33e808070c28a2ec9b1773b93d16a71e025e84f3250",
+      "translated_at": "2026-03-23T06:55:56Z"
     },
     "harnesses/CODEX.md": {
-      "commit": "dc5d0c8",
-      "source_sha256": "49e7004a50baba38901f899aacf794e8700e8ed1229ead7bb54fb8c375cb9b92",
-      "translated_at": "2026-03-20T08:32:12Z"
+      "commit": "7605a21",
+      "source_sha256": "6d4bb1a1fdef8db207effc33fcab821802499b7d1c52d3e19ae69ec0e38988c3",
+      "translated_at": "2026-03-23T06:55:56Z"
     },
     "harnesses/CONDUCTOR.md": {
-      "commit": "dc5d0c8",
-      "source_sha256": "82e9baf2eec8e0e866d2f345d568ceb5582b8fd26af0e204650800a4a39ef3f4",
-      "translated_at": "2026-03-20T08:32:12Z"
+      "commit": "7605a21",
+      "source_sha256": "da906dbdced7029cd926efc8a69019663ceb11f5fe12c3e7c135678e57a90318",
+      "translated_at": "2026-03-23T06:55:56Z"
     },
     "harnesses/CURSOR.md": {
-      "commit": "dc5d0c8",
-      "source_sha256": "9d7d3a519b30212f34f53c991fcb527eec4ac5b2974e803791cb5daeddadac82",
-      "translated_at": "2026-03-20T08:32:12Z"
+      "commit": "7605a21",
+      "source_sha256": "fd5e77e54699f1abe6bef5de02601680a0142d159992c1549f1199e95129c033",
+      "translated_at": "2026-03-23T06:55:56Z"
     },
     "harnesses/MULTIPLE_HARNESSES.md": {
       "commit": "dc5d0c8",
@@ -1232,19 +1337,54 @@
       "translated_at": "2026-03-20T08:32:12Z"
     },
     "harnesses/README.md": {
-      "commit": "dc5d0c8",
-      "source_sha256": "50a37cab347b4ae3b76147f5b535a0b0935c17962ee9ee08ac47310dc1e0e85f",
-      "translated_at": "2026-03-20T08:32:12Z"
+      "commit": "7605a21",
+      "source_sha256": "2834c6df1d0434d0b3cd19ee96e866ecf9cb5bea9bb4fb05de562ce1f674166f",
+      "translated_at": "2026-03-23T06:55:56Z"
+    },
+    "harnesses/SHEP.md": {
+      "commit": "7605a21",
+      "source_sha256": "97d671ab62e88f6fbe6573bb171b4f547b84ec04827b99afee2b0211206a1a27",
+      "translated_at": "2026-03-23T06:55:56Z"
     },
     "harnesses/T3_CODE.md": {
-      "commit": "dc5d0c8",
-      "source_sha256": "cf21e6477eca8809d1bda19dc99146ee6f343bad00985ab59ee81c183070fbe5",
-      "translated_at": "2026-03-20T08:32:12Z"
+      "commit": "7605a21",
+      "source_sha256": "074b73a447c98ed322404956f1f01189eded8e5c9dd4261556e68e45316dfa6f",
+      "translated_at": "2026-03-23T06:55:56Z"
+    },
+    "harnesses/claude_code_setup_prompt.txt": {
+      "commit": "7605a21",
+      "source_sha256": "5fb391196805358f5e5bbf4629a1ff9a94aee6251cf311fbdf9772ade4fa40aa",
+      "translated_at": "2026-03-23T06:55:56Z"
+    },
+    "harnesses/codex_setup_prompt.txt": {
+      "commit": "7605a21",
+      "source_sha256": "71e0e3ce06ec7745b70982212e80ebc53adecf2d3715a3c7b07d312bf402c0e4",
+      "translated_at": "2026-03-23T06:55:56Z"
+    },
+    "harnesses/conductor_setup_prompt.txt": {
+      "commit": "7605a21",
+      "source_sha256": "4aee9852028accd11f146418572014780b1155b7fddeef3f33c24e193bf22797",
+      "translated_at": "2026-03-23T06:55:56Z"
+    },
+    "harnesses/cursor_setup_prompt.txt": {
+      "commit": "7605a21",
+      "source_sha256": "bba0fa3315863f58dd6dee4e8444a6ae20b995edb72d3b9b38df3ff16dfc9ac8",
+      "translated_at": "2026-03-23T06:55:56Z"
+    },
+    "harnesses/shep_setup_prompt.txt": {
+      "commit": "7605a21",
+      "source_sha256": "0c2b8b36c5cd8c33d9edc82cca6c10c52ba2f443563182c55cf8b58bd9f384fd",
+      "translated_at": "2026-03-23T06:55:56Z"
+    },
+    "harnesses/t3_code_setup_prompt.txt": {
+      "commit": "7605a21",
+      "source_sha256": "88f406b49ae5be8610b382c4abf18ca375ea4e0712de975772efead70089371d",
+      "translated_at": "2026-03-23T06:55:56Z"
     },
     "installation_prompt.txt": {
-      "commit": "b42c701",
-      "source_sha256": "1848d3fcc131c11fb00caaed79fd8861bba7bef7696472275240d221d6cef046",
-      "translated_at": "2026-03-05T00:10:17Z"
+      "commit": "7605a21",
+      "source_sha256": "0f24c57905911ccf17fe33d2600227c3739933ef9e570e0226a83d0600dc232c",
+      "translated_at": "2026-03-23T06:55:56Z"
     },
     "learn-coasts-videos/README.md": {
       "commit": "d7ed347",
@@ -1302,9 +1442,9 @@
       "translated_at": "2026-03-05T00:10:17Z"
     },
     "skills_prompt.txt": {
-      "commit": "dc5d0c8",
-      "source_sha256": "93a4bc2f90663261477d4aa99b075a9d53b2fb3c269e530fc92e896219cfad39",
-      "translated_at": "2026-03-20T08:32:12Z"
+      "commit": "7605a21",
+      "source_sha256": "05af224d96284132a901248ec76961143531cba38c34b54078383fa16e3f2b1f",
+      "translated_at": "2026-03-23T06:55:56Z"
     }
   },
   "ru": {
@@ -1319,9 +1459,9 @@
       "translated_at": "2026-03-19T08:01:14Z"
     },
     "SKILLS_FOR_HOST_AGENTS.md": {
-      "commit": "dc5d0c8",
-      "source_sha256": "1463d8eb4ab9c56d79601b90c6b560c54ef2ae420724bcb297deeda6effbc9ea",
-      "translated_at": "2026-03-20T07:43:48Z"
+      "commit": "7605a21",
+      "source_sha256": "1b547cf2ab113169e5d18af29bec97eb3764551ed96f3cf99a6de8a30a000e0c",
+      "translated_at": "2026-03-23T06:51:54Z"
     },
     "VIDEO_TUTORIALS.md": {
       "commit": "85b1396",
@@ -1389,9 +1529,9 @@
       "translated_at": "2026-02-28T12:58:35Z"
     },
     "coastfiles/WORKTREE_DIR.md": {
-      "commit": "36c1f8f",
-      "source_sha256": "900ea1a98080d2d6700c598ccdccb82b080b8db4fe4af7d69e853b6b9d919030",
-      "translated_at": "2026-03-16T08:45:01Z"
+      "commit": "7605a21",
+      "source_sha256": "22f71103253ae3582f79a6900580d950a3457a8910f9e7e8f314d157c24a3424",
+      "translated_at": "2026-03-23T06:51:54Z"
     },
     "concepts_and_terminology/AGENT_SHELLS.md": {
       "commit": "3357381",
@@ -1414,9 +1554,9 @@
       "translated_at": "2026-03-20T07:43:48Z"
     },
     "concepts_and_terminology/CHECKOUT.md": {
-      "commit": "fa404df",
-      "source_sha256": "dbe2365211536c016980e92782c4dc7e5816d39fbdddfcc4b4497358f475afc4",
-      "translated_at": "2026-03-19T07:28:31Z"
+      "commit": "7605a21",
+      "source_sha256": "67b7ba8b7e0c2d043c18e325601359a1037090612ac0cace6304b7c5fe767f99",
+      "translated_at": "2026-03-23T06:51:54Z"
     },
     "concepts_and_terminology/CLI.md": {
       "commit": "dc5d0c8",
@@ -1444,9 +1584,9 @@
       "translated_at": "2026-02-28T12:58:35Z"
     },
     "concepts_and_terminology/EXEC_AND_DOCKER.md": {
-      "commit": "3357381",
-      "source_sha256": "0a3cd96523abd611f740f8c151754d4eeea049f1dcaa7a91ef45488c2705a1c5",
-      "translated_at": "2026-02-28T12:58:35Z"
+      "commit": "7605a21",
+      "source_sha256": "2ff1995174b48fc767b1880e80a980a2992fe6e958af12c47d154b112faeb934",
+      "translated_at": "2026-03-23T06:51:54Z"
     },
     "concepts_and_terminology/FILESYSTEM.md": {
       "commit": "85b1396",
@@ -1529,29 +1669,29 @@
       "translated_at": "2026-02-28T12:58:35Z"
     },
     "doc_ordering.txt": {
-      "commit": "dc5d0c8",
-      "source_sha256": "b80fa2c8f3cfb92b3c6ea6240072dd3153713b1cc3c74b746cfdb3787358573a",
-      "translated_at": "2026-03-20T07:43:48Z"
+      "commit": "7605a21",
+      "source_sha256": "f67f01eedb34ef7607c0918729e72c09650d4353c633c36c694275983d34ffa2",
+      "translated_at": "2026-03-23T06:51:54Z"
     },
     "harnesses/CLAUDE_CODE.md": {
-      "commit": "dc5d0c8",
-      "source_sha256": "6ce13e1a6b001baa6c2c46bc85ee06a35588943e00e3ad4b0678d08af1ae4410",
-      "translated_at": "2026-03-20T07:43:48Z"
+      "commit": "7605a21",
+      "source_sha256": "da053fd37ccc2068f640d33e808070c28a2ec9b1773b93d16a71e025e84f3250",
+      "translated_at": "2026-03-23T06:51:54Z"
     },
     "harnesses/CODEX.md": {
-      "commit": "dc5d0c8",
-      "source_sha256": "49e7004a50baba38901f899aacf794e8700e8ed1229ead7bb54fb8c375cb9b92",
-      "translated_at": "2026-03-20T07:43:48Z"
+      "commit": "7605a21",
+      "source_sha256": "6d4bb1a1fdef8db207effc33fcab821802499b7d1c52d3e19ae69ec0e38988c3",
+      "translated_at": "2026-03-23T06:51:54Z"
     },
     "harnesses/CONDUCTOR.md": {
-      "commit": "dc5d0c8",
-      "source_sha256": "82e9baf2eec8e0e866d2f345d568ceb5582b8fd26af0e204650800a4a39ef3f4",
-      "translated_at": "2026-03-20T07:43:48Z"
+      "commit": "7605a21",
+      "source_sha256": "da906dbdced7029cd926efc8a69019663ceb11f5fe12c3e7c135678e57a90318",
+      "translated_at": "2026-03-23T06:51:54Z"
     },
     "harnesses/CURSOR.md": {
-      "commit": "dc5d0c8",
-      "source_sha256": "9d7d3a519b30212f34f53c991fcb527eec4ac5b2974e803791cb5daeddadac82",
-      "translated_at": "2026-03-20T07:43:48Z"
+      "commit": "7605a21",
+      "source_sha256": "fd5e77e54699f1abe6bef5de02601680a0142d159992c1549f1199e95129c033",
+      "translated_at": "2026-03-23T06:51:54Z"
     },
     "harnesses/MULTIPLE_HARNESSES.md": {
       "commit": "dc5d0c8",
@@ -1559,19 +1699,54 @@
       "translated_at": "2026-03-20T07:43:48Z"
     },
     "harnesses/README.md": {
-      "commit": "dc5d0c8",
-      "source_sha256": "50a37cab347b4ae3b76147f5b535a0b0935c17962ee9ee08ac47310dc1e0e85f",
-      "translated_at": "2026-03-20T07:43:48Z"
+      "commit": "7605a21",
+      "source_sha256": "2834c6df1d0434d0b3cd19ee96e866ecf9cb5bea9bb4fb05de562ce1f674166f",
+      "translated_at": "2026-03-23T06:51:54Z"
+    },
+    "harnesses/SHEP.md": {
+      "commit": "7605a21",
+      "source_sha256": "97d671ab62e88f6fbe6573bb171b4f547b84ec04827b99afee2b0211206a1a27",
+      "translated_at": "2026-03-23T06:51:54Z"
     },
     "harnesses/T3_CODE.md": {
-      "commit": "dc5d0c8",
-      "source_sha256": "cf21e6477eca8809d1bda19dc99146ee6f343bad00985ab59ee81c183070fbe5",
-      "translated_at": "2026-03-20T07:43:48Z"
+      "commit": "7605a21",
+      "source_sha256": "074b73a447c98ed322404956f1f01189eded8e5c9dd4261556e68e45316dfa6f",
+      "translated_at": "2026-03-23T06:51:54Z"
+    },
+    "harnesses/claude_code_setup_prompt.txt": {
+      "commit": "7605a21",
+      "source_sha256": "5fb391196805358f5e5bbf4629a1ff9a94aee6251cf311fbdf9772ade4fa40aa",
+      "translated_at": "2026-03-23T06:51:54Z"
+    },
+    "harnesses/codex_setup_prompt.txt": {
+      "commit": "7605a21",
+      "source_sha256": "71e0e3ce06ec7745b70982212e80ebc53adecf2d3715a3c7b07d312bf402c0e4",
+      "translated_at": "2026-03-23T06:51:54Z"
+    },
+    "harnesses/conductor_setup_prompt.txt": {
+      "commit": "7605a21",
+      "source_sha256": "4aee9852028accd11f146418572014780b1155b7fddeef3f33c24e193bf22797",
+      "translated_at": "2026-03-23T06:51:54Z"
+    },
+    "harnesses/cursor_setup_prompt.txt": {
+      "commit": "7605a21",
+      "source_sha256": "bba0fa3315863f58dd6dee4e8444a6ae20b995edb72d3b9b38df3ff16dfc9ac8",
+      "translated_at": "2026-03-23T06:51:54Z"
+    },
+    "harnesses/shep_setup_prompt.txt": {
+      "commit": "7605a21",
+      "source_sha256": "0c2b8b36c5cd8c33d9edc82cca6c10c52ba2f443563182c55cf8b58bd9f384fd",
+      "translated_at": "2026-03-23T06:51:54Z"
+    },
+    "harnesses/t3_code_setup_prompt.txt": {
+      "commit": "7605a21",
+      "source_sha256": "88f406b49ae5be8610b382c4abf18ca375ea4e0712de975772efead70089371d",
+      "translated_at": "2026-03-23T06:51:54Z"
     },
     "installation_prompt.txt": {
-      "commit": "b42c701",
-      "source_sha256": "1848d3fcc131c11fb00caaed79fd8861bba7bef7696472275240d221d6cef046",
-      "translated_at": "2026-03-05T00:08:04Z"
+      "commit": "7605a21",
+      "source_sha256": "0f24c57905911ccf17fe33d2600227c3739933ef9e570e0226a83d0600dc232c",
+      "translated_at": "2026-03-23T06:51:54Z"
     },
     "learn-coasts-videos/README.md": {
       "commit": "d7ed347",
@@ -1629,9 +1804,9 @@
       "translated_at": "2026-03-05T00:08:04Z"
     },
     "skills_prompt.txt": {
-      "commit": "dc5d0c8",
-      "source_sha256": "93a4bc2f90663261477d4aa99b075a9d53b2fb3c269e530fc92e896219cfad39",
-      "translated_at": "2026-03-20T07:43:48Z"
+      "commit": "7605a21",
+      "source_sha256": "05af224d96284132a901248ec76961143531cba38c34b54078383fa16e3f2b1f",
+      "translated_at": "2026-03-23T06:51:54Z"
     }
   },
   "zh": {
@@ -1646,9 +1821,9 @@
       "translated_at": "2026-03-19T08:00:06Z"
     },
     "SKILLS_FOR_HOST_AGENTS.md": {
-      "commit": "dc5d0c8",
-      "source_sha256": "1463d8eb4ab9c56d79601b90c6b560c54ef2ae420724bcb297deeda6effbc9ea",
-      "translated_at": "2026-03-20T07:32:44Z"
+      "commit": "7605a21",
+      "source_sha256": "1b547cf2ab113169e5d18af29bec97eb3764551ed96f3cf99a6de8a30a000e0c",
+      "translated_at": "2026-03-23T06:38:20Z"
     },
     "VIDEO_TUTORIALS.md": {
       "commit": "85b1396",
@@ -1716,9 +1891,9 @@
       "translated_at": "2026-02-28T12:39:25Z"
     },
     "coastfiles/WORKTREE_DIR.md": {
-      "commit": "36c1f8f",
-      "source_sha256": "900ea1a98080d2d6700c598ccdccb82b080b8db4fe4af7d69e853b6b9d919030",
-      "translated_at": "2026-03-16T08:41:17Z"
+      "commit": "7605a21",
+      "source_sha256": "22f71103253ae3582f79a6900580d950a3457a8910f9e7e8f314d157c24a3424",
+      "translated_at": "2026-03-23T06:38:20Z"
     },
     "concepts_and_terminology/AGENT_SHELLS.md": {
       "commit": "3357381",
@@ -1741,9 +1916,9 @@
       "translated_at": "2026-03-20T07:32:44Z"
     },
     "concepts_and_terminology/CHECKOUT.md": {
-      "commit": "fa404df",
-      "source_sha256": "dbe2365211536c016980e92782c4dc7e5816d39fbdddfcc4b4497358f475afc4",
-      "translated_at": "2026-03-19T07:25:56Z"
+      "commit": "7605a21",
+      "source_sha256": "67b7ba8b7e0c2d043c18e325601359a1037090612ac0cace6304b7c5fe767f99",
+      "translated_at": "2026-03-23T06:38:20Z"
     },
     "concepts_and_terminology/CLI.md": {
       "commit": "dc5d0c8",
@@ -1771,9 +1946,9 @@
       "translated_at": "2026-02-28T12:39:25Z"
     },
     "concepts_and_terminology/EXEC_AND_DOCKER.md": {
-      "commit": "3357381",
-      "source_sha256": "0a3cd96523abd611f740f8c151754d4eeea049f1dcaa7a91ef45488c2705a1c5",
-      "translated_at": "2026-02-28T12:39:25Z"
+      "commit": "7605a21",
+      "source_sha256": "2ff1995174b48fc767b1880e80a980a2992fe6e958af12c47d154b112faeb934",
+      "translated_at": "2026-03-23T06:38:20Z"
     },
     "concepts_and_terminology/FILESYSTEM.md": {
       "commit": "85b1396",
@@ -1856,29 +2031,29 @@
       "translated_at": "2026-02-28T12:39:25Z"
     },
     "doc_ordering.txt": {
-      "commit": "dc5d0c8",
-      "source_sha256": "b80fa2c8f3cfb92b3c6ea6240072dd3153713b1cc3c74b746cfdb3787358573a",
-      "translated_at": "2026-03-20T07:32:44Z"
+      "commit": "7605a21",
+      "source_sha256": "f67f01eedb34ef7607c0918729e72c09650d4353c633c36c694275983d34ffa2",
+      "translated_at": "2026-03-23T06:38:20Z"
     },
     "harnesses/CLAUDE_CODE.md": {
-      "commit": "dc5d0c8",
-      "source_sha256": "6ce13e1a6b001baa6c2c46bc85ee06a35588943e00e3ad4b0678d08af1ae4410",
-      "translated_at": "2026-03-20T07:32:44Z"
+      "commit": "7605a21",
+      "source_sha256": "da053fd37ccc2068f640d33e808070c28a2ec9b1773b93d16a71e025e84f3250",
+      "translated_at": "2026-03-23T06:38:20Z"
     },
     "harnesses/CODEX.md": {
-      "commit": "dc5d0c8",
-      "source_sha256": "49e7004a50baba38901f899aacf794e8700e8ed1229ead7bb54fb8c375cb9b92",
-      "translated_at": "2026-03-20T07:32:44Z"
+      "commit": "7605a21",
+      "source_sha256": "6d4bb1a1fdef8db207effc33fcab821802499b7d1c52d3e19ae69ec0e38988c3",
+      "translated_at": "2026-03-23T06:38:20Z"
     },
     "harnesses/CONDUCTOR.md": {
-      "commit": "dc5d0c8",
-      "source_sha256": "82e9baf2eec8e0e866d2f345d568ceb5582b8fd26af0e204650800a4a39ef3f4",
-      "translated_at": "2026-03-20T07:32:44Z"
+      "commit": "7605a21",
+      "source_sha256": "da906dbdced7029cd926efc8a69019663ceb11f5fe12c3e7c135678e57a90318",
+      "translated_at": "2026-03-23T06:38:20Z"
     },
     "harnesses/CURSOR.md": {
-      "commit": "dc5d0c8",
-      "source_sha256": "9d7d3a519b30212f34f53c991fcb527eec4ac5b2974e803791cb5daeddadac82",
-      "translated_at": "2026-03-20T07:32:44Z"
+      "commit": "7605a21",
+      "source_sha256": "fd5e77e54699f1abe6bef5de02601680a0142d159992c1549f1199e95129c033",
+      "translated_at": "2026-03-23T06:38:20Z"
     },
     "harnesses/MULTIPLE_HARNESSES.md": {
       "commit": "dc5d0c8",
@@ -1886,19 +2061,54 @@
       "translated_at": "2026-03-20T07:32:44Z"
     },
     "harnesses/README.md": {
-      "commit": "dc5d0c8",
-      "source_sha256": "50a37cab347b4ae3b76147f5b535a0b0935c17962ee9ee08ac47310dc1e0e85f",
-      "translated_at": "2026-03-20T07:32:44Z"
+      "commit": "7605a21",
+      "source_sha256": "2834c6df1d0434d0b3cd19ee96e866ecf9cb5bea9bb4fb05de562ce1f674166f",
+      "translated_at": "2026-03-23T06:38:20Z"
+    },
+    "harnesses/SHEP.md": {
+      "commit": "7605a21",
+      "source_sha256": "97d671ab62e88f6fbe6573bb171b4f547b84ec04827b99afee2b0211206a1a27",
+      "translated_at": "2026-03-23T06:38:20Z"
     },
     "harnesses/T3_CODE.md": {
-      "commit": "dc5d0c8",
-      "source_sha256": "cf21e6477eca8809d1bda19dc99146ee6f343bad00985ab59ee81c183070fbe5",
-      "translated_at": "2026-03-20T07:32:44Z"
+      "commit": "7605a21",
+      "source_sha256": "074b73a447c98ed322404956f1f01189eded8e5c9dd4261556e68e45316dfa6f",
+      "translated_at": "2026-03-23T06:38:20Z"
+    },
+    "harnesses/claude_code_setup_prompt.txt": {
+      "commit": "7605a21",
+      "source_sha256": "5fb391196805358f5e5bbf4629a1ff9a94aee6251cf311fbdf9772ade4fa40aa",
+      "translated_at": "2026-03-23T06:38:20Z"
+    },
+    "harnesses/codex_setup_prompt.txt": {
+      "commit": "7605a21",
+      "source_sha256": "71e0e3ce06ec7745b70982212e80ebc53adecf2d3715a3c7b07d312bf402c0e4",
+      "translated_at": "2026-03-23T06:38:20Z"
+    },
+    "harnesses/conductor_setup_prompt.txt": {
+      "commit": "7605a21",
+      "source_sha256": "4aee9852028accd11f146418572014780b1155b7fddeef3f33c24e193bf22797",
+      "translated_at": "2026-03-23T06:38:20Z"
+    },
+    "harnesses/cursor_setup_prompt.txt": {
+      "commit": "7605a21",
+      "source_sha256": "bba0fa3315863f58dd6dee4e8444a6ae20b995edb72d3b9b38df3ff16dfc9ac8",
+      "translated_at": "2026-03-23T06:38:20Z"
+    },
+    "harnesses/shep_setup_prompt.txt": {
+      "commit": "7605a21",
+      "source_sha256": "0c2b8b36c5cd8c33d9edc82cca6c10c52ba2f443563182c55cf8b58bd9f384fd",
+      "translated_at": "2026-03-23T06:38:20Z"
+    },
+    "harnesses/t3_code_setup_prompt.txt": {
+      "commit": "7605a21",
+      "source_sha256": "88f406b49ae5be8610b382c4abf18ca375ea4e0712de975772efead70089371d",
+      "translated_at": "2026-03-23T06:38:20Z"
     },
     "installation_prompt.txt": {
-      "commit": "b42c701",
-      "source_sha256": "1848d3fcc131c11fb00caaed79fd8861bba7bef7696472275240d221d6cef046",
-      "translated_at": "2026-03-05T00:01:09Z"
+      "commit": "7605a21",
+      "source_sha256": "0f24c57905911ccf17fe33d2600227c3739933ef9e570e0226a83d0600dc232c",
+      "translated_at": "2026-03-23T06:38:20Z"
     },
     "learn-coasts-videos/README.md": {
       "commit": "d7ed347",
@@ -1956,9 +2166,9 @@
       "translated_at": "2026-03-05T00:01:09Z"
     },
     "skills_prompt.txt": {
-      "commit": "dc5d0c8",
-      "source_sha256": "93a4bc2f90663261477d4aa99b075a9d53b2fb3c269e530fc92e896219cfad39",
-      "translated_at": "2026-03-20T07:32:44Z"
+      "commit": "7605a21",
+      "source_sha256": "05af224d96284132a901248ec76961143531cba38c34b54078383fa16e3f2b1f",
+      "translated_at": "2026-03-23T06:38:20Z"
     }
   }
 }

@@ -1,9 +1,31 @@
 # T3 Code
 
+## Quick setup
+
+需要 [Coast CLI](../GETTING_STARTED.md)。将以下提示复制到你的
+agent 聊天中，以自动设置 Coasts:
+
+```prompt-copy
+t3_code_setup_prompt.txt
+```
+
+你也可以通过 CLI 获取技能内容:`coast skills-prompt`。
+
+设置完成后，**重启 T3 Code** 以使技能和规则更改生效。
+
+**注意:** T3 Code 可能尚未从 `.agents/skills/` 或
+`.claude/skills/` 加载项目级技能。该设置提示还会将技能放置到
+`~/.codex/skills/coasts/` 中，以便它可供 Codex provider 全局使用。
+`AGENTS.md` 和 `CLAUDE.md` 中的 Coast Runtime 规则仍会在每个
+任务中照常生效。
+
+---
+
 [T3 Code](https://github.com/pingdotgg/t3code) 会在
 `~/.t3/worktrees/<project-name>/` 创建 git worktree，并检出到命名分支上。
 
-在 T3 Code 中，将始终开启的 Coast Runtime 规则放在 `AGENTS.md` 中，并将可复用的 `/coasts` 工作流放在 `.agents/skills/coasts/SKILL.md` 中。
+T3 Code 封装了 Codex，因此它使用 `AGENTS.md` 存放始终启用的规则，并使用
+`.agents/skills/coasts/SKILL.md` 存放可复用的 `/coasts` 工作流。
 
 由于这些 worktree 位于项目根目录之外，Coasts 需要显式配置才能发现并挂载它们。
 

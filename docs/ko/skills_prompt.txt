@@ -29,6 +29,7 @@
 예시:
 
   coast exec <instance> -- sh -c "cd <dir> && npm test"    # DB 필요
+  coast exec <instance> --service <service>                # 서비스 셸
   npm run lint                                              # 호스트에서 충분
   npx playwright test                                       # 호스트에서 충분
 
@@ -74,6 +75,7 @@ Coast 동작을 추측하기 전에 문서를 살펴보세요:
 
 - 세션에서 첫 번째 런타임 명령 전에 항상 `coast lookup`을 실행하세요.
 - 컨테이너 런타임이 필요한 작업에만 `coast exec`를 사용하세요.
+- 앱/서비스 컨테이너 내부에서 실행해야 할 때는 `coast exec --service <service>`를 사용하세요.
 - 린팅, 타입체킹, 포매팅, git은 호스트에서 직접 실행하세요.
 - Coast 동작을 추측하기 전에 `coast docs` 또는 `coast search-docs`를 사용하세요.
 - 프로젝트가 Coast를 기대하는 경우 호스트에서 서비스를 직접 실행하지 마세요.

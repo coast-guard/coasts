@@ -1,0 +1,104 @@
+Você está configurando a skill Coasts para o T3 Code neste projeto. Execute todos
+os comandos a partir da raiz do projeto.
+
+## Etapa 1: Verificar o Coast CLI
+
+Execute este comando:
+
+  coast --version
+
+Se o comando `coast` não for encontrado, pare aqui e diga ao usuário:
+
+  "O Coast CLI não está instalado. Instale-o primeiro: https://coasts.dev/docs/getting-started"
+
+Não continue até que o CLI esteja disponível.
+
+## Etapa 2: Obter o conteúdo da skill
+
+Execute este comando:
+
+  coast skills-prompt
+
+A saída tem duas partes:
+
+- **Regras do Coast Runtime** — tudo desde o início até (mas não incluindo) a linha que começa com `---`
+- **Skill Coasts** — tudo a partir do bloco de frontmatter `---` em diante (incluindo as linhas `---` e tudo depois delas)
+
+Salve ambas as partes para as etapas abaixo.
+
+## Etapa 3: Perguntar ao usuário
+
+O T3 Code oferece suporte a vários provedores. Pergunte ao usuário: quais provedores você usa
+no T3 Code?
+
+- **Codex** (OpenAI)
+- **Claude** (Anthropic)
+- **Ambos**
+- **Outro** — se o usuário mencionar um provedor diferente, execute
+  `coast docs --path SKILLS_FOR_HOST_AGENTS.md` e
+  `coast docs --path harnesses/README.md` para determinar onde esse provedor
+  espera instruções de projeto e skills, então siga o mesmo padrão
+
+## Etapa 4: Colocar os arquivos
+
+A configuração do T3 Code é sempre no nível do projeto. Se um arquivo de destino já existir, acrescente
+a seção Coast Runtime em vez de sobrescrever — mas verifique primeiro se uma
+seção `# Coast Runtime` já está presente e ignore se estiver.
+
+**Se o usuário selecionou Codex (ou ambos):**
+- Acrescente as regras do Coast Runtime a `AGENTS.md` na raiz do projeto
+- Grave a skill Coasts em `.agents/skills/coasts/SKILL.md` (nível do projeto)
+- Grave também a skill Coasts em `~/.codex/skills/coasts/SKILL.md` (fallback
+  global — o T3 Code talvez ainda não examine `.agents/skills/` no nível do projeto)
+- Crie `.agents/skills/coasts/agents/openai.yaml` com este conteúdo:
+
+interface:
+  display_name: "Coasts"
+  short_description: "Inspect, assign, and open Coasts for this repo"
+  default_prompt: "Use this skill when the user wants help finding, assigning, or opening a Coast."
+
+policy:
+  allow_implicit_invocation: false
+
+**Se o usuário selecionou Claude (ou ambos):**
+- Acrescente as regras do Coast Runtime a `CLAUDE.md` na raiz do projeto
+- Grave a skill Coasts em `.claude/skills/coasts/SKILL.md` (nível do projeto)
+- Grave também a skill Coasts em `~/.claude/skills/coasts/SKILL.md` (fallback
+  global — o T3 Code talvez ainda não examine `.claude/skills/` no nível do projeto de forma confiável)
+
+**Nota:** O T3 Code talvez ainda não carregue skills no nível do projeto a partir de `.agents/skills/` ou
+`.claude/skills/`. As regras em `AGENTS.md` e `CLAUDE.md` ainda se aplicam em
+todas as tarefas independentemente disso. O fallback global `~/.codex/skills/coasts/` garante
+que o provedor Codex possa encontrar a skill.
+
+## Etapa 5: Atualizar o Coastfile
+
+Leia o `Coastfile` na raiz do projeto. Observe o campo `worktree_dir` na
+seção `[coast]`. Leia também o campo `name` — você precisará dele para construir o
+caminho da worktree.
+
+O diretório de worktree do T3 Code é `~/.t3/worktrees/<name>`, onde `<name>` é
+o valor do campo `name` no Coastfile.
+
+Se esse caminho **ainda não** estiver listado em `worktree_dir`:
+
+- Se `worktree_dir` for uma única string, converta-o em um array e acrescente o
+  caminho do T3 Code. Por exemplo, `worktree_dir = ".worktrees"` se torna
+  `worktree_dir = [".worktrees", "~/.t3/worktrees/my-app"]`.
+- Se `worktree_dir` já for um array, acrescente a ele o caminho do T3 Code.
+- Se `worktree_dir` não estiver presente, adicione
+  `worktree_dir = [".worktrees", "~/.t3/worktrees/<name>"]` usando o
+  nome real do projeto.
+
+Este é um caminho externo, portanto, se uma instância do Coast já estiver em execução para este
+projeto, ela deverá ser recriada com `coast run` para que a nova montagem de bind
+tenha efeito. Informe isso ao usuário.
+
+## Etapa 6: Confirmar
+
+Após colocar os arquivos, mostre ao usuário um resumo do que foi criado e onde.
+Explique que a cópia global em `~/.codex/skills/coasts/` é uma solução temporária para
+o T3 Code ainda não carregar skills no nível do projeto.
+
+Diga ao usuário: **Reinicie o T3 Code** para que as alterações na skill e nas regras entrem
+em vigor.

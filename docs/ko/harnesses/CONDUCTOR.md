@@ -1,8 +1,23 @@
 # Conductor
 
-[Conductor](https://conductor.build/)는 병렬 Claude Code 에이전트를 실행하며, 각 에이전트는 자체적으로 격리된 워크스페이스를 가집니다. 워크스페이스는 `~/conductor/workspaces/<project-name>/`에 저장된 git worktree입니다. 각 워크스페이스는 이름이 지정된 브랜치로 체크아웃됩니다.
+## 빠른 설정
 
-이러한 worktree는 프로젝트 루트 외부에 존재하므로, Coasts가 이를 발견하고 마운트하려면 명시적인 구성이 필요합니다.
+[Coast CLI](../GETTING_STARTED.md)가 필요합니다. Coasts를 자동으로 설정하려면 이 프롬프트를
+에이전트의 채팅에 복사하세요:
+
+```prompt-copy
+conductor_setup_prompt.txt
+```
+
+CLI에서 스킬 내용도 가져올 수 있습니다: `coast skills-prompt`.
+
+> **중요:** Conductor는 각 세션을 격리된 git worktree에서 실행합니다. 이
+> 설정 프롬프트는 현재 워크스페이스에만 존재하는 파일을 생성합니다 — 이를
+> 메인 브랜치에 커밋하고 병합하지 않으면 새 세션에서는 사용할 수
+> 없습니다.
+
+설정 후에는 변경 사항이 적용되도록 **Conductor를 완전히 종료한 뒤 다시 여세요**. `/coasts`
+명령이 나타나지 않으면 다시 한 번 종료 후 재실행하세요.
 
 ## 설정
 

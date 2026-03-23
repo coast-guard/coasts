@@ -16,6 +16,7 @@ Se um repositório for usado por vários harnesses, consulte [Multiple Harnesses
 | Cursor | `~/.cursor/worktrees/<project>` | `AGENTS.md` ou `.cursor/rules/` | `.cursor/skills/` ou `.agents/skills/` | `.cursor/commands/` | [Cursor](CURSOR.md) |
 | Conductor | `~/conductor/workspaces/<project>` | `CLAUDE.md` | -- | -- | [Conductor](CONDUCTOR.md) |
 | T3 Code | `~/.t3/worktrees/<project>` | `AGENTS.md` | `.agents/skills/` | -- | [T3 Code](T3_CODE.md) |
+| Shep | `~/.shep/repos/*/wt` | `CLAUDE.md` | `.agents/skills/` ou `.claude/skills/` | -- | [Shep](SHEP.md) |
 
 ## Skills vs Commands
 

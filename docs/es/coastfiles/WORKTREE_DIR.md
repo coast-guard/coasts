@@ -35,7 +35,7 @@ Las rutas que comienzan con `~/` se expanden al directorio home del usuario y se
 worktree_dir = ["~/.codex/worktrees", ".worktrees"]
 ```
 
-Así es como se integra con herramientas que crean worktrees fuera de la raíz de su proyecto, como OpenAI Codex (que siempre crea worktrees en `$CODEX_HOME/worktrees`).
+Así es como se integra con herramientas que crean worktrees fuera de la raíz del proyecto, como OpenAI Codex (que siempre crea worktrees en `$CODEX_HOME/worktrees`).
 
 ### Rutas absolutas (externas)
 
@@ -44,6 +44,27 @@ Las rutas que comienzan con `/` también se tratan como externas y reciben su pr
 ```toml
 worktree_dir = ["/shared/worktrees", ".worktrees"]
 ```
+
+### Patrones glob (externos)
+
+Las rutas externas pueden contener metacaracteres glob (`*`, `?`, `[...]`). Coast los expande en tiempo de ejecución contra el sistema de archivos del host, creando un bind mount para cada directorio coincidente.
+
+```toml
+worktree_dir = [".worktrees", "~/.shep/repos/*/wt"]
+```
+
+Esto es útil cuando una herramienta genera worktrees bajo un componente de ruta que varía según el proyecto (como un hash). El `*` coincide con cualquier nombre de directorio único, por lo que `~/.shep/repos/*/wt` coincide con `~/.shep/repos/a21f0cda9ab9d456/wt` y con cualquier otro directorio hash que contenga un subdirectorio `wt`.
+
+Sintaxis glob compatible:
+
+- `*` — coincide con cualquier secuencia de caracteres dentro de un único componente de ruta
+- `?` — coincide con cualquier carácter único
+- `[abc]` — coincide con cualquier carácter del conjunto
+- `[!abc]` — coincide con cualquier carácter que no esté en el conjunto
+
+La expansión glob ocurre en todos los lugares donde se resuelven los directorios de worktree: creación del contenedor, assign, start, lookup y el watcher de git. Las coincidencias se ordenan para un orden determinista. Si un glob no coincide con ningún directorio, se omite silenciosamente.
+
+Como ocurre con otras rutas externas, el contenedor debe recrearse (`coast run`) después de agregar un patrón glob para que el bind mount surta efecto.
 
 ## Cómo funcionan los directorios externos
 
@@ -100,12 +121,22 @@ name = "my-app"
 worktree_dir = [".worktrees", ".claude/worktrees"]
 ```
 
-### Los tres juntos
+### Integración con Shep
+
+Shep crea worktrees en `~/.shep/repos/{hash}/wt/{branch-slug}` donde el hash es por repositorio. Use un patrón glob para coincidir con el directorio hash:
 
 ```toml
 [coast]
 name = "my-app"
-worktree_dir = [".worktrees", ".claude/worktrees", "~/.codex/worktrees"]
+worktree_dir = [".worktrees", "~/.shep/repos/*/wt"]
+```
+
+### Todos los harnesses juntos
+
+```toml
+[coast]
+name = "my-app"
+worktree_dir = [".worktrees", ".claude/worktrees", "~/.codex/worktrees", "~/.shep/repos/*/wt"]
 ```
 
 ## Lectura en vivo del Coastfile
