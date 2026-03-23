@@ -34,11 +34,9 @@ Want a concrete example to explore? Check out the [`coasts-demo` repository](htt
 
 ## Harness Demos
 
-[![Coasts + Claude Code](https://img.youtube.com/vi/yjMFVoOiAW0/maxresdefault.jpg)](https://www.youtube.com/watch?v=yjMFVoOiAW0)
-
-[![Coasts + Codex](https://img.youtube.com/vi/MDidmMQtaqU/maxresdefault.jpg)](https://www.youtube.com/watch?v=MDidmMQtaqU)
-
-[![Coasts + Conductor](https://img.youtube.com/vi/mbwilJHlanQ/maxresdefault.jpg)](https://www.youtube.com/watch?v=mbwilJHlanQ)
+- [Coasts + Claude Code](https://www.youtube.com/watch?v=yjMFVoOiAW0)
+- [Coasts + Codex](https://www.youtube.com/watch?v=MDidmMQtaqU)
+- [Coasts + Conductor](https://www.youtube.com/watch?v=mbwilJHlanQ)
 
 ## Contributing
 
