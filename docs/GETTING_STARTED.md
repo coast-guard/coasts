@@ -8,7 +8,7 @@ Part of the [Coasts Video Course](learn-coasts-videos/README.md).
 ## Installing
 
 ```bash
-curl -fsSL https://coasts.dev/install | sh
+eval "$(curl -fsSL https://coasts.dev/install)"
 coast daemon install
 ```
 

@@ -7,7 +7,7 @@ Part of the [Coasts Video Course](learn-coasts-videos/README.md).
 
 ## Installing
 
-- `curl -fsSL https://coasts.dev/install | sh`
+- `eval "$(curl -fsSL https://coasts.dev/install)"`
 - `coast daemon install`
 
 *If you decide not to run `coast daemon install`, you are responsible for starting the daemon manually with `coast daemon start` every single time.*
