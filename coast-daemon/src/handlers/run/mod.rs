@@ -15,6 +15,8 @@ mod service_start;
 mod shared_services_setup;
 mod validate;
 
+pub(crate) use service_start::compose_ps_output_is_ready;
+
 use tracing::{info, warn};
 
 use coast_core::error::Result;

@@ -58,5 +58,6 @@ toml = { workspace = true }
 workspace = true
 
 [dev-dependencies]
+async-trait = { workspace = true }
 tower = { version = "0.5", features = ["util"] }
 tokio-tungstenite = "0.28"

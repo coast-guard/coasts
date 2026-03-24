@@ -183,7 +183,7 @@ async fn run_compose_up<R: ExecRuntime>(
     exec_string_command(runtime, container_id, &compose_cmd).await
 }
 
-fn compose_ps_output_is_ready(output: &str) -> bool {
+pub(crate) fn compose_ps_output_is_ready(output: &str) -> bool {
     !output.is_empty()
         && output
             .lines()
