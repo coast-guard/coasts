@@ -16,6 +16,7 @@ pub mod docker;
 pub mod docs;
 pub mod doctor;
 pub mod exec;
+pub mod harness_setup_prompt;
 pub mod installation_prompt;
 pub mod logs;
 pub mod lookup;

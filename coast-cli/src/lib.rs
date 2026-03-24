@@ -62,6 +62,9 @@ pub enum Commands {
     /// Print the Coast runtime skills prompt for AI coding agents.
     #[command(name = "skills-prompt")]
     SkillsPrompt(commands::skills_prompt::SkillsPromptArgs),
+    /// Print harness-specific setup prompts for AI coding agents.
+    #[command(name = "harness-setup-prompt")]
+    HarnessSetupPrompt(commands::harness_setup_prompt::HarnessSetupPromptArgs),
 
     // --- Project-explicit commands (project as positional arg or self-resolved) ---
     /// Build a coast image from a Coastfile.
@@ -257,6 +260,7 @@ async fn dispatch(cli: Cli) -> Result<()> {
         Commands::SearchDocs(args) => commands::search_docs::execute(&args).await,
         Commands::InstallationPrompt(args) => commands::installation_prompt::execute(&args).await,
         Commands::SkillsPrompt(args) => commands::skills_prompt::execute(&args).await,
+        Commands::HarnessSetupPrompt(args) => commands::harness_setup_prompt::execute(&args).await,
 
         // --- Project-explicit commands ---
         Commands::Build(args) => commands::build::execute(&args).await,
