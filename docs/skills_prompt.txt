@@ -27,7 +27,12 @@ Use `coast exec` for:
 Run directly on the host:
 - Linting, typechecking, formatting
 - Git operations
-- Playwright and browser tests
+- Playwright and browser tests (if the project uses them) — run the browser
+  on the host, pointed at the Coast's dynamic port URL (get it from
+  `coast lookup` or `coast ports`). If the Coast is checked out, the
+  canonical port (e.g. localhost:3000) works too, but prefer the dynamic
+  port unless the user says otherwise.
+  Do NOT run Playwright inside the Coast via `coast exec`.
 - Installing host-side dependencies (npm install, pip install)
 - File search, code generation, static analysis
 
@@ -36,7 +41,7 @@ Example:
   coast exec <instance> -- sh -c "cd <dir> && npm test"    # needs DB
   coast exec <instance> --service <service>                # service shell
   npm run lint                                              # host is fine
-  npx playwright test                                       # host is fine
+  BASE_URL=http://localhost:62217 npx playwright test       # host — use dynamic port
 
 ## Runtime feedback
 
@@ -156,9 +161,22 @@ that need running services inside the container.
 - Typechecking (`tsc --noEmit`, `go vet`)
 - Formatting (`prettier`, `gofmt`)
 - Git operations
-- Playwright and browser tests
+- Playwright and browser tests (if the project uses them) — run the browser
+  on the host, pointed at the Coast's dynamic port URL (get it from
+  `coast lookup` or `coast ports`). If the Coast is checked out, the
+  canonical port (e.g. localhost:3000) works too, but prefer the dynamic
+  port unless the user says otherwise.
+  Do NOT run Playwright inside the Coast via `coast exec`.
 - Static analysis, code generation
 - Package installs (`npm install`, `pip install`)
+
+Example — Playwright hits the frontend through the dynamic port:
+
+  coast ports <instance>
+  # SERVICE    CANONICAL  DYNAMIC
+  # ★ web      3000       62217
+
+  BASE_URL=http://localhost:62217 npx playwright test   # host, not coast exec
 
 ## Create and Assign
 
