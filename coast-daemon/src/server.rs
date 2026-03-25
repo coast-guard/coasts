@@ -1695,6 +1695,89 @@ mod tests {
         let _ = server_handle.await;
     }
 
+    #[tokio::test]
+    async fn test_duplicate_run_returns_error_response() {
+        let tmp = tempfile::tempdir().unwrap();
+        let socket_path = tmp.path().join("test_dup_run.sock");
+        let db = StateDb::open_in_memory().unwrap();
+        let state = Arc::new(AppState::new_for_testing(db));
+
+        let (shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel(1);
+
+        let server_path = socket_path.clone();
+        let server_state = Arc::clone(&state);
+        let server_handle =
+            tokio::spawn(async move { run_server(&server_path, server_state, shutdown_rx).await });
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        // Pre-insert an instance so the next run request hits "already exists"
+        {
+            let db = state.db.lock().await;
+            let inst = coast_core::types::CoastInstance {
+                name: "dup-test".to_string(),
+                project: "test-proj".to_string(),
+                status: coast_core::types::InstanceStatus::Running,
+                branch: Some("main".to_string()),
+                commit_sha: None,
+                container_id: Some("abc123".to_string()),
+                runtime: coast_core::types::RuntimeType::Dind,
+                created_at: chrono::Utc::now(),
+                worktree_name: None,
+                build_id: None,
+                coastfile_type: None,
+            };
+            db.insert_instance(&inst).unwrap();
+        }
+
+        let stream = tokio::net::UnixStream::connect(&socket_path).await.unwrap();
+        let (reader, mut writer) = stream.into_split();
+
+        let request = Request::Run(coast_core::protocol::RunRequest {
+            name: "dup-test".to_string(),
+            project: "test-proj".to_string(),
+            branch: Some("main".to_string()),
+            commit_sha: None,
+            worktree: None,
+            build_id: None,
+            coastfile_type: None,
+            force_remove_dangling: false,
+        });
+        let encoded = protocol::encode_request(&request).unwrap();
+        writer.write_all(&encoded).await.unwrap();
+        writer.flush().await.unwrap();
+
+        let mut buf_reader = BufReader::new(reader);
+        let mut response_line = String::new();
+        let read_result = tokio::time::timeout(
+            tokio::time::Duration::from_secs(5),
+            buf_reader.read_line(&mut response_line),
+        )
+        .await;
+
+        match read_result {
+            Ok(Ok(n)) if n > 0 => {
+                let response = protocol::decode_response(response_line.trim().as_bytes()).unwrap();
+                match response {
+                    Response::Error(e) => {
+                        assert!(
+                            e.error.contains("already exists"),
+                            "expected 'already exists' error, got: {}",
+                            e.error
+                        );
+                    }
+                    other => panic!("expected Error response, got: {other:?}"),
+                }
+            }
+            Ok(Ok(_)) => panic!("server closed connection without sending error response"),
+            Ok(Err(e)) => panic!("read error: {e}"),
+            Err(_) => panic!("timed out waiting for response — server likely dropped connection"),
+        }
+
+        let _ = shutdown_tx.send(());
+        let _ = server_handle.await;
+    }
+
     #[test]
     fn test_begin_update_operation_rejects_when_quiescing() {
         let db = StateDb::open_in_memory().unwrap();

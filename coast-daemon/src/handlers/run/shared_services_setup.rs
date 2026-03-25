@@ -146,6 +146,30 @@ async fn create_shared_service_container(
     container_name: &str,
     docker: &bollard::Docker,
 ) -> Result<()> {
+    use futures_util::StreamExt;
+
+    let image = &svc_config.image;
+    if docker.inspect_image(image).await.is_err() {
+        tracing::info!(image = %image, "Pulling shared service image (not found locally)");
+        let mut stream = docker.create_image(
+            Some(bollard::image::CreateImageOptions {
+                from_image: image.as_str(),
+                ..Default::default()
+            }),
+            None,
+            None,
+        );
+        while let Some(result) = stream.next().await {
+            if let Err(e) = result {
+                return Err(CoastError::docker(format!(
+                    "Failed to pull shared service image '{}': {}",
+                    image, e
+                )));
+            }
+        }
+        tracing::info!(image = %image, "Shared service image pulled successfully");
+    }
+
     let shared_cfg = crate::shared_services::build_shared_container_config(project, svc_config);
     let host_config = bollard::models::HostConfig {
         binds: Some(shared_cfg.volumes.clone()),

@@ -36,17 +36,16 @@ tests:
     status: pass
     cached_seconds: 116
 
-  # --- verified failing ---
   test_coastfile_types:
     script: integrated-examples/test_coastfile_types.sh
-    status: fail
-    cached_seconds: 53
-    fail_at: "test 8: coast run types-default (16/16 build assertions pass)"
+    status: pass
+    cached_seconds: 132
+  # --- verified failing ---
   test_lookup:
     script: integrated-examples/test_lookup.sh
     status: fail
     cached_seconds: 94
-    fail_at: "test 3: coast lookup --compact from worktree (10/10 prior assertions pass)"
+    fail_at: "test 3: coast lookup --compact from worktree dir (10/10 prior assertions pass)"
 
   # --- untested ---
   test_lifecycle:
