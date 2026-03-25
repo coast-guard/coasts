@@ -49,7 +49,7 @@ echo ""
 echo "=== Test 1: coast build ==="
 
 BUILD_OUT=$("$COAST" build 2>&1)
-assert_contains "$BUILD_OUT" "Built coast image" "coast build succeeds"
+assert_contains "$BUILD_OUT" "Build complete" "coast build succeeds"
 assert_contains "$BUILD_OUT" "coast-demo" "build output references project name"
 pass "Build complete"
 

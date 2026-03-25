@@ -86,6 +86,9 @@ fn extract_language_code(locale: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn test_extract_language_code_full_locale() {
@@ -109,6 +112,7 @@ mod tests {
 
     #[test]
     fn test_resolve_language_defaults_to_valid() {
+        let _lock = ENV_LOCK.lock().unwrap();
         let saved_lang = std::env::var("COAST_LANG").ok();
         std::env::remove_var("COAST_LANG");
         let saved_lc = std::env::var("LC_ALL").ok();
@@ -143,6 +147,7 @@ mod tests {
 
     #[test]
     fn test_resolve_language_from_env() {
+        let _lock = ENV_LOCK.lock().unwrap();
         let saved = std::env::var("COAST_LANG").ok();
         std::env::set_var("COAST_LANG", "ja");
 
@@ -158,6 +163,7 @@ mod tests {
 
     #[test]
     fn test_resolve_language_invalid_env_falls_through() {
+        let _lock = ENV_LOCK.lock().unwrap();
         let saved = std::env::var("COAST_LANG").ok();
         std::env::set_var("COAST_LANG", "fr");
 

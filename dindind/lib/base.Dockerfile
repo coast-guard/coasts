@@ -11,7 +11,6 @@ ARG EXTRA_PACKAGES=""
 ARG DEBIAN_FRONTEND=noninteractive
 
 # Disable universe/multiverse repos to avoid slow/unreliable ports.ubuntu.com downloads.
-# All packages we need are in main or the Docker repo.
 RUN sed -i '/universe/d; /multiverse/d' /etc/apt/sources.list \
   && apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
