@@ -28,6 +28,10 @@ eval "$(curl -fsSL https://coasts.dev/install)"
 
 For the full user-facing documentation, see the [Coasts docs](https://coasts.dev/docs).
 
+## Demo Video
+
+- [Coasts Demo](https://www.youtube.com/watch?v=yRiySdGQZZA&t=1s)
+
 ## Demo Repo
 
 Want a concrete example to explore? Check out the [`coasts-demo` repository](https://github.com/coast-guard/coasts-demo) for a small demo project you can use to try Coasts end to end.
@@ -37,6 +41,7 @@ Want a concrete example to explore? Check out the [`coasts-demo` repository](htt
 - [Coasts + Claude Code](https://www.youtube.com/watch?v=yjMFVoOiAW0)
 - [Coasts + Codex](https://www.youtube.com/watch?v=MDidmMQtaqU)
 - [Coasts + Conductor](https://www.youtube.com/watch?v=mbwilJHlanQ)
+- [Coasts + Cursor](https://www.youtube.com/watch?v=ZmbcZ_QfO6w)
 
 ## Contributing
 
