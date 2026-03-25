@@ -51,7 +51,7 @@ echo ""
 echo "=== Test 1: coast build (with agent_shell) ==="
 
 BUILD_OUT=$("$COAST" build 2>&1)
-assert_contains "$BUILD_OUT" "Built coast image" "coast build succeeds"
+assert_contains "$BUILD_OUT" "Build complete" "coast build succeeds"
 assert_contains "$BUILD_OUT" "coast-agent-shell" "build output references project"
 pass "Build complete"
 

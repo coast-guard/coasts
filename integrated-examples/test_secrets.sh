@@ -50,7 +50,7 @@ echo ""
 echo "=== Test 1: coast build (with secrets) ==="
 
 BUILD_OUT=$("$COAST" build 2>&1)
-assert_contains "$BUILD_OUT" "Built coast image" "coast build succeeds"
+assert_contains "$BUILD_OUT" "Build complete" "coast build succeeds"
 assert_contains "$BUILD_OUT" "Secrets:" "build output shows secrets extracted"
 
 # Check that secrets count is > 0
@@ -155,7 +155,7 @@ echo "=== Test 5: coast build --refresh ==="
 export COAST_TEST_ENV_SECRET="refreshed-value-99999"
 
 REFRESH_OUT=$("$COAST" build --refresh 2>&1)
-assert_contains "$REFRESH_OUT" "Built coast image" "coast build --refresh succeeds"
+assert_contains "$REFRESH_OUT" "Build complete" "coast build --refresh succeeds"
 
 # The build should re-extract secrets with the new value
 # We'd need to run a new instance to verify the new value is injected,

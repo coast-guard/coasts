@@ -49,7 +49,7 @@ start_daemon
 echo ""
 echo "=== Build ==="
 BUILD_OUT=$("$COAST" build 2>&1)
-assert_contains "$BUILD_OUT" "Built coast image" "coast build succeeds"
+assert_contains "$BUILD_OUT" "Build complete" "coast build succeeds"
 
 # ============================================================
 # Test 1: Run slot-1 (defaults to current HEAD = main)

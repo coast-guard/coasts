@@ -44,7 +44,7 @@ echo ""
 echo "=== Build and run ==="
 
 BUILD_OUT=$("$COAST" build 2>&1)
-assert_contains "$BUILD_OUT" "Built coast image" "coast build succeeds"
+assert_contains "$BUILD_OUT" "Build complete" "coast build succeeds"
 
 RUN_OUT=$("$COAST" run main 2>&1)
 CLEANUP_INSTANCES+=("main")

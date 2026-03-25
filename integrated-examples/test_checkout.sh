@@ -54,7 +54,7 @@ start_daemon
 echo ""
 echo "=== Build ==="
 BUILD_OUT=$("$COAST" build 2>&1)
-assert_contains "$BUILD_OUT" "Built coast image" "coast build succeeds"
+assert_contains "$BUILD_OUT" "Build complete" "coast build succeeds"
 
 # Run two instances (both on main branch — code is identical, but each has
 # isolated Redis so we can distinguish them using request counters).
@@ -362,7 +362,7 @@ cd "$PROJECTS_DIR/coast-benchmark"
 echo ""
 echo "=== Build coast-benchmark ==="
 BENCH_BUILD=$("$COAST" build 2>&1)
-assert_contains "$BENCH_BUILD" "Built coast image" "coast build coast-benchmark succeeds"
+assert_contains "$BENCH_BUILD" "Build complete" "coast build coast-benchmark succeeds"
 
 # ============================================================
 # Test 8: Batch creation — coast run dev-{n} --n=3

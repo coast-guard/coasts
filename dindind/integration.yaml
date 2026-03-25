@@ -17,20 +17,44 @@ defaults:
   timeout: 600
 
 tests:
+  # --- verified passing ---
   test_egress:
     script: integrated-examples/test_egress.sh
+    status: pass
     timeout: 180
     cached_seconds: 84
+  test_daemon_restart:
+    script: integrated-examples/test_daemon_restart.sh
+    status: pass
+    cached_seconds: 41
+  test_no_compose:
+    script: integrated-examples/test_no_compose.sh
+    status: pass
+    cached_seconds: 99
+  test_error_cases:
+    script: integrated-examples/test_error_cases.sh
+    status: pass
+    cached_seconds: 116
+
+  # --- verified failing ---
+  test_coastfile_types:
+    script: integrated-examples/test_coastfile_types.sh
+    status: fail
+    cached_seconds: 53
+    fail_at: "test 8: coast run types-default (16/16 build assertions pass)"
+  test_lookup:
+    script: integrated-examples/test_lookup.sh
+    status: fail
+    cached_seconds: 94
+    fail_at: "test 3: coast lookup --compact from worktree (10/10 prior assertions pass)"
+
+  # --- untested ---
   test_lifecycle:
     script: integrated-examples/test_lifecycle.sh
   test_assign:
     script: integrated-examples/test_assign.sh
   test_checkout:
     script: integrated-examples/test_checkout.sh
-  test_lookup:
-    script: integrated-examples/test_lookup.sh
-  test_error_cases:
-    script: integrated-examples/test_error_cases.sh
   test_secrets:
     script: integrated-examples/test_secrets.sh
   test_observability:
@@ -39,8 +63,6 @@ tests:
     script: integrated-examples/test_multi_project.sh
   test_bare_services:
     script: integrated-examples/test_bare_services.sh
-  test_no_compose:
-    script: integrated-examples/test_no_compose.sh
   test_mixed_service_types:
     script: integrated-examples/test_mixed_service_types.sh
   test_hmr:
@@ -57,8 +79,6 @@ tests:
     script: integrated-examples/test_volume_shared_services.sh
   test_volume_source:
     script: integrated-examples/test_volume_source.sh
-  test_coastfile_types:
-    script: integrated-examples/test_coastfile_types.sh
   test_dangling_containers:
     script: integrated-examples/test_dangling_containers.sh
   test_restart_services:
@@ -73,7 +93,5 @@ tests:
     script: integrated-examples/test_worktree_delete.sh
   test_worktree_daemon_restart:
     script: integrated-examples/test_worktree_daemon_restart.sh
-  test_daemon_restart:
-    script: integrated-examples/test_daemon_restart.sh
   test_cleanup_shared_services_volume:
     script: integrated-examples/test_cleanup_shared_services_volume.sh

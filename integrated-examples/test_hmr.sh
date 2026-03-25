@@ -57,7 +57,7 @@ start_daemon
 
 # Build
 BUILD_OUT=$("$COAST" build 2>&1)
-assert_contains "$BUILD_OUT" "Built coast image" "coast build succeeds"
+assert_contains "$BUILD_OUT" "Build complete" "coast build succeeds"
 
 # Run instance
 RUN_OUT=$("$COAST" run hmr-slot 2>&1)

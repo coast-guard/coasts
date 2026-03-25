@@ -825,7 +825,12 @@ async fn handle_run_streaming(
             build_id: req.build_id.clone(),
             coastfile_type: req.coastfile_type.clone(),
         };
-        db.insert_instance(&enqueued_inst)?;
+        if let Err(e) = db.insert_instance(&enqueued_inst) {
+            let resp = Response::Error(ErrorResponse {
+                error: e.to_string(),
+            });
+            return write_response(writer, &resp).await;
+        }
     }
     state.emit_event(coast_core::protocol::CoastEvent::InstanceStatusChanged {
         name: req.name.clone(),
