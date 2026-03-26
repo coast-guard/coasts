@@ -59,17 +59,17 @@ pub(super) async fn run_docker_steps(p: DockerStepsParams<'_>) -> Result<()> {
     )
     .await;
 
-    let (service_actions, all_hot) = discover_and_classify(
-        &rt,
-        p.container_id,
-        &p.req.project,
-        p.cf_data,
-        p.assign_config,
-        p.project_root,
-        p.previous_branch,
-        &p.req.worktree,
-        p.instance_build_id,
-    )
+    let (service_actions, all_hot) = discover_and_classify(DiscoverAndClassifyParams {
+        rt: &rt,
+        container_id: p.container_id,
+        project: &p.req.project,
+        cf_data: p.cf_data,
+        assign_config: p.assign_config,
+        project_root: p.project_root,
+        previous_branch: p.previous_branch,
+        worktree: &p.req.worktree,
+        build_id: p.instance_build_id,
+    })
     .await;
     let restart_svcs: Vec<&str> = services_with_action(&service_actions, &AssignAction::Restart);
     let rebuild_svcs: Vec<&str> = services_with_action(&service_actions, &AssignAction::Rebuild);
@@ -101,43 +101,43 @@ pub(super) async fn run_docker_steps(p: DockerStepsParams<'_>) -> Result<()> {
     done(p.progress, "Stopping services").await;
 
     step(p.progress, "Switching worktree", 4).await;
-    switch_worktree(
-        &rt,
-        p.container_id,
-        p.state,
-        p.req,
-        p.project_root,
-        &wt_location,
+    switch_worktree(SwitchWorktreeParams {
+        rt: &rt,
+        container_id: p.container_id,
+        state: p.state,
+        req: p.req,
+        project_root: p.project_root,
+        wt_location: &wt_location,
         wt_child,
         wt_spawn_t,
-        p.assign_config,
-        p.progress,
-    )
+        assign_config: p.assign_config,
+        progress: p.progress,
+    })
     .await?;
     done(p.progress, "Switching worktree").await;
 
-    recreate_containers(
-        &rt,
-        p.container_id,
-        p.docker,
-        p.cf_data.has_compose,
+    recreate_containers(RecreateContainersParams {
+        rt: &rt,
+        container_id: p.container_id,
+        docker: p.docker,
+        has_compose: p.cf_data.has_compose,
         all_hot,
-        &p.req.project,
-        p.instance_build_id,
-    )
+        project: &p.req.project,
+        build_id: p.instance_build_id,
+    })
     .await;
 
     step(p.progress, "Building images", 5).await;
-    let image_tags = build_images(
-        &rt,
-        p.container_id,
-        &artifact_dir,
-        &rebuild_svcs,
-        p.project_root,
-        &p.req.project,
-        &p.req.name,
-        p.progress,
-    )
+    let image_tags = build_images(BuildImagesParams {
+        rt: &rt,
+        container_id: p.container_id,
+        artifact_dir: &artifact_dir,
+        rebuild_svcs: &rebuild_svcs,
+        project_root: p.project_root,
+        project: &p.req.project,
+        instance_name: &p.req.name,
+        progress: p.progress,
+    })
     .await;
     if !image_tags.is_empty() {
         write_image_overrides(&rt, p.container_id, &image_tags).await;
@@ -185,23 +185,37 @@ fn services_with_action<'a>(
         .collect()
 }
 
-#[allow(clippy::too_many_arguments)]
+struct DiscoverAndClassifyParams<'a> {
+    rt: &'a coast_docker::dind::DindRuntime,
+    container_id: &'a str,
+    project: &'a str,
+    cf_data: &'a CoastfileData,
+    assign_config: &'a AssignConfig,
+    project_root: &'a Option<std::path::PathBuf>,
+    previous_branch: &'a Option<String>,
+    worktree: &'a str,
+    build_id: Option<&'a str>,
+}
+
 async fn discover_and_classify(
-    rt: &coast_docker::dind::DindRuntime,
-    container_id: &str,
-    project: &str,
-    cf_data: &CoastfileData,
-    assign_config: &AssignConfig,
-    project_root: &Option<std::path::PathBuf>,
-    previous_branch: &Option<String>,
-    worktree: &str,
-    build_id: Option<&str>,
+    p: DiscoverAndClassifyParams<'_>,
 ) -> (std::collections::HashMap<String, AssignAction>, bool) {
-    let all_service_names =
-        discover_service_names(rt, container_id, cf_data.has_compose, project, build_id).await;
-    let changed_files =
-        diff_changed_files(assign_config, project_root, previous_branch, worktree).await;
-    let actions = classify_services(&all_service_names, assign_config, &changed_files);
+    let all_service_names = discover_service_names(
+        p.rt,
+        p.container_id,
+        p.cf_data.has_compose,
+        p.project,
+        p.build_id,
+    )
+    .await;
+    let changed_files = diff_changed_files(
+        p.assign_config,
+        p.project_root,
+        p.previous_branch,
+        p.worktree,
+    )
+    .await;
+    let actions = classify_services(&all_service_names, p.assign_config, &changed_files);
 
     let hot_svcs: Vec<&str> = services_with_action(&actions, &AssignAction::Hot);
     let all_hot = !actions.is_empty()
@@ -787,26 +801,27 @@ async fn stop_affected_services(
 // Step 4: Switch worktree
 // ---------------------------------------------------------------------------
 
-#[allow(clippy::too_many_arguments)]
-async fn switch_worktree(
-    rt: &coast_docker::dind::DindRuntime,
-    container_id: &str,
-    state: &AppState,
-    req: &AssignRequest,
-    project_root: &Option<std::path::PathBuf>,
-    wt_location: &Option<WorktreeLocation>,
+struct SwitchWorktreeParams<'a> {
+    rt: &'a coast_docker::dind::DindRuntime,
+    container_id: &'a str,
+    state: &'a AppState,
+    req: &'a AssignRequest,
+    project_root: &'a Option<std::path::PathBuf>,
+    wt_location: &'a Option<WorktreeLocation>,
     wt_child: Option<Option<tokio::process::Child>>,
     wt_spawn_t: std::time::Instant,
-    assign_config: &AssignConfig,
-    progress: &tokio::sync::mpsc::Sender<BuildProgressEvent>,
-) -> Result<()> {
-    let Some(ref root) = project_root else {
+    assign_config: &'a AssignConfig,
+    progress: &'a tokio::sync::mpsc::Sender<BuildProgressEvent>,
+}
+
+async fn switch_worktree(p: SwitchWorktreeParams<'_>) -> Result<()> {
+    let Some(ref root) = p.project_root else {
         return Ok(());
     };
-    let loc = wt_location.clone().unwrap_or_else(|| {
+    let loc = p.wt_location.clone().unwrap_or_else(|| {
         let dir = ".worktrees".to_string();
-        let host_path = root.join(".worktrees").join(&req.worktree);
-        let mount_src = format!("/host-project/.worktrees/{}", req.worktree);
+        let host_path = root.join(".worktrees").join(&p.req.worktree);
+        let mount_src = format!("/host-project/.worktrees/{}", p.req.worktree);
         WorktreeLocation {
             wt_dir: dir,
             host_path,
@@ -817,28 +832,29 @@ async fn switch_worktree(
     ensure_worktree_exists(
         root,
         &loc.host_path,
-        &req.worktree,
-        wt_child,
-        wt_spawn_t,
-        progress,
+        &p.req.worktree,
+        p.wt_child,
+        p.wt_spawn_t,
+        p.progress,
     )
     .await?;
     sync_gitignored_files(
         root,
         &loc.host_path,
         &loc.wt_dir,
-        &req.worktree,
-        assign_config,
-        req.force_sync,
+        &p.req.worktree,
+        p.assign_config,
+        p.req.force_sync,
     )
     .await;
-    remount_workspace(rt, container_id, root, &loc.container_mount_src).await;
+    remount_workspace(p.rt, p.container_id, root, &loc.container_mount_src).await;
 
-    let _ = state
-        .db
-        .lock()
-        .await
-        .set_worktree(&req.project, &req.name, Some(&req.worktree));
+    let _ =
+        p.state
+            .db
+            .lock()
+            .await
+            .set_worktree(&p.req.project, &p.req.name, Some(&p.req.worktree));
     Ok(())
 }
 
@@ -1107,27 +1123,28 @@ async fn remount_workspace(
 // Step 4b: Recreate containers
 // ---------------------------------------------------------------------------
 
-#[allow(clippy::too_many_arguments)]
-async fn recreate_containers(
-    rt: &coast_docker::dind::DindRuntime,
-    container_id: &str,
-    docker: &bollard::Docker,
+struct RecreateContainersParams<'a> {
+    rt: &'a coast_docker::dind::DindRuntime,
+    container_id: &'a str,
+    docker: &'a bollard::Docker,
     has_compose: bool,
     all_hot: bool,
-    project: &str,
-    build_id: Option<&str>,
-) {
-    if has_compose {
-        let ctx = crate::handlers::compose_context_for_build(project, build_id);
-        if all_hot {
-            compose_force_recreate(rt, container_id, &ctx).await;
+    project: &'a str,
+    build_id: Option<&'a str>,
+}
+
+async fn recreate_containers(p: RecreateContainersParams<'_>) {
+    if p.has_compose {
+        let ctx = crate::handlers::compose_context_for_build(p.project, p.build_id);
+        if p.all_hot {
+            compose_force_recreate(p.rt, p.container_id, &ctx).await;
         } else {
-            compose_down_up(rt, container_id, &ctx).await;
+            compose_down_up(p.rt, p.container_id, &ctx).await;
         }
     }
 
-    if crate::bare_services::has_bare_services(docker, container_id).await {
-        restart_bare_services(rt, container_id, project, build_id).await;
+    if crate::bare_services::has_bare_services(p.docker, p.container_id).await {
+        restart_bare_services(p.rt, p.container_id, p.project, p.build_id).await;
     }
 }
 
@@ -1253,44 +1270,45 @@ async fn restart_bare_services(
 // Step 5: Build images
 // ---------------------------------------------------------------------------
 
-#[allow(clippy::too_many_arguments)]
-async fn build_images(
-    rt: &coast_docker::dind::DindRuntime,
-    container_id: &str,
-    artifact_dir: &std::path::Path,
-    rebuild_svcs: &[&str],
-    project_root: &Option<std::path::PathBuf>,
-    project: &str,
-    instance_name: &str,
-    progress: &tokio::sync::mpsc::Sender<BuildProgressEvent>,
-) -> Vec<(String, String)> {
-    let compose_path = artifact_dir.join("compose.yml");
-    if rebuild_svcs.is_empty() || !compose_path.exists() {
+struct BuildImagesParams<'a> {
+    rt: &'a coast_docker::dind::DindRuntime,
+    container_id: &'a str,
+    artifact_dir: &'a std::path::Path,
+    rebuild_svcs: &'a [&'a str],
+    project_root: &'a Option<std::path::PathBuf>,
+    project: &'a str,
+    instance_name: &'a str,
+    progress: &'a tokio::sync::mpsc::Sender<BuildProgressEvent>,
+}
+
+async fn build_images(p: BuildImagesParams<'_>) -> Vec<(String, String)> {
+    let compose_path = p.artifact_dir.join("compose.yml");
+    if p.rebuild_svcs.is_empty() || !compose_path.exists() {
         emit(
-            progress,
+            p.progress,
             BuildProgressEvent::item("Building images", "no images to build", "skip"),
         )
         .await;
         return Vec::new();
     }
 
-    let compose_to_parse = resolve_compose_path(project_root, &compose_path);
-    let Some(directives) = parse_build_directives(&compose_to_parse, project) else {
+    let compose_to_parse = resolve_compose_path(p.project_root, &compose_path);
+    let Some(directives) = parse_build_directives(&compose_to_parse, p.project) else {
         return Vec::new();
     };
 
     let mut tags = Vec::new();
     for directive in &directives {
-        if !rebuild_svcs.contains(&directive.service_name.as_str()) {
+        if !p.rebuild_svcs.contains(&directive.service_name.as_str()) {
             continue;
         }
         let result = build_single_image(
-            rt,
-            container_id,
-            project,
-            instance_name,
+            p.rt,
+            p.container_id,
+            p.project,
+            p.instance_name,
             directive,
-            progress,
+            p.progress,
         )
         .await;
         if let Some(tag_pair) = result {
