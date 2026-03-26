@@ -58,12 +58,21 @@ tests:
     script: integrated-examples/test_observability.sh
   test_multi_project:
     script: integrated-examples/test_multi_project.sh
+    status: pass
+    cached_seconds: 154
+    note: "requires warm Docker cache (first-ever run may fail assign image build)"
   test_bare_services:
     script: integrated-examples/test_bare_services.sh
+    status: pass
+    cached_seconds: 165
   test_mixed_service_types:
     script: integrated-examples/test_mixed_service_types.sh
+    status: pass
+    cached_seconds: 137
   test_hmr:
     script: integrated-examples/test_hmr.sh
+    status: pass
+    cached_seconds: 103
   test_mcp:
     script: integrated-examples/test_mcp.sh
   test_agent_shell:
@@ -100,3 +109,6 @@ tests:
     script: integrated-examples/test_worktree_daemon_restart.sh
   test_cleanup_shared_services_volume:
     script: integrated-examples/test_cleanup_shared_services_volume.sh
+    status: pass
+    cached_seconds: 97
+    note: "compose service name must match shared_service key in Coastfile"

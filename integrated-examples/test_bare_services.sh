@@ -187,10 +187,18 @@ SERVERJS_MAIN=$($COAST exec test-bare -- cat /workspace/server.js 2>&1)
 assert_not_contains "$SERVERJS_MAIN" "v2" "/workspace has main server.js (no v2)"
 pass "workspace files switched back to main"
 
-sleep 5
+# Wait for bare service to restart with new code.
+# In DinD, the stop + install + start cycle takes longer.
+MAIN_RESP=""
+for attempt in $(seq 1 12); do
+  sleep 5
+  MAIN_RESP=$(curl -s --max-time 5 "http://localhost:${DYNAMIC_PORT}" 2>&1) || true
+  if echo "$MAIN_RESP" | grep -q "Hello from Coast bare services!"; then
+    break
+  fi
+done
 
 if [ -n "$DYNAMIC_PORT" ]; then
-  MAIN_RESP=$(curl -s --max-time 5 "http://localhost:${DYNAMIC_PORT}" 2>&1) || true
   assert_contains "$MAIN_RESP" "Hello from Coast bare services!" "response is original main version"
   pass "server serves main response after assign back"
 else

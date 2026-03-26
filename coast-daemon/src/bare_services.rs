@@ -154,10 +154,9 @@ fn stop_all_script(services: &[BareServiceConfig]) -> String {
             "if [ -f {SUPERVISOR_DIR}/{name}.pid ]; then\n\
              \x20 PID=$(cat {SUPERVISOR_DIR}/{name}.pid 2>/dev/null)\n\
              \x20 if [ -n \"$PID\" ] && kill -0 \"$PID\" 2>/dev/null; then\n\
-             \x20   for CHILD in $(ps -o pid= --ppid \"$PID\" 2>/dev/null || true); do\n\
-             \x20     kill \"$CHILD\" 2>/dev/null\n\
-             \x20   done\n\
-             \x20   kill \"$PID\" 2>/dev/null\n\
+             \x20   kill -- -\"$PID\" 2>/dev/null || kill \"$PID\" 2>/dev/null\n\
+             \x20   sleep 1\n\
+             \x20   kill -0 \"$PID\" 2>/dev/null && kill -9 -- -\"$PID\" 2>/dev/null || true\n\
              \x20   echo \"[coast-supervisor] stopped {name} (PID $PID)\"\n\
              \x20 fi\n\
              \x20 rm -f {SUPERVISOR_DIR}/{name}.pid\n\
@@ -762,11 +761,11 @@ mod tests {
         let svc = test_svc("web", "npm run dev", RestartPolicy::OnFailure);
         let script = stop_all_script(&[svc]);
         assert!(
-            script.contains("--ppid"),
-            "stop script must kill child processes via --ppid"
+            script.contains("kill -- -"),
+            "stop script must kill process group via kill -- -PID"
         );
         assert!(
-            script.contains("kill \"$CHILD\""),
+            script.contains("kill -9 -- -"),
             "stop script must kill each child"
         );
     }

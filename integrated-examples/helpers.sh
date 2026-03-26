@@ -167,6 +167,7 @@ _do_cleanup() {
 extract_dynamic_port() {
     local output="$1"
     local service="$2"
-    # Match only port table rows where the first field is exactly the service name
-    echo "$output" | awk -v svc="$service" '$1 == svc {print $3}'
+    # Match port table rows: service_name  canonical_port  dynamic_port
+    # $2 must be numeric to avoid matching the "Allocating ports" progress line
+    echo "$output" | awk -v svc="$service" '$1 == svc && $2 ~ /^[0-9]+$/ {print $3}'
 }

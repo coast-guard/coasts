@@ -66,8 +66,7 @@ cd "$PROJECTS_DIR/coast-demo"
 DEMO_RUN=$("$COAST" run main 2>&1)
 CLEANUP_INSTANCES+=("main")
 assert_contains "$DEMO_RUN" "Created coast instance" "coast-demo main started"
-DEMO_PORT=$(extract_dynamic_port "$DEMO_RUN" "33000")
-[ -n "$DEMO_PORT" ] || DEMO_PORT=$(echo "$DEMO_RUN" | grep "33000" | awk '{print $3}')
+DEMO_PORT=$(extract_dynamic_port "$DEMO_RUN" "app")
 [ -n "$DEMO_PORT" ] || fail "Could not extract coast-demo dynamic port"
 pass "coast-demo main port: $DEMO_PORT"
 
@@ -76,8 +75,7 @@ cd "$PROJECTS_DIR/coast-api"
 API_RUN=$("$COAST" run main 2>&1)
 CLEANUP_INSTANCES+=("main")
 assert_contains "$API_RUN" "Created coast instance" "coast-api main started"
-API_PORT=$(extract_dynamic_port "$API_RUN" "34000")
-[ -n "$API_PORT" ] || API_PORT=$(echo "$API_RUN" | grep "34000" | awk '{print $3}')
+API_PORT=$(extract_dynamic_port "$API_RUN" "api")
 [ -n "$API_PORT" ] || fail "Could not extract coast-api dynamic port"
 pass "coast-api main port: $API_PORT"
 
@@ -137,8 +135,7 @@ cd "$PROJECTS_DIR/coast-api"
 API_V2_RUN=$("$COAST" run feature-v2 2>&1)
 CLEANUP_INSTANCES+=("feature-v2")
 assert_contains "$API_V2_RUN" "Created coast instance" "coast-api feature-v2 slot started"
-API_V2_PORT=$(extract_dynamic_port "$API_V2_RUN" "34000")
-[ -n "$API_V2_PORT" ] || API_V2_PORT=$(echo "$API_V2_RUN" | grep "34000" | awk '{print $3}')
+API_V2_PORT=$(extract_dynamic_port "$API_V2_RUN" "api")
 [ -n "$API_V2_PORT" ] || fail "Could not extract coast-api feature-v2 port"
 
 wait_for_healthy "$API_V2_PORT" 60 || fail "coast-api feature-v2 slot did not become healthy"
@@ -146,7 +143,7 @@ pass "coast-api feature-v2 slot is healthy (running main code)"
 
 # Now assign to feature-v2 branch — builds from branch code via git archive
 ASSIGN_OUT=$("$COAST" assign feature-v2 --worktree feature-v2 2>&1)
-assert_contains "$ASSIGN_OUT" "Assigned branch" "assign to feature-v2 succeeded"
+assert_contains "$ASSIGN_OUT" "Assigned worktree" "assign to feature-v2 succeeded"
 
 wait_for_healthy "$API_V2_PORT" 60 || fail "coast-api feature-v2 did not become healthy after assign"
 pass "coast-api feature-v2 is healthy after assign"

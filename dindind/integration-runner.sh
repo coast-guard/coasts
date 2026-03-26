@@ -80,6 +80,7 @@ run_test() {
     -v coast-dindind-cargo-git:/root/.cargo/git \
     -v coast-dindind-target:/workspace/target \
     -v coast-dindind-coast-home:/root/.coast \
+    -v coast-dindind-docker:/var/lib/docker \
     -e HOME=/root \
     -e SHELL=/bin/bash \
     -e DIND_TEST_SCRIPT="$script" \
@@ -104,11 +105,23 @@ cargo build --release 2>&1
 
 # Skip auto-update (dev build flag)
 export COAST_HOME=/root/.coast
+# Increase compose health timeout for DinDinD (services start slower with nested Docker)
+export COAST_COMPOSE_HEALTH_TIMEOUT=300
+# Use BuildKit to avoid legacy builder deprecation warnings that break host builds
+export DOCKER_BUILDKIT=1
 
-# Clean stale state from previous test runs (the coast-home volume persists
-# instance records and container IDs that no longer exist in this container).
+# Set up git identity (needed for setup.sh git commits)
+git config --global user.email "test@coasts.dev"
+git config --global user.name "Coast Test"
+
+# Clean stale state from previous test runs. The docker volume persists
+# containers and state from killed runs.
 rm -f /root/.coast/state.db /root/.coast/state.db-wal /root/.coast/state.db-shm
 rm -f /root/.coast/coastd.sock /root/.coast/coastd.pid
+docker rm -f $(docker ps -aq --filter "label=coast.managed=true") 2>/dev/null || true
+docker volume ls -q --filter "name=coast-shared--" 2>/dev/null | xargs -r docker volume rm 2>/dev/null || true
+docker volume ls -q --filter "name=coast-dind--" 2>/dev/null | xargs -r docker volume rm 2>/dev/null || true
+docker network ls -q --filter "name=coast-shared-" 2>/dev/null | xargs -r docker network rm 2>/dev/null || true
 
 # Install coast wrapper for egress forwarding in nested DinD.
 # Put the real binary and wrapper in /opt/coast/ -- never touch the cached
@@ -122,6 +135,21 @@ chmod +x /opt/coast/coast-wrapper
 # Replace target/release/coast with a symlink to the wrapper
 ln -sf /opt/coast/coast-wrapper /workspace/target/release/coast
 export REAL_COAST=/opt/coast/coast
+
+# Seed the inner Docker daemon with images from /coast-repo/.dindind-image-cache
+# if available (populated by the host). Fall back to pulling from registry.
+echo "==> Seeding Docker image cache..."
+if [ -d /coast-repo/.dindind-image-cache ]; then
+  for tarball in /coast-repo/.dindind-image-cache/*.tar; do
+    [ -f "$tarball" ] && docker load < "$tarball" 2>/dev/null && echo "    loaded $(basename "$tarball")" || true
+  done
+fi
+for img in docker:dind alpine:3.20 postgres:16 postgres:15 postgres:16-alpine redis:7-alpine redis:7 node:18-alpine node:20-alpine node:22-alpine; do
+  if ! docker image inspect "$img" >/dev/null 2>&1; then
+    echo "    pulling $img..."
+    docker pull "$img" 2>&1 | tail -1 || true
+  fi
+done
 
 echo ""
 echo "==> Running test: ${DIND_TEST_SCRIPT}"

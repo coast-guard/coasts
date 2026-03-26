@@ -91,7 +91,7 @@ doc-search-all:
 prune:
 	cargo clean
 	docker rmi coast-dindind-base coast-dindind-integration coast-dindind-wsl-ubuntu 2>/dev/null || true
-	docker volume rm coast-dindind-cargo-registry coast-dindind-cargo-git coast-dindind-target coast-dindind-coast-home 2>/dev/null || true
+	docker volume rm coast-dindind-cargo-registry coast-dindind-cargo-git coast-dindind-target coast-dindind-coast-home coast-dindind-docker 2>/dev/null || true
 ifdef DOCKER
 	docker system prune -a --volumes -f
 endif

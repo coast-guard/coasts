@@ -196,12 +196,16 @@ async fn wait_for_compose_health<R: ExecRuntime>(
     compose_base_args: &[String],
     instance_name: &str,
 ) -> Result<()> {
+    let timeout_secs = std::env::var("COAST_COMPOSE_HEALTH_TIMEOUT")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(120);
     wait_for_compose_health_with_timeout(
         runtime,
         container_id,
         compose_base_args,
         instance_name,
-        tokio::time::Duration::from_secs(120),
+        tokio::time::Duration::from_secs(timeout_secs),
     )
     .await
 }
@@ -223,10 +227,14 @@ async fn wait_for_compose_health_with_timeout<R: ExecRuntime>(
                 .map(|result| result.stdout)
                 .unwrap_or_default();
             return Err(CoastError::docker(format!(
-                "Services in instance '{}' did not become healthy within 120s. \
+                "Services in instance '{}' did not become healthy within {}s. \
                  Check the service logs below and fix any issues, then retry with \
                  `coast rm {} && coast run {}`.\nRecent logs:\n{}",
-                instance_name, instance_name, instance_name, logs
+                instance_name,
+                timeout.as_secs(),
+                instance_name,
+                instance_name,
+                logs
             )));
         }
 
@@ -725,7 +733,7 @@ mod tests {
         .unwrap_err();
 
         let message = error.to_string();
-        assert!(message.contains("did not become healthy within 120s"));
+        assert!(message.contains("did not become healthy within 0s"));
         assert!(message.contains("service logs"));
         assert!(message.contains("coast rm dev-1 && coast run dev-1"));
         assert_eq!(

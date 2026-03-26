@@ -7,3 +7,4 @@ integrated-examples/projects/
 integrated_examples/*/.git
 integrated_examples/*/.coasts
 integrated_examples/*/node_modules
+.dindind-image-cache/

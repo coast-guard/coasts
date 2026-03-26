@@ -7,11 +7,24 @@ set -eu
 DOCKER_READY_TIMEOUT="${DOCKER_READY_TIMEOUT:-60}"
 DOCKERD_LOG="/tmp/dockerd.log"
 
+# Use a non-default bridge subnet so the outer DinD's networks don't collide
+# with the inner Coast DinD's default docker0 (172.17.0.0/16). Without this,
+# shared service proxy alias IPs on the inner docker0 overlap with the outer
+# daemon's bridge, breaking routing in DinDinD.
+mkdir -p /etc/docker
+cat > /etc/docker/daemon.json <<'DAEMONJSON'
+{
+  "bip": "10.200.0.1/16",
+  "default-address-pools": [{"base": "10.201.0.0/16", "size": 24}],
+  "storage-driver": "overlay2"
+}
+DAEMONJSON
+
 echo "==> Starting Docker daemon..."
 if [ "$(id -u)" -eq 0 ]; then
-  dockerd --storage-driver=overlay2 > "$DOCKERD_LOG" 2>&1 &
+  dockerd > "$DOCKERD_LOG" 2>&1 &
 else
-  sudo dockerd --storage-driver=overlay2 > "$DOCKERD_LOG" 2>&1 &
+  sudo dockerd > "$DOCKERD_LOG" 2>&1 &
 fi
 DOCKERD_PID=$!
 

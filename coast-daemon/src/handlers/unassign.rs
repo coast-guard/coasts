@@ -236,9 +236,20 @@ pub async fn handle(
 
         if crate::bare_services::has_bare_services(docker, &container_id).await {
             let stop_cmd = crate::bare_services::generate_stop_command();
-            let _ = rt
+            match rt
                 .exec_in_coast(&container_id, &["sh", "-c", &stop_cmd])
-                .await;
+                .await
+            {
+                Ok(r) if r.success() => {
+                    info!(name = %req.name, "bare services stopped for unassign");
+                }
+                Ok(r) => {
+                    warn!(name = %req.name, stderr = %r.stderr, "bare services stop had issues");
+                }
+                Err(e) => {
+                    warn!(name = %req.name, error = %e, "bare services stop failed");
+                }
+            }
 
             let home = dirs::home_dir().unwrap_or_default();
             let cf_path = instance
@@ -263,11 +274,25 @@ pub async fn handle(
                 .map(|cf| cf.services)
                 .unwrap_or_default();
 
-            let start_cmd = crate::bare_services::generate_install_and_start_command(&svc_list);
+            let stop_cmd = crate::bare_services::generate_stop_command();
             let _ = rt
-                .exec_in_coast(&container_id, &["sh", "-c", &start_cmd])
+                .exec_in_coast(&container_id, &["sh", "-c", &stop_cmd])
                 .await;
-            info!(name = %req.name, "bare services restarted after unassign");
+            let start_cmd = crate::bare_services::generate_install_and_start_command(&svc_list);
+            match rt
+                .exec_in_coast(&container_id, &["sh", "-c", &start_cmd])
+                .await
+            {
+                Ok(r) if r.success() => {
+                    info!(name = %req.name, "bare services restarted after unassign");
+                }
+                Ok(r) => {
+                    warn!(name = %req.name, stderr = %r.stderr, stdout = %r.stdout, "bare services start after unassign had issues");
+                }
+                Err(e) => {
+                    warn!(name = %req.name, error = %e, "bare services start after unassign failed");
+                }
+            }
         }
 
         emit(
