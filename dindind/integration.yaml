@@ -95,18 +95,32 @@ tests:
     cached_seconds: 133
   test_dangling_containers:
     script: integrated-examples/test_dangling_containers.sh
+    status: pass
+    cached_seconds: 208
   test_restart_services:
     script: integrated-examples/test_restart_services.sh
+    status: pass
+    cached_seconds: 176
   test_nuke:
     script: integrated-examples/test_nuke.sh
+    status: pass
+    cached_seconds: 49
   test_update:
     script: integrated-examples/test_update.sh
+    status: pass
+    cached_seconds: 44
   test_sync:
     script: integrated-examples/test_sync.sh
+    status: pass
+    cached_seconds: 126
   test_worktree_delete:
     script: integrated-examples/test_worktree_delete.sh
+    status: pass
+    cached_seconds: 103
   test_worktree_daemon_restart:
     script: integrated-examples/test_worktree_daemon_restart.sh
+    status: pass
+    cached_seconds: 97
   test_cleanup_shared_services_volume:
     script: integrated-examples/test_cleanup_shared_services_volume.sh
     status: pass

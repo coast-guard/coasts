@@ -80,7 +80,7 @@ pass "workspace verified on feature-v2"
 echo ""
 echo "=== Test 3: Delete worktree and wait for auto-unassign ==="
 
-rm -rf .coasts/feature-v2
+rm -rf .worktrees/feature-v2
 pass "deleted .coasts/feature-v2 from host"
 
 # The git watcher polls every 2 seconds. On macOS, deleting the worktree

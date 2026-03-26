@@ -95,8 +95,12 @@ TEST_HOME2="$(mktemp -d)"
 export COAST_HOME="$TEST_HOME2"
 
 mkdir -p "$TEST_HOME2/bin"
-cp "$COAST" "$TEST_HOME2/bin/coast"
-cp "$COASTD" "$TEST_HOME2/bin/coastd"
+# Use the real ELF binary, not the DinD wrapper script, so current_exe()
+# resolves to the copy inside COAST_HOME and bin_dir_inside() preserves it.
+COAST_BIN="${REAL_COAST:-$COAST}"
+COASTD_BIN="${REAL_COASTD:-$COASTD}"
+cp "$COAST_BIN" "$TEST_HOME2/bin/coast"
+cp "$COASTD_BIN" "$TEST_HOME2/bin/coastd"
 chmod +x "$TEST_HOME2/bin/coast" "$TEST_HOME2/bin/coastd"
 
 # Seed state

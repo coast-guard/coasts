@@ -84,13 +84,13 @@ echo ""
 echo "=== Test B: coast assign dev-slot --worktree feature-01 ==="
 
 ASSIGN_OUT=$("$COAST" assign dev-slot --worktree feature-01 2>&1)
-assert_contains "$ASSIGN_OUT" "Assigned branch" "assign to feature-01 succeeds"
+assert_contains "$ASSIGN_OUT" "Assigned worktree" "assign to feature-01 succeeds"
 wait_for_healthy "$DYN_PORT" 60 || fail "dev-slot not healthy after assign"
 pass "dev-slot healthy after assign to feature-01"
 
 # Verify worktree directory exists on host
-[ -d ".coasts/feature-01" ] || fail ".coasts/feature-01 worktree directory not created"
-pass "worktree .coasts/feature-01/ exists on host"
+[ -d ".worktrees/feature-01" ] || fail ".worktrees/feature-01 worktree directory not created"
+pass "worktree .worktrees/feature-01/ exists on host"
 
 # Verify /workspace inside DinD shows feature-01
 INNER_BRANCH=$("$COAST" exec dev-slot -- git -C /workspace rev-parse --abbrev-ref HEAD 2>&1)
@@ -114,19 +114,19 @@ echo "=== Test C: HMR — edits inside DinD visible on host worktree ==="
 "$COAST" exec dev-slot -- sh -c "echo 'hmr-test-marker' > /workspace/hmr-test-file.txt" 2>&1
 
 # The worktree on the host should have the file (host-bound)
-[ -f ".coasts/feature-01/hmr-test-file.txt" ] || fail "hmr-test-file.txt should exist in host worktree"
-HOST_CONTENT=$(cat .coasts/feature-01/hmr-test-file.txt)
+[ -f ".worktrees/feature-01/hmr-test-file.txt" ] || fail "hmr-test-file.txt should exist in host worktree"
+HOST_CONTENT=$(cat .worktrees/feature-01/hmr-test-file.txt)
 assert_eq "$HOST_CONTENT" "hmr-test-marker" "DinD write visible on host worktree"
 pass "HMR sync confirmed: DinD → host worktree"
 
 # Also verify the reverse: write on host worktree, visible in DinD
-echo "host-written" > .coasts/feature-01/host-marker.txt
+echo "host-written" > .worktrees/feature-01/host-marker.txt
 INNER_CONTENT=$("$COAST" exec dev-slot -- cat /workspace/host-marker.txt 2>&1)
 assert_eq "$INNER_CONTENT" "host-written" "host write visible inside DinD"
 pass "Bidirectional sync confirmed: host worktree ↔ DinD"
 
 # Clean up test files
-rm -f .coasts/feature-01/hmr-test-file.txt .coasts/feature-01/host-marker.txt
+rm -f .worktrees/feature-01/hmr-test-file.txt .worktrees/feature-01/host-marker.txt
 
 # ============================================================
 # Test D: Assign back to main — /workspace switches back
@@ -136,7 +136,7 @@ echo ""
 echo "=== Test D: coast assign dev-slot --worktree main ==="
 
 ASSIGN_BACK=$("$COAST" assign dev-slot --worktree main 2>&1)
-assert_contains "$ASSIGN_BACK" "Assigned branch" "assign back to main succeeds"
+assert_contains "$ASSIGN_BACK" "Assigned worktree" "assign back to main succeeds"
 wait_for_healthy "$DYN_PORT" 60 || fail "dev-slot not healthy after assign back to main"
 pass "dev-slot healthy after assign back to main"
 

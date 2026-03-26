@@ -114,7 +114,7 @@ if $COAST ls 2>/dev/null; then
 fi
 pass "daemon killed"
 
-rm -rf .coasts/feature-v2
+rm -rf .worktrees/feature-v2
 pass "deleted .coasts/feature-v2 while daemon was down"
 
 # ============================================================
