@@ -95,8 +95,12 @@ tests:
     cached_seconds: 133
   test_dangling_containers:
     script: integrated-examples/test_dangling_containers.sh
+    status: pass
+    cached_seconds: 208
   test_restart_services:
     script: integrated-examples/test_restart_services.sh
+    status: pass
+    cached_seconds: 176
   test_nuke:
     script: integrated-examples/test_nuke.sh
   test_update:
