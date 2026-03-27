@@ -52,6 +52,8 @@ tests:
     script: integrated-examples/test_assign.sh
   test_checkout:
     script: integrated-examples/test_checkout.sh
+    status: pass
+    cached_seconds: 334
   test_secrets:
     script: integrated-examples/test_secrets.sh
     status: pass
