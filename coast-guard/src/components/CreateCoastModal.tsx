@@ -11,7 +11,7 @@ interface CreateCoastModalProps {
   readonly builds?: readonly BuildSummary[];
   readonly worktrees: readonly string[];
   readonly occupiedWorktrees: ReadonlySet<string>;
-  readonly currentBranch?: string | null;
+  readonly currentBranch?: string | null | undefined;
   readonly onCreated: (name: string, worktree: string | null) => void;
   readonly onError?: (msg: string) => void;
   readonly onClose: () => void;
