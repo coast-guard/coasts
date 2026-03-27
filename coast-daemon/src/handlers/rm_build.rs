@@ -23,7 +23,6 @@ fn emit(
 }
 
 /// Handle an rm-build request with optional streaming progress.
-#[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 pub async fn handle(
     req: RmBuildRequest,
     state: &AppState,
@@ -63,72 +62,8 @@ pub async fn handle(
         build_ids: Vec::new(),
     });
 
-    let (containers_removed, volumes_removed, images_removed) = match &state.docker {
-        Some(docker) => {
-            emit(
-                &progress,
-                BuildProgressEvent::started("Removing containers", 2, total),
-            );
-            let c = remove_project_containers(docker, &project).await;
-            emit(
-                &progress,
-                BuildProgressEvent::ok_with_detail(
-                    "Removing containers",
-                    2,
-                    total,
-                    format!("{c} removed"),
-                ),
-            );
-
-            emit(
-                &progress,
-                BuildProgressEvent::started("Removing volumes", 3, total),
-            );
-            let v = remove_project_volumes(docker, &project).await;
-            emit(
-                &progress,
-                BuildProgressEvent::ok_with_detail(
-                    "Removing volumes",
-                    3,
-                    total,
-                    format!("{v} removed"),
-                ),
-            );
-
-            emit(
-                &progress,
-                BuildProgressEvent::started("Removing images", 4, total),
-            );
-            let i = remove_project_images(docker, &project).await;
-            emit(
-                &progress,
-                BuildProgressEvent::ok_with_detail(
-                    "Removing images",
-                    4,
-                    total,
-                    format!("{i} removed"),
-                ),
-            );
-
-            (c, v, i)
-        }
-        None => {
-            emit(
-                &progress,
-                BuildProgressEvent::skip("Removing containers", 2, total),
-            );
-            emit(
-                &progress,
-                BuildProgressEvent::skip("Removing volumes", 3, total),
-            );
-            emit(
-                &progress,
-                BuildProgressEvent::skip("Removing images", 4, total),
-            );
-            warn!("Docker client not available, skipping resource cleanup");
-            (0, 0, 0)
-        }
-    };
+    let (containers_removed, volumes_removed, images_removed) =
+        remove_docker_resources(state.docker.as_ref(), &project, &progress, total).await;
 
     emit(
         &progress,
@@ -175,7 +110,6 @@ pub async fn handle(
 }
 
 /// Remove specific builds by ID (just their directories and image tags).
-#[allow(clippy::cognitive_complexity)]
 async fn handle_remove_specific_builds(
     req: RmBuildRequest,
     state: &AppState,
@@ -246,37 +180,12 @@ async fn handle_remove_specific_builds(
         );
 
         let is_latest = latest_target.as_deref() == Some(build_id.as_str());
-
-        let build_dir = project_dir.join(build_id);
-        if build_dir.exists() {
-            match std::fs::remove_dir_all(&build_dir) {
-                Ok(_) => {
-                    info!(build_id = %build_id, "removed build directory");
-                    builds_removed += 1;
-
-                    if is_latest {
-                        let symlink_path = project_dir.join("latest");
-                        if symlink_path.symlink_metadata().is_ok() {
-                            let _ = std::fs::remove_file(&symlink_path);
-                            info!("removed stale 'latest' symlink after deleting latest build");
-                        }
-                    }
-                }
-                Err(e) => {
-                    warn!(build_id = %build_id, error = %e, "failed to remove build directory");
-                }
-            }
+        if remove_build_dir(&project_dir, build_id, is_latest) {
+            builds_removed += 1;
         }
-
         if let Some(docker) = &state.docker {
-            let tag = format!("coast-image/{}:{}", project, build_id);
-            let rm_opts = bollard::image::RemoveImageOptions {
-                force: false,
-                noprune: false,
-            };
-            if docker.remove_image(&tag, Some(rm_opts), None).await.is_ok() {
+            if remove_build_image(docker, project, build_id).await {
                 images_removed += 1;
-                info!(tag = %tag, "removed Docker image tag");
             }
         }
 
@@ -354,6 +263,103 @@ fn build_in_use_map(
         }
     }
     map
+}
+
+/// Remove Docker containers, volumes, and images for a project, with progress.
+async fn remove_docker_resources(
+    docker: Option<&bollard::Docker>,
+    project: &str,
+    progress: &Option<tokio::sync::mpsc::Sender<BuildProgressEvent>>,
+    total: u32,
+) -> (usize, usize, usize) {
+    let Some(docker) = docker else {
+        emit(
+            progress,
+            BuildProgressEvent::skip("Removing containers", 2, total),
+        );
+        emit(
+            progress,
+            BuildProgressEvent::skip("Removing volumes", 3, total),
+        );
+        emit(
+            progress,
+            BuildProgressEvent::skip("Removing images", 4, total),
+        );
+        warn!("Docker client not available, skipping resource cleanup");
+        return (0, 0, 0);
+    };
+
+    emit(
+        progress,
+        BuildProgressEvent::started("Removing containers", 2, total),
+    );
+    let c = remove_project_containers(docker, project).await;
+    emit(
+        progress,
+        BuildProgressEvent::ok_with_detail("Removing containers", 2, total, format!("{c} removed")),
+    );
+
+    emit(
+        progress,
+        BuildProgressEvent::started("Removing volumes", 3, total),
+    );
+    let v = remove_project_volumes(docker, project).await;
+    emit(
+        progress,
+        BuildProgressEvent::ok_with_detail("Removing volumes", 3, total, format!("{v} removed")),
+    );
+
+    emit(
+        progress,
+        BuildProgressEvent::started("Removing images", 4, total),
+    );
+    let i = remove_project_images(docker, project).await;
+    emit(
+        progress,
+        BuildProgressEvent::ok_with_detail("Removing images", 4, total, format!("{i} removed")),
+    );
+
+    (c, v, i)
+}
+
+/// Remove a single build directory and clean up the "latest" symlink if needed.
+fn remove_build_dir(project_dir: &std::path::Path, build_id: &str, is_latest: bool) -> bool {
+    let build_dir = project_dir.join(build_id);
+    if !build_dir.exists() {
+        return false;
+    }
+    match std::fs::remove_dir_all(&build_dir) {
+        Ok(_) => {
+            info!(build_id = %build_id, "removed build directory");
+            if is_latest {
+                let symlink_path = project_dir.join("latest");
+                if symlink_path.symlink_metadata().is_ok() {
+                    let _ = std::fs::remove_file(&symlink_path);
+                    info!("removed stale 'latest' symlink after deleting latest build");
+                }
+            }
+            true
+        }
+        Err(e) => {
+            warn!(build_id = %build_id, error = %e, "failed to remove build directory");
+            false
+        }
+    }
+}
+
+/// Remove the Docker image tag for a specific build.
+async fn remove_build_image(docker: &bollard::Docker, project: &str, build_id: &str) -> bool {
+    let tag = format!("coast-image/{}:{}", project, build_id);
+    let rm_opts = bollard::image::RemoveImageOptions {
+        force: false,
+        noprune: false,
+    };
+    if docker.remove_image(&tag, Some(rm_opts), None).await.is_ok() {
+        info!(tag = %tag, "removed Docker image tag");
+        true
+    } else {
+        false
+    }
 }
 
 /// Remove all containers labelled with `coast.project={project}`.
@@ -752,5 +758,62 @@ mod tests {
             "coast-image/my-app:abc123".to_string(),
         ];
         assert!(image_matches_project(&tags, "my-app"));
+    }
+
+    // --- remove_build_dir tests ---
+
+    #[test]
+    fn test_remove_build_dir_removes_existing_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project_dir = tmp.path();
+        let build_dir = project_dir.join("abc123");
+        std::fs::create_dir_all(&build_dir).unwrap();
+        std::fs::write(build_dir.join("file.txt"), "data").unwrap();
+
+        assert!(remove_build_dir(project_dir, "abc123", false));
+        assert!(!build_dir.exists());
+    }
+
+    #[test]
+    fn test_remove_build_dir_nonexistent_returns_false() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(!remove_build_dir(tmp.path(), "no-such-build", false));
+    }
+
+    #[test]
+    fn test_remove_build_dir_cleans_latest_symlink() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project_dir = tmp.path();
+        let build_dir = project_dir.join("abc123");
+        std::fs::create_dir_all(&build_dir).unwrap();
+
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("abc123", project_dir.join("latest")).unwrap();
+
+        assert!(remove_build_dir(project_dir, "abc123", true));
+        assert!(!build_dir.exists());
+        #[cfg(unix)]
+        assert!(
+            !project_dir.join("latest").symlink_metadata().is_ok(),
+            "latest symlink should be removed"
+        );
+    }
+
+    #[test]
+    fn test_remove_build_dir_not_latest_keeps_symlink() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project_dir = tmp.path();
+        let build_dir = project_dir.join("old-build");
+        std::fs::create_dir_all(&build_dir).unwrap();
+
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("current-build", project_dir.join("latest")).unwrap();
+
+        assert!(remove_build_dir(project_dir, "old-build", false));
+        #[cfg(unix)]
+        assert!(
+            project_dir.join("latest").symlink_metadata().is_ok(),
+            "latest symlink should be kept for non-latest builds"
+        );
     }
 }
