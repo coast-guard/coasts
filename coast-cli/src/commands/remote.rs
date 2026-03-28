@@ -90,7 +90,9 @@ pub async fn execute(args: &RemoteArgs) -> Result<()> {
             }))
         }
         RemoteAction::Remove { name } => {
-            Request::Remote(RemoteRequest::Remove(RemoteRemoveRequest { name: name.clone() }))
+            Request::Remote(RemoteRequest::Remove(RemoteRemoveRequest {
+                name: name.clone(),
+            }))
         }
         RemoteAction::List => Request::Remote(RemoteRequest::List(RemoteListRequest {})),
         RemoteAction::Setup { name, force } => {
@@ -99,11 +101,13 @@ pub async fn execute(args: &RemoteArgs) -> Result<()> {
                 force: *force,
             }))
         }
-        RemoteAction::Ping { name } => {
-            Request::Remote(RemoteRequest::Ping(RemotePingRequest { name: name.clone() }))
-        }
+        RemoteAction::Ping { name } => Request::Remote(RemoteRequest::Ping(RemotePingRequest {
+            name: name.clone(),
+        })),
         RemoteAction::Connect { name } => {
-            Request::Remote(RemoteRequest::Connect(RemoteConnectRequest { name: name.clone() }))
+            Request::Remote(RemoteRequest::Connect(RemoteConnectRequest {
+                name: name.clone(),
+            }))
         }
         RemoteAction::Disconnect { name } => {
             Request::Remote(RemoteRequest::Disconnect(RemoteDisconnectRequest {
@@ -142,17 +146,17 @@ fn handle_remote_response(resp: RemoteResponse) -> Result<()> {
             if r.remotes.is_empty() {
                 println!("No remotes configured.");
                 println!();
-                println!("Add a remote with: {} remote add <name> <user@host>", "coast".cyan());
+                println!(
+                    "Add a remote with: {} remote add <name> <user@host>",
+                    "coast".cyan()
+                );
             } else {
                 println!("{}", format_remotes_table(&r.remotes));
             }
         }
         RemoteResponse::Setup(r) => {
             if r.success {
-                let version_info = r
-                    .version
-                    .map(|v| format!(" (v{})", v))
-                    .unwrap_or_default();
+                let version_info = r.version.map(|v| format!(" (v{})", v)).unwrap_or_default();
                 println!(
                     "{} {}{}",
                     "✓".green().bold(),
@@ -172,12 +176,7 @@ fn handle_remote_response(resp: RemoteResponse) -> Result<()> {
                     .local_port
                     .map(|p| format!(" (local port: {})", p))
                     .unwrap_or_default();
-                println!(
-                    "{} {}{}",
-                    "✓".green().bold(),
-                    r.message,
-                    port_info.dimmed()
-                );
+                println!("{} {}{}", "✓".green().bold(), r.message, port_info.dimmed());
             } else {
                 bail!("{}", r.message);
             }
@@ -218,7 +217,13 @@ fn print_ping_result(r: &coast_core::protocol::RemotePingResponse) -> Result<()>
             .map(|ms| format!("{}ms", ms))
             .unwrap_or_else(|| "?".to_string());
 
-        println!("{} {} | {} | latency: {}", "✓".green().bold(), ssh_status, daemon_status, latency);
+        println!(
+            "{} {} | {} | latency: {}",
+            "✓".green().bold(),
+            ssh_status,
+            daemon_status,
+            latency
+        );
         Ok(())
     } else {
         let error = r.error.as_deref().unwrap_or("Unknown error");
@@ -269,10 +274,7 @@ fn format_remotes_table(remotes: &[RemoteInfo]) -> String {
     ));
 
     for remote in remotes {
-        let status = remote
-            .tunnel_status
-            .as_deref()
-            .unwrap_or("disconnected");
+        let status = remote.tunnel_status.as_deref().unwrap_or("disconnected");
 
         let status_colored = match status {
             "connected" => "connected".green().to_string(),
@@ -306,13 +308,7 @@ mod tests {
 
     #[test]
     fn test_remote_add_args() {
-        let cli = TestCli::try_parse_from([
-            "test",
-            "add",
-            "staging",
-            "user@example.com",
-        ])
-        .unwrap();
+        let cli = TestCli::try_parse_from(["test", "add", "staging", "user@example.com"]).unwrap();
         match cli.args.action {
             RemoteAction::Add {
                 name,

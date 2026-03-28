@@ -126,14 +126,21 @@ impl TunnelManager {
 
         // SSH options for non-interactive, stable tunneling
         cmd.args([
-            "-o", "StrictHostKeyChecking=accept-new",
-            "-o", "BatchMode=yes",
-            "-o", "ServerAliveInterval=30",
-            "-o", "ServerAliveCountMax=3",
-            "-o", "ExitOnForwardFailure=yes",
+            "-o",
+            "StrictHostKeyChecking=accept-new",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ServerAliveInterval=30",
+            "-o",
+            "ServerAliveCountMax=3",
+            "-o",
+            "ExitOnForwardFailure=yes",
             "-N", // Don't execute remote command
-            "-L", &format!("{}:localhost:{}", local_port, REMOTE_DAEMON_PORT),
-            "-p", &remote.port.to_string(),
+            "-L",
+            &format!("{}:localhost:{}", local_port, REMOTE_DAEMON_PORT),
+            "-p",
+            &remote.port.to_string(),
             &format!("{}@{}", remote.user, remote.host),
         ]);
 

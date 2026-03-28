@@ -131,9 +131,7 @@ async fn handle_remote_list(state: &Arc<AppState>) -> Response {
                         .map(String::from);
 
                     // Count projects using this remote
-                    let project_count = db
-                        .count_projects_for_remote(&r.name)
-                        .unwrap_or(0) as u32;
+                    let project_count = db.count_projects_for_remote(&r.name).unwrap_or(0) as u32;
 
                     RemoteInfo {
                         name: r.name,
@@ -205,11 +203,7 @@ async fn handle_remote_setup(req: RemoteSetupRequest, state: &Arc<AppState>) -> 
     match setup.full_setup(&remote, None).await {
         Ok(_) => {
             // Get the installed version
-            let version = setup
-                .check_coastd(&remote)
-                .await
-                .ok()
-                .flatten();
+            let version = setup.check_coastd(&remote).await.ok().flatten();
 
             Response::Remote(RemoteResponse::Setup(RemoteSetupResponse {
                 success: true,
@@ -444,7 +438,10 @@ async fn handle_sync_pause(req: SyncPauseRequest, _state: &Arc<AppState>) -> Res
     // TODO: Implement pause sync with Mutagen
     Response::Sync(SyncResponse::Pause(SyncPauseResponse {
         paused: false,
-        message: format!("Sync pause not yet implemented for project '{}'", req.project),
+        message: format!(
+            "Sync pause not yet implemented for project '{}'",
+            req.project
+        ),
     }))
 }
 
@@ -452,6 +449,9 @@ async fn handle_sync_resume(req: SyncResumeRequest, _state: &Arc<AppState>) -> R
     // TODO: Implement resume sync with Mutagen
     Response::Sync(SyncResponse::Resume(SyncResumeResponse {
         resumed: false,
-        message: format!("Sync resume not yet implemented for project '{}'", req.project),
+        message: format!(
+            "Sync resume not yet implemented for project '{}'",
+            req.project
+        ),
     }))
 }

@@ -179,7 +179,12 @@ impl RemoteSetup {
     }
 
     /// Copy a file to the remote via SCP.
-    async fn scp_to_remote(&self, remote: &Remote, local_path: &str, remote_path: &str) -> Result<()> {
+    async fn scp_to_remote(
+        &self,
+        remote: &Remote,
+        local_path: &str,
+        remote_path: &str,
+    ) -> Result<()> {
         let mut cmd = Command::new("scp");
 
         // Add SSH key if specified
@@ -226,7 +231,7 @@ impl RemoteSetup {
     /// Check SSH connectivity to the remote.
     pub async fn check_connectivity(&self, remote: &Remote) -> Result<bool> {
         self.report("Checking SSH connectivity...");
-        
+
         match self.ssh_exec(remote, "echo ok").await {
             Ok(output) if output.trim() == "ok" => {
                 info!(remote = %remote.name, "SSH connectivity confirmed");
@@ -247,7 +252,10 @@ impl RemoteSetup {
     pub async fn check_docker(&self, remote: &Remote) -> Result<bool> {
         self.report("Checking Docker installation...");
 
-        match self.ssh_exec(remote, "docker version --format '{{.Server.Version}}'").await {
+        match self
+            .ssh_exec(remote, "docker version --format '{{.Server.Version}}'")
+            .await
+        {
             Ok(version) => {
                 let version = version.trim();
                 info!(remote = %remote.name, version = %version, "Docker is installed");
@@ -279,7 +287,10 @@ impl RemoteSetup {
         "#;
 
         let exit_code = self
-            .ssh_exec_streaming(remote, &format!("bash -c '{}'", install_script.replace('\n', " ")))
+            .ssh_exec_streaming(
+                remote,
+                &format!("bash -c '{}'", install_script.replace('\n', " ")),
+            )
             .await?;
 
         if exit_code != 0 {
@@ -296,7 +307,16 @@ impl RemoteSetup {
     pub async fn check_coastd(&self, remote: &Remote) -> Result<Option<String>> {
         self.report("Checking coastd installation...");
 
-        match self.ssh_exec(remote, &format!("{} --version 2>/dev/null || echo 'not-found'", REMOTE_COASTD_PATH)).await {
+        match self
+            .ssh_exec(
+                remote,
+                &format!(
+                    "{} --version 2>/dev/null || echo 'not-found'",
+                    REMOTE_COASTD_PATH
+                ),
+            )
+            .await
+        {
             Ok(output) => {
                 let output = output.trim();
                 if output == "not-found" || output.is_empty() {
@@ -352,7 +372,9 @@ impl RemoteSetup {
             path = REMOTE_COASTD_PATH,
         );
 
-        let output = self.ssh_exec(remote, &install_cmd.replace('\n', " ")).await?;
+        let output = self
+            .ssh_exec(remote, &install_cmd.replace('\n', " "))
+            .await?;
         let version = output.lines().last().unwrap_or("unknown").trim();
 
         info!(remote = %remote.name, version = %version, "coastd installed");
@@ -529,7 +551,8 @@ WantedBy=multi-user.target
             // Need to verify Docker is working after install
             if !self.check_docker(remote).await? {
                 return Err(CoastError::Remote {
-                    message: "Docker installation completed but Docker is not responding".to_string(),
+                    message: "Docker installation completed but Docker is not responding"
+                        .to_string(),
                 });
             }
         }
@@ -598,13 +621,11 @@ WantedBy=multi-user.target
             sudo systemctl daemon-reload
             sudo rm -f {}
             "#,
-            SYSTEMD_SERVICE_NAME,
-            SYSTEMD_SERVICE_NAME,
-            SYSTEMD_SERVICE_NAME,
-            REMOTE_COASTD_PATH,
+            SYSTEMD_SERVICE_NAME, SYSTEMD_SERVICE_NAME, SYSTEMD_SERVICE_NAME, REMOTE_COASTD_PATH,
         );
 
-        self.ssh_exec(remote, &uninstall_cmd.replace('\n', " ")).await?;
+        self.ssh_exec(remote, &uninstall_cmd.replace('\n', " "))
+            .await?;
 
         self.report("Uninstall completed successfully!");
         info!(remote = %remote.name, "coastd uninstalled");
