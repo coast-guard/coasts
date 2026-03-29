@@ -57,7 +57,7 @@ Dynamic ports let you peek at any Coast without checking it out. You can open `l
 └──────────────────────────────────────────────────┘
 ```
 
-Switching [checkout](CHECKOUT.md) is instant — Coast kills and respawns lightweight `socat` forwarders. No containers are restarted.
+Switching [checkout](CHECKOUT.md) is instant. Coast kills and respawns lightweight `socat` forwarders. No containers are restarted.
 
 ## Dynamic Port Environment Variables
 
@@ -67,5 +67,5 @@ These are useful when a service needs to know its externally-reachable port, for
 
 ## See Also
 
-- [Primary Port & DNS](PRIMARY_PORT_AND_DNS.md) — quick-links, subdomain routing, and URL templates
-- [Dynamic Port Environment Variables](DYNAMIC_PORT_ENVIRONMENT_VARIABLES.md) — using `WEB_DYNAMIC_PORT` and friends in service commands
+- [Primary Port & DNS](PRIMARY_PORT_AND_DNS.md) - quick-links, subdomain routing, and URL templates
+- [Dynamic Port Environment Variables](DYNAMIC_PORT_ENVIRONMENT_VARIABLES.md) - using `WEB_DYNAMIC_PORT` and related variables in service commands

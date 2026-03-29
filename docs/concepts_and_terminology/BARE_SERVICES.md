@@ -1,6 +1,6 @@
 # Bare Services
 
-If you can containerize your project, you should. Bare services exist for projects that have not been containerized yet and where adding a `Dockerfile` and `docker-compose.yml` is not practical in the short term. They are a stepping stone, not a destination.
+If you can containerize your project, you should. Bare services exist for projects that have not been containerized yet and where adding a `Dockerfile` and `docker-compose.yml` is not practical in the short term.
 
 Instead of a `docker-compose.yml` orchestrating containerized services, bare services let you define shell commands in your Coastfile and Coast runs them as plain processes with a lightweight supervisor inside the Coast container.
 
@@ -20,7 +20,7 @@ Bare services give you none of that. Your processes share the same filesystem, c
 
 - You are adopting Coast for a project that has never been containerized and you want to start getting value from worktree isolation and port management immediately
 - Your project is a single-process tool or CLI where a Dockerfile would be overkill
-- You want to iterate on containerizing gradually — start with bare services, move to compose later
+- You want to containerize gradually, starting with bare services and moving to compose later
 
 ## Configuration
 
@@ -83,13 +83,13 @@ Install commands run sequentially. If any install command fails, the service doe
 
 ### Restart Policies
 
-- **`no`** — the service runs once. If it exits, it stays dead. Use this for one-shot tasks or services you want to manage manually.
-- **`on-failure`** — restarts the service if it exits with a non-zero code. Successful exits (code 0) are left alone. Uses exponential backoff from 1 second up to 30 seconds, and gives up after 10 consecutive crashes.
-- **`always`** — restarts on any exit, including success. Same backoff as `on-failure`. Use this for long-running servers that should never stop.
+- **`no`**: the service runs once. If it exits, it stays dead. Use this for one-shot tasks or services you want to manage manually.
+- **`on-failure`**: restarts the service if it exits with a non-zero code. Successful exits (code 0) are left alone. Uses exponential backoff from 1 second up to 30 seconds, and gives up after 10 consecutive crashes.
+- **`always`**: restarts on any exit, including success. Same backoff as `on-failure`. Use this for long-running servers that should never stop.
 
 If a service runs for more than 30 seconds before crashing, the retry counter and backoff reset — the assumption is that it was healthy for a while and the crash is a new problem.
 
-## How It Works Under the Hood
+## How It Works
 
 ```text
 ┌─── Coast: dev-1 ──────────────────────────────────────┐
@@ -142,7 +142,7 @@ This is equivalent to what happens with compose — `docker compose down`, branc
 
 ## Limitations
 
-- **No health checks.** Coast cannot wait for a bare service to be "healthy" the way it can with a compose service that defines a health check. It starts the process and hopes for the best.
+- **No health checks.** Coast cannot wait for a bare service to be "healthy" the way it can with a compose service that defines a health check. Coast starts the process but has no way to know when it is ready.
 - **No isolation between services.** All processes share the same filesystem and process namespace inside the Coast container. A misbehaving service can affect others.
 - **No build caching.** Docker Compose builds are cached layer by layer. Bare service `install` commands run from scratch on every assign.
 - **Crash recovery is basic.** The restart policy uses a shell loop with exponential backoff. It is not a process supervisor like systemd or supervisord.

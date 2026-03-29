@@ -44,7 +44,7 @@ The actual port numbers are assigned at `coast run` time and differ per instance
 
 ## When to Use Them
 
-The most common use case is configuring services that embed their own URL in responses — auth callbacks, OAuth redirect URIs, CORS origins, or webhook URLs. These services need to know the port that external clients use, not the internal port they listen on.
+The most common use case is configuring services that embed their own URL in responses: auth callbacks, OAuth redirect URIs, CORS origins, or webhook URLs. These services need to know the port that external clients use, not the internal port they listen on.
 
 For example, a Next.js application using NextAuth needs `AUTH_URL` set to the externally-reachable address. Inside the Coast, Next.js always listens on port 3000, but the host-side port is dynamic:
 
@@ -73,5 +73,5 @@ The values do not change for the lifetime of the instance. If you stop and start
 
 ## See Also
 
-- [Ports](PORTS.md) — canonical vs dynamic ports and how checkout swaps between them
-- [Primary Port & DNS](PRIMARY_PORT_AND_DNS.md) — subdomain routing for cookie isolation across instances
+- [Ports](PORTS.md) - canonical vs dynamic ports and how checkout swaps between them
+- [Primary Port & DNS](PRIMARY_PORT_AND_DNS.md) - subdomain routing and cookie isolation across instances

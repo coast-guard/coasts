@@ -1,6 +1,6 @@
 # Bare Service Optimization
 
-[Bare services](BARE_SERVICES.md) run as plain processes inside the Coast container. Because there are no Docker layers or image caches to lean on, startup and branch-switch performance depends on how you structure your `install` commands, caching, and assign strategies. This page covers the techniques that make bare-service Coasts fast.
+[Bare services](BARE_SERVICES.md) run as plain processes inside the Coast container. Without Docker layers or image caches, startup and branch-switch performance depends on how you structure your `install` commands, caching, and assign strategies.
 
 ## Fast Install Commands
 
@@ -123,6 +123,6 @@ Setting the default to `none` means infrastructure services are never touched on
 
 ## See Also
 
-- [Bare Services](BARE_SERVICES.md) — the full bare services reference
-- [Performance Optimizations](PERFORMANCE_OPTIMIZATIONS.md) — general performance tuning including `exclude_paths` and `rebuild_triggers`
-- [Dynamic Port Environment Variables](DYNAMIC_PORT_ENVIRONMENT_VARIABLES.md) — using `WEB_DYNAMIC_PORT` and friends in commands
+- [Bare Services](BARE_SERVICES.md) - the full bare services reference
+- [Performance Optimizations](PERFORMANCE_OPTIMIZATIONS.md) - general performance tuning including `exclude_paths` and `rebuild_triggers`
+- [Dynamic Port Environment Variables](DYNAMIC_PORT_ENVIRONMENT_VARIABLES.md) - using `WEB_DYNAMIC_PORT` and related variables in commands
