@@ -4,6 +4,13 @@ Example projects and integration tests for coast's features: worktrees, assign, 
 
 These tests are **not run in CI**. They require a running Docker daemon, socat, and fully built release binaries. They are designed for local development and manual verification before releases.
 
+> **DinD runner available:** Most of these tests can now run inside a Docker-in-Docker container instead of directly on the host. This avoids needing socat or a host daemon and works on any platform with Docker. See [`dindind/README.md`](../dindind/README.md) for usage and [`dindind/integration.yaml`](../dindind/integration.yaml) for the list of ported tests with average run times.
+>
+> ```bash
+> make run-dind-integration TEST=test_assign    # run one test in DinD
+> make run-dind-integration TEST=all            # run all ported tests
+> ```
+
 ## Why this pattern?
 
 Coast creates git worktrees for each instance, so every example project needs its own independent git repository. The project files live under `projects/` (gitignored), and a setup script initializes each one as a standalone git repo with feature branches for testing.

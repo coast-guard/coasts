@@ -1,18 +1,35 @@
 # dindind
 
-Docker-in-Docker integration test environment and install script test suite.
+Docker-in-Docker integration test environment, install script test suite, and macOS VM tests.
 
-These tests can only be run on macOS (Apple Silicon).
+## DinD Integration Tests
 
-## Tests
+The main integration tests run inside a privileged Docker container with Docker-in-Docker. They work on any platform with Docker (Linux, macOS, Windows with Docker Desktop).
+
+Test scripts live in `integrated-examples/` and the DinD-ported subset is listed in `integration.yaml` with average run times.
+
+```bash
+make run-dind-integration TEST=test_bare_services    # run one test
+make run-dind-integration TEST=all                   # run all tests
+```
+
+See `integration.yaml` for the full list of available tests and their status.
+
+### Dependencies
+
+Docker only. The runner builds its own images from `lib/base.Dockerfile` and `lib/integration.Dockerfile`.
+
+## Tart Tests (macOS only)
+
+The `tests/` directory contains tests that require a real macOS environment (e.g., install script behavior, launchd integration). These use Tart VMs and can only be run on macOS (Apple Silicon).
 
 ### test_install
 
 Tests the Coast install script (`external/install.sh`) on both Linux and macOS.
 
 ```bash
-./dindind/tests/test_install.sh linux    # Ubuntu DinD container
-./dindind/tests/test_install.sh macos    # Tart macOS VM
+./dindind/tests/test_install.sh linux    # Ubuntu DinD container (any platform)
+./dindind/tests/test_install.sh macos    # Tart macOS VM (Apple Silicon only)
 ```
 
 Assertions:
@@ -24,11 +41,7 @@ Assertions:
 - `eval` vs `| sh` invocation behavior
 - Docker-not-installed warning fires when Docker is absent
 
-### Dependencies
-
-**Linux target** requires Docker only (uses the existing `dindind/lib/base.Dockerfile`).
-
-**macOS target** requires two additional tools:
+### Tart Dependencies
 
 #### tart
 

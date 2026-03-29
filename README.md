@@ -180,9 +180,16 @@ Runs `cargo test --workspace` across all crates.
 
 ### Integration tests
 
-Integration tests live in `integrated-examples/` and exercise full end-to-end coast workflows. They are useful for validating real behavior but come with practical costs: they require Docker running, socat installed, and a release build. Each test spins up real DinD containers, so a full run can consume significant disk space and you may need to `docker system prune` periodically to reclaim it.
+Integration tests live in `integrated-examples/` and exercise full end-to-end coast workflows. Most tests can run inside a Docker-in-Docker container via the DinD runner, which only requires Docker:
 
-For the full list of tests, prerequisites, and cleanup guidance, see the [integrated-examples README](integrated-examples/README.md).
+```bash
+make run-dind-integration TEST=test_assign    # run one test
+make run-dind-integration TEST=all            # run all ported tests
+```
+
+Tests can also run directly on the host (requires Docker, socat, and a release build). Each test spins up real DinD containers, so a full run can consume significant disk space -- run `docker system prune` periodically to reclaim it.
+
+For the full list of tests and average run times, see [`dindind/integration.yaml`](dindind/integration.yaml). For host-mode usage and prerequisites, see the [integrated-examples README](integrated-examples/README.md).
 
 Quick usage:
 
