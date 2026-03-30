@@ -186,9 +186,10 @@ mount = "/data/db"
 
 ## Conventions
 
-- ファイル名は `Coastfile` でなければならず（大文字の C、拡張子なし）、プロジェクトルートに配置する必要があります。
-- 型付きバリアントは `Coastfile.{type}` というパターンを使います。たとえば `Coastfile.light`、`Coastfile.snap` です。[Inheritance and Types](INHERITANCE.md) を参照してください。
-- 予約名 `Coastfile.default` は使用できません。
+- ファイル名は `Coastfile` でなければならず（大文字の C、拡張子なし）、プロジェクトルートに配置する必要があります。エディタのシンタックスハイライト用に、任意で `.toml` 拡張子（`Coastfile.toml`）を付けることもできます。どちらの形式も同等です。
+- 型付きバリアントは `Coastfile.{type}` というパターンを使います。たとえば `Coastfile.light`、`Coastfile.snap` です。`.toml` 接尾辞も受け入れられます。つまり、`Coastfile.light.toml` は `Coastfile.light` と同等です。[Inheritance and Types](INHERITANCE.md) を参照してください。
+- **競合時のルール:** `Coastfile` と `Coastfile.toml` の両方が存在する場合（または `Coastfile.light` と `Coastfile.light.toml` の両方が存在する場合）、`.toml` バリアントが優先されます。
+- 予約名 `Coastfile.default` および `Coastfile.toml`（型名として）は使用できません。`"default"` と `"toml"` は予約された型名です。
 - 全体を通して TOML 構文を使用します。すべてのセクションヘッダーは `[brackets]` を使用し、名前付きエントリは `[section.name]` を使用します（array-of-tables ではありません）。
 - 同じ Coastfile 内で `compose` と `[services]` の両方を使うことはできません。どちらか一方を選んでください。
 - 相対パス（`compose`、`root` など）は、Coastfile の親ディレクトリを基準に解決されます。

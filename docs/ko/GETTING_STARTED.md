@@ -47,6 +47,8 @@ my-project/
 └── ...
 ```
 
+편집기 구문 강조를 위해 파일 이름을 `Coastfile.toml`로 지정할 수도 있습니다 — 두 형식은 동일합니다. 둘 다 존재하면 `.toml` 변형이 우선합니다.
+
 `Coastfile`은 기존 로컬 개발 리소스를 가리키고 Coasts 전용 구성을 추가합니다 — 전체 스키마는 [Coastfiles 문서](coastfiles/README.md)를 참고하세요:
 
 ```toml

@@ -1,8 +1,8 @@
 # Herança, Tipos e Composição
 
-Os Coastfiles suportam herança (`extends`), composição de fragmentos (`includes`), remoção de itens (`[unset]`) e remoção no nível do compose (`[omit]`). Juntos, eles permitem que você defina uma configuração base uma vez e crie variantes enxutas para diferentes fluxos de trabalho — executores de teste, frontends leves, stacks inicializadas por snapshot — sem duplicar configuração.
+Os Coastfiles oferecem suporte a herança (`extends`), composição de fragmentos (`includes`), remoção de itens (`[unset]`) e exclusão em nível de compose (`[omit]`). Juntos, esses recursos permitem definir uma configuração base uma vez e criar variantes enxutas para diferentes fluxos de trabalho — executores de teste, frontends leves, stacks inicializadas por snapshot — sem duplicar configuração.
 
-Para uma visão geral de nível mais alto de como Coastfiles tipados se encaixam no sistema de build, veja [Coastfile Types](../concepts_and_terminology/COASTFILE_TYPES.md) e [Builds](../concepts_and_terminology/BUILDS.md).
+Para uma visão geral mais abrangente de como Coastfiles tipados se encaixam no sistema de build, consulte [Coastfile Types](../concepts_and_terminology/COASTFILE_TYPES.md) e [Builds](../concepts_and_terminology/BUILDS.md).
 
 ## Tipos de Coastfile
 
@@ -13,7 +13,15 @@ O Coastfile base é sempre chamado `Coastfile`. Variantes tipadas usam o padrão
 - `Coastfile.snap` — tipo `snap`
 - `Coastfile.ci.minimal` — tipo `ci.minimal`
 
-O nome `Coastfile.default` é reservado e não é permitido. Um ponto final (`Coastfile.`) também é inválido.
+Qualquer Coastfile pode ter uma extensão opcional `.toml` para realce de sintaxe no editor. O sufixo `.toml` é removido antes de extrair o tipo:
+
+- `Coastfile.toml` = `Coastfile` (tipo padrão)
+- `Coastfile.light.toml` = `Coastfile.light` (tipo `light`)
+- `Coastfile.ci.minimal.toml` = `Coastfile.ci.minimal` (tipo `ci.minimal`)
+
+Se existirem tanto a forma simples quanto a forma `.toml` (por exemplo, `Coastfile` e `Coastfile.toml`), a variante `.toml` tem precedência.
+
+Os nomes `Coastfile.default` e `"toml"` (como um tipo) são reservados e não são permitidos. Um ponto final (`Coastfile.`) também é inválido.
 
 Faça build e execute variantes tipadas com `--type`:
 
@@ -22,18 +30,18 @@ coast build --type light
 coast run test-1 --type light
 ```
 
-Cada tipo tem seu próprio pool de builds independente. Um build com `--type light` não interfere com builds padrão.
+Cada tipo tem seu próprio pool de build independente. Um build com `--type light` não interfere nos builds padrão.
 
 ## `extends`
 
-Um Coastfile tipado pode herdar de um pai usando `extends` na seção `[coast]`. O pai é totalmente interpretado primeiro, depois os valores do filho são sobrepostos por cima.
+Um Coastfile tipado pode herdar de um pai usando `extends` na seção `[coast]`. O pai é totalmente analisado primeiro, e depois os valores do filho são aplicados por cima.
 
 ```toml
 [coast]
 extends = "Coastfile"
 ```
 
-O valor é um caminho relativo para o Coastfile pai, resolvido em relação ao diretório do filho. Cadeias são suportadas — um filho pode estender um pai que por sua vez estende um avô:
+O valor é um caminho relativo para o Coastfile pai, resolvido em relação ao diretório do filho. Se o caminho exato não existir, o Coast também tentará adicionar `.toml` — portanto, `extends = "Coastfile"` encontrará `Coastfile.toml` se apenas a variante `.toml` existir no disco. Cadeias são suportadas — um filho pode estender um pai que por sua vez estende um avô:
 
 ```
 Coastfile                    (base)
@@ -47,17 +55,17 @@ Cadeias circulares (A estende B estende A, ou A estende A) são detectadas e rej
 
 Quando um filho estende um pai:
 
-- **Campos escalares** (`name`, `runtime`, `compose`, `root`, `worktree_dir`, `autostart`, `primary_port`) — o valor do filho vence se estiver presente; caso contrário, é herdado do pai.
-- **Mapas** (`[ports]`, `[egress]`) — mesclados por chave. Chaves do filho sobrescrevem chaves de mesmo nome do pai; chaves existentes apenas no pai são preservadas.
+- **Campos escalares** (`name`, `runtime`, `compose`, `root`, `worktree_dir`, `autostart`, `primary_port`) — o valor do filho vence se presente; caso contrário, é herdado do pai.
+- **Mapas** (`[ports]`, `[egress]`) — mesclados por chave. Chaves do filho substituem chaves do pai com o mesmo nome; chaves exclusivas do pai são preservadas.
 - **Seções nomeadas** (`[secrets.*]`, `[volumes.*]`, `[shared_services.*]`, `[mcp.*]`, `[mcp_clients.*]`, `[services.*]`) — mescladas por nome. Uma entrada do filho com o mesmo nome substitui completamente a entrada do pai; novos nomes são adicionados.
 - **`[coast.setup]`**:
-  - `packages` — união com desduplicação (o filho adiciona novos pacotes, os pacotes do pai são mantidos)
-  - `run` — comandos do filho são anexados após os comandos do pai
-  - `files` — mesclado por `path` (mesmo path = a entrada do filho substitui a do pai)
+  - `packages` — união com deduplicação (o filho adiciona novos pacotes, os pacotes do pai são mantidos)
+  - `run` — os comandos do filho são anexados após os comandos do pai
+  - `files` — mesclados por `path` (mesmo caminho = a entrada do filho substitui a do pai)
 - **`[inject]`** — as listas `env` e `files` são concatenadas.
 - **`[omit]`** — as listas `services` e `volumes` são concatenadas.
-- **`[assign]`** — totalmente substituído se presente no filho (não é mesclado campo a campo).
-- **`[agent_shell]`** — totalmente substituído se presente no filho.
+- **`[assign]`** — substituído inteiramente se presente no filho (não é mesclado campo por campo).
+- **`[agent_shell]`** — substituído inteiramente se presente no filho.
 
 ### Herdando o nome do projeto
 
@@ -76,7 +84,7 @@ extends = "Coastfile"
 autostart = false
 ```
 
-Você pode sobrescrever `name` no filho se quiser que a variante apareça como um projeto separado:
+Você pode substituir `name` no filho se quiser que a variante apareça como um projeto separado:
 
 ```toml
 [coast]
@@ -94,7 +102,7 @@ extends = "Coastfile"
 includes = ["extra-secrets.toml"]
 ```
 
-Um fragmento incluído é um arquivo TOML com a mesma estrutura de seções de um Coastfile. Ele deve conter uma seção `[coast]` (que pode estar vazia), mas não pode usar `extends` ou `includes` por conta própria.
+Um fragmento incluído é um arquivo TOML com a mesma estrutura de seções de um Coastfile. Ele deve conter uma seção `[coast]` (que pode estar vazia), mas não pode usar `extends` nem `includes`.
 
 ```toml
 # extra-secrets.toml
@@ -106,15 +114,15 @@ var = "MONGO_URI"
 inject = "env:MONGO_URI"
 ```
 
-Ordem de merge quando `extends` e `includes` estão presentes:
+Ordem de merge quando `extends` e `includes` estão ambos presentes:
 
-1. Interpretar o pai (via `extends`), recursivamente
-2. Mesclar cada fragmento incluído na ordem
-3. Aplicar os próprios valores do arquivo (que prevalecem sobre todo o resto)
+1. Analisar o pai (via `extends`), recursivamente
+2. Mesclar cada fragmento incluído em ordem
+3. Aplicar os próprios valores do arquivo (que vencem sobre tudo)
 
 ## `[unset]`
 
-Remove itens nomeados da configuração resolvida depois que toda a mesclagem é concluída. É assim que um filho remove algo que herdou do pai sem precisar redefinir a seção inteira.
+Remove itens nomeados da configuração resolvida depois que todo o merge é concluído. É assim que um filho remove algo que herdou de seu pai sem precisar redefinir a seção inteira.
 
 ```toml
 [unset]
@@ -125,20 +133,20 @@ ports = ["postgres", "redis"]
 
 Campos suportados:
 
-- `secrets` — lista de nomes de secrets a remover
-- `ports` — lista de nomes de portas a remover
-- `shared_services` — lista de nomes de serviços compartilhados a remover
-- `volumes` — lista de nomes de volumes a remover
-- `mcp` — lista de nomes de servidores MCP a remover
-- `mcp_clients` — lista de nomes de clientes MCP a remover
+- `secrets` — lista de nomes de secret a remover
+- `ports` — lista de nomes de porta a remover
+- `shared_services` — lista de nomes de serviço compartilhado a remover
+- `volumes` — lista de nomes de volume a remover
+- `mcp` — lista de nomes de servidor MCP a remover
+- `mcp_clients` — lista de nomes de cliente MCP a remover
 - `egress` — lista de nomes de egress a remover
-- `services` — lista de nomes de serviços (simples) a remover
+- `services` — lista de nomes de serviço simples a remover
 
-`[unset]` é aplicado após a cadeia completa de merge de extends + includes ser resolvida. Ele remove itens por nome do resultado final mesclado.
+`[unset]` é aplicado após a resolução de toda a cadeia de merge de extends + includes. Ele remove itens por nome do resultado final mesclado.
 
 ## `[omit]`
 
-Remove serviços e volumes do compose da stack Docker Compose que roda dentro do Coast. Diferentemente de `[unset]` (que remove configuração no nível do Coastfile), `[omit]` diz ao Coast para excluir serviços ou volumes específicos ao executar `docker compose up` dentro do container DinD.
+Remove serviços e volumes do compose da stack Docker Compose que é executada dentro do Coast. Diferentemente de `[unset]` (que remove configuração em nível de Coastfile), `[omit]` instrui o Coast a excluir serviços ou volumes específicos ao executar `docker compose up` dentro do container DinD.
 
 ```toml
 [omit]
@@ -149,13 +157,13 @@ volumes = ["keycloak-db-data"]
 - **`services`** — nomes de serviços do compose a excluir de `docker compose up`
 - **`volumes`** — nomes de volumes do compose a excluir
 
-Isso é útil quando seu `docker-compose.yml` define serviços de que você não precisa em toda variante do Coast — stacks de monitoramento, proxies reversos, ferramentas de administração. Em vez de manter múltiplos arquivos de compose, você usa um único arquivo compose e remove o que não precisa por variante.
+Isso é útil quando seu `docker-compose.yml` define serviços de que você não precisa em todas as variantes do Coast — stacks de monitoramento, proxies reversos, ferramentas administrativas. Em vez de manter vários arquivos compose, você usa um único arquivo compose e remove o que não precisa por variante.
 
-Quando um filho estende um pai, as listas de `[omit]` são concatenadas — o filho adiciona à lista de omissões do pai.
+Quando um filho estende um pai, as listas de `[omit]` são concatenadas — o filho adiciona à lista de omissão do pai.
 
 ## Exemplos
 
-### Variante de teste leve
+### Variante leve para testes
 
 Estende o Coastfile base, desativa o autostart, remove serviços compartilhados e executa bancos de dados isolados por instância:
 
@@ -241,7 +249,7 @@ services = ["debug-tools"]
 
 ### Cadeia de herança em múltiplos níveis
 
-Três níveis: base -> light -> chain.
+Três níveis de profundidade: base -> light -> chain.
 
 ```toml
 # Coastfile.chain
@@ -255,11 +263,11 @@ run = ["echo 'chain setup appended'"]
 debug = 39999
 ```
 
-A configuração resolvida começa com o `Coastfile` base, mescla `Coastfile.light` por cima, depois mescla `Coastfile.chain` por cima disso. Comandos `run` de setup dos três níveis são concatenados em ordem. `packages` de setup são desduplicados em todos os níveis.
+A configuração resolvida começa com o `Coastfile` base, mescla `Coastfile.light` por cima e depois mescla `Coastfile.chain` por cima disso. Os comandos `run` de setup de todos os três níveis são concatenados em ordem. Os `packages` de setup são deduplicados em todos os níveis.
 
-### Omitindo serviços de uma stack grande de compose
+### Omitindo serviços de uma grande stack compose
 
-Remova serviços de `docker-compose.yml` que não são necessários para desenvolvimento:
+Remove serviços de `docker-compose.yml` que não são necessários para desenvolvimento:
 
 ```toml
 [coast]

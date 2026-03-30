@@ -1,4 +1,4 @@
-# Coastfile
+# Coastfiles
 
 Coastfile 是一个 TOML 配置文件，位于你的项目根目录。它会告诉 Coast 构建和运行该项目的隔离开发环境所需了解的一切——运行哪些服务、转发哪些端口、如何处理数据，以及如何管理密钥。
 
@@ -186,9 +186,10 @@ mount = "/data/db"
 
 ## 约定
 
-- 文件必须命名为 `Coastfile`（大写 C，无扩展名），并位于项目根目录。
-- 带类型的变体使用 `Coastfile.{type}` 模式——例如 `Coastfile.light`、`Coastfile.snap`。参见 [继承与类型](INHERITANCE.md)。
-- 保留名称 `Coastfile.default` 不允许使用。
+- 文件必须命名为 `Coastfile`（大写 C，无扩展名），并位于项目根目录。你也可以选择添加 `.toml` 扩展名（`Coastfile.toml`）以获得编辑器语法高亮——两种形式是等价的。
+- 带类型的变体使用 `Coastfile.{type}` 模式——例如 `Coastfile.light`、`Coastfile.snap`。也接受 `.toml` 后缀:`Coastfile.light.toml` 等价于 `Coastfile.light`。参见 [继承与类型](INHERITANCE.md)。
+- **冲突裁决规则:**如果 `Coastfile` 和 `Coastfile.toml` 同时存在（或 `Coastfile.light` 和 `Coastfile.light.toml` 同时存在），则优先使用 `.toml` 变体。
+- 不允许使用保留名称 `Coastfile.default` 和 `Coastfile.toml`（作为类型）。`"default"` 和 `"toml"` 是保留类型名。
 - 全文使用 TOML 语法。所有节标题都使用 `[brackets]`，命名条目使用 `[section.name]`（不是 array-of-tables）。
 - 你不能在同一个 Coastfile 中同时使用 `compose` 和 `[services]`——二选一。
 - 相对路径（用于 `compose`、`root` 等）会相对于 Coastfile 的父目录进行解析。

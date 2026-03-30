@@ -186,9 +186,10 @@ mount = "/data/db"
 
 ## Conventions
 
-- Файл должен называться `Coastfile` (с заглавной C, без расширения) и находиться в корне проекта.
-- Типизированные варианты используют шаблон `Coastfile.{type}` — например, `Coastfile.light`, `Coastfile.snap`. См. [Inheritance and Types](INHERITANCE.md).
-- Зарезервированное имя `Coastfile.default` не допускается.
+- Файл должен называться `Coastfile` (с заглавной C, без расширения) и находиться в корне проекта. При желании можно добавить расширение `.toml` (`Coastfile.toml`) для подсветки синтаксиса в редакторе — обе формы эквивалентны.
+- Типизированные варианты используют шаблон `Coastfile.{type}` — например, `Coastfile.light`, `Coastfile.snap`. Суффикс `.toml` тоже допускается: `Coastfile.light.toml` эквивалентен `Coastfile.light`. См. [Inheritance and Types](INHERITANCE.md).
+- **Правило разрешения конфликта:** если существуют и `Coastfile`, и `Coastfile.toml` (или и `Coastfile.light`, и `Coastfile.light.toml`), приоритет имеет вариант с `.toml`.
+- Зарезервированные имена `Coastfile.default` и `Coastfile.toml` (в качестве типа) не допускаются. `"default"` и `"toml"` — зарезервированные имена типов.
 - Повсюду используется синтаксис TOML. Все заголовки секций используют `[brackets]`, а именованные записи используют `[section.name]` (не array-of-tables).
 - Нельзя использовать одновременно `compose` и `[services]` в одном Coastfile — выберите что-то одно.
 - Относительные пути (для `compose`, `root` и т. д.) разрешаются относительно родительского каталога Coastfile.

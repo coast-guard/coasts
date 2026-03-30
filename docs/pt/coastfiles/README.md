@@ -186,9 +186,10 @@ mount = "/data/db"
 
 ## Conventions
 
-- O arquivo deve ser nomeado `Coastfile` (C maiúsculo, sem extensão) e ficar na raiz do projeto.
-- Variantes tipadas usam o padrão `Coastfile.{type}` — por exemplo `Coastfile.light`, `Coastfile.snap`. Veja [Inheritance and Types](INHERITANCE.md).
-- O nome reservado `Coastfile.default` não é permitido.
+- O arquivo deve ser nomeado `Coastfile` (C maiúsculo, sem extensão) e ficar na raiz do projeto. Opcionalmente, você pode adicionar uma extensão `.toml` (`Coastfile.toml`) para realce de sintaxe no editor — ambas as formas são equivalentes.
+- Variantes tipadas usam o padrão `Coastfile.{type}` — por exemplo `Coastfile.light`, `Coastfile.snap`. Um sufixo `.toml` também é aceito: `Coastfile.light.toml` é equivalente a `Coastfile.light`. Veja [Inheritance and Types](INHERITANCE.md).
+- **Regra de desempate:** se `Coastfile` e `Coastfile.toml` existirem ao mesmo tempo (ou `Coastfile.light` e `Coastfile.light.toml`), a variante `.toml` tem precedência.
+- Os nomes reservados `Coastfile.default` e `Coastfile.toml` (como um tipo) não são permitidos. `"default"` e `"toml"` são nomes de tipo reservados.
 - A sintaxe TOML é usada em todo o documento. Todos os cabeçalhos de seção usam `[colchetes]` e entradas nomeadas usam `[section.name]` (não array-of-tables).
 - Você não pode usar `compose` e `[services]` no mesmo Coastfile — escolha um.
 - Caminhos relativos (para `compose`, `root` etc.) são resolvidos em relação ao diretório pai do Coastfile.

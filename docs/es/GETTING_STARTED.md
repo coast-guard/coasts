@@ -47,6 +47,8 @@ my-project/
 └── ...
 ```
 
+También puedes llamarlo `Coastfile.toml` para obtener resaltado de sintaxis en el editor — ambas formas son equivalentes. Si ambos existen, la variante `.toml` tiene prioridad.
+
 El `Coastfile` apunta a tus recursos existentes de desarrollo local y añade configuración específica de Coasts — consulta la [documentación de Coastfiles](coastfiles/README.md) para el esquema completo:
 
 ```toml

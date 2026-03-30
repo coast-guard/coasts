@@ -47,6 +47,8 @@ my-project/
 └── ...
 ```
 
+你也可以将其命名为 `Coastfile.toml` 以获得编辑器语法高亮——这两种形式是等效的。如果两者都存在，则 `.toml` 版本优先。
+
 `Coastfile` 指向你现有的本地开发资源，并添加 Coasts 特有的配置——完整 schema 请参阅 [Coastfiles documentation](coastfiles/README.md):
 
 ```toml

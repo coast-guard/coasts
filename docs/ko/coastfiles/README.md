@@ -186,9 +186,10 @@ mount = "/data/db"
 
 ## Conventions
 
-- 파일 이름은 반드시 `Coastfile`이어야 하며(대문자 C, 확장자 없음), 프로젝트 루트에 위치해야 합니다.
-- 타입이 지정된 변형은 `Coastfile.{type}` 패턴을 사용합니다 — 예: `Coastfile.light`, `Coastfile.snap`. [Inheritance and Types](INHERITANCE.md)를 참고하세요.
-- 예약된 이름 `Coastfile.default`는 허용되지 않습니다.
+- 파일 이름은 반드시 `Coastfile`이어야 하며(대문자 C, 확장자 없음), 프로젝트 루트에 위치해야 합니다. 편집기 구문 강조를 위해 선택적으로 `.toml` 확장자(`Coastfile.toml`)를 붙일 수 있으며, 두 형식은 동일하게 취급됩니다.
+- 타입이 지정된 변형은 `Coastfile.{type}` 패턴을 사용합니다 — 예: `Coastfile.light`, `Coastfile.snap`. `.toml` 접미사도 허용됩니다: `Coastfile.light.toml`은 `Coastfile.light`와 동일합니다. [Inheritance and Types](INHERITANCE.md)를 참고하세요.
+- **우선순위 규칙:** `Coastfile`과 `Coastfile.toml`이 둘 다 존재하는 경우(또는 `Coastfile.light`와 `Coastfile.light.toml`이 둘 다 존재하는 경우), `.toml` 변형이 우선합니다.
+- 예약된 이름 `Coastfile.default`와 타입으로서의 `Coastfile.toml`은 허용되지 않습니다. `"default"`와 `"toml"`은 예약된 타입 이름입니다.
 - 전체적으로 TOML 문법을 사용합니다. 모든 섹션 헤더는 `[brackets]`를 사용하고, 이름 있는 항목은 `[section.name]`을 사용합니다(array-of-tables 아님).
 - 같은 Coastfile에서 `compose`와 `[services]`를 동시에 사용할 수 없습니다 — 하나를 선택하세요.
 - 상대 경로(`compose`, `root` 등)는 Coastfile의 상위 디렉터리를 기준으로 해석됩니다.

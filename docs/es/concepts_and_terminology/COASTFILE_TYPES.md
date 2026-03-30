@@ -7,9 +7,19 @@ Un solo proyecto puede tener múltiples Coastfiles para diferentes casos de uso.
 La convención de nombres es `Coastfile` para el predeterminado y `Coastfile.{type}` para las variantes. El sufijo después del punto se convierte en el nombre del tipo:
 
 - `Coastfile` -- tipo predeterminado
-- `Coastfile.test` -- tipo de pruebas
+- `Coastfile.test` -- tipo de prueba
 - `Coastfile.snap` -- tipo de instantánea
 - `Coastfile.light` -- tipo ligero
+
+Cualquier Coastfile puede tener una extensión `.toml` opcional para el resaltado de sintaxis en el editor. El sufijo `.toml` se elimina antes de derivar el tipo, por lo que estos son pares equivalentes:
+
+- `Coastfile.toml` = `Coastfile` (tipo predeterminado)
+- `Coastfile.test.toml` = `Coastfile.test` (tipo de prueba)
+- `Coastfile.light.toml` = `Coastfile.light` (tipo ligero)
+
+**Regla de desempate:** si existen ambas formas (p. ej. `Coastfile` y `Coastfile.toml`, o `Coastfile.light` y `Coastfile.light.toml`), la variante `.toml` tiene prioridad.
+
+**Nombres de tipo reservados:** `"default"` y `"toml"` no pueden usarse como nombres de tipo. `Coastfile.default` y `Coastfile.toml` (como sufijo de tipo, es decir, un archivo literalmente llamado `Coastfile.toml.toml`) se rechazan.
 
 Construyes y ejecutas Coasts tipados con `--type`:
 
@@ -28,11 +38,11 @@ Un Coastfile tipado hereda de un padre mediante `extends`. Todo lo del padre se 
 extends = "Coastfile"
 ```
 
-Esto evita duplicar toda tu configuración para cada variante. El hijo hereda todos los [puertos](PORTS.md), [secretos](SECRETS.md), [volúmenes](VOLUMES.md), [servicios compartidos](SHARED_SERVICES.md), [estrategias de asignación](ASSIGN.md), comandos de configuración y configuraciones de [MCP](MCP_SERVERS.md) del padre. Cualquier cosa que el hijo defina tiene prioridad sobre el padre.
+Esto evita duplicar toda tu configuración para cada variante. El hijo hereda todos los [ports](PORTS.md), [secrets](SECRETS.md), [volumes](VOLUMES.md), [shared services](SHARED_SERVICES.md), [assign strategies](ASSIGN.md), comandos de configuración y configuraciones de [MCP](MCP_SERVERS.md) del padre. Cualquier cosa que defina el hijo tiene prioridad sobre el padre.
 
 ## [unset]
 
-Elimina elementos específicos heredados del padre por nombre. Puedes hacer unset de `ports`, `shared_services`, `secrets` y `volumes`.
+Elimina elementos específicos heredados del padre por nombre. Puedes eliminar `ports`, `shared_services`, `secrets` y `volumes`.
 
 ```toml
 [unset]
@@ -40,22 +50,22 @@ ports = ["web", "redis", "backend"]
 shared_services = ["postgres", "redis"]
 ```
 
-Así es como una variante de pruebas elimina servicios compartidos (para que las bases de datos se ejecuten dentro del Coast con volúmenes aislados) y elimina puertos que no necesita.
+Así es como una variante de prueba elimina servicios compartidos (para que las bases de datos se ejecuten dentro del Coast con volúmenes aislados) y quita puertos que no necesita.
 
 ## [omit]
 
-Elimina por completo servicios de compose de la construcción. Los servicios omitidos se eliminan del archivo compose y no se ejecutan dentro del Coast en absoluto.
+Elimina completamente servicios de compose de la compilación. Los servicios omitidos se eliminan del archivo compose y no se ejecutan dentro del Coast en absoluto.
 
 ```toml
 [omit]
 services = ["redis", "backend", "mailhog", "web"]
 ```
 
-Úsalo para excluir servicios que son irrelevantes para el propósito de la variante. Una variante de pruebas podría mantener solo la base de datos, las migraciones y el ejecutor de pruebas.
+Usa esto para excluir servicios que son irrelevantes para el propósito de la variante. Una variante de prueba podría conservar solo la base de datos, las migraciones y el ejecutor de pruebas.
 
 ## autostart
 
-Controla si `docker compose up` se ejecuta automáticamente cuando inicia el Coast. El valor predeterminado es `true`.
+Controla si `docker compose up` se ejecuta automáticamente cuando se inicia el Coast. El valor predeterminado es `true`.
 
 ```toml
 [coast]
@@ -63,13 +73,13 @@ extends = "Coastfile"
 autostart = false
 ```
 
-Establece `autostart = false` para variantes en las que quieres ejecutar comandos específicos manualmente en lugar de levantar toda la pila. Esto es común para ejecutores de pruebas: creas el Coast y luego usas [`coast exec`](EXEC_AND_DOCKER.md) para ejecutar suites de pruebas individuales.
+Establece `autostart = false` para variantes en las que quieras ejecutar comandos específicos manualmente en lugar de levantar toda la pila. Esto es común para ejecutores de pruebas -- creas el Coast y luego usas [`coast exec`](EXEC_AND_DOCKER.md) para ejecutar suites de prueba individuales.
 
 ## Patrones comunes
 
-### Variante de pruebas
+### Variante de prueba
 
-Un `Coastfile.test` que mantiene solo lo necesario para ejecutar pruebas:
+Un `Coastfile.test` que conserva solo lo necesario para ejecutar pruebas:
 
 ```toml
 [coast]
@@ -95,7 +105,7 @@ test-runner = "rebuild"
 migrations = "rebuild"
 ```
 
-Cada Coast de pruebas obtiene su propia base de datos limpia. No se exponen puertos porque las pruebas se comunican con los servicios a través de la red interna de compose. `autostart = false` significa que disparas las ejecuciones de pruebas manualmente con `coast exec`.
+Cada Coast de prueba obtiene su propia base de datos limpia. No se expone ningún puerto porque las pruebas se comunican con los servicios a través de la red interna de compose. `autostart = false` significa que activas las ejecuciones de prueba manualmente con `coast exec`.
 
 ### Variante de instantánea
 
@@ -121,35 +131,35 @@ service = "redis"
 mount = "/data"
 ```
 
-Los servicios compartidos se eliminan para que las bases de datos se ejecuten dentro de cada Coast. `snapshot_source` inicializa los volúmenes aislados a partir de volúmenes existentes del host en el momento de la construcción. Después de la creación, los datos de cada instancia divergen de forma independiente.
+Los servicios compartidos se eliminan para que las bases de datos se ejecuten dentro de cada Coast. `snapshot_source` inicializa los volúmenes aislados a partir de volúmenes existentes del host en el momento de la compilación. Después de la creación, los datos de cada instancia divergen de forma independiente.
 
 ### Variante ligera
 
-Un `Coastfile.light` que reduce el proyecto al mínimo para un flujo de trabajo específico: quizá solo un servicio de backend y su base de datos para iteración rápida.
+Un `Coastfile.light` que reduce el proyecto al mínimo para un flujo de trabajo específico -- quizás solo un servicio backend y su base de datos para una iteración rápida.
 
-## Grupos de construcción independientes
+## Pools de compilación independientes
 
-Cada tipo tiene su propio enlace simbólico `latest-{type}` y su propio grupo de auto-poda de 5 construcciones:
+Cada tipo tiene su propio enlace simbólico `latest-{type}` y su propio pool de poda automática de 5 compilaciones:
 
 ```bash
-coast build              # actualiza latest, poda las construcciones predeterminadas
-coast build --type test  # actualiza latest-test, poda las construcciones de test
-coast build --type snap  # actualiza latest-snap, poda las construcciones de snap
+coast build              # updates latest, prunes default builds
+coast build --type test  # updates latest-test, prunes test builds
+coast build --type snap  # updates latest-snap, prunes snap builds
 ```
 
-Construir un tipo `test` no afecta a las construcciones `default` o `snap`. La poda es completamente independiente por tipo.
+Compilar un tipo `test` no afecta las compilaciones `default` o `snap`. La poda es completamente independiente por tipo.
 
 ## Ejecutar Coasts tipados
 
 Las instancias creadas con `--type` se etiquetan con su tipo. Puedes tener instancias de diferentes tipos ejecutándose simultáneamente para el mismo proyecto:
 
 ```bash
-coast run dev-1                    # tipo predeterminado
-coast run test-1 --type test       # tipo de pruebas
-coast run snapshot-1 --type snap   # tipo de instantánea
+coast run dev-1                    # default type
+coast run test-1 --type test       # test type
+coast run snapshot-1 --type snap   # snapshot type
 
 coast ls
-# Las tres aparecen, cada una con su propio tipo, puertos y estrategia de volúmenes
+# All three appear, each with their own type, ports, and volume strategy
 ```
 
-Así es como puedes tener un entorno de desarrollo completo ejecutándose junto a ejecutores de pruebas aislados e instancias inicializadas desde instantáneas, todo para el mismo proyecto, todo al mismo tiempo.
+Así es como puedes tener un entorno de desarrollo completo ejecutándose junto con ejecutores de pruebas aislados e instancias inicializadas desde instantáneas, todo para el mismo proyecto, todo al mismo tiempo.

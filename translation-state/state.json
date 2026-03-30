@@ -1,9 +1,9 @@
 {
   "es": {
     "GETTING_STARTED.md": {
-      "commit": "2b2ae89",
-      "source_sha256": "2f0b7c8b541cdeb3ffde05a19e2bb375d5c8c0acd3e1c77e75b030c6bc58f203",
-      "translated_at": "2026-03-26T23:25:04Z"
+      "commit": "0ed12e0",
+      "source_sha256": "82f59872090cfdbc4c24fd917d7cc31d9874a5822294aebdb2f71a5bb7ce1bc8",
+      "translated_at": "2026-03-30T03:02:01Z"
     },
     "README.md": {
       "commit": "8a556b7",
@@ -36,9 +36,9 @@
       "translated_at": "2026-02-26T21:14:15Z"
     },
     "coastfiles/INHERITANCE.md": {
-      "commit": "3357381",
-      "source_sha256": "39bfd597091160ebe647fbe265dbdd3eefea60e6c08fcfabadfb699a57157ec9",
-      "translated_at": "2026-02-28T13:10:06Z"
+      "commit": "0ed12e0",
+      "source_sha256": "c1d9a3a5b3f851338befd788ecdf2e6f67f1030b0dd2fd7d626c5da022d79863",
+      "translated_at": "2026-03-30T03:02:01Z"
     },
     "coastfiles/MCP.md": {
       "commit": "3357381",
@@ -56,9 +56,9 @@
       "translated_at": "2026-03-26T23:25:04Z"
     },
     "coastfiles/README.md": {
-      "commit": "2b2ae89",
-      "source_sha256": "f935908ea7ed49550499aa1b8db9c538db752c97c5dda3d5ff65c0efd085d05b",
-      "translated_at": "2026-03-26T23:25:04Z"
+      "commit": "0ed12e0",
+      "source_sha256": "0ab46c77f716921fd57ac11596431aff81af576b9d9502a08e63b4c08d7690af",
+      "translated_at": "2026-03-30T03:02:01Z"
     },
     "coastfiles/SECRETS.md": {
       "commit": "3357381",
@@ -121,9 +121,9 @@
       "translated_at": "2026-03-20T08:34:06Z"
     },
     "concepts_and_terminology/COASTFILE_TYPES.md": {
-      "commit": "3357381",
-      "source_sha256": "9a8f6fd74e4933f3a17fedf3338712b0ad8676f9b19b5508bc24229c6af91dbb",
-      "translated_at": "2026-02-28T13:10:06Z"
+      "commit": "0ed12e0",
+      "source_sha256": "38fbb1044d012f521367853aa46205cadee577363463ac808b95ee5af5029998",
+      "translated_at": "2026-03-30T03:02:01Z"
     },
     "concepts_and_terminology/COASTGUARD.md": {
       "commit": "3357381",
@@ -383,9 +383,9 @@
   },
   "ja": {
     "GETTING_STARTED.md": {
-      "commit": "2b2ae89",
-      "source_sha256": "2f0b7c8b541cdeb3ffde05a19e2bb375d5c8c0acd3e1c77e75b030c6bc58f203",
-      "translated_at": "2026-03-26T23:17:09Z"
+      "commit": "0ed12e0",
+      "source_sha256": "82f59872090cfdbc4c24fd917d7cc31d9874a5822294aebdb2f71a5bb7ce1bc8",
+      "translated_at": "2026-03-30T02:57:14Z"
     },
     "README.md": {
       "commit": "8a556b7",
@@ -418,9 +418,9 @@
       "translated_at": "2026-02-26T21:12:25Z"
     },
     "coastfiles/INHERITANCE.md": {
-      "commit": "3357381",
-      "source_sha256": "39bfd597091160ebe647fbe265dbdd3eefea60e6c08fcfabadfb699a57157ec9",
-      "translated_at": "2026-02-28T12:45:25Z"
+      "commit": "0ed12e0",
+      "source_sha256": "c1d9a3a5b3f851338befd788ecdf2e6f67f1030b0dd2fd7d626c5da022d79863",
+      "translated_at": "2026-03-30T02:57:14Z"
     },
     "coastfiles/MCP.md": {
       "commit": "3357381",
@@ -438,9 +438,9 @@
       "translated_at": "2026-03-26T23:17:09Z"
     },
     "coastfiles/README.md": {
-      "commit": "2b2ae89",
-      "source_sha256": "f935908ea7ed49550499aa1b8db9c538db752c97c5dda3d5ff65c0efd085d05b",
-      "translated_at": "2026-03-26T23:17:09Z"
+      "commit": "0ed12e0",
+      "source_sha256": "0ab46c77f716921fd57ac11596431aff81af576b9d9502a08e63b4c08d7690af",
+      "translated_at": "2026-03-30T02:57:14Z"
     },
     "coastfiles/SECRETS.md": {
       "commit": "3357381",
@@ -503,9 +503,9 @@
       "translated_at": "2026-03-20T07:36:10Z"
     },
     "concepts_and_terminology/COASTFILE_TYPES.md": {
-      "commit": "3357381",
-      "source_sha256": "9a8f6fd74e4933f3a17fedf3338712b0ad8676f9b19b5508bc24229c6af91dbb",
-      "translated_at": "2026-02-28T12:45:25Z"
+      "commit": "0ed12e0",
+      "source_sha256": "38fbb1044d012f521367853aa46205cadee577363463ac808b95ee5af5029998",
+      "translated_at": "2026-03-30T02:57:14Z"
     },
     "concepts_and_terminology/COASTGUARD.md": {
       "commit": "3357381",
@@ -765,9 +765,9 @@
   },
   "ko": {
     "GETTING_STARTED.md": {
-      "commit": "2b2ae89",
-      "source_sha256": "2f0b7c8b541cdeb3ffde05a19e2bb375d5c8c0acd3e1c77e75b030c6bc58f203",
-      "translated_at": "2026-03-26T23:19:25Z"
+      "commit": "0ed12e0",
+      "source_sha256": "82f59872090cfdbc4c24fd917d7cc31d9874a5822294aebdb2f71a5bb7ce1bc8",
+      "translated_at": "2026-03-30T02:58:32Z"
     },
     "README.md": {
       "commit": "8a556b7",
@@ -800,9 +800,9 @@
       "translated_at": "2026-02-26T21:12:54Z"
     },
     "coastfiles/INHERITANCE.md": {
-      "commit": "3357381",
-      "source_sha256": "39bfd597091160ebe647fbe265dbdd3eefea60e6c08fcfabadfb699a57157ec9",
-      "translated_at": "2026-02-28T12:52:18Z"
+      "commit": "0ed12e0",
+      "source_sha256": "c1d9a3a5b3f851338befd788ecdf2e6f67f1030b0dd2fd7d626c5da022d79863",
+      "translated_at": "2026-03-30T02:58:32Z"
     },
     "coastfiles/MCP.md": {
       "commit": "3357381",
@@ -820,9 +820,9 @@
       "translated_at": "2026-03-26T23:19:25Z"
     },
     "coastfiles/README.md": {
-      "commit": "2b2ae89",
-      "source_sha256": "f935908ea7ed49550499aa1b8db9c538db752c97c5dda3d5ff65c0efd085d05b",
-      "translated_at": "2026-03-26T23:19:25Z"
+      "commit": "0ed12e0",
+      "source_sha256": "0ab46c77f716921fd57ac11596431aff81af576b9d9502a08e63b4c08d7690af",
+      "translated_at": "2026-03-30T02:58:32Z"
     },
     "coastfiles/SECRETS.md": {
       "commit": "3357381",
@@ -885,9 +885,9 @@
       "translated_at": "2026-03-20T07:40:29Z"
     },
     "concepts_and_terminology/COASTFILE_TYPES.md": {
-      "commit": "3357381",
-      "source_sha256": "9a8f6fd74e4933f3a17fedf3338712b0ad8676f9b19b5508bc24229c6af91dbb",
-      "translated_at": "2026-02-28T12:52:18Z"
+      "commit": "0ed12e0",
+      "source_sha256": "38fbb1044d012f521367853aa46205cadee577363463ac808b95ee5af5029998",
+      "translated_at": "2026-03-30T02:58:32Z"
     },
     "concepts_and_terminology/COASTGUARD.md": {
       "commit": "3357381",
@@ -1147,9 +1147,9 @@
   },
   "pt": {
     "GETTING_STARTED.md": {
-      "commit": "2b2ae89",
-      "source_sha256": "2f0b7c8b541cdeb3ffde05a19e2bb375d5c8c0acd3e1c77e75b030c6bc58f203",
-      "translated_at": "2026-03-26T23:23:16Z"
+      "commit": "0ed12e0",
+      "source_sha256": "82f59872090cfdbc4c24fd917d7cc31d9874a5822294aebdb2f71a5bb7ce1bc8",
+      "translated_at": "2026-03-30T03:01:00Z"
     },
     "README.md": {
       "commit": "8a556b7",
@@ -1182,9 +1182,9 @@
       "translated_at": "2026-02-26T21:13:48Z"
     },
     "coastfiles/INHERITANCE.md": {
-      "commit": "3357381",
-      "source_sha256": "39bfd597091160ebe647fbe265dbdd3eefea60e6c08fcfabadfb699a57157ec9",
-      "translated_at": "2026-02-28T13:04:30Z"
+      "commit": "0ed12e0",
+      "source_sha256": "c1d9a3a5b3f851338befd788ecdf2e6f67f1030b0dd2fd7d626c5da022d79863",
+      "translated_at": "2026-03-30T03:01:00Z"
     },
     "coastfiles/MCP.md": {
       "commit": "3357381",
@@ -1202,9 +1202,9 @@
       "translated_at": "2026-03-26T23:23:16Z"
     },
     "coastfiles/README.md": {
-      "commit": "2b2ae89",
-      "source_sha256": "f935908ea7ed49550499aa1b8db9c538db752c97c5dda3d5ff65c0efd085d05b",
-      "translated_at": "2026-03-26T23:23:16Z"
+      "commit": "0ed12e0",
+      "source_sha256": "0ab46c77f716921fd57ac11596431aff81af576b9d9502a08e63b4c08d7690af",
+      "translated_at": "2026-03-30T03:01:00Z"
     },
     "coastfiles/SECRETS.md": {
       "commit": "3357381",
@@ -1267,9 +1267,9 @@
       "translated_at": "2026-03-20T07:46:55Z"
     },
     "concepts_and_terminology/COASTFILE_TYPES.md": {
-      "commit": "3357381",
-      "source_sha256": "9a8f6fd74e4933f3a17fedf3338712b0ad8676f9b19b5508bc24229c6af91dbb",
-      "translated_at": "2026-02-28T13:04:30Z"
+      "commit": "0ed12e0",
+      "source_sha256": "38fbb1044d012f521367853aa46205cadee577363463ac808b95ee5af5029998",
+      "translated_at": "2026-03-30T03:01:00Z"
     },
     "concepts_and_terminology/COASTGUARD.md": {
       "commit": "3357381",
@@ -1529,9 +1529,9 @@
   },
   "ru": {
     "GETTING_STARTED.md": {
-      "commit": "2b2ae89",
-      "source_sha256": "2f0b7c8b541cdeb3ffde05a19e2bb375d5c8c0acd3e1c77e75b030c6bc58f203",
-      "translated_at": "2026-03-26T23:21:21Z"
+      "commit": "0ed12e0",
+      "source_sha256": "82f59872090cfdbc4c24fd917d7cc31d9874a5822294aebdb2f71a5bb7ce1bc8",
+      "translated_at": "2026-03-30T02:59:49Z"
     },
     "README.md": {
       "commit": "8a556b7",
@@ -1564,9 +1564,9 @@
       "translated_at": "2026-02-26T21:13:17Z"
     },
     "coastfiles/INHERITANCE.md": {
-      "commit": "3357381",
-      "source_sha256": "39bfd597091160ebe647fbe265dbdd3eefea60e6c08fcfabadfb699a57157ec9",
-      "translated_at": "2026-02-28T12:58:35Z"
+      "commit": "0ed12e0",
+      "source_sha256": "c1d9a3a5b3f851338befd788ecdf2e6f67f1030b0dd2fd7d626c5da022d79863",
+      "translated_at": "2026-03-30T02:59:49Z"
     },
     "coastfiles/MCP.md": {
       "commit": "3357381",
@@ -1584,9 +1584,9 @@
       "translated_at": "2026-03-26T23:21:21Z"
     },
     "coastfiles/README.md": {
-      "commit": "2b2ae89",
-      "source_sha256": "f935908ea7ed49550499aa1b8db9c538db752c97c5dda3d5ff65c0efd085d05b",
-      "translated_at": "2026-03-26T23:21:21Z"
+      "commit": "0ed12e0",
+      "source_sha256": "0ab46c77f716921fd57ac11596431aff81af576b9d9502a08e63b4c08d7690af",
+      "translated_at": "2026-03-30T02:59:49Z"
     },
     "coastfiles/SECRETS.md": {
       "commit": "3357381",
@@ -1649,9 +1649,9 @@
       "translated_at": "2026-03-20T07:43:48Z"
     },
     "concepts_and_terminology/COASTFILE_TYPES.md": {
-      "commit": "3357381",
-      "source_sha256": "9a8f6fd74e4933f3a17fedf3338712b0ad8676f9b19b5508bc24229c6af91dbb",
-      "translated_at": "2026-02-28T12:58:35Z"
+      "commit": "0ed12e0",
+      "source_sha256": "38fbb1044d012f521367853aa46205cadee577363463ac808b95ee5af5029998",
+      "translated_at": "2026-03-30T02:59:49Z"
     },
     "concepts_and_terminology/COASTGUARD.md": {
       "commit": "3357381",
@@ -1911,9 +1911,9 @@
   },
   "zh": {
     "GETTING_STARTED.md": {
-      "commit": "2b2ae89",
-      "source_sha256": "2f0b7c8b541cdeb3ffde05a19e2bb375d5c8c0acd3e1c77e75b030c6bc58f203",
-      "translated_at": "2026-03-26T23:15:17Z"
+      "commit": "0ed12e0",
+      "source_sha256": "82f59872090cfdbc4c24fd917d7cc31d9874a5822294aebdb2f71a5bb7ce1bc8",
+      "translated_at": "2026-03-30T02:56:09Z"
     },
     "README.md": {
       "commit": "8a556b7",
@@ -1946,9 +1946,9 @@
       "translated_at": "2026-02-26T21:11:59Z"
     },
     "coastfiles/INHERITANCE.md": {
-      "commit": "3357381",
-      "source_sha256": "39bfd597091160ebe647fbe265dbdd3eefea60e6c08fcfabadfb699a57157ec9",
-      "translated_at": "2026-02-28T12:39:25Z"
+      "commit": "0ed12e0",
+      "source_sha256": "c1d9a3a5b3f851338befd788ecdf2e6f67f1030b0dd2fd7d626c5da022d79863",
+      "translated_at": "2026-03-30T02:56:09Z"
     },
     "coastfiles/MCP.md": {
       "commit": "3357381",
@@ -1966,9 +1966,9 @@
       "translated_at": "2026-03-26T23:15:17Z"
     },
     "coastfiles/README.md": {
-      "commit": "2b2ae89",
-      "source_sha256": "f935908ea7ed49550499aa1b8db9c538db752c97c5dda3d5ff65c0efd085d05b",
-      "translated_at": "2026-03-26T23:15:17Z"
+      "commit": "0ed12e0",
+      "source_sha256": "0ab46c77f716921fd57ac11596431aff81af576b9d9502a08e63b4c08d7690af",
+      "translated_at": "2026-03-30T02:56:09Z"
     },
     "coastfiles/SECRETS.md": {
       "commit": "3357381",
@@ -2031,9 +2031,9 @@
       "translated_at": "2026-03-20T07:32:44Z"
     },
     "concepts_and_terminology/COASTFILE_TYPES.md": {
-      "commit": "3357381",
-      "source_sha256": "9a8f6fd74e4933f3a17fedf3338712b0ad8676f9b19b5508bc24229c6af91dbb",
-      "translated_at": "2026-02-28T12:39:25Z"
+      "commit": "0ed12e0",
+      "source_sha256": "38fbb1044d012f521367853aa46205cadee577363463ac808b95ee5af5029998",
+      "translated_at": "2026-03-30T02:56:09Z"
     },
     "concepts_and_terminology/COASTGUARD.md": {
       "commit": "3357381",
