@@ -57,6 +57,15 @@ As portas dinâmicas permitem que você dê uma olhada em qualquer Coast sem col
 └──────────────────────────────────────────────────┘
 ```
 
-Alternar o [checkout](CHECKOUT.md) é instantâneo — o Coast encerra e recria encaminhadores leves do `socat`. Nenhum contêiner é reiniciado.
+Alternar o [checkout](CHECKOUT.md) é instantâneo. O Coast encerra e recria encaminhadores leves do `socat`. Nenhum contêiner é reiniciado.
 
-Veja também [Porta Primária e DNS](PRIMARY_PORT_AND_DNS.md) para links rápidos, roteamento por subdomínio e modelos de URL.
+## Variáveis de Ambiente de Porta Dinâmica
+
+O Coast injeta variáveis de ambiente em cada instância que expõem a porta dinâmica de cada serviço. O nome da variável é derivado da chave `[ports]`: `web` se torna `WEB_DYNAMIC_PORT`, `backend-test` se torna `BACKEND_TEST_DYNAMIC_PORT`.
+
+Elas são úteis quando um serviço precisa saber sua porta acessível externamente, por exemplo, para definir `AUTH_URL` para redirecionamentos de callback de autenticação. Veja [Variáveis de Ambiente de Porta Dinâmica](DYNAMIC_PORT_ENVIRONMENT_VARIABLES.md) para a referência completa.
+
+## Veja Também
+
+- [Porta Primária e DNS](PRIMARY_PORT_AND_DNS.md) - links rápidos, roteamento por subdomínio e modelos de URL
+- [Variáveis de Ambiente de Porta Dinâmica](DYNAMIC_PORT_ENVIRONMENT_VARIABLES.md) - usando `WEB_DYNAMIC_PORT` e variáveis relacionadas em comandos de serviço

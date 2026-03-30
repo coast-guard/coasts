@@ -57,6 +57,15 @@ coast ports dev-2
 └──────────────────────────────────────────────────┘
 ```
 
-切换[检出](CHECKOUT.md)是即时的——Coast 会终止并重新生成轻量级的 `socat` 转发器。不会重启任何容器。
+切换[检出](CHECKOUT.md)是即时的。Coast 会终止并重新生成轻量级的 `socat` 转发器。不会重启任何容器。
 
-另请参阅 [Primary Port & DNS](PRIMARY_PORT_AND_DNS.md) 了解快速链接、子域路由和 URL 模板。
+## 动态端口环境变量
+
+Coast 会向每个实例注入环境变量，以暴露每个服务的动态端口。变量名派生自 `[ports]` 键:`web` 会变成 `WEB_DYNAMIC_PORT`，`backend-test` 会变成 `BACKEND_TEST_DYNAMIC_PORT`。
+
+当服务需要知道其可从外部访问的端口时，这些变量会很有用，例如用于为身份验证回调重定向设置 `AUTH_URL`。完整参考请参阅[动态端口环境变量](DYNAMIC_PORT_ENVIRONMENT_VARIABLES.md)。
+
+## 另请参阅
+
+- [Primary Port & DNS](PRIMARY_PORT_AND_DNS.md) - 快速链接、子域路由和 URL 模板
+- [Dynamic Port Environment Variables](DYNAMIC_PORT_ENVIRONMENT_VARIABLES.md) - 在服务命令中使用 `WEB_DYNAMIC_PORT` 及相关变量

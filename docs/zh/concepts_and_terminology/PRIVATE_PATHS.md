@@ -50,7 +50,7 @@ mount --bind /coast-private/frontend/.next /workspace/frontend/.next
 3. **`coast assign`** —— 在卸载并将 `/workspace` 重新绑定到某个 worktree 目录之后。
 4. **`coast unassign`** —— 在将 `/workspace` 恢复为项目根目录之后。
 
-私有目录会在 stop/start 周期之间持久保留（它们位于容器文件系统中，而不是共享挂载上）。在执行 `coast rm` 时，它们会随容器一起被销毁。
+私有目录会在 stop/start 周期之间持久保留（它们位于容器文件系统中，而不是共享挂载上）。在 `coast assign` 或 `coast unassign` 时，私有目录会被**清空**，这样开发服务器会根据正确分支的源文件重新编译，而不是继续提供来自先前分支的陈旧构建输出。在执行 `coast rm` 时，它们会随容器一起被销毁。
 
 ## 何时使用
 

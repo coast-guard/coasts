@@ -1,6 +1,6 @@
 # Servicios Bare
 
-Si puedes contenerizar tu proyecto, deberías hacerlo. Los servicios bare existen para proyectos que aún no se han contenerizado y en los que añadir un `Dockerfile` y `docker-compose.yml` no es práctico a corto plazo. Son un peldaño, no un destino.
+Si puedes contenerizar tu proyecto, deberías hacerlo. Los servicios bare existen para proyectos que aún no se han contenerizado y en los que añadir un `Dockerfile` y `docker-compose.yml` no es práctico a corto plazo.
 
 En lugar de que un `docker-compose.yml` orqueste servicios contenerizados, los servicios bare te permiten definir comandos de shell en tu Coastfile y Coast los ejecuta como procesos normales con un supervisor ligero dentro del contenedor de Coast.
 
@@ -20,7 +20,7 @@ Los servicios bare no te dan nada de eso. Tus procesos comparten el mismo sistem
 
 - Estás adoptando Coast para un proyecto que nunca se ha contenerizado y quieres empezar a obtener valor del aislamiento de worktrees y la gestión de puertos inmediatamente
 - Tu proyecto es una herramienta de un solo proceso o un CLI donde un Dockerfile sería excesivo
-- Quieres iterar en la contenerización de forma gradual — empieza con servicios bare y pásate a compose más adelante
+- Quieres contenerizar gradualmente, empezando con servicios bare y pasando a compose más adelante
 
 ## Configuración
 
@@ -83,13 +83,13 @@ Los comandos de instalación se ejecutan secuencialmente. Si algún comando de i
 
 ### Políticas de Reinicio
 
-- **`no`** — el servicio se ejecuta una vez. Si termina, se queda muerto. Úsalo para tareas de una sola ejecución o servicios que quieras gestionar manualmente.
-- **`on-failure`** — reinicia el servicio si termina con un código distinto de cero. Las salidas exitosas (código 0) se dejan tal cual. Usa backoff exponencial desde 1 segundo hasta 30 segundos, y se rinde tras 10 fallos consecutivos.
-- **`always`** — reinicia ante cualquier salida, incluida la exitosa. Mismo backoff que `on-failure`. Úsalo para servidores de larga ejecución que no deberían detenerse nunca.
+- **`no`**: el servicio se ejecuta una vez. Si termina, se queda muerto. Úsalo para tareas de una sola ejecución o servicios que quieras gestionar manualmente.
+- **`on-failure`**: reinicia el servicio si termina con un código distinto de cero. Las salidas exitosas (código 0) se dejan tal cual. Usa backoff exponencial desde 1 segundo hasta 30 segundos, y se rinde tras 10 fallos consecutivos.
+- **`always`**: reinicia ante cualquier salida, incluida la exitosa. Mismo backoff que `on-failure`. Úsalo para servidores de larga ejecución que no deberían detenerse nunca.
 
 Si un servicio se ejecuta durante más de 30 segundos antes de fallar, el contador de reintentos y el backoff se reinician — la suposición es que estuvo sano durante un tiempo y el fallo es un problema nuevo.
 
-## Cómo Funciona Por Debajo
+## Cómo Funciona
 
 ```text
 ┌─── Coast: dev-1 ──────────────────────────────────────┐
@@ -142,7 +142,7 @@ Esto es equivalente a lo que ocurre con compose — `docker compose down`, cambi
 
 ## Limitaciones
 
-- **Sin health checks.** Coast no puede esperar a que un servicio bare esté "sano" de la manera en que puede hacerlo con un servicio compose que define un health check. Inicia el proceso y espera lo mejor.
+- **Sin health checks.** Coast no puede esperar a que un servicio bare esté "sano" de la manera en que puede hacerlo con un servicio compose que define un health check. Coast inicia el proceso pero no tiene forma de saber cuándo está listo.
 - **Sin aislamiento entre servicios.** Todos los procesos comparten el mismo sistema de archivos y el mismo espacio de nombres de procesos dentro del contenedor de Coast. Un servicio que se comporte mal puede afectar a otros.
 - **Sin caché de build.** Los builds de Docker Compose se cachean capa por capa. Los comandos `install` de servicios bare se ejecutan desde cero en cada assign.
 - **Recuperación ante fallos básica.** La política de reinicio usa un bucle de shell con backoff exponencial. No es un supervisor de procesos como systemd o supervisord.

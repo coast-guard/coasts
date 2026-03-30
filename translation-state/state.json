@@ -96,9 +96,14 @@
       "translated_at": "2026-03-09T09:08:24Z"
     },
     "concepts_and_terminology/BARE_SERVICES.md": {
-      "commit": "d769707",
-      "source_sha256": "51e6dc213d509ecec8a1336305a7590141a66c01ac7d2a2d61b681dd8f897171",
-      "translated_at": "2026-03-03T10:27:08Z"
+      "commit": "a333f0f",
+      "source_sha256": "d47d2dda10042b47d5aa57613adf4fe82363743b43fc57d0bfc029f208950b81",
+      "translated_at": "2026-03-30T00:13:11Z"
+    },
+    "concepts_and_terminology/BARE_SERVICE_OPTIMIZATION.md": {
+      "commit": "a333f0f",
+      "source_sha256": "07b277c8395be5ba4c30aca8db1d742d6fc0153b003f7ac3997697586d2798f0",
+      "translated_at": "2026-03-30T00:13:11Z"
     },
     "concepts_and_terminology/BUILDS.md": {
       "commit": "dc5d0c8",
@@ -134,6 +139,11 @@
       "commit": "3357381",
       "source_sha256": "fa03c60c0019ce45ceb07f6cb8717d2729e73ea4b7496156cd3ff966ca99bb37",
       "translated_at": "2026-02-28T13:10:06Z"
+    },
+    "concepts_and_terminology/DYNAMIC_PORT_ENVIRONMENT_VARIABLES.md": {
+      "commit": "a333f0f",
+      "source_sha256": "5228949b945a630e63e3fd60b513d7fba06f0dd7515703c6f14a8923723402d7",
+      "translated_at": "2026-03-30T00:13:11Z"
     },
     "concepts_and_terminology/EXEC_AND_DOCKER.md": {
       "commit": "7605a21",
@@ -171,9 +181,9 @@
       "translated_at": "2026-03-27T19:57:33Z"
     },
     "concepts_and_terminology/PORTS.md": {
-      "commit": "fa404df",
-      "source_sha256": "ce2aa6a1722daec3e76d2e138b9b18ce1e5011f03ffc137eded93ebf72e09491",
-      "translated_at": "2026-03-19T07:30:03Z"
+      "commit": "a333f0f",
+      "source_sha256": "bb1ceede89e0a093d7b41d2e3bd274d0a4af055f1a250448be936960dc7b532d",
+      "translated_at": "2026-03-30T00:13:11Z"
     },
     "concepts_and_terminology/PRIMARY_PORT_AND_DNS.md": {
       "commit": "3357381",
@@ -181,14 +191,14 @@
       "translated_at": "2026-02-28T13:10:06Z"
     },
     "concepts_and_terminology/PRIVATE_PATHS.md": {
-      "commit": "2b2ae89",
-      "source_sha256": "d579a8e4ddec140ee15761e232196a154c98c49e8b6c8ac5e9c2277cf37c03a1",
-      "translated_at": "2026-03-26T23:25:04Z"
+      "commit": "a333f0f",
+      "source_sha256": "612afb518dbf6370278e8be477a7e0ca2c7d9efb5d909d7d083bb486380c39d9",
+      "translated_at": "2026-03-30T00:13:11Z"
     },
     "concepts_and_terminology/README.md": {
-      "commit": "2b2ae89",
-      "source_sha256": "62a8501af4ce702978f69d0ecdeb8d18cd449e4e1c4bfec15fc5dcdcc714515b",
-      "translated_at": "2026-03-26T23:25:04Z"
+      "commit": "a333f0f",
+      "source_sha256": "2690b5ebde609d5375f1bcfe6fe28fc442bd5810f2e5ef2bef6edae38171948b",
+      "translated_at": "2026-03-30T00:13:11Z"
     },
     "concepts_and_terminology/REMOVE.md": {
       "commit": "dc5d0c8",
@@ -226,9 +236,9 @@
       "translated_at": "2026-02-28T13:10:06Z"
     },
     "doc_ordering.txt": {
-      "commit": "2b2ae89",
-      "source_sha256": "8d7b236e035a96e834ec5ae443f1db0d665b53750b7168a24f6ed05fd61d87b7",
-      "translated_at": "2026-03-26T23:25:04Z"
+      "commit": "a333f0f",
+      "source_sha256": "0184c36579aa5937b5ecc019e7c594b2123a0645adb694073d56a84da27a3086",
+      "translated_at": "2026-03-30T00:31:37Z"
     },
     "harnesses/CLAUDE_CODE.md": {
       "commit": "8a556b7",
@@ -355,10 +365,15 @@
       "source_sha256": "6310b3f52657dc74b825a27f1d46e72248d0edcf115cf879591e6afbadf6251f",
       "translated_at": "2026-03-09T09:08:24Z"
     },
+    "recipes/NEXTJS.md": {
+      "commit": "a333f0f",
+      "source_sha256": "41b10435c0a066add81de8c460ad777c8e64a0ea5ff7e6c165fdcfe5043c87fe",
+      "translated_at": "2026-03-30T00:31:37Z"
+    },
     "recipes/README.md": {
-      "commit": "b42c701",
-      "source_sha256": "3580000b008311c7a4a10a2c7da53a2ddc245b70bf3a2ee50e368aa2bb2755cd",
-      "translated_at": "2026-03-05T00:12:10Z"
+      "commit": "a333f0f",
+      "source_sha256": "a64cae961f8fae6a58b1f86610ac74b466ceb847358ef43134ca215d305fe355",
+      "translated_at": "2026-03-30T00:31:37Z"
     },
     "skills_prompt.txt": {
       "commit": "2b2ae89",
@@ -463,9 +478,14 @@
       "translated_at": "2026-03-09T08:59:59Z"
     },
     "concepts_and_terminology/BARE_SERVICES.md": {
-      "commit": "d769707",
-      "source_sha256": "51e6dc213d509ecec8a1336305a7590141a66c01ac7d2a2d61b681dd8f897171",
-      "translated_at": "2026-03-03T10:23:05Z"
+      "commit": "a333f0f",
+      "source_sha256": "d47d2dda10042b47d5aa57613adf4fe82363743b43fc57d0bfc029f208950b81",
+      "translated_at": "2026-03-30T00:05:54Z"
+    },
+    "concepts_and_terminology/BARE_SERVICE_OPTIMIZATION.md": {
+      "commit": "a333f0f",
+      "source_sha256": "07b277c8395be5ba4c30aca8db1d742d6fc0153b003f7ac3997697586d2798f0",
+      "translated_at": "2026-03-30T00:05:54Z"
     },
     "concepts_and_terminology/BUILDS.md": {
       "commit": "dc5d0c8",
@@ -501,6 +521,11 @@
       "commit": "3357381",
       "source_sha256": "fa03c60c0019ce45ceb07f6cb8717d2729e73ea4b7496156cd3ff966ca99bb37",
       "translated_at": "2026-02-28T12:45:25Z"
+    },
+    "concepts_and_terminology/DYNAMIC_PORT_ENVIRONMENT_VARIABLES.md": {
+      "commit": "a333f0f",
+      "source_sha256": "5228949b945a630e63e3fd60b513d7fba06f0dd7515703c6f14a8923723402d7",
+      "translated_at": "2026-03-30T00:05:54Z"
     },
     "concepts_and_terminology/EXEC_AND_DOCKER.md": {
       "commit": "7605a21",
@@ -538,9 +563,9 @@
       "translated_at": "2026-03-27T19:56:00Z"
     },
     "concepts_and_terminology/PORTS.md": {
-      "commit": "fa404df",
-      "source_sha256": "ce2aa6a1722daec3e76d2e138b9b18ce1e5011f03ffc137eded93ebf72e09491",
-      "translated_at": "2026-03-19T07:26:45Z"
+      "commit": "a333f0f",
+      "source_sha256": "bb1ceede89e0a093d7b41d2e3bd274d0a4af055f1a250448be936960dc7b532d",
+      "translated_at": "2026-03-30T00:05:54Z"
     },
     "concepts_and_terminology/PRIMARY_PORT_AND_DNS.md": {
       "commit": "3357381",
@@ -548,14 +573,14 @@
       "translated_at": "2026-02-28T12:45:25Z"
     },
     "concepts_and_terminology/PRIVATE_PATHS.md": {
-      "commit": "2b2ae89",
-      "source_sha256": "d579a8e4ddec140ee15761e232196a154c98c49e8b6c8ac5e9c2277cf37c03a1",
-      "translated_at": "2026-03-26T23:17:09Z"
+      "commit": "a333f0f",
+      "source_sha256": "612afb518dbf6370278e8be477a7e0ca2c7d9efb5d909d7d083bb486380c39d9",
+      "translated_at": "2026-03-30T00:05:54Z"
     },
     "concepts_and_terminology/README.md": {
-      "commit": "2b2ae89",
-      "source_sha256": "62a8501af4ce702978f69d0ecdeb8d18cd449e4e1c4bfec15fc5dcdcc714515b",
-      "translated_at": "2026-03-26T23:17:09Z"
+      "commit": "a333f0f",
+      "source_sha256": "2690b5ebde609d5375f1bcfe6fe28fc442bd5810f2e5ef2bef6edae38171948b",
+      "translated_at": "2026-03-30T00:05:54Z"
     },
     "concepts_and_terminology/REMOVE.md": {
       "commit": "dc5d0c8",
@@ -593,9 +618,9 @@
       "translated_at": "2026-02-28T12:45:25Z"
     },
     "doc_ordering.txt": {
-      "commit": "2b2ae89",
-      "source_sha256": "8d7b236e035a96e834ec5ae443f1db0d665b53750b7168a24f6ed05fd61d87b7",
-      "translated_at": "2026-03-26T23:17:09Z"
+      "commit": "a333f0f",
+      "source_sha256": "0184c36579aa5937b5ecc019e7c594b2123a0645adb694073d56a84da27a3086",
+      "translated_at": "2026-03-30T00:05:54Z"
     },
     "harnesses/CLAUDE_CODE.md": {
       "commit": "8a556b7",
@@ -722,10 +747,15 @@
       "source_sha256": "6310b3f52657dc74b825a27f1d46e72248d0edcf115cf879591e6afbadf6251f",
       "translated_at": "2026-03-09T08:59:59Z"
     },
+    "recipes/NEXTJS.md": {
+      "commit": "a333f0f",
+      "source_sha256": "41b10435c0a066add81de8c460ad777c8e64a0ea5ff7e6c165fdcfe5043c87fe",
+      "translated_at": "2026-03-30T00:05:54Z"
+    },
     "recipes/README.md": {
-      "commit": "b42c701",
-      "source_sha256": "3580000b008311c7a4a10a2c7da53a2ddc245b70bf3a2ee50e368aa2bb2755cd",
-      "translated_at": "2026-03-05T00:03:15Z"
+      "commit": "a333f0f",
+      "source_sha256": "a64cae961f8fae6a58b1f86610ac74b466ceb847358ef43134ca215d305fe355",
+      "translated_at": "2026-03-30T00:05:54Z"
     },
     "skills_prompt.txt": {
       "commit": "2b2ae89",
@@ -830,9 +860,14 @@
       "translated_at": "2026-03-09T09:02:23Z"
     },
     "concepts_and_terminology/BARE_SERVICES.md": {
-      "commit": "d769707",
-      "source_sha256": "51e6dc213d509ecec8a1336305a7590141a66c01ac7d2a2d61b681dd8f897171",
-      "translated_at": "2026-03-03T10:24:11Z"
+      "commit": "a333f0f",
+      "source_sha256": "d47d2dda10042b47d5aa57613adf4fe82363743b43fc57d0bfc029f208950b81",
+      "translated_at": "2026-03-30T00:08:01Z"
+    },
+    "concepts_and_terminology/BARE_SERVICE_OPTIMIZATION.md": {
+      "commit": "a333f0f",
+      "source_sha256": "07b277c8395be5ba4c30aca8db1d742d6fc0153b003f7ac3997697586d2798f0",
+      "translated_at": "2026-03-30T00:08:01Z"
     },
     "concepts_and_terminology/BUILDS.md": {
       "commit": "dc5d0c8",
@@ -868,6 +903,11 @@
       "commit": "3357381",
       "source_sha256": "fa03c60c0019ce45ceb07f6cb8717d2729e73ea4b7496156cd3ff966ca99bb37",
       "translated_at": "2026-02-28T12:52:18Z"
+    },
+    "concepts_and_terminology/DYNAMIC_PORT_ENVIRONMENT_VARIABLES.md": {
+      "commit": "a333f0f",
+      "source_sha256": "5228949b945a630e63e3fd60b513d7fba06f0dd7515703c6f14a8923723402d7",
+      "translated_at": "2026-03-30T00:08:01Z"
     },
     "concepts_and_terminology/EXEC_AND_DOCKER.md": {
       "commit": "7605a21",
@@ -905,9 +945,9 @@
       "translated_at": "2026-03-27T19:56:27Z"
     },
     "concepts_and_terminology/PORTS.md": {
-      "commit": "fa404df",
-      "source_sha256": "ce2aa6a1722daec3e76d2e138b9b18ce1e5011f03ffc137eded93ebf72e09491",
-      "translated_at": "2026-03-19T07:27:41Z"
+      "commit": "a333f0f",
+      "source_sha256": "bb1ceede89e0a093d7b41d2e3bd274d0a4af055f1a250448be936960dc7b532d",
+      "translated_at": "2026-03-30T00:08:01Z"
     },
     "concepts_and_terminology/PRIMARY_PORT_AND_DNS.md": {
       "commit": "3357381",
@@ -915,14 +955,14 @@
       "translated_at": "2026-02-28T12:52:18Z"
     },
     "concepts_and_terminology/PRIVATE_PATHS.md": {
-      "commit": "2b2ae89",
-      "source_sha256": "d579a8e4ddec140ee15761e232196a154c98c49e8b6c8ac5e9c2277cf37c03a1",
-      "translated_at": "2026-03-26T23:19:25Z"
+      "commit": "a333f0f",
+      "source_sha256": "612afb518dbf6370278e8be477a7e0ca2c7d9efb5d909d7d083bb486380c39d9",
+      "translated_at": "2026-03-30T00:08:01Z"
     },
     "concepts_and_terminology/README.md": {
-      "commit": "2b2ae89",
-      "source_sha256": "62a8501af4ce702978f69d0ecdeb8d18cd449e4e1c4bfec15fc5dcdcc714515b",
-      "translated_at": "2026-03-26T23:19:25Z"
+      "commit": "a333f0f",
+      "source_sha256": "2690b5ebde609d5375f1bcfe6fe28fc442bd5810f2e5ef2bef6edae38171948b",
+      "translated_at": "2026-03-30T00:08:01Z"
     },
     "concepts_and_terminology/REMOVE.md": {
       "commit": "dc5d0c8",
@@ -960,9 +1000,9 @@
       "translated_at": "2026-02-28T12:52:18Z"
     },
     "doc_ordering.txt": {
-      "commit": "2b2ae89",
-      "source_sha256": "8d7b236e035a96e834ec5ae443f1db0d665b53750b7168a24f6ed05fd61d87b7",
-      "translated_at": "2026-03-26T23:19:25Z"
+      "commit": "a333f0f",
+      "source_sha256": "0184c36579aa5937b5ecc019e7c594b2123a0645adb694073d56a84da27a3086",
+      "translated_at": "2026-03-30T00:08:01Z"
     },
     "harnesses/CLAUDE_CODE.md": {
       "commit": "8a556b7",
@@ -1089,10 +1129,15 @@
       "source_sha256": "6310b3f52657dc74b825a27f1d46e72248d0edcf115cf879591e6afbadf6251f",
       "translated_at": "2026-03-09T09:02:23Z"
     },
+    "recipes/NEXTJS.md": {
+      "commit": "a333f0f",
+      "source_sha256": "41b10435c0a066add81de8c460ad777c8e64a0ea5ff7e6c165fdcfe5043c87fe",
+      "translated_at": "2026-03-30T00:08:01Z"
+    },
     "recipes/README.md": {
-      "commit": "b42c701",
-      "source_sha256": "3580000b008311c7a4a10a2c7da53a2ddc245b70bf3a2ee50e368aa2bb2755cd",
-      "translated_at": "2026-03-05T00:05:49Z"
+      "commit": "a333f0f",
+      "source_sha256": "a64cae961f8fae6a58b1f86610ac74b466ceb847358ef43134ca215d305fe355",
+      "translated_at": "2026-03-30T00:08:01Z"
     },
     "skills_prompt.txt": {
       "commit": "2b2ae89",
@@ -1197,9 +1242,14 @@
       "translated_at": "2026-03-09T09:06:35Z"
     },
     "concepts_and_terminology/BARE_SERVICES.md": {
-      "commit": "d769707",
-      "source_sha256": "51e6dc213d509ecec8a1336305a7590141a66c01ac7d2a2d61b681dd8f897171",
-      "translated_at": "2026-03-03T10:26:12Z"
+      "commit": "a333f0f",
+      "source_sha256": "d47d2dda10042b47d5aa57613adf4fe82363743b43fc57d0bfc029f208950b81",
+      "translated_at": "2026-03-30T00:11:31Z"
+    },
+    "concepts_and_terminology/BARE_SERVICE_OPTIMIZATION.md": {
+      "commit": "a333f0f",
+      "source_sha256": "07b277c8395be5ba4c30aca8db1d742d6fc0153b003f7ac3997697586d2798f0",
+      "translated_at": "2026-03-30T00:11:31Z"
     },
     "concepts_and_terminology/BUILDS.md": {
       "commit": "dc5d0c8",
@@ -1235,6 +1285,11 @@
       "commit": "3357381",
       "source_sha256": "fa03c60c0019ce45ceb07f6cb8717d2729e73ea4b7496156cd3ff966ca99bb37",
       "translated_at": "2026-02-28T13:04:30Z"
+    },
+    "concepts_and_terminology/DYNAMIC_PORT_ENVIRONMENT_VARIABLES.md": {
+      "commit": "a333f0f",
+      "source_sha256": "5228949b945a630e63e3fd60b513d7fba06f0dd7515703c6f14a8923723402d7",
+      "translated_at": "2026-03-30T00:11:31Z"
     },
     "concepts_and_terminology/EXEC_AND_DOCKER.md": {
       "commit": "7605a21",
@@ -1272,9 +1327,9 @@
       "translated_at": "2026-03-27T19:57:13Z"
     },
     "concepts_and_terminology/PORTS.md": {
-      "commit": "fa404df",
-      "source_sha256": "ce2aa6a1722daec3e76d2e138b9b18ce1e5011f03ffc137eded93ebf72e09491",
-      "translated_at": "2026-03-19T07:29:17Z"
+      "commit": "a333f0f",
+      "source_sha256": "bb1ceede89e0a093d7b41d2e3bd274d0a4af055f1a250448be936960dc7b532d",
+      "translated_at": "2026-03-30T00:11:31Z"
     },
     "concepts_and_terminology/PRIMARY_PORT_AND_DNS.md": {
       "commit": "3357381",
@@ -1282,14 +1337,14 @@
       "translated_at": "2026-02-28T13:04:30Z"
     },
     "concepts_and_terminology/PRIVATE_PATHS.md": {
-      "commit": "2b2ae89",
-      "source_sha256": "d579a8e4ddec140ee15761e232196a154c98c49e8b6c8ac5e9c2277cf37c03a1",
-      "translated_at": "2026-03-26T23:23:16Z"
+      "commit": "a333f0f",
+      "source_sha256": "612afb518dbf6370278e8be477a7e0ca2c7d9efb5d909d7d083bb486380c39d9",
+      "translated_at": "2026-03-30T00:11:31Z"
     },
     "concepts_and_terminology/README.md": {
-      "commit": "2b2ae89",
-      "source_sha256": "62a8501af4ce702978f69d0ecdeb8d18cd449e4e1c4bfec15fc5dcdcc714515b",
-      "translated_at": "2026-03-26T23:23:16Z"
+      "commit": "a333f0f",
+      "source_sha256": "2690b5ebde609d5375f1bcfe6fe28fc442bd5810f2e5ef2bef6edae38171948b",
+      "translated_at": "2026-03-30T00:11:31Z"
     },
     "concepts_and_terminology/REMOVE.md": {
       "commit": "dc5d0c8",
@@ -1327,9 +1382,9 @@
       "translated_at": "2026-02-28T13:04:30Z"
     },
     "doc_ordering.txt": {
-      "commit": "2b2ae89",
-      "source_sha256": "8d7b236e035a96e834ec5ae443f1db0d665b53750b7168a24f6ed05fd61d87b7",
-      "translated_at": "2026-03-26T23:23:16Z"
+      "commit": "a333f0f",
+      "source_sha256": "0184c36579aa5937b5ecc019e7c594b2123a0645adb694073d56a84da27a3086",
+      "translated_at": "2026-03-30T00:11:31Z"
     },
     "harnesses/CLAUDE_CODE.md": {
       "commit": "8a556b7",
@@ -1456,10 +1511,15 @@
       "source_sha256": "6310b3f52657dc74b825a27f1d46e72248d0edcf115cf879591e6afbadf6251f",
       "translated_at": "2026-03-09T09:06:35Z"
     },
+    "recipes/NEXTJS.md": {
+      "commit": "a333f0f",
+      "source_sha256": "41b10435c0a066add81de8c460ad777c8e64a0ea5ff7e6c165fdcfe5043c87fe",
+      "translated_at": "2026-03-30T00:11:31Z"
+    },
     "recipes/README.md": {
-      "commit": "b42c701",
-      "source_sha256": "3580000b008311c7a4a10a2c7da53a2ddc245b70bf3a2ee50e368aa2bb2755cd",
-      "translated_at": "2026-03-05T00:10:17Z"
+      "commit": "a333f0f",
+      "source_sha256": "a64cae961f8fae6a58b1f86610ac74b466ceb847358ef43134ca215d305fe355",
+      "translated_at": "2026-03-30T00:11:31Z"
     },
     "skills_prompt.txt": {
       "commit": "2b2ae89",
@@ -1564,9 +1624,14 @@
       "translated_at": "2026-03-09T09:04:33Z"
     },
     "concepts_and_terminology/BARE_SERVICES.md": {
-      "commit": "d769707",
-      "source_sha256": "51e6dc213d509ecec8a1336305a7590141a66c01ac7d2a2d61b681dd8f897171",
-      "translated_at": "2026-03-03T10:25:12Z"
+      "commit": "a333f0f",
+      "source_sha256": "d47d2dda10042b47d5aa57613adf4fe82363743b43fc57d0bfc029f208950b81",
+      "translated_at": "2026-03-30T00:09:45Z"
+    },
+    "concepts_and_terminology/BARE_SERVICE_OPTIMIZATION.md": {
+      "commit": "a333f0f",
+      "source_sha256": "07b277c8395be5ba4c30aca8db1d742d6fc0153b003f7ac3997697586d2798f0",
+      "translated_at": "2026-03-30T00:09:45Z"
     },
     "concepts_and_terminology/BUILDS.md": {
       "commit": "dc5d0c8",
@@ -1602,6 +1667,11 @@
       "commit": "3357381",
       "source_sha256": "fa03c60c0019ce45ceb07f6cb8717d2729e73ea4b7496156cd3ff966ca99bb37",
       "translated_at": "2026-02-28T12:58:35Z"
+    },
+    "concepts_and_terminology/DYNAMIC_PORT_ENVIRONMENT_VARIABLES.md": {
+      "commit": "a333f0f",
+      "source_sha256": "5228949b945a630e63e3fd60b513d7fba06f0dd7515703c6f14a8923723402d7",
+      "translated_at": "2026-03-30T00:09:45Z"
     },
     "concepts_and_terminology/EXEC_AND_DOCKER.md": {
       "commit": "7605a21",
@@ -1639,9 +1709,9 @@
       "translated_at": "2026-03-27T19:56:50Z"
     },
     "concepts_and_terminology/PORTS.md": {
-      "commit": "fa404df",
-      "source_sha256": "ce2aa6a1722daec3e76d2e138b9b18ce1e5011f03ffc137eded93ebf72e09491",
-      "translated_at": "2026-03-19T07:28:31Z"
+      "commit": "a333f0f",
+      "source_sha256": "bb1ceede89e0a093d7b41d2e3bd274d0a4af055f1a250448be936960dc7b532d",
+      "translated_at": "2026-03-30T00:09:45Z"
     },
     "concepts_and_terminology/PRIMARY_PORT_AND_DNS.md": {
       "commit": "3357381",
@@ -1649,14 +1719,14 @@
       "translated_at": "2026-02-28T12:58:35Z"
     },
     "concepts_and_terminology/PRIVATE_PATHS.md": {
-      "commit": "2b2ae89",
-      "source_sha256": "d579a8e4ddec140ee15761e232196a154c98c49e8b6c8ac5e9c2277cf37c03a1",
-      "translated_at": "2026-03-26T23:21:21Z"
+      "commit": "a333f0f",
+      "source_sha256": "612afb518dbf6370278e8be477a7e0ca2c7d9efb5d909d7d083bb486380c39d9",
+      "translated_at": "2026-03-30T00:09:45Z"
     },
     "concepts_and_terminology/README.md": {
-      "commit": "2b2ae89",
-      "source_sha256": "62a8501af4ce702978f69d0ecdeb8d18cd449e4e1c4bfec15fc5dcdcc714515b",
-      "translated_at": "2026-03-26T23:21:21Z"
+      "commit": "a333f0f",
+      "source_sha256": "2690b5ebde609d5375f1bcfe6fe28fc442bd5810f2e5ef2bef6edae38171948b",
+      "translated_at": "2026-03-30T00:09:45Z"
     },
     "concepts_and_terminology/REMOVE.md": {
       "commit": "dc5d0c8",
@@ -1694,9 +1764,9 @@
       "translated_at": "2026-02-28T12:58:35Z"
     },
     "doc_ordering.txt": {
-      "commit": "2b2ae89",
-      "source_sha256": "8d7b236e035a96e834ec5ae443f1db0d665b53750b7168a24f6ed05fd61d87b7",
-      "translated_at": "2026-03-26T23:21:21Z"
+      "commit": "a333f0f",
+      "source_sha256": "0184c36579aa5937b5ecc019e7c594b2123a0645adb694073d56a84da27a3086",
+      "translated_at": "2026-03-30T00:09:45Z"
     },
     "harnesses/CLAUDE_CODE.md": {
       "commit": "8a556b7",
@@ -1823,10 +1893,15 @@
       "source_sha256": "6310b3f52657dc74b825a27f1d46e72248d0edcf115cf879591e6afbadf6251f",
       "translated_at": "2026-03-09T09:04:33Z"
     },
+    "recipes/NEXTJS.md": {
+      "commit": "a333f0f",
+      "source_sha256": "41b10435c0a066add81de8c460ad777c8e64a0ea5ff7e6c165fdcfe5043c87fe",
+      "translated_at": "2026-03-30T00:09:45Z"
+    },
     "recipes/README.md": {
-      "commit": "b42c701",
-      "source_sha256": "3580000b008311c7a4a10a2c7da53a2ddc245b70bf3a2ee50e368aa2bb2755cd",
-      "translated_at": "2026-03-05T00:08:04Z"
+      "commit": "a333f0f",
+      "source_sha256": "a64cae961f8fae6a58b1f86610ac74b466ceb847358ef43134ca215d305fe355",
+      "translated_at": "2026-03-30T00:09:45Z"
     },
     "skills_prompt.txt": {
       "commit": "2b2ae89",
@@ -1931,9 +2006,14 @@
       "translated_at": "2026-03-09T08:57:57Z"
     },
     "concepts_and_terminology/BARE_SERVICES.md": {
-      "commit": "d769707",
-      "source_sha256": "51e6dc213d509ecec8a1336305a7590141a66c01ac7d2a2d61b681dd8f897171",
-      "translated_at": "2026-03-03T10:22:04Z"
+      "commit": "a333f0f",
+      "source_sha256": "d47d2dda10042b47d5aa57613adf4fe82363743b43fc57d0bfc029f208950b81",
+      "translated_at": "2026-03-30T00:04:07Z"
+    },
+    "concepts_and_terminology/BARE_SERVICE_OPTIMIZATION.md": {
+      "commit": "a333f0f",
+      "source_sha256": "07b277c8395be5ba4c30aca8db1d742d6fc0153b003f7ac3997697586d2798f0",
+      "translated_at": "2026-03-30T00:04:07Z"
     },
     "concepts_and_terminology/BUILDS.md": {
       "commit": "dc5d0c8",
@@ -1969,6 +2049,11 @@
       "commit": "3357381",
       "source_sha256": "fa03c60c0019ce45ceb07f6cb8717d2729e73ea4b7496156cd3ff966ca99bb37",
       "translated_at": "2026-02-28T12:39:25Z"
+    },
+    "concepts_and_terminology/DYNAMIC_PORT_ENVIRONMENT_VARIABLES.md": {
+      "commit": "a333f0f",
+      "source_sha256": "5228949b945a630e63e3fd60b513d7fba06f0dd7515703c6f14a8923723402d7",
+      "translated_at": "2026-03-30T00:04:07Z"
     },
     "concepts_and_terminology/EXEC_AND_DOCKER.md": {
       "commit": "7605a21",
@@ -2006,9 +2091,9 @@
       "translated_at": "2026-03-27T19:55:39Z"
     },
     "concepts_and_terminology/PORTS.md": {
-      "commit": "fa404df",
-      "source_sha256": "ce2aa6a1722daec3e76d2e138b9b18ce1e5011f03ffc137eded93ebf72e09491",
-      "translated_at": "2026-03-19T07:25:56Z"
+      "commit": "a333f0f",
+      "source_sha256": "bb1ceede89e0a093d7b41d2e3bd274d0a4af055f1a250448be936960dc7b532d",
+      "translated_at": "2026-03-30T00:04:07Z"
     },
     "concepts_and_terminology/PRIMARY_PORT_AND_DNS.md": {
       "commit": "3357381",
@@ -2016,14 +2101,14 @@
       "translated_at": "2026-02-28T12:39:25Z"
     },
     "concepts_and_terminology/PRIVATE_PATHS.md": {
-      "commit": "2b2ae89",
-      "source_sha256": "d579a8e4ddec140ee15761e232196a154c98c49e8b6c8ac5e9c2277cf37c03a1",
-      "translated_at": "2026-03-26T23:15:17Z"
+      "commit": "a333f0f",
+      "source_sha256": "612afb518dbf6370278e8be477a7e0ca2c7d9efb5d909d7d083bb486380c39d9",
+      "translated_at": "2026-03-30T00:04:07Z"
     },
     "concepts_and_terminology/README.md": {
-      "commit": "2b2ae89",
-      "source_sha256": "62a8501af4ce702978f69d0ecdeb8d18cd449e4e1c4bfec15fc5dcdcc714515b",
-      "translated_at": "2026-03-26T23:15:17Z"
+      "commit": "a333f0f",
+      "source_sha256": "2690b5ebde609d5375f1bcfe6fe28fc442bd5810f2e5ef2bef6edae38171948b",
+      "translated_at": "2026-03-30T00:04:07Z"
     },
     "concepts_and_terminology/REMOVE.md": {
       "commit": "dc5d0c8",
@@ -2061,9 +2146,9 @@
       "translated_at": "2026-02-28T12:39:25Z"
     },
     "doc_ordering.txt": {
-      "commit": "2b2ae89",
-      "source_sha256": "8d7b236e035a96e834ec5ae443f1db0d665b53750b7168a24f6ed05fd61d87b7",
-      "translated_at": "2026-03-26T23:15:17Z"
+      "commit": "a333f0f",
+      "source_sha256": "0184c36579aa5937b5ecc019e7c594b2123a0645adb694073d56a84da27a3086",
+      "translated_at": "2026-03-30T00:04:07Z"
     },
     "harnesses/CLAUDE_CODE.md": {
       "commit": "8a556b7",
@@ -2190,10 +2275,15 @@
       "source_sha256": "6310b3f52657dc74b825a27f1d46e72248d0edcf115cf879591e6afbadf6251f",
       "translated_at": "2026-03-09T08:57:57Z"
     },
+    "recipes/NEXTJS.md": {
+      "commit": "a333f0f",
+      "source_sha256": "41b10435c0a066add81de8c460ad777c8e64a0ea5ff7e6c165fdcfe5043c87fe",
+      "translated_at": "2026-03-30T00:04:07Z"
+    },
     "recipes/README.md": {
-      "commit": "b42c701",
-      "source_sha256": "3580000b008311c7a4a10a2c7da53a2ddc245b70bf3a2ee50e368aa2bb2755cd",
-      "translated_at": "2026-03-05T00:01:09Z"
+      "commit": "a333f0f",
+      "source_sha256": "a64cae961f8fae6a58b1f86610ac74b466ceb847358ef43134ca215d305fe355",
+      "translated_at": "2026-03-30T00:04:07Z"
     },
     "skills_prompt.txt": {
       "commit": "2b2ae89",

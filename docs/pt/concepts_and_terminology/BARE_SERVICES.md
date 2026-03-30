@@ -1,6 +1,6 @@
 # Serviços Bare
 
-Se você consegue conteinerizar seu projeto, você deve. Serviços bare existem para projetos que ainda não foram conteinerizados e em que adicionar um `Dockerfile` e `docker-compose.yml` não é prático no curto prazo. Eles são um degrau, não um destino.
+Se você consegue conteinerizar seu projeto, você deve. Serviços bare existem para projetos que ainda não foram conteinerizados e em que adicionar um `Dockerfile` e `docker-compose.yml` não é prático no curto prazo.
 
 Em vez de um `docker-compose.yml` orquestrando serviços conteinerizados, serviços bare permitem que você defina comandos de shell no seu Coastfile e o Coast os execute como processos comuns com um supervisor leve dentro do contêiner do Coast.
 
@@ -20,7 +20,7 @@ Serviços bare não oferecem nada disso. Seus processos compartilham o mesmo sis
 
 - Você está adotando o Coast para um projeto que nunca foi conteinerizado e quer começar a obter valor do isolamento de worktree e do gerenciamento de portas imediatamente
 - Seu projeto é uma ferramenta de processo único ou CLI em que um Dockerfile seria exagero
-- Você quer iterar na conteinerização gradualmente — comece com serviços bare, migre para compose depois
+- Você quer conteinerizar gradualmente, começando com serviços bare e migrando para compose depois
 
 ## Configuração
 
@@ -83,13 +83,13 @@ Os comandos de instalação rodam sequencialmente. Se algum comando de instalaç
 
 ### Políticas de reinício
 
-- **`no`** — o serviço roda uma vez. Se ele sair, permanece morto. Use isto para tarefas one-shot ou serviços que você quer gerenciar manualmente.
-- **`on-failure`** — reinicia o serviço se ele sair com um código diferente de zero. Saídas bem-sucedidas (código 0) são deixadas como estão. Usa backoff exponencial de 1 segundo até 30 segundos, e desiste após 10 falhas consecutivas.
-- **`always`** — reinicia em qualquer saída, incluindo sucesso. Mesmo backoff que `on-failure`. Use isto para servidores de longa duração que nunca devem parar.
+- **`no`**: o serviço roda uma vez. Se ele sair, permanece morto. Use isto para tarefas one-shot ou serviços que você quer gerenciar manualmente.
+- **`on-failure`**: reinicia o serviço se ele sair com um código diferente de zero. Saídas bem-sucedidas (código 0) são deixadas como estão. Usa backoff exponencial de 1 segundo até 30 segundos, e desiste após 10 falhas consecutivas.
+- **`always`**: reinicia em qualquer saída, incluindo sucesso. Mesmo backoff que `on-failure`. Use isto para servidores de longa duração que nunca devem parar.
 
 Se um serviço rodar por mais de 30 segundos antes de falhar, o contador de tentativas e o backoff são reiniciados — a suposição é que ele esteve saudável por um tempo e a falha é um problema novo.
 
-## Como funciona por baixo dos panos
+## Como funciona
 
 ```text
 ┌─── Coast: dev-1 ──────────────────────────────────────┐
@@ -142,7 +142,7 @@ Isso é equivalente ao que acontece com compose — `docker compose down`, troca
 
 ## Limitações
 
-- **Sem health checks.** O Coast não consegue esperar que um serviço bare fique "saudável" da forma que consegue com um serviço do compose que define um health check. Ele inicia o processo e espera pelo melhor.
+- **Sem health checks.** O Coast não consegue esperar que um serviço bare fique "saudável" da forma que consegue com um serviço do compose que define um health check. O Coast inicia o processo, mas não tem como saber quando ele está pronto.
 - **Sem isolamento entre serviços.** Todos os processos compartilham o mesmo sistema de arquivos e o mesmo namespace de processos dentro do contêiner do Coast. Um serviço com mau comportamento pode afetar os outros.
 - **Sem cache de build.** Builds do Docker Compose são cacheadas camada por camada. Comandos `install` de serviços bare rodam do zero a cada assign.
 - **Recuperação de falhas é básica.** A política de reinício usa um loop de shell com backoff exponencial. Não é um supervisor de processos como systemd ou supervisord.

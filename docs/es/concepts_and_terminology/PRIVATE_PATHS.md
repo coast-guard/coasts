@@ -50,7 +50,7 @@ Los montajes de rutas privadas se aplican en cada punto del ciclo de vida de Coa
 3. **`coast assign`** — después de desmontar y volver a enlazar `/workspace` a un directorio worktree.
 4. **`coast unassign`** — después de revertir `/workspace` de vuelta a la raíz del proyecto.
 
-Los directorios privados persisten entre ciclos de stop/start (viven en el sistema de archivos del contenedor, no en el montaje compartido). En `coast rm`, se destruyen junto con el contenedor.
+Los directorios privados persisten entre ciclos de stop/start (viven en el sistema de archivos del contenedor, no en el montaje compartido). En `coast assign` o `coast unassign`, los directorios privados se **vacían** para que los servidores de desarrollo recompilen a partir de los archivos fuente de la rama correcta en lugar de servir salidas de compilación obsoletas de una rama anterior. En `coast rm`, se destruyen junto con el contenedor.
 
 ## Cuándo Usarlo
 

@@ -50,7 +50,7 @@ Private path 마운트는 `/workspace`가 마운트되거나 다시 마운트되
 3. **`coast assign`** — `/workspace`를 언마운트하고 워크트리 디렉터리로 다시 바인드한 이후.
 4. **`coast unassign`** — `/workspace`를 프로젝트 루트로 되돌린 이후.
 
-Private 디렉터리는 stop/start 주기 전반에 걸쳐 유지됩니다(공유 마운트가 아니라 컨테이너 파일시스템에 존재하기 때문입니다). `coast rm` 시에는 컨테이너와 함께 삭제됩니다.
+Private 디렉터리는 stop/start 주기 전반에 걸쳐 유지됩니다(공유 마운트가 아니라 컨테이너 파일시스템에 존재하기 때문입니다). `coast assign` 또는 `coast unassign` 시에는 private 디렉터리가 **비워집니다**. 이는 개발 서버가 이전 브랜치의 오래된 빌드 출력물을 제공하는 대신 올바른 브랜치의 소스 파일로 다시 컴파일하도록 하기 위함입니다. `coast rm` 시에는 컨테이너와 함께 삭제됩니다.
 
 ## When to Use It
 

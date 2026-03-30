@@ -50,7 +50,7 @@ As montagens de caminhos privados são aplicadas em todos os pontos do ciclo de 
 3. **`coast assign`** — após desmontar e refazer o bind de `/workspace` para um diretório worktree.
 4. **`coast unassign`** — após reverter `/workspace` de volta para a raiz do projeto.
 
-Os diretórios privados persistem entre ciclos de parada/inicialização (eles vivem no sistema de arquivos do contêiner, não na montagem compartilhada). Em `coast rm`, eles são destruídos junto com o contêiner.
+Os diretórios privados persistem entre ciclos de parada/inicialização (eles vivem no sistema de arquivos do contêiner, não na montagem compartilhada). Em `coast assign` ou `coast unassign`, os diretórios privados são **limpos** para que os servidores de desenvolvimento recompilem a partir dos arquivos-fonte do branch correto, em vez de servir saída de build obsoleta de um branch anterior. Em `coast rm`, eles são destruídos junto com o contêiner.
 
 ## Quando Usar
 

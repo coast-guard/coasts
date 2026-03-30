@@ -57,6 +57,15 @@ Los puertos dinámicos te permiten echar un vistazo a cualquier Coast sin hacer 
 └──────────────────────────────────────────────────┘
 ```
 
-Cambiar el [checkout](CHECKOUT.md) es instantáneo — Coast mata y vuelve a iniciar reenviadores ligeros de `socat`. No se reinicia ningún contenedor.
+Cambiar el [checkout](CHECKOUT.md) es instantáneo. Coast mata y vuelve a iniciar reenviadores ligeros de `socat`. No se reinicia ningún contenedor.
 
-Consulta también [Primary Port & DNS](PRIMARY_PORT_AND_DNS.md) para enlaces rápidos, enrutamiento por subdominios y plantillas de URL.
+## Variables de entorno de puertos dinámicos
+
+Coast inyecta variables de entorno en cada instancia que exponen el puerto dinámico de cada servicio. El nombre de la variable se deriva de la clave `[ports]`: `web` se convierte en `WEB_DYNAMIC_PORT`, `backend-test` se convierte en `BACKEND_TEST_DYNAMIC_PORT`.
+
+Estas son útiles cuando un servicio necesita conocer su puerto accesible externamente, por ejemplo para establecer `AUTH_URL` para redirecciones de callback de autenticación. Consulta [Dynamic Port Environment Variables](DYNAMIC_PORT_ENVIRONMENT_VARIABLES.md) para la referencia completa.
+
+## Ver también
+
+- [Primary Port & DNS](PRIMARY_PORT_AND_DNS.md) - enlaces rápidos, enrutamiento por subdominios y plantillas de URL
+- [Dynamic Port Environment Variables](DYNAMIC_PORT_ENVIRONMENT_VARIABLES.md) - uso de `WEB_DYNAMIC_PORT` y variables relacionadas en comandos de servicio

@@ -46,7 +46,9 @@ concepts_and_terminology/BUILDS.md
 concepts_and_terminology/COASTFILE_TYPES.md
 concepts_and_terminology/RUNTIMES_AND_SERVICES.md
 concepts_and_terminology/BARE_SERVICES.md
+concepts_and_terminology/BARE_SERVICE_OPTIMIZATION.md
 concepts_and_terminology/MIXED_SERVICE_TYPES.md
+concepts_and_terminology/DYNAMIC_PORT_ENVIRONMENT_VARIABLES.md
 concepts_and_terminology/LOGS.md
 concepts_and_terminology/EXEC_AND_DOCKER.md
 concepts_and_terminology/AGENT_SHELLS.md
@@ -71,3 +73,4 @@ coastfiles/MCP.md
 # Рецепты
 recipes/README.md
 recipes/FULLSTACK_MONOREPO.md
+recipes/NEXTJS.md
