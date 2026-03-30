@@ -114,9 +114,14 @@ impl Coastfile {
 
     /// Derive the Coastfile "type" from a filename.
     ///
-    /// - `Coastfile` -> `None` (the default type, displayed as "default")
-    /// - `Coastfile.light` -> `Some("light")`
-    /// - `Coastfile.default` -> error (reserved name)
+    /// - `Coastfile` / `Coastfile.toml` -> `None` (the default type, displayed as "default")
+    /// - `Coastfile.light` / `Coastfile.light.toml` -> `Some("light")`
+    /// - `Coastfile.default` / `Coastfile.default.toml` -> error (reserved name)
+    /// - `Coastfile.toml` (as a type) -> error (reserved name; "toml" cannot be a type)
+    ///
+    /// A trailing `.toml` extension is stripped before extracting the type,
+    /// so `Coastfile.light.toml` is equivalent to `Coastfile.light`. The `.toml`
+    /// variant is provided purely for editor syntax highlighting.
     pub fn coastfile_type_from_path(path: &Path) -> Result<Option<String>> {
         let filename = path.file_name().and_then(|f| f.to_str()).unwrap_or("");
 
@@ -124,11 +129,13 @@ impl Coastfile {
             return Ok(None);
         }
 
-        if filename == "Coastfile" {
+        if filename == "Coastfile" || filename == "Coastfile.toml" {
             return Ok(None);
         }
 
-        if let Some(suffix) = filename.strip_prefix("Coastfile.") {
+        let effective = filename.strip_suffix(".toml").unwrap_or(filename);
+
+        if let Some(suffix) = effective.strip_prefix("Coastfile.") {
             if suffix.is_empty() {
                 return Err(CoastError::coastfile(
                     "Coastfile type cannot be empty (trailing dot). \
@@ -141,10 +148,49 @@ impl Coastfile {
                      The base 'Coastfile' is the default type.",
                 ));
             }
+            if suffix == "toml" {
+                return Err(CoastError::coastfile(
+                    "'toml' is a reserved Coastfile type name. \
+                     Use 'Coastfile.toml' for the default type with syntax highlighting, \
+                     or choose a different type name.",
+                ));
+            }
             return Ok(Some(suffix.to_string()));
         }
 
         Ok(None)
+    }
+
+    /// Find a Coastfile on disk, trying the `.toml` variant first.
+    ///
+    /// Given `base_name` (e.g. `"Coastfile"` or `"Coastfile.light"`), checks for
+    /// `{base_name}.toml` first, then `{base_name}`. Returns the first path that
+    /// exists, or `None` if neither does.
+    ///
+    /// This implements the tie-break rule: when both `Coastfile` and
+    /// `Coastfile.toml` exist, the `.toml` variant wins.
+    pub fn find_coastfile(dir: &Path, base_name: &str) -> Option<PathBuf> {
+        let toml_path = dir.join(format!("{base_name}.toml"));
+        if toml_path.exists() {
+            return Some(toml_path);
+        }
+        let plain_path = dir.join(base_name);
+        if plain_path.exists() {
+            return Some(plain_path);
+        }
+        None
+    }
+
+    /// Find a Coastfile for a given type, trying `.toml` first.
+    ///
+    /// - `None` -> looks for `Coastfile.toml` then `Coastfile`
+    /// - `Some("light")` -> looks for `Coastfile.light.toml` then `Coastfile.light`
+    pub fn find_coastfile_for_type(dir: &Path, coastfile_type: Option<&str>) -> Option<PathBuf> {
+        let base = match coastfile_type {
+            Some(t) => format!("Coastfile.{t}"),
+            None => "Coastfile".to_string(),
+        };
+        Self::find_coastfile(dir, &base)
     }
 
     /// Recursively parse a Coastfile, resolving `extends` and `includes`.
@@ -222,7 +268,8 @@ impl Coastfile {
             let unset = raw.unset.clone();
 
             let mut base = if let Some(ref extends_path_str) = extends_ref {
-                let extends_path = project_root.join(extends_path_str);
+                let extends_path = Self::find_coastfile(project_root, extends_path_str)
+                    .unwrap_or_else(|| project_root.join(extends_path_str));
                 Self::from_file_with_ancestry(&extends_path, ancestors)?
             } else {
                 Self::empty(project_root)

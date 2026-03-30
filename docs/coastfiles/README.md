@@ -186,9 +186,10 @@ mount = "/data/db"
 
 ## Conventions
 
-- The file must be named `Coastfile` (capital C, no extension) and live at the project root.
-- Typed variants use the pattern `Coastfile.{type}` — for example `Coastfile.light`, `Coastfile.snap`. See [Inheritance and Types](INHERITANCE.md).
-- The reserved name `Coastfile.default` is not allowed.
+- The file must be named `Coastfile` (capital C, no extension) and live at the project root. You can optionally add a `.toml` extension (`Coastfile.toml`) for editor syntax highlighting — both forms are equivalent.
+- Typed variants use the pattern `Coastfile.{type}` — for example `Coastfile.light`, `Coastfile.snap`. A `.toml` suffix is also accepted: `Coastfile.light.toml` is equivalent to `Coastfile.light`. See [Inheritance and Types](INHERITANCE.md).
+- **Tie-break rule:** if both `Coastfile` and `Coastfile.toml` exist (or both `Coastfile.light` and `Coastfile.light.toml`), the `.toml` variant takes precedence.
+- The reserved names `Coastfile.default` and `Coastfile.toml` (as a type) are not allowed. `"default"` and `"toml"` are reserved type names.
 - TOML syntax is used throughout. All section headers use `[brackets]` and named entries use `[section.name]` (not array-of-tables).
 - You cannot use both `compose` and `[services]` in the same Coastfile — pick one.
 - Relative paths (for `compose`, `root`, etc.) are resolved against the Coastfile's parent directory.

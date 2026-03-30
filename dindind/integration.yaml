@@ -40,6 +40,9 @@ tests:
     script: integrated-examples/test_coastfile_types.sh
     status: pass
     cached_seconds: 132
+  test_coastfile_toml:
+    script: integrated-examples/test_coastfile_toml.sh
+    timeout: 180
   test_lookup:
     script: integrated-examples/test_lookup.sh
     status: pass

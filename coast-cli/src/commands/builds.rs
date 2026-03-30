@@ -173,8 +173,7 @@ fn resolve(sub_project: &Option<String>, cli_project: &Option<String>) -> Result
         return Ok(p.clone());
     }
     let cwd = std::env::current_dir()?;
-    let coastfile = cwd.join("Coastfile");
-    if coastfile.exists() {
+    if let Some(coastfile) = coast_core::coastfile::Coastfile::find_coastfile(&cwd, "Coastfile") {
         let cf = coast_core::coastfile::Coastfile::from_file(&coastfile)?;
         return Ok(cf.name);
     }

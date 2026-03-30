@@ -353,6 +353,13 @@ pub async fn execute(args: &BuildArgs) -> Result<()> {
                  Run 'coast build' without --type."
             );
         }
+        if t == "toml" {
+            bail!(
+                "'--type toml' is not allowed. \
+                 'toml' is a reserved name. Use 'Coastfile.toml' for the default type \
+                 with syntax highlighting, or choose a different type name."
+            );
+        }
     }
 
     let coastfile_path = if let Some(ref t) = args.coastfile_type {
@@ -364,8 +371,13 @@ pub async fn execute(args: &BuildArgs) -> Result<()> {
                  or -f to specify an explicit path."
             );
         }
-        let filename = format!("Coastfile.{t}");
-        std::env::current_dir()?.join(filename)
+        let cwd = std::env::current_dir()?;
+        coast_core::coastfile::Coastfile::find_coastfile_for_type(&cwd, Some(t))
+            .unwrap_or_else(|| cwd.join(format!("Coastfile.{t}")))
+    } else if args.coastfile_path == Path::new("Coastfile") {
+        let cwd = std::env::current_dir()?;
+        coast_core::coastfile::Coastfile::find_coastfile(&cwd, "Coastfile")
+            .unwrap_or_else(|| cwd.join("Coastfile"))
     } else if args.coastfile_path.is_absolute() {
         args.coastfile_path.clone()
     } else {

@@ -11,6 +11,16 @@ The naming convention is `Coastfile` for the default and `Coastfile.{type}` for 
 - `Coastfile.snap` -- snapshot type
 - `Coastfile.light` -- lightweight type
 
+Any Coastfile can have an optional `.toml` extension for editor syntax highlighting. The `.toml` suffix is stripped before deriving the type, so these are equivalent pairs:
+
+- `Coastfile.toml` = `Coastfile` (default type)
+- `Coastfile.test.toml` = `Coastfile.test` (test type)
+- `Coastfile.light.toml` = `Coastfile.light` (lightweight type)
+
+**Tie-break rule:** if both forms exist (e.g. `Coastfile` and `Coastfile.toml`, or `Coastfile.light` and `Coastfile.light.toml`), the `.toml` variant takes precedence.
+
+**Reserved type names:** `"default"` and `"toml"` cannot be used as type names. `Coastfile.default` and `Coastfile.toml` (as a type suffix, meaning a file literally named `Coastfile.toml.toml`) are rejected.
+
 You build and run typed Coasts with `--type`:
 
 ```bash

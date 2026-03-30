@@ -13,7 +13,15 @@ The base Coastfile is always named `Coastfile`. Typed variants use the naming pa
 - `Coastfile.snap` — type `snap`
 - `Coastfile.ci.minimal` — type `ci.minimal`
 
-The name `Coastfile.default` is reserved and not allowed. A trailing dot (`Coastfile.`) is also invalid.
+Any Coastfile can have an optional `.toml` extension for editor syntax highlighting. The `.toml` suffix is stripped before extracting the type:
+
+- `Coastfile.toml` = `Coastfile` (default type)
+- `Coastfile.light.toml` = `Coastfile.light` (type `light`)
+- `Coastfile.ci.minimal.toml` = `Coastfile.ci.minimal` (type `ci.minimal`)
+
+If both the plain and `.toml` forms exist (e.g. `Coastfile` and `Coastfile.toml`), the `.toml` variant takes precedence.
+
+The names `Coastfile.default` and `"toml"` (as a type) are reserved and not allowed. A trailing dot (`Coastfile.`) is also invalid.
 
 Build and run typed variants with `--type`:
 
@@ -33,7 +41,7 @@ A typed Coastfile can inherit from a parent using `extends` in the `[coast]` sec
 extends = "Coastfile"
 ```
 
-The value is a relative path to the parent Coastfile, resolved against the child's directory. Chains are supported — a child can extend a parent that itself extends a grandparent:
+The value is a relative path to the parent Coastfile, resolved against the child's directory. If the exact path does not exist, Coast will also try appending `.toml` — so `extends = "Coastfile"` will find `Coastfile.toml` if only the `.toml` variant exists on disk. Chains are supported — a child can extend a parent that itself extends a grandparent:
 
 ```
 Coastfile                    (base)

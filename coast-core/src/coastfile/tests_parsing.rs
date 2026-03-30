@@ -1552,6 +1552,260 @@ fn test_type_non_coastfile_returns_none() {
     assert_eq!(t, None);
 }
 
+// --- .toml extension type-from-path tests ---
+
+#[test]
+fn test_type_from_coastfile_toml_is_default() {
+    let t = Coastfile::coastfile_type_from_path(Path::new("/proj/Coastfile.toml")).unwrap();
+    assert_eq!(t, None);
+}
+
+#[test]
+fn test_type_from_coastfile_light_toml() {
+    let t = Coastfile::coastfile_type_from_path(Path::new("/proj/Coastfile.light.toml")).unwrap();
+    assert_eq!(t, Some("light".to_string()));
+}
+
+#[test]
+fn test_type_from_coastfile_snap_toml() {
+    let t = Coastfile::coastfile_type_from_path(Path::new("/proj/Coastfile.snap.toml")).unwrap();
+    assert_eq!(t, Some("snap".to_string()));
+}
+
+#[test]
+fn test_type_from_coastfile_test_toml() {
+    let t = Coastfile::coastfile_type_from_path(Path::new("/proj/Coastfile.test.toml")).unwrap();
+    assert_eq!(t, Some("test".to_string()));
+}
+
+#[test]
+fn test_type_from_multi_part_suffix_toml() {
+    let t =
+        Coastfile::coastfile_type_from_path(Path::new("/proj/Coastfile.ci.minimal.toml")).unwrap();
+    assert_eq!(t, Some("ci.minimal".to_string()));
+}
+
+#[test]
+fn test_type_toml_is_reserved() {
+    let result = Coastfile::coastfile_type_from_path(Path::new("/proj/Coastfile.toml.toml"));
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("reserved"));
+}
+
+#[test]
+fn test_type_default_toml_is_still_illegal() {
+    let result = Coastfile::coastfile_type_from_path(Path::new("/proj/Coastfile.default.toml"));
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("Coastfile.default"));
+}
+
+#[test]
+fn test_type_trailing_dot_toml_is_illegal() {
+    let result = Coastfile::coastfile_type_from_path(Path::new("/proj/Coastfile..toml"));
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("empty"));
+}
+
+// --- find_coastfile tests ---
+
+#[test]
+fn test_find_coastfile_plain_only() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("Coastfile"), "[coast]\nname = \"a\"\n").unwrap();
+    let found = Coastfile::find_coastfile(dir.path(), "Coastfile");
+    assert_eq!(found, Some(dir.path().join("Coastfile")));
+}
+
+#[test]
+fn test_find_coastfile_toml_only() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("Coastfile.toml"), "[coast]\nname = \"a\"\n").unwrap();
+    let found = Coastfile::find_coastfile(dir.path(), "Coastfile");
+    assert_eq!(found, Some(dir.path().join("Coastfile.toml")));
+}
+
+#[test]
+fn test_find_coastfile_both_prefers_toml() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("Coastfile"), "[coast]\nname = \"a\"\n").unwrap();
+    std::fs::write(dir.path().join("Coastfile.toml"), "[coast]\nname = \"a\"\n").unwrap();
+    let found = Coastfile::find_coastfile(dir.path(), "Coastfile");
+    assert_eq!(found, Some(dir.path().join("Coastfile.toml")));
+}
+
+#[test]
+fn test_find_coastfile_neither_exists() {
+    let dir = tempfile::tempdir().unwrap();
+    let found = Coastfile::find_coastfile(dir.path(), "Coastfile");
+    assert_eq!(found, None);
+}
+
+#[test]
+fn test_find_coastfile_typed_plain_only() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("Coastfile.light"),
+        "[coast]\nextends = \"Coastfile\"\n",
+    )
+    .unwrap();
+    let found = Coastfile::find_coastfile(dir.path(), "Coastfile.light");
+    assert_eq!(found, Some(dir.path().join("Coastfile.light")));
+}
+
+#[test]
+fn test_find_coastfile_typed_toml_only() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("Coastfile.light.toml"),
+        "[coast]\nextends = \"Coastfile\"\n",
+    )
+    .unwrap();
+    let found = Coastfile::find_coastfile(dir.path(), "Coastfile.light");
+    assert_eq!(found, Some(dir.path().join("Coastfile.light.toml")));
+}
+
+#[test]
+fn test_find_coastfile_typed_both_prefers_toml() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("Coastfile.light"),
+        "[coast]\nextends = \"Coastfile\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("Coastfile.light.toml"),
+        "[coast]\nextends = \"Coastfile\"\n",
+    )
+    .unwrap();
+    let found = Coastfile::find_coastfile(dir.path(), "Coastfile.light");
+    assert_eq!(found, Some(dir.path().join("Coastfile.light.toml")));
+}
+
+// --- find_coastfile_for_type tests ---
+
+#[test]
+fn test_find_coastfile_for_type_default() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("Coastfile.toml"), "[coast]\nname = \"a\"\n").unwrap();
+    let found = Coastfile::find_coastfile_for_type(dir.path(), None);
+    assert_eq!(found, Some(dir.path().join("Coastfile.toml")));
+}
+
+#[test]
+fn test_find_coastfile_for_type_named() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("Coastfile.snap.toml"),
+        "[coast]\nextends = \"Coastfile\"\n",
+    )
+    .unwrap();
+    let found = Coastfile::find_coastfile_for_type(dir.path(), Some("snap"));
+    assert_eq!(found, Some(dir.path().join("Coastfile.snap.toml")));
+}
+
+#[test]
+fn test_find_coastfile_for_type_not_found() {
+    let dir = tempfile::tempdir().unwrap();
+    let found = Coastfile::find_coastfile_for_type(dir.path(), Some("nonexistent"));
+    assert_eq!(found, None);
+}
+
+// --- from_file integration tests with .toml extension ---
+
+#[test]
+fn test_from_file_coastfile_toml_is_default_type() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("Coastfile.toml"),
+        "[coast]\nname = \"my-app\"\n",
+    )
+    .unwrap();
+    let cf = Coastfile::from_file(&dir.path().join("Coastfile.toml")).unwrap();
+    assert_eq!(cf.name, "my-app");
+    assert_eq!(cf.coastfile_type, None);
+}
+
+#[test]
+fn test_from_file_coastfile_light_toml_has_type() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("Coastfile.toml"),
+        "[coast]\nname = \"my-app\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("Coastfile.light.toml"),
+        "[coast]\nextends = \"Coastfile\"\n",
+    )
+    .unwrap();
+    let cf = Coastfile::from_file(&dir.path().join("Coastfile.light.toml")).unwrap();
+    assert_eq!(cf.name, "my-app");
+    assert_eq!(cf.coastfile_type, Some("light".to_string()));
+}
+
+#[test]
+fn test_extends_discovers_coastfile_toml() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("Coastfile.toml"),
+        "[coast]\nname = \"my-app\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("Coastfile.light"),
+        "[coast]\nextends = \"Coastfile\"\n",
+    )
+    .unwrap();
+    let cf = Coastfile::from_file(&dir.path().join("Coastfile.light")).unwrap();
+    assert_eq!(cf.name, "my-app");
+    assert_eq!(cf.coastfile_type, Some("light".to_string()));
+}
+
+#[test]
+fn test_extends_prefers_toml_over_plain() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("Coastfile"),
+        "[coast]\nname = \"plain-app\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("Coastfile.toml"),
+        "[coast]\nname = \"toml-app\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("Coastfile.light"),
+        "[coast]\nextends = \"Coastfile\"\n",
+    )
+    .unwrap();
+    let cf = Coastfile::from_file(&dir.path().join("Coastfile.light")).unwrap();
+    assert_eq!(cf.name, "toml-app");
+}
+
+#[test]
+fn test_extends_subdir_discovers_coastfile_toml() {
+    let dir = tempfile::tempdir().unwrap();
+    let subdir = dir.path().join("subdir");
+    std::fs::create_dir_all(&subdir).unwrap();
+    std::fs::write(
+        subdir.join("Coastfile.toml"),
+        "[coast]\nname = \"sub-app\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("Coastfile.light"),
+        "[coast]\nextends = \"subdir/Coastfile\"\n",
+    )
+    .unwrap();
+    let cf = Coastfile::from_file(&dir.path().join("Coastfile.light")).unwrap();
+    assert_eq!(cf.name, "sub-app");
+    assert_eq!(cf.coastfile_type, Some("light".to_string()));
+}
+
 // ---------------------------------------------------------------------------
 // External worktree dir helpers
 // ---------------------------------------------------------------------------

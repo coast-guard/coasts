@@ -100,7 +100,8 @@ fn load_worktree_dirs_from_live_or_cached(
 ) -> Vec<String> {
     use coast_core::coastfile::Coastfile;
 
-    let live_path = project_root.join("Coastfile");
+    let live_path = Coastfile::find_coastfile(project_root, "Coastfile")
+        .unwrap_or_else(|| project_root.join("Coastfile"));
     if let Ok(cf) = Coastfile::from_file(&live_path) {
         return cf.worktree_dirs;
     }

@@ -142,8 +142,9 @@ fn resolve_project(cli_project: &Option<String>) -> Result<String> {
 fn resolve_project_from(start: &std::path::Path) -> Result<String> {
     let mut dir = start.to_path_buf();
     loop {
-        let coastfile_path = dir.join("Coastfile");
-        if coastfile_path.exists() {
+        if let Some(coastfile_path) =
+            coast_core::coastfile::Coastfile::find_coastfile(&dir, "Coastfile")
+        {
             let coastfile = coast_core::coastfile::Coastfile::from_file(&coastfile_path)
                 .context("Failed to parse Coastfile")?;
             return Ok(coastfile.name);

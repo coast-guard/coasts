@@ -45,7 +45,8 @@ fn read_worktree_dirs(project: &str) -> Vec<String> {
     use coast_core::coastfile::Coastfile;
 
     if let Some(root) = resolve_project_root(project) {
-        let live_path = root.join("Coastfile");
+        let live_path =
+            Coastfile::find_coastfile(&root, "Coastfile").unwrap_or_else(|| root.join("Coastfile"));
         if let Ok(cf) = Coastfile::from_file(&live_path) {
             return cf.worktree_dirs;
         }

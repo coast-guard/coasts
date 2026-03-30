@@ -236,17 +236,19 @@ async fn builds_coastfile_types(
     if let Ok(entries) = std::fs::read_dir(root_path) {
         for entry in entries.flatten() {
             let fname = entry.file_name().to_string_lossy().to_string();
-            if fname == "Coastfile" {
+            if fname == "Coastfile" || fname == "Coastfile.toml" {
                 types.push("default".to_string());
             } else if let Some(suffix) = fname.strip_prefix("Coastfile.") {
-                if !suffix.is_empty() && suffix != "default" {
-                    types.push(suffix.to_string());
+                let effective = suffix.strip_suffix(".toml").unwrap_or(suffix);
+                if !effective.is_empty() && effective != "default" && effective != "toml" {
+                    types.push(effective.to_string());
                 }
             }
         }
     }
 
     types.sort();
+    types.dedup();
     if types.first().map(std::string::String::as_str) != Some("default")
         && !types.contains(&"default".to_string())
     {

@@ -300,7 +300,9 @@ fn resolve_project_root_from_git_file(start: &Path) -> Result<std::path::PathBuf
 
 /// Load worktree_dirs from the Coastfile at the given project root.
 fn load_worktree_dirs_from_project(project_root: &Path) -> Vec<String> {
-    let coastfile_path = project_root.join("Coastfile");
+    let coastfile_path =
+        coast_core::coastfile::Coastfile::find_coastfile(project_root, "Coastfile")
+            .unwrap_or_else(|| project_root.join("Coastfile"));
     if let Ok(cf) = coast_core::coastfile::Coastfile::from_file(&coastfile_path) {
         return cf.worktree_dirs;
     }
@@ -331,7 +333,10 @@ pub fn detect_worktree_from_paths(cwd: &Path, worktree_base: &Path) -> Result<Op
         for component in &components {
             accumulated.push(component);
             let candidate = canonical_wt.join(&accumulated);
-            if candidate.join(".git").exists() || candidate.join("Coastfile").exists() {
+            if candidate.join(".git").exists()
+                || candidate.join("Coastfile").exists()
+                || candidate.join("Coastfile.toml").exists()
+            {
                 let name = accumulated.to_string_lossy().to_string();
                 if !name.is_empty() {
                     return Ok(Some(name));
@@ -362,8 +367,9 @@ fn find_project_root_and_worktree_dirs(start: &Path) -> Result<(std::path::PathB
     let mut dir = start.to_path_buf();
     let mut outermost: Option<(std::path::PathBuf, Vec<String>)> = None;
     loop {
-        let coastfile_path = dir.join("Coastfile");
-        if coastfile_path.exists() {
+        if let Some(coastfile_path) =
+            coast_core::coastfile::Coastfile::find_coastfile(&dir, "Coastfile")
+        {
             if let Ok(cf) = coast_core::coastfile::Coastfile::from_file(&coastfile_path) {
                 outermost = Some((dir.clone(), cf.worktree_dirs));
             }
