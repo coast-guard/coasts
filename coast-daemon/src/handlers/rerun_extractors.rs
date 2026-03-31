@@ -385,72 +385,36 @@ async fn apply_refreshed_secrets_to_instance(
     }
 }
 
-/// Handle a rerun-extractors request.
-#[allow(clippy::too_many_lines)]
-pub async fn handle(
-    req: RerunExtractorsRequest,
-    state: &AppState,
-    progress: tokio::sync::mpsc::Sender<BuildProgressEvent>,
-) -> Result<RerunExtractorsResponse> {
-    info!(
-        project = %req.project,
-        build_id = ?req.build_id,
-        "handling rerun-extractors request"
-    );
+/// Resolve secret params, converting relative paths to absolute under `project_root`.
+fn resolve_secret_params(
+    params: &HashMap<String, String>,
+    project_root: &Path,
+) -> HashMap<String, String> {
+    let mut resolved = params.clone();
+    if let Some(path) = resolved.get("path") {
+        let p = Path::new(path);
+        if p.is_relative() {
+            let abs = project_root.join(p);
+            resolved.insert("path".to_string(), abs.to_string_lossy().to_string());
+        }
+    }
+    resolved
+}
 
-    let plan = vec![
-        "Resolving cached Coastfile".to_string(),
-        "Extracting secrets".to_string(),
-        "Applying refreshed secrets".to_string(),
-    ];
-    let total_steps = plan.len() as u32;
-    emit(&progress, BuildProgressEvent::build_plan(plan));
-
-    emit(
-        &progress,
-        BuildProgressEvent::started("Resolving cached Coastfile", 1, total_steps),
-    );
-    let (coastfile_path, resolved_build_id) =
-        resolve_cached_coastfile_path(&req.project, req.build_id.as_deref())?;
-    let coastfile = coast_core::coastfile::Coastfile::from_file(&coastfile_path)?;
-    emit(
-        &progress,
-        BuildProgressEvent::done("Resolving cached Coastfile", "ok")
-            .with_verbose(coastfile_path.display().to_string()),
-    );
-
-    let home = dirs::home_dir().ok_or_else(|| {
-        CoastError::io_simple("cannot determine home directory. Set $HOME and try again.")
-    })?;
-    let keystore_db_path = home.join(".coast").join("keystore.db");
-    let keystore_key_path = home.join(".coast").join("keystore.key");
-
+/// Open the keystore, extract each secret from the coastfile, and store results.
+///
+/// Returns `(secrets_extracted, warnings, step_status)`.
+async fn extract_and_store_secrets(
+    coastfile: &coast_core::coastfile::Coastfile,
+    keystore_db_path: &Path,
+    keystore_key_path: &Path,
+    progress: &tokio::sync::mpsc::Sender<BuildProgressEvent>,
+) -> (usize, Vec<String>, &'static str) {
     let mut warnings = Vec::new();
     let mut secrets_extracted = 0usize;
+    let mut step_status = "ok";
 
-    emit(
-        &progress,
-        BuildProgressEvent::started("Extracting secrets", 2, total_steps),
-    );
-
-    if coastfile.secrets.is_empty() {
-        emit(
-            &progress,
-            BuildProgressEvent::skip("Extracting secrets", 2, total_steps),
-        );
-        emit(
-            &progress,
-            BuildProgressEvent::skip("Applying refreshed secrets", 3, total_steps),
-        );
-        return Ok(RerunExtractorsResponse {
-            project: req.project,
-            secrets_extracted: 0,
-            warnings,
-        });
-    }
-
-    let mut extraction_step_status = "ok";
-    match coast_secrets::keystore::Keystore::open(&keystore_db_path, &keystore_key_path) {
+    match coast_secrets::keystore::Keystore::open(keystore_db_path, keystore_key_path) {
         Ok(keystore) => {
             if let Err(e) = keystore.delete_secrets_for_image(&coastfile.name) {
                 warnings.push(format!(
@@ -461,15 +425,8 @@ pub async fn handle(
 
             let registry = coast_secrets::extractor::ExtractorRegistry::with_builtins();
             for secret_config in &coastfile.secrets {
-                let mut resolved_params = secret_config.params.clone();
-                if let Some(path) = resolved_params.get("path") {
-                    let p = Path::new(path);
-                    if p.is_relative() {
-                        let abs = coastfile.project_root.join(p);
-                        resolved_params
-                            .insert("path".to_string(), abs.to_string_lossy().to_string());
-                    }
-                }
+                let resolved_params =
+                    resolve_secret_params(&secret_config.params, &coastfile.project_root);
 
                 let inject_target = match &secret_config.inject {
                     InjectType::Env(name) => name.clone(),
@@ -497,7 +454,7 @@ pub async fn handle(
                             })
                         {
                             emit(
-                                &progress,
+                                progress,
                                 BuildProgressEvent::item(
                                     "Extracting secrets",
                                     format!("{} -> {}", secret_config.extractor, inject_target),
@@ -505,7 +462,7 @@ pub async fn handle(
                                 )
                                 .with_verbose(format!("Failed to store: {e}")),
                             );
-                            extraction_step_status = "warn";
+                            step_status = "warn";
                             warnings.push(format!(
                                 "Failed to store secret '{}': {}",
                                 secret_config.name, e
@@ -513,7 +470,7 @@ pub async fn handle(
                         } else {
                             secrets_extracted += 1;
                             emit(
-                                &progress,
+                                progress,
                                 BuildProgressEvent::item(
                                     "Extracting secrets",
                                     format!("{} -> {}", secret_config.extractor, inject_target),
@@ -524,7 +481,7 @@ pub async fn handle(
                     }
                     Err(e) => {
                         emit(
-                            &progress,
+                            progress,
                             BuildProgressEvent::item(
                                 "Extracting secrets",
                                 format!("{} -> {}", secret_config.extractor, inject_target),
@@ -532,7 +489,7 @@ pub async fn handle(
                             )
                             .with_verbose(e.to_string()),
                         );
-                        extraction_step_status = "warn";
+                        step_status = "warn";
                         warnings.push(format!(
                             "Failed to extract secret '{}' using extractor '{}': {}",
                             secret_config.name, secret_config.extractor, e
@@ -543,10 +500,10 @@ pub async fn handle(
         }
         Err(e) => {
             emit(
-                &progress,
+                progress,
                 BuildProgressEvent::done("Extracting secrets", "fail").with_verbose(e.to_string()),
             );
-            extraction_step_status = "fail";
+            step_status = "fail";
             warnings.push(format!(
                 "Failed to open keystore: {}. Secrets were not stored.",
                 e
@@ -554,20 +511,26 @@ pub async fn handle(
         }
     }
 
-    emit(
-        &progress,
-        BuildProgressEvent::done("Extracting secrets", extraction_step_status),
-    );
+    (secrets_extracted, warnings, step_status)
+}
 
-    emit(
-        &progress,
-        BuildProgressEvent::started("Applying refreshed secrets", 3, total_steps),
-    );
+/// Load resolved secrets from the keystore and apply them to all matching instances.
+///
+/// Returns `(warnings, step_status)`.
+async fn apply_secrets_to_instances(
+    state: &AppState,
+    coastfile: &coast_core::coastfile::Coastfile,
+    project: &str,
+    target_build_id: Option<&str>,
+    keystore_db_path: &Path,
+    keystore_key_path: &Path,
+    progress: &tokio::sync::mpsc::Sender<BuildProgressEvent>,
+) -> Result<(Vec<String>, &'static str)> {
+    let mut warnings = Vec::new();
+    let mut step_status = "ok";
 
-    let mut apply_step_status = "ok";
-    let target_build_id = resolved_build_id.as_deref();
     if target_build_id.is_none() {
-        apply_step_status = "warn";
+        step_status = "warn";
         warnings.push(
             "Could not resolve a specific latest build_id; applying refreshed secrets to all instances in the project."
                 .to_string(),
@@ -576,7 +539,7 @@ pub async fn handle(
 
     let target_instances = {
         let db = state.db.lock().await;
-        db.list_instances_for_project(&req.project)?
+        db.list_instances_for_project(project)?
             .into_iter()
             .filter(|instance| instance_matches_build(instance, target_build_id))
             .collect::<Vec<_>>()
@@ -584,57 +547,40 @@ pub async fn handle(
 
     if target_instances.is_empty() {
         emit(
-            &progress,
+            progress,
             BuildProgressEvent::item(
                 "Applying refreshed secrets",
                 "no matching instances",
                 "skip",
             ),
         );
-        emit(
-            &progress,
-            BuildProgressEvent::done("Applying refreshed secrets", "skip"),
-        );
-        return Ok(RerunExtractorsResponse {
-            project: req.project,
-            secrets_extracted,
-            warnings,
-        });
+        return Ok((warnings, "skip"));
     }
 
     if state.docker.is_none() {
-        apply_step_status = "warn";
         warnings.push(
             "Docker is not available; refreshed secrets were stored but could not be applied to instances."
                 .to_string(),
         );
-        emit(
-            &progress,
-            BuildProgressEvent::done("Applying refreshed secrets", apply_step_status),
-        );
-        return Ok(RerunExtractorsResponse {
-            project: req.project,
-            secrets_extracted,
-            warnings,
-        });
+        return Ok((warnings, "warn"));
     }
 
     let instance_secrets: Option<HashMap<String, Vec<ResolvedSecret>>> =
-        match coast_secrets::keystore::Keystore::open(&keystore_db_path, &keystore_key_path) {
+        match coast_secrets::keystore::Keystore::open(keystore_db_path, keystore_key_path) {
             Ok(keystore) => {
                 let mut per_instance = HashMap::new();
                 for instance in &target_instances {
                     match load_resolved_secrets_for_instance(
                         &keystore,
                         &coastfile.name,
-                        &req.project,
+                        project,
                         &instance.name,
                     ) {
                         Ok(resolved) => {
                             per_instance.insert(instance.name.clone(), resolved);
                         }
                         Err(e) => {
-                            apply_step_status = "warn";
+                            step_status = "warn";
                             warnings.push(format!(
                                 "Failed loading merged secrets for instance '{}': {}",
                                 instance.name, e
@@ -645,7 +591,7 @@ pub async fn handle(
                 Some(per_instance)
             }
             Err(e) => {
-                apply_step_status = "warn";
+                step_status = "warn";
                 warnings.push(format!(
                     "Failed to reopen keystore for applying refreshed secrets: {}",
                     e
@@ -662,7 +608,7 @@ pub async fn handle(
                 .unwrap_or_default();
             if resolved.is_empty() {
                 emit(
-                    &progress,
+                    progress,
                     BuildProgressEvent::item(
                         "Applying refreshed secrets",
                         format!("{} (no injected secrets)", instance.name),
@@ -673,7 +619,7 @@ pub async fn handle(
             }
 
             emit(
-                &progress,
+                progress,
                 BuildProgressEvent::item(
                     "Applying refreshed secrets",
                     format!("{} (status: {})", instance.name, instance.status),
@@ -681,10 +627,10 @@ pub async fn handle(
                 ),
             );
 
-            let has_compose = has_compose_for_build(&req.project, instance.build_id.as_deref());
+            let has_compose = has_compose_for_build(project, instance.build_id.as_deref());
             match apply_refreshed_secrets_to_instance(
                 state,
-                &req.project,
+                project,
                 &instance.name,
                 instance.status,
                 instance.container_id,
@@ -696,7 +642,7 @@ pub async fn handle(
             {
                 Ok(()) => {
                     emit(
-                        &progress,
+                        progress,
                         BuildProgressEvent::item(
                             "Applying refreshed secrets",
                             format!("{} applied", instance.name),
@@ -705,13 +651,13 @@ pub async fn handle(
                     );
                 }
                 Err(e) => {
-                    apply_step_status = "warn";
+                    step_status = "warn";
                     warnings.push(format!(
                         "Failed applying refreshed secrets to instance '{}': {}",
                         instance.name, e
                     ));
                     emit(
-                        &progress,
+                        progress,
                         BuildProgressEvent::item(
                             "Applying refreshed secrets",
                             format!("{} failed", instance.name),
@@ -724,6 +670,95 @@ pub async fn handle(
         }
     }
 
+    Ok((warnings, step_status))
+}
+
+/// Handle a rerun-extractors request.
+pub async fn handle(
+    req: RerunExtractorsRequest,
+    state: &AppState,
+    progress: tokio::sync::mpsc::Sender<BuildProgressEvent>,
+) -> Result<RerunExtractorsResponse> {
+    info!(
+        project = %req.project,
+        build_id = ?req.build_id,
+        "handling rerun-extractors request"
+    );
+
+    let plan = vec![
+        "Resolving cached Coastfile".to_string(),
+        "Extracting secrets".to_string(),
+        "Applying refreshed secrets".to_string(),
+    ];
+    let total_steps = plan.len() as u32;
+    emit(&progress, BuildProgressEvent::build_plan(plan));
+
+    // Step 1: Resolve cached Coastfile.
+    emit(
+        &progress,
+        BuildProgressEvent::started("Resolving cached Coastfile", 1, total_steps),
+    );
+    let (coastfile_path, resolved_build_id) =
+        resolve_cached_coastfile_path(&req.project, req.build_id.as_deref())?;
+    let coastfile = coast_core::coastfile::Coastfile::from_file(&coastfile_path)?;
+    emit(
+        &progress,
+        BuildProgressEvent::done("Resolving cached Coastfile", "ok")
+            .with_verbose(coastfile_path.display().to_string()),
+    );
+
+    let home = dirs::home_dir().ok_or_else(|| {
+        CoastError::io_simple("cannot determine home directory. Set $HOME and try again.")
+    })?;
+    let keystore_db_path = home.join(".coast").join("keystore.db");
+    let keystore_key_path = home.join(".coast").join("keystore.key");
+
+    // Step 2: Extract secrets.
+    emit(
+        &progress,
+        BuildProgressEvent::started("Extracting secrets", 2, total_steps),
+    );
+    if coastfile.secrets.is_empty() {
+        emit(
+            &progress,
+            BuildProgressEvent::skip("Extracting secrets", 2, total_steps),
+        );
+        emit(
+            &progress,
+            BuildProgressEvent::skip("Applying refreshed secrets", 3, total_steps),
+        );
+        return Ok(RerunExtractorsResponse {
+            project: req.project,
+            secrets_extracted: 0,
+            warnings: Vec::new(),
+        });
+    }
+
+    let (secrets_extracted, extract_warnings, extraction_step_status) =
+        extract_and_store_secrets(&coastfile, &keystore_db_path, &keystore_key_path, &progress)
+            .await;
+    let mut warnings = extract_warnings;
+    emit(
+        &progress,
+        BuildProgressEvent::done("Extracting secrets", extraction_step_status),
+    );
+
+    // Step 3: Apply refreshed secrets to instances.
+    emit(
+        &progress,
+        BuildProgressEvent::started("Applying refreshed secrets", 3, total_steps),
+    );
+    let (apply_warnings, apply_step_status) = apply_secrets_to_instances(
+        state,
+        &coastfile,
+        &req.project,
+        resolved_build_id.as_deref(),
+        &keystore_db_path,
+        &keystore_key_path,
+        &progress,
+    )
+    .await?;
+    warnings.extend(apply_warnings);
     emit(
         &progress,
         BuildProgressEvent::done("Applying refreshed secrets", apply_step_status),
@@ -842,5 +877,36 @@ mod tests {
         assert!(!is_valid_env_name(""));
         assert!(!is_valid_env_name("1BAD"));
         assert!(!is_valid_env_name("BAD-NAME"));
+    }
+
+    #[test]
+    fn test_resolve_secret_params_relative_path() {
+        let mut params = HashMap::new();
+        params.insert("path".to_string(), "secrets/api.key".to_string());
+        let root = Path::new("/home/user/my-project");
+        let resolved = resolve_secret_params(&params, root);
+        assert_eq!(
+            resolved.get("path").unwrap(),
+            "/home/user/my-project/secrets/api.key"
+        );
+    }
+
+    #[test]
+    fn test_resolve_secret_params_absolute_path() {
+        let mut params = HashMap::new();
+        params.insert("path".to_string(), "/etc/secrets/api.key".to_string());
+        let root = Path::new("/home/user/my-project");
+        let resolved = resolve_secret_params(&params, root);
+        assert_eq!(resolved.get("path").unwrap(), "/etc/secrets/api.key");
+    }
+
+    #[test]
+    fn test_resolve_secret_params_no_path() {
+        let mut params = HashMap::new();
+        params.insert("key".to_string(), "value".to_string());
+        let root = Path::new("/home/user/my-project");
+        let resolved = resolve_secret_params(&params, root);
+        assert_eq!(resolved.get("key").unwrap(), "value");
+        assert!(!resolved.contains_key("path"));
     }
 }
