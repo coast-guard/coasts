@@ -5,6 +5,8 @@
 use tokio::time::Instant;
 use tracing::{info, warn};
 
+use bollard::models::ContainerInspectResponse;
+
 use coast_core::error::{CoastError, Result};
 use coast_core::protocol::{CoastEvent, SharedRequest, SharedResponse, SharedServiceInfo};
 use coast_docker::runtime::Runtime;
@@ -409,11 +411,100 @@ async fn handle_restart(
     Ok(SharedResponse { message, services })
 }
 
+/// Extract named volume names from a container's bind mounts.
+fn extract_volume_names_from_inspect(inspect: &ContainerInspectResponse) -> Vec<String> {
+    let Some(binds) = inspect.host_config.as_ref().and_then(|h| h.binds.as_ref()) else {
+        return Vec::new();
+    };
+    binds
+        .iter()
+        .filter_map(|bind_str| crate::shared_services::extract_named_volume(bind_str))
+        .map(ToString::to_string)
+        .collect()
+}
+
+/// Stop and remove a shared service container, then delete its volumes.
+async fn remove_shared_container_and_volumes(
+    runtime: &coast_docker::dind::DindRuntime,
+    docker: &bollard::Docker,
+    container_name: &str,
+    volume_names: &[String],
+) {
+    if let Err(e) = runtime.stop_coast_container(container_name).await {
+        warn!(
+            container = %container_name,
+            error = %e,
+            "failed to stop shared service container, it may already be stopped"
+        );
+    }
+    if let Err(e) = runtime.remove_coast_container(container_name).await {
+        warn!(
+            container = %container_name,
+            error = %e,
+            "failed to remove shared service container"
+        );
+    }
+    remove_volumes(docker, volume_names).await;
+}
+
+/// Delete Docker volumes by name, logging each outcome.
+async fn remove_volumes(docker: &bollard::Docker, volume_names: &[String]) {
+    for vol_name in volume_names {
+        match docker.remove_volume(vol_name, None).await {
+            Ok(_) => info!(volume = %vol_name, "removed shared service volume"),
+            Err(e) => warn!(
+                volume = %vol_name,
+                error = %e,
+                "failed to remove shared service volume (may be in use)"
+            ),
+        }
+    }
+}
+
+/// Try to remove a dangling Docker container that has no DB record.
+///
+/// Returns `Some(SharedResponse)` if a dangling container was found and cleaned up,
+/// or `None` if no container exists in Docker.
+async fn try_remove_dangling_container(
+    project: &str,
+    service: &str,
+    state: &AppState,
+) -> Option<SharedResponse> {
+    let docker = state.docker.as_ref()?;
+    let container_name = crate::shared_services::shared_container_name(project, service);
+    let inspect = docker.inspect_container(&container_name, None).await.ok()?;
+
+    warn!(
+        service = %service,
+        project = %project,
+        container = %container_name,
+        "removing dangling shared service container during rm"
+    );
+    let volume_names = extract_volume_names_from_inspect(&inspect);
+    let runtime = coast_docker::dind::DindRuntime::with_client(docker.clone());
+    remove_shared_container_and_volumes(&runtime, docker, &container_name, &volume_names).await;
+
+    let vol_msg = if volume_names.is_empty() {
+        String::new()
+    } else {
+        format!(" Removed {} volume(s).", volume_names.len())
+    };
+    state.emit_event(CoastEvent::SharedServiceRemoved {
+        project: project.to_string(),
+        service: service.to_string(),
+    });
+    Some(SharedResponse {
+        message: format!(
+            "Removed dangling shared service '{service}' from project '{project}'.{vol_msg}"
+        ),
+        services: Vec::new(),
+    })
+}
+
 /// Remove a shared service.
 ///
 /// Stops and removes the shared service container, disconnects it from
 /// the bridge network, and removes associated Docker volumes.
-#[allow(clippy::cognitive_complexity)]
 async fn handle_rm(project: String, service: String, state: &AppState) -> Result<SharedResponse> {
     info!(project = %project, service = %service, "handling shared-services rm request");
 
@@ -423,53 +514,8 @@ async fn handle_rm(project: String, service: String, state: &AppState) -> Result
         match svc {
             Some(s) => s.container_id.clone(),
             None => {
-                // Service not in DB — check for a dangling Docker container and clean it up.
-                let container_name =
-                    crate::shared_services::shared_container_name(&project, &service);
-                if let Some(ref docker) = state.docker {
-                    if let Ok(inspect) = docker.inspect_container(&container_name, None).await {
-                        warn!(
-                            service = %service,
-                            project = %project,
-                            container = %container_name,
-                            "removing dangling shared service container during rm"
-                        );
-                        let mut volume_names: Vec<String> = Vec::new();
-                        if let Some(binds) =
-                            inspect.host_config.as_ref().and_then(|h| h.binds.as_ref())
-                        {
-                            for bind_str in binds {
-                                if let Some(vol_name) =
-                                    crate::shared_services::extract_named_volume(bind_str)
-                                {
-                                    volume_names.push(vol_name.to_string());
-                                }
-                            }
-                        }
-                        let runtime = coast_docker::dind::DindRuntime::with_client(docker.clone());
-                        let _ = runtime.stop_coast_container(&container_name).await;
-                        if let Err(e) = runtime.remove_coast_container(&container_name).await {
-                            warn!(container = %container_name, error = %e, "failed to remove dangling shared service container");
-                        }
-                        for vol_name in &volume_names {
-                            let _ = docker.remove_volume(vol_name, None).await;
-                        }
-                        let vol_msg = if volume_names.is_empty() {
-                            String::new()
-                        } else {
-                            format!(" Removed {} volume(s).", volume_names.len())
-                        };
-                        state.emit_event(CoastEvent::SharedServiceRemoved {
-                            project: project.clone(),
-                            service: service.clone(),
-                        });
-                        return Ok(SharedResponse {
-                            message: format!(
-                                "Removed dangling shared service '{service}' from project '{project}'.{vol_msg}"
-                            ),
-                            services: Vec::new(),
-                        });
-                    }
+                if let Some(resp) = try_remove_dangling_container(&project, &service, state).await {
+                    return Ok(resp);
                 }
                 return Err(CoastError::state(format!(
                     "Shared service '{}' not found in project '{}'. \
@@ -484,45 +530,12 @@ async fn handle_rm(project: String, service: String, state: &AppState) -> Result
 
     if let Some(ref cid) = container_id {
         if let Some(ref docker) = state.docker {
-            // Inspect the container before removal to discover its volumes.
             if let Ok(inspect) = docker.inspect_container(cid, None).await {
-                if let Some(binds) = inspect.host_config.as_ref().and_then(|h| h.binds.as_ref()) {
-                    for bind_str in binds {
-                        if let Some(vol_name) =
-                            crate::shared_services::extract_named_volume(bind_str)
-                        {
-                            volume_names.push(vol_name.to_string());
-                        }
-                    }
-                }
+                volume_names = extract_volume_names_from_inspect(&inspect);
             }
 
             let runtime = coast_docker::dind::DindRuntime::with_client(docker.clone());
-            if let Err(e) = runtime.stop_coast_container(cid).await {
-                tracing::warn!(
-                    container_id = %cid,
-                    error = %e,
-                    "failed to stop shared service container, it may already be stopped"
-                );
-            }
-            if let Err(e) = runtime.remove_coast_container(cid).await {
-                tracing::warn!(
-                    container_id = %cid,
-                    error = %e,
-                    "failed to remove shared service container"
-                );
-            }
-
-            for vol_name in &volume_names {
-                match docker.remove_volume(vol_name, None).await {
-                    Ok(_) => info!(volume = %vol_name, "removed shared service volume"),
-                    Err(e) => tracing::warn!(
-                        volume = %vol_name,
-                        error = %e,
-                        "failed to remove shared service volume (may be in use)"
-                    ),
-                }
-            }
+            remove_shared_container_and_volumes(&runtime, docker, cid, &volume_names).await;
         }
     }
 
@@ -898,5 +911,44 @@ mod tests {
             }
         }
         assert!(error_found, "expected SharedServiceError event");
+    }
+
+    // --- extract_volume_names_from_inspect tests ---
+
+    fn inspect_with_binds(binds: Option<Vec<String>>) -> ContainerInspectResponse {
+        ContainerInspectResponse {
+            host_config: Some(bollard::models::HostConfig {
+                binds,
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_extract_volumes_named_volumes() {
+        let inspect = inspect_with_binds(Some(vec![
+            "pgdata:/var/lib/postgresql/data".to_string(),
+            "redis_data:/data".to_string(),
+        ]));
+        let names = extract_volume_names_from_inspect(&inspect);
+        assert_eq!(names, vec!["pgdata", "redis_data"]);
+    }
+
+    #[test]
+    fn test_extract_volumes_host_paths_only() {
+        let inspect = inspect_with_binds(Some(vec![
+            "/host/path:/container/path".to_string(),
+            "./relative:/data".to_string(),
+        ]));
+        let names = extract_volume_names_from_inspect(&inspect);
+        assert!(names.is_empty());
+    }
+
+    #[test]
+    fn test_extract_volumes_no_binds() {
+        let inspect = ContainerInspectResponse::default();
+        let names = extract_volume_names_from_inspect(&inspect);
+        assert!(names.is_empty());
     }
 }
