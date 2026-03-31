@@ -539,6 +539,7 @@ async fn handle_inspect(
                 primary_port_dynamic: None,
                 primary_port_url: None,
                 down_service_count: 0,
+                remote_name: row.remote_name.clone(),
             })
             .collect()
     };

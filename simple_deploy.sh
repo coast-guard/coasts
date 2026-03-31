@@ -149,7 +149,7 @@ sshpass -p "$VM_PASSWORD" ssh "$VM_HOST" "
     chmod +x ~/.local/bin/coastd-dev
     
     echo 'Build complete!'
-    ~/.local/bin/coastd-dev --version
+    ~/.local/bin/coastd-dev --help | head -n 3
 " 2>&1 | tee vm_build.log
 
 if [ ${PIPESTATUS[0]} -ne 0 ]; then
@@ -203,7 +203,7 @@ sshpass -p "$VM_PASSWORD" ssh "$VM_HOST" "
     echo \"  - Docker Compose: \$(docker compose version 2>/dev/null || echo 'not found')\"
     echo \"  - Mutagen: \$(~/.local/bin/mutagen version 2>/dev/null || echo 'not found')\"
     echo \"  - Rust: \$(~/.cargo/bin/rustc --version 2>/dev/null || echo 'not found')\"
-    echo \"  - coastd-dev: \$(~/.local/bin/coastd-dev --version 2>/dev/null || echo 'not found')\"
+    echo "  - coastd-dev: $(test -x ~/.local/bin/coastd-dev && echo 'installed' || echo 'not found')"
 "
 echo ""
 echo "Remote daemon is running on: $VM_HOST"

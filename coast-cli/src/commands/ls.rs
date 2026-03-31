@@ -299,6 +299,7 @@ mod tests {
             primary_port_dynamic: None,
             primary_port_url: None,
             down_service_count: 0,
+            remote_name: None,
         }];
 
         let output = format_instance_table(&instances);
@@ -335,6 +336,7 @@ mod tests {
                 primary_port_dynamic: None,
                 primary_port_url: None,
                 down_service_count: 0,
+                remote_name: None,
             },
             InstanceSummary {
                 name: "feature-x".to_string(),
@@ -353,6 +355,7 @@ mod tests {
                 primary_port_dynamic: None,
                 primary_port_url: None,
                 down_service_count: 0,
+                remote_name: None,
             },
             InstanceSummary {
                 name: "snapshot-1".to_string(),
@@ -371,6 +374,7 @@ mod tests {
                 primary_port_dynamic: None,
                 primary_port_url: None,
                 down_service_count: 0,
+                remote_name: None,
             },
         ];
 
@@ -403,6 +407,7 @@ mod tests {
                 primary_port_dynamic: None,
                 primary_port_url: None,
                 down_service_count: 0,
+                remote_name: None,
             },
             InstanceSummary {
                 name: "dev-2".to_string(),
@@ -421,6 +426,7 @@ mod tests {
                 primary_port_dynamic: None,
                 primary_port_url: None,
                 down_service_count: 0,
+                remote_name: None,
             },
         ];
 

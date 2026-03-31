@@ -24,6 +24,7 @@ import {
 import { api } from '../api/endpoints';
 import Breadcrumb from '../components/Breadcrumb';
 import StatusBadge from '../components/StatusBadge';
+import RemoteBadge from '../components/RemoteBadge';
 import HealthDot from '../components/HealthDot';
 import TabBar, { type TabDef } from '../components/TabBar';
 import Modal from '../components/Modal';
@@ -217,6 +218,7 @@ export default function InstanceDetailPage() {
           {/* Header */}
           <div className="flex items-center gap-3 mb-2">
             <h1 className="text-2xl font-bold text-main">{name}</h1>
+            {instance.remote_name != null && <RemoteBadge remoteName={instance.remote_name} />}
             {instance.primary_port_url != null && (
               <a
                 href={instance.primary_port_url}

@@ -174,6 +174,8 @@ pub struct RemoteRoute {
     pub remote_name: String,
     /// Local port where the SSH tunnel is listening.
     pub tunnel_port: u16,
+    /// Active sync session for path translation (optional).
+    pub sync_session: Option<crate::state::remotes::SyncSession>,
 }
 
 impl RemoteRoute {
@@ -201,6 +203,7 @@ mod tests {
         let route = RemoteRoute {
             remote_name: "dev-vm".to_string(),
             tunnel_port: 31417,
+            sync_session: None,
         };
         let client = route.client();
         assert_eq!(client.local_port, 31417);

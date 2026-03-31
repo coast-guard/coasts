@@ -17,10 +17,15 @@ use crate::state::remotes::{Remote, Tunnel, TunnelStatus};
 use coast_core::error::{CoastError, Result};
 
 /// Default local port for the first tunnel (subsequent tunnels increment from here).
-const DEFAULT_TUNNEL_BASE_PORT: u16 = 31416;
+/// For dev mode (port 31416), tunnels start at 31417 to avoid collision.
+/// For production (port 31415), tunnels start at 31416.
+const DEFAULT_TUNNEL_BASE_PORT: u16 = 31417;
 
-/// Remote daemon API port.
-const REMOTE_DAEMON_PORT: u16 = 31415;
+/// Remote daemon Unix socket path (relative to user's home directory).
+/// For dev mode: ~/.coast-dev/coastd.sock
+/// For production: ~/.coast/coastd.sock
+const REMOTE_DAEMON_SOCKET_DEV: &str = ".coast-dev/coastd.sock";
+const REMOTE_DAEMON_SOCKET_PROD: &str = ".coast/coastd.sock";
 
 /// Configuration for establishing a tunnel.
 #[derive(Debug, Clone)]
@@ -124,6 +129,9 @@ impl TunnelManager {
         }
 
         // SSH options for non-interactive, stable tunneling
+        // Forward local TCP port to remote Unix socket
+        // Format: local_port:/path/to/remote.sock (OpenSSH 6.7+)
+        let remote_socket_path = format!("/home/{}/{}", remote.user, REMOTE_DAEMON_SOCKET_DEV);
         cmd.args([
             "-o",
             "StrictHostKeyChecking=accept-new",
@@ -137,7 +145,7 @@ impl TunnelManager {
             "ExitOnForwardFailure=yes",
             "-N", // Don't execute remote command
             "-L",
-            &format!("{}:localhost:{}", local_port, REMOTE_DAEMON_PORT),
+            &format!("{}:{}", local_port, remote_socket_path),
             "-p",
             &remote.port.to_string(),
             &format!("{}@{}", remote.user, remote.host),

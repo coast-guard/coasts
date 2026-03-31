@@ -86,6 +86,7 @@ pub async fn handle(req: LsRequest, state: &AppState) -> Result<LsResponse> {
                 primary_port_dynamic: pp.dynamic,
                 primary_port_url: pp.url,
                 down_service_count,
+                remote_name: row.remote_name.clone(),
             }
         })
         .collect();

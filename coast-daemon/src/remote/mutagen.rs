@@ -248,12 +248,13 @@ impl MutagenManager {
             cmd.args(["--ignore", pattern]);
         }
 
-        // Add SSH configuration if key specified
+        // Configure SSH command if key is specified
+        // Mutagen uses SSH under the hood and respects the SSH_COMMAND environment variable
         if let Some(ref key_path) = remote.ssh_key_path {
-            cmd.args([
-                "--configuration-beta",
-                &format!("ssh.identityKeyPath={}", key_path),
-            ]);
+            cmd.env(
+                "MUTAGEN_SSH_COMMAND",
+                format!("ssh -i {}", key_path),
+            );
         }
 
         // Source (local) and destination (remote)

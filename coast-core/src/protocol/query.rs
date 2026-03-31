@@ -268,6 +268,9 @@ pub struct InstanceSummary {
     /// Number of inner services that are not in "running" state.
     #[serde(default)]
     pub down_service_count: u32,
+    /// Name of the remote where this instance is running (None = local).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_name: Option<String>,
 }
 
 /// A project that has been built (has an image artifact in ~/.coast/images/).

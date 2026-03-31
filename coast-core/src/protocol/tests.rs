@@ -613,6 +613,7 @@ fn test_ls_response_roundtrip() {
             primary_port_dynamic: None,
             primary_port_url: None,
             down_service_count: 0,
+            remote_name: None,
         }],
         known_projects: Vec::new(),
     }));

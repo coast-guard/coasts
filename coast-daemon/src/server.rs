@@ -552,6 +552,7 @@ async fn handle_connection(stream: tokio::net::UnixStream, state: Arc<AppState>)
         track(result.is_ok(), base_metadata.clone());
         return result;
     }
+    // Handle assign requests - check if instance is remote
     if let Request::Assign(req) = request {
         if req.explain {
             let result = handlers::assign::handle_explain(req, &state).await;
@@ -567,24 +568,118 @@ async fn handle_connection(stream: tokio::net::UnixStream, state: Arc<AppState>)
             );
             return write_response(&mut writer, &response).await;
         }
-        let result = handle_assign_streaming(req, &state, &mut writer).await;
-        track(result.is_ok(), base_metadata.clone());
-        return result;
+        // Check if this instance is running on a remote
+        match get_instance_remote_route(&state, &req.project, &req.name).await {
+            Ok(Some(route)) => {
+                // Forward to remote daemon
+                let remote_request = Request::Assign(req);
+                let result =
+                    forward_streaming_to_remote(&remote_request, &route, &mut writer).await;
+                track(result.is_ok(), base_metadata.clone());
+                return result;
+            }
+            Ok(None) => {
+                // Local instance - use local handler
+                let result = handle_assign_streaming(req, &state, &mut writer).await;
+                track(result.is_ok(), base_metadata.clone());
+                return result;
+            }
+            Err(e) => {
+                let response = Response::Error(ErrorResponse {
+                    error: e.to_string(),
+                });
+                write_response(&mut writer, &response).await?;
+                track(false, base_metadata.clone());
+                return Ok(());
+            }
+        }
     }
+
+    // Handle unassign requests - check if instance is remote
     if let Request::Unassign(req) = request {
-        let result = handle_unassign_streaming(req, &state, &mut writer).await;
-        track(result.is_ok(), base_metadata.clone());
-        return result;
+        // Check if this instance is running on a remote
+        match get_instance_remote_route(&state, &req.project, &req.name).await {
+            Ok(Some(route)) => {
+                // Forward to remote daemon
+                let remote_request = Request::Unassign(req);
+                let result =
+                    forward_streaming_to_remote(&remote_request, &route, &mut writer).await;
+                track(result.is_ok(), base_metadata.clone());
+                return result;
+            }
+            Ok(None) => {
+                // Local instance - use local handler
+                let result = handle_unassign_streaming(req, &state, &mut writer).await;
+                track(result.is_ok(), base_metadata.clone());
+                return result;
+            }
+            Err(e) => {
+                let response = Response::Error(ErrorResponse {
+                    error: e.to_string(),
+                });
+                write_response(&mut writer, &response).await?;
+                track(false, base_metadata.clone());
+                return Ok(());
+            }
+        }
     }
+
+    // Handle start requests - check if instance is remote
     if let Request::Start(req) = request {
-        let result = handle_start_streaming(req, &state, &mut writer).await;
-        track(result.is_ok(), base_metadata.clone());
-        return result;
+        // Check if this instance is running on a remote
+        match get_instance_remote_route(&state, &req.project, &req.name).await {
+            Ok(Some(route)) => {
+                // Forward to remote daemon
+                let remote_request = Request::Start(req);
+                let result =
+                    forward_streaming_to_remote(&remote_request, &route, &mut writer).await;
+                track(result.is_ok(), base_metadata.clone());
+                return result;
+            }
+            Ok(None) => {
+                // Local instance - use local handler
+                let result = handle_start_streaming(req, &state, &mut writer).await;
+                track(result.is_ok(), base_metadata.clone());
+                return result;
+            }
+            Err(e) => {
+                let response = Response::Error(ErrorResponse {
+                    error: e.to_string(),
+                });
+                write_response(&mut writer, &response).await?;
+                track(false, base_metadata.clone());
+                return Ok(());
+            }
+        }
     }
+
+    // Handle stop requests - check if instance is remote
     if let Request::Stop(req) = request {
-        let result = handle_stop_streaming(req, &state, &mut writer).await;
-        track(result.is_ok(), base_metadata.clone());
-        return result;
+        // Check if this instance is running on a remote
+        match get_instance_remote_route(&state, &req.project, &req.name).await {
+            Ok(Some(route)) => {
+                // Forward to remote daemon
+                let remote_request = Request::Stop(req);
+                let result =
+                    forward_streaming_to_remote(&remote_request, &route, &mut writer).await;
+                track(result.is_ok(), base_metadata.clone());
+                return result;
+            }
+            Ok(None) => {
+                // Local instance - use local handler
+                let result = handle_stop_streaming(req, &state, &mut writer).await;
+                track(result.is_ok(), base_metadata.clone());
+                return result;
+            }
+            Err(e) => {
+                let response = Response::Error(ErrorResponse {
+                    error: e.to_string(),
+                });
+                write_response(&mut writer, &response).await?;
+                track(false, base_metadata.clone());
+                return Ok(());
+            }
+        }
     }
     if let Request::RmBuild(req) = request {
         let result = handle_rm_build_streaming(req, &state, &mut writer).await;
@@ -684,6 +779,85 @@ async fn handle_connection(stream: tokio::net::UnixStream, state: Arc<AppState>)
                 write_response(&mut writer, &response).await?;
                 track(false, base_metadata.clone());
                 return Ok(());
+            }
+        }
+    }
+
+    // Handle ps requests - check if instance is remote
+    if let Request::Ps(ref req) = request {
+        // Check if this instance is running on a remote
+        match get_instance_remote_route(&state, &req.project, &req.name).await {
+            Ok(Some(route)) => {
+                // Forward to remote daemon
+                let remote_request = Request::Ps(req.clone());
+                let response = match forward_to_remote(&remote_request, &route).await {
+                    Ok(resp) => resp,
+                    Err(e) => Response::Error(ErrorResponse {
+                        error: format!("Remote ps failed: {}", e),
+                    }),
+                };
+                let success = !matches!(&response, Response::Error(_));
+                let mut metadata = base_metadata.clone();
+                metadata.extend(analytics::response_metadata(&request_for_meta, &response));
+                write_response(&mut writer, &response).await?;
+                track(success, metadata);
+                return Ok(());
+            }
+            Ok(None) => {
+                // Local instance - fall through to normal dispatch
+            }
+            Err(e) => {
+                let response = Response::Error(ErrorResponse {
+                    error: e.to_string(),
+                });
+                write_response(&mut writer, &response).await?;
+                track(false, base_metadata.clone());
+                return Ok(());
+            }
+        }
+    }
+
+    // Handle rm requests - check if instance is remote
+    if let Request::Rm(ref req) = request {
+        // Check if this instance is running on a remote
+        match get_instance_remote_route(&state, &req.project, &req.name).await {
+            Ok(Some(route)) => {
+                // Forward to remote daemon
+                let remote_request = Request::Rm(req.clone());
+                let response = match forward_to_remote(&remote_request, &route).await {
+                    Ok(resp) => resp,
+                    Err(e) => Response::Error(ErrorResponse {
+                        error: format!("Remote rm failed: {}", e),
+                    }),
+                };
+                // If successful, also delete the local shadow instance record
+                if matches!(&response, Response::Rm(_)) {
+                    let db = state.db.lock().await;
+                    let _ = db.delete_instance(&req.project, &req.name);
+                }
+                let success = !matches!(&response, Response::Error(_));
+                let mut metadata = base_metadata.clone();
+                metadata.extend(analytics::response_metadata(&request_for_meta, &response));
+                write_response(&mut writer, &response).await?;
+                track(success, metadata);
+                return Ok(());
+            }
+            Ok(None) => {
+                // Local instance - fall through to normal dispatch
+            }
+            Err(e) => {
+                // For rm, if instance not found, fall through to normal dispatch
+                // which will also return not found error (but may clean up dangling containers)
+                if matches!(e, CoastError::InstanceNotFound { .. }) {
+                    // Fall through to local handling
+                } else {
+                    let response = Response::Error(ErrorResponse {
+                        error: e.to_string(),
+                    });
+                    write_response(&mut writer, &response).await?;
+                    track(false, base_metadata.clone());
+                    return Ok(());
+                }
             }
         }
     }
@@ -1650,9 +1824,16 @@ async fn get_remote_route(state: &AppState, project: &str) -> Result<Option<Remo
         "routing request to remote daemon"
     );
 
+    // Get sync session for path translation
+    let sync_session = {
+        let db = state.db.lock().await;
+        db.get_sync_session(project).ok().flatten()
+    };
+
     Ok(Some(RemoteRoute {
         remote_name,
         tunnel_port,
+        sync_session,
     }))
 }
 
@@ -1707,9 +1888,16 @@ async fn get_instance_remote_route(
         "routing instance request to remote daemon"
     );
 
+    // Get sync session for path translation
+    let sync_session = {
+        let db = state.db.lock().await;
+        db.get_sync_session(project).ok().flatten()
+    };
+
     Ok(Some(RemoteRoute {
         remote_name,
         tunnel_port,
+        sync_session,
     }))
 }
 
@@ -1755,7 +1943,7 @@ async fn ensure_synced(state: &AppState, project: &str) -> Result<()> {
 
 /// Forward a build request to a remote daemon and proxy responses back.
 async fn forward_build_to_remote(
-    req: coast_core::protocol::BuildRequest,
+    mut req: coast_core::protocol::BuildRequest,
     route: &RemoteRoute,
     writer: &mut tokio::net::unix::OwnedWriteHalf,
 ) -> Result<()> {
@@ -1764,6 +1952,21 @@ async fn forward_build_to_remote(
         coastfile = %req.coastfile_path.display(),
         "forwarding build request to remote daemon"
     );
+
+    // Translate local Coastfile path to remote workspace path
+    if let Some(ref sync_session) = route.sync_session {
+        // Replace local path prefix with remote path
+        if let Ok(rel_path) = req.coastfile_path.strip_prefix(&sync_session.local_path) {
+            let remote_coastfile = std::path::PathBuf::from(&sync_session.remote_path)
+                .join(rel_path);
+            debug!(
+                local_path = %req.coastfile_path.display(),
+                remote_path = %remote_coastfile.display(),
+                "translated path for remote build"
+            );
+            req.coastfile_path = remote_coastfile;
+        }
+    }
 
     let request = Request::Build(req);
 
@@ -2028,7 +2231,13 @@ async fn forward_streaming_to_remote(
         // Check if this is a progress response or final
         let is_final = !matches!(
             response,
-            Response::BuildProgress(_) | Response::RunProgress(_) | Response::LogsProgress(_)
+            Response::BuildProgress(_)
+                | Response::RunProgress(_)
+                | Response::LogsProgress(_)
+                | Response::AssignProgress(_)
+                | Response::UnassignProgress(_)
+                | Response::StartProgress(_)
+                | Response::StopProgress(_)
         );
 
         // Proxy the response to local client
