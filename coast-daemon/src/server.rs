@@ -675,6 +675,19 @@ async fn handle_build_streaming(
     let project_name = coast_core::coastfile::Coastfile::from_file(&req.coastfile_path)
         .map(|cf| cf.name)
         .unwrap_or_default();
+
+    // Check if this project should be routed to a remote daemon
+    if !project_name.is_empty() {
+        if let Some(route) = get_remote_route(state, &project_name).await? {
+            // Ensure files are synced before remote build
+            ensure_synced(state, &project_name).await?;
+
+            // Forward to remote daemon
+            return forward_build_to_remote(req, &route, writer).await;
+        }
+    }
+
+    // Local execution
     let sem = if !project_name.is_empty() {
         Some(state.project_semaphore(&project_name).await)
     } else {
@@ -806,6 +819,16 @@ async fn handle_run_streaming(
     state: &Arc<AppState>,
     writer: &mut tokio::net::unix::OwnedWriteHalf,
 ) -> Result<()> {
+    // Check if this project should be routed to a remote daemon
+    if let Some(route) = get_remote_route(state, &req.project).await? {
+        // Ensure files are synced before remote run
+        ensure_synced(state, &req.project).await?;
+
+        // Forward to remote daemon
+        return forward_run_to_remote(req, &route, writer).await;
+    }
+
+    // Local execution
     let Some(_operation_guard) = begin_streaming_update_operation(
         state,
         UpdateOperationKind::Run,
@@ -1495,6 +1518,236 @@ async fn dispatch_unarchive_request(
         Ok(_guard) => handlers::handle_unarchive_project(req, state).await,
         Err(response) => *response,
     }
+}
+
+// ============================================================================
+// Remote Routing Helpers
+// ============================================================================
+
+use crate::remote::RemoteRoute;
+use crate::state::remotes::ProjectMode;
+
+/// Check if a project should be routed to a remote daemon.
+///
+/// Returns `Some(RemoteRoute)` if the project is configured for remote mode
+/// and the tunnel is connected, otherwise `None` for local execution.
+async fn get_remote_route(state: &AppState, project: &str) -> Result<Option<RemoteRoute>> {
+    // Get project mode from database
+    let mode_config = {
+        let db = state.db.lock().await;
+        db.get_project_mode(project)?
+    };
+
+    let Some(config) = mode_config else {
+        // No mode configured = local
+        return Ok(None);
+    };
+
+    if config.mode != ProjectMode::Remote {
+        // Explicitly set to local mode
+        return Ok(None);
+    }
+
+    let Some(remote_name) = config.remote_name else {
+        // Remote mode but no remote specified - treat as local
+        warn!(project = %project, "project has remote mode but no remote_name configured");
+        return Ok(None);
+    };
+
+    // Check if tunnel is connected
+    let Some(tunnel_manager) = &state.tunnel_manager else {
+        return Err(CoastError::state("tunnel manager not initialized"));
+    };
+
+    let Some(tunnel_port) = tunnel_manager.get_tunnel_port(&remote_name).await else {
+        // Tunnel not connected - return helpful error
+        return Err(CoastError::state(format!(
+            "project '{}' is configured for remote '{}' but tunnel is not connected. \
+             Run 'coast remote connect {}' first.",
+            project, remote_name, remote_name
+        )));
+    };
+
+    info!(
+        project = %project,
+        remote = %remote_name,
+        tunnel_port = tunnel_port,
+        "routing request to remote daemon"
+    );
+
+    Ok(Some(RemoteRoute {
+        remote_name,
+        tunnel_port,
+    }))
+}
+
+/// Ensure Mutagen sync is active and flushed before remote operations.
+///
+/// This triggers a flush to ensure the latest local changes are synced
+/// to the remote before building or running.
+async fn ensure_synced(state: &AppState, project: &str) -> Result<()> {
+    let Some(mutagen_manager) = &state.mutagen_manager else {
+        // No mutagen manager - skip sync check
+        return Ok(());
+    };
+
+    // Check if there's an active sync session for this project
+    let session = mutagen_manager.get_session_by_project(project).await;
+
+    if session.is_none() {
+        // No sync session - warn but don't block
+        // The user may have manually synced files or the remote has the code
+        warn!(
+            project = %project,
+            "no active sync session found for project. \
+             Consider running 'coast sync create' to keep files in sync."
+        );
+        return Ok(());
+    }
+
+    // Flush the sync to ensure latest changes are on remote
+    debug!(project = %project, "flushing sync session before remote operation");
+
+    if let Some(session) = session {
+        if let Err(e) = mutagen_manager.flush_session(&session.session_name).await {
+            warn!(
+                project = %project,
+                error = %e,
+                "failed to flush sync session, continuing anyway"
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// Forward a build request to a remote daemon and proxy responses back.
+async fn forward_build_to_remote(
+    req: coast_core::protocol::BuildRequest,
+    route: &RemoteRoute,
+    writer: &mut tokio::net::unix::OwnedWriteHalf,
+) -> Result<()> {
+    info!(
+        remote = %route.remote_name,
+        coastfile = %req.coastfile_path.display(),
+        "forwarding build request to remote daemon"
+    );
+
+    let request = Request::Build(req);
+
+    match forward_streaming_to_remote(&request, route, writer).await {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            // Write error response
+            let error_response = Response::Error(ErrorResponse {
+                error: format!("Remote build failed: {}", e),
+            });
+            write_response(writer, &error_response).await
+        }
+    }
+}
+
+/// Forward a run request to a remote daemon and proxy responses back.
+async fn forward_run_to_remote(
+    req: coast_core::protocol::RunRequest,
+    route: &RemoteRoute,
+    writer: &mut tokio::net::unix::OwnedWriteHalf,
+) -> Result<()> {
+    info!(
+        remote = %route.remote_name,
+        project = %req.project,
+        instance = %req.name,
+        "forwarding run request to remote daemon"
+    );
+
+    let request = Request::Run(req);
+
+    match forward_streaming_to_remote(&request, route, writer).await {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            // Write error response
+            let error_response = Response::Error(ErrorResponse {
+                error: format!("Remote run failed: {}", e),
+            });
+            write_response(writer, &error_response).await
+        }
+    }
+}
+
+/// Generic function to forward a streaming request to a remote daemon.
+///
+/// Connects to the remote daemon, sends the request, and proxies all
+/// responses back to the local client until a final response is received.
+async fn forward_streaming_to_remote(
+    request: &Request,
+    route: &RemoteRoute,
+    writer: &mut tokio::net::unix::OwnedWriteHalf,
+) -> Result<()> {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::TcpStream;
+
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], route.tunnel_port));
+    debug!(remote = %route.remote_name, addr = %addr, "connecting to remote daemon");
+
+    let stream = TcpStream::connect(addr).await.map_err(|e| CoastError::Io {
+        message: format!(
+            "failed to connect to remote daemon '{}' at {}: {}",
+            route.remote_name, addr, e
+        ),
+        path: std::path::PathBuf::new(),
+        source: Some(e),
+    })?;
+
+    let (reader, mut remote_writer) = stream.into_split();
+
+    // Encode and send request to remote
+    let encoded = protocol::encode_request(request)?;
+    remote_writer.write_all(&encoded).await.map_err(|e| CoastError::Io {
+        message: format!("failed to send request to remote daemon: {}", e),
+        path: std::path::PathBuf::new(),
+        source: Some(e),
+    })?;
+    remote_writer.shutdown().await.map_err(|e| CoastError::Io {
+        message: format!("failed to flush request to remote daemon: {}", e),
+        path: std::path::PathBuf::new(),
+        source: Some(e),
+    })?;
+
+    // Read responses from remote and proxy to local client
+    let mut buf_reader = BufReader::new(reader);
+    let mut line = String::new();
+
+    loop {
+        line.clear();
+        let bytes_read = buf_reader.read_line(&mut line).await.map_err(|e| CoastError::Io {
+            message: format!("failed to read response from remote daemon: {}", e),
+            path: std::path::PathBuf::new(),
+            source: Some(e),
+        })?;
+
+        if bytes_read == 0 {
+            return Err(CoastError::state("remote daemon closed connection unexpectedly"));
+        }
+
+        // Decode the response to check if it's final
+        let response = protocol::decode_response(line.trim_end().as_bytes())?;
+
+        // Check if this is a progress response or final
+        let is_final = !matches!(
+            response,
+            Response::BuildProgress(_) | Response::RunProgress(_) | Response::LogsProgress(_)
+        );
+
+        // Proxy the response to local client
+        write_response(writer, &response).await?;
+
+        if is_final {
+            debug!(remote = %route.remote_name, "received final response from remote daemon");
+            break;
+        }
+    }
+
+    Ok(())
 }
 
 /// Dispatch a decoded request to the appropriate handler.
