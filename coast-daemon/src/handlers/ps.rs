@@ -4,17 +4,105 @@
 /// `docker compose ps` inside the coast container.
 use tracing::info;
 
+use std::collections::HashSet;
+
 use coast_core::error::{CoastError, Result};
 use coast_core::protocol::{PsRequest, PsResponse, ServiceStatus};
-use coast_core::types::InstanceStatus;
+use coast_core::types::{CoastInstance, InstanceStatus};
 use coast_docker::runtime::Runtime;
 
 use crate::server::AppState;
 
 use super::compose_context_for_build;
 
+/// Result of validating whether an instance is ready for `ps`.
+#[derive(Debug)]
+enum PsValidation {
+    /// Instance is idle — return empty services.
+    Idle,
+    /// Instance is ready — use these identifiers for Docker queries.
+    Ready {
+        container_id: String,
+        build_id: Option<String>,
+    },
+}
+
+/// Check that the instance is in a state where `ps` makes sense.
+///
+/// Returns `Ready` with the container_id and build_id when the instance is
+/// running, or `Idle` when the instance exists but has no services yet.
+/// Errors for stopped, provisioning, or corrupt states.
+fn validate_ps_ready(instance: &CoastInstance) -> Result<PsValidation> {
+    if instance.status == InstanceStatus::Stopped {
+        return Err(CoastError::state(format!(
+            "Instance '{}' is stopped. No services are running. Run `coast start {}` first.",
+            instance.name, instance.name
+        )));
+    }
+    if instance.status == InstanceStatus::Provisioning
+        || instance.status == InstanceStatus::Assigning
+    {
+        let action = if instance.status == InstanceStatus::Provisioning {
+            "provisioned"
+        } else {
+            "assigned"
+        };
+        return Err(CoastError::state(format!(
+            "Instance '{}' is still being {action}. Wait for the operation to complete.",
+            instance.name
+        )));
+    }
+
+    if instance.status == InstanceStatus::Idle {
+        return Ok(PsValidation::Idle);
+    }
+
+    let container_id = instance.container_id.clone().ok_or_else(|| {
+        CoastError::state(format!(
+            "Instance '{}' has no container ID. This may indicate a corrupt state. \
+             Try `coast rm {}` and `coast run` again.",
+            instance.name, instance.name
+        ))
+    })?;
+
+    Ok(PsValidation::Ready {
+        container_id,
+        build_id: instance.build_id.clone(),
+    })
+}
+
+/// Cross-reference `docker compose config` with the current service list to
+/// filter out non-port exited services and add "down" entries for missing ones.
+fn enrich_compose_services(
+    services: &mut Vec<ServiceStatus>,
+    config_yaml: &str,
+    shared_names: &HashSet<String>,
+) {
+    let port_services: HashSet<String> = extract_services_with_ports(config_yaml)
+        .into_iter()
+        .collect();
+
+    services.retain(|s| {
+        s.kind.as_deref() != Some("compose")
+            || s.status == "running"
+            || port_services.contains(&s.name)
+    });
+
+    let found_names: HashSet<String> = services.iter().map(|s| s.name.clone()).collect();
+    for svc_name in &port_services {
+        if !found_names.contains(svc_name) && !shared_names.contains(svc_name) {
+            services.push(ServiceStatus {
+                name: svc_name.clone(),
+                status: "down".to_string(),
+                ports: String::new(),
+                image: String::new(),
+                kind: Some("compose".to_string()),
+            });
+        }
+    }
+}
+
 /// Handle a ps request.
-#[allow(clippy::cognitive_complexity)]
 pub async fn handle(req: PsRequest, state: &AppState) -> Result<PsResponse> {
     info!(name = %req.name, project = %req.project, "handling ps request");
 
@@ -27,41 +115,18 @@ pub async fn handle(req: PsRequest, state: &AppState) -> Result<PsResponse> {
             project: req.project.clone(),
         })?;
 
-        if instance.status == InstanceStatus::Stopped {
-            return Err(CoastError::state(format!(
-                "Instance '{}' is stopped. No services are running. Run `coast start {}` first.",
-                req.name, req.name
-            )));
+        match validate_ps_ready(&instance)? {
+            PsValidation::Idle => {
+                return Ok(PsResponse {
+                    name: req.name.clone(),
+                    services: vec![],
+                });
+            }
+            PsValidation::Ready {
+                container_id,
+                build_id,
+            } => (container_id, build_id),
         }
-        if instance.status == InstanceStatus::Provisioning
-            || instance.status == InstanceStatus::Assigning
-        {
-            let action = if instance.status == InstanceStatus::Provisioning {
-                "provisioned"
-            } else {
-                "assigned"
-            };
-            return Err(CoastError::state(format!(
-                "Instance '{}' is still being {action}. Wait for the operation to complete.",
-                req.name
-            )));
-        }
-
-        if instance.status == InstanceStatus::Idle {
-            return Ok(PsResponse {
-                name: req.name.clone(),
-                services: vec![],
-            });
-        }
-
-        let cid = instance.container_id.clone().ok_or_else(|| {
-            CoastError::state(format!(
-                "Instance '{}' has no container ID. This may indicate a corrupt state. \
-                 Try `coast rm {}` and `coast run` again.",
-                req.name, req.name
-            ))
-        })?;
-        (cid, instance.build_id.clone())
     };
 
     // Phase 2: Docker operations (unlocked)
@@ -76,7 +141,7 @@ pub async fn handle(req: PsRequest, state: &AppState) -> Result<PsResponse> {
     let mut services: Vec<ServiceStatus> = Vec::new();
 
     // Load shared service names so we can exclude them
-    let shared_names: std::collections::HashSet<String> = {
+    let shared_names: HashSet<String> = {
         let db = state.db.lock().await;
         db.list_shared_services(Some(&req.project))
             .unwrap_or_default()
@@ -112,30 +177,7 @@ pub async fn handle(req: PsRequest, state: &AppState) -> Result<PsResponse> {
         let config_refs: Vec<&str> = config_cmd.iter().map(String::as_str).collect();
         if let Ok(config_result) = runtime.exec_in_coast(&container_id, &config_refs).await {
             if config_result.success() {
-                let port_services: std::collections::HashSet<String> =
-                    extract_services_with_ports(&config_result.stdout)
-                        .into_iter()
-                        .collect();
-
-                services.retain(|s| {
-                    s.kind.as_deref() != Some("compose")
-                        || s.status == "running"
-                        || port_services.contains(&s.name)
-                });
-
-                let found_names: std::collections::HashSet<String> =
-                    services.iter().map(|s| s.name.clone()).collect();
-                for svc_name in &port_services {
-                    if !found_names.contains(svc_name) && !shared_names.contains(svc_name) {
-                        services.push(ServiceStatus {
-                            name: svc_name.clone(),
-                            status: "down".to_string(),
-                            ports: String::new(),
-                            image: String::new(),
-                            kind: Some("compose".to_string()),
-                        });
-                    }
-                }
+                enrich_compose_services(&mut services, &config_result.stdout, &shared_names);
             }
         }
     }
@@ -270,7 +312,7 @@ fn parse_compose_ps_output(output: &str) -> Result<Vec<ServiceStatus>> {
 mod tests {
     use super::*;
     use crate::state::StateDb;
-    use coast_core::types::{CoastInstance, RuntimeType};
+    use coast_core::types::RuntimeType;
 
     fn test_state() -> AppState {
         AppState::new_for_testing(StateDb::open_in_memory().unwrap())
@@ -391,5 +433,112 @@ mod tests {
     fn test_parse_compose_ps_invalid_json() {
         let services = parse_compose_ps_output("not json\nalso not json").unwrap();
         assert!(services.is_empty());
+    }
+
+    // --- validate_ps_ready tests ---
+
+    #[test]
+    fn test_validate_ps_ready_running_with_container_id() {
+        let instance = make_instance("feat-a", InstanceStatus::Running, Some("cid-123"));
+        let result = validate_ps_ready(&instance).unwrap();
+        assert!(matches!(
+            result,
+            PsValidation::Ready { ref container_id, .. } if container_id == "cid-123"
+        ));
+    }
+
+    #[test]
+    fn test_validate_ps_ready_stopped() {
+        let instance = make_instance("feat-a", InstanceStatus::Stopped, Some("cid"));
+        let result = validate_ps_ready(&instance);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("stopped"));
+    }
+
+    #[test]
+    fn test_validate_ps_ready_provisioning() {
+        let instance = make_instance("feat-a", InstanceStatus::Provisioning, Some("cid"));
+        let result = validate_ps_ready(&instance);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("provisioned"));
+    }
+
+    #[test]
+    fn test_validate_ps_ready_idle() {
+        let instance = make_instance("feat-a", InstanceStatus::Idle, None);
+        let result = validate_ps_ready(&instance).unwrap();
+        assert!(matches!(result, PsValidation::Idle));
+    }
+
+    #[test]
+    fn test_validate_ps_ready_no_container_id() {
+        let instance = make_instance("feat-a", InstanceStatus::Running, None);
+        let result = validate_ps_ready(&instance);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("no container ID"));
+    }
+
+    // --- enrich_compose_services tests ---
+
+    fn svc(name: &str, status: &str, kind: Option<&str>) -> ServiceStatus {
+        ServiceStatus {
+            name: name.to_string(),
+            status: status.to_string(),
+            ports: String::new(),
+            image: String::new(),
+            kind: kind.map(|k| k.to_string()),
+        }
+    }
+
+    fn yaml_with_ports(services: &[(&str, bool)]) -> String {
+        let mut y = "services:\n".to_string();
+        for (name, has_ports) in services {
+            y.push_str(&format!("  {name}:\n    image: img\n"));
+            if *has_ports {
+                y.push_str("    ports:\n      - \"3000:3000\"\n");
+            }
+        }
+        y
+    }
+
+    #[test]
+    fn test_enrich_keeps_running_compose_service() {
+        let yaml = yaml_with_ports(&[("web", true)]);
+        let mut services = vec![svc("web", "running", Some("compose"))];
+        enrich_compose_services(&mut services, &yaml, &HashSet::new());
+        assert_eq!(services.len(), 1);
+        assert_eq!(services[0].status, "running");
+    }
+
+    #[test]
+    fn test_enrich_filters_exited_no_port_service() {
+        let yaml = yaml_with_ports(&[("web", true), ("migrate", false)]);
+        let mut services = vec![
+            svc("web", "running", Some("compose")),
+            svc("migrate", "exited", Some("compose")),
+        ];
+        enrich_compose_services(&mut services, &yaml, &HashSet::new());
+        assert_eq!(services.len(), 1);
+        assert_eq!(services[0].name, "web");
+    }
+
+    #[test]
+    fn test_enrich_adds_down_for_missing_port_service() {
+        let yaml = yaml_with_ports(&[("web", true), ("worker", true)]);
+        let mut services = vec![svc("web", "running", Some("compose"))];
+        enrich_compose_services(&mut services, &yaml, &HashSet::new());
+        assert_eq!(services.len(), 2);
+        let down = services.iter().find(|s| s.name == "worker").unwrap();
+        assert_eq!(down.status, "down");
+    }
+
+    #[test]
+    fn test_enrich_excludes_shared_from_down() {
+        let yaml = yaml_with_ports(&[("web", true), ("redis", true)]);
+        let mut services = vec![svc("web", "running", Some("compose"))];
+        let shared: HashSet<String> = ["redis".to_string()].into();
+        enrich_compose_services(&mut services, &yaml, &shared);
+        assert_eq!(services.len(), 1);
+        assert_eq!(services[0].name, "web");
     }
 }
