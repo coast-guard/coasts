@@ -11,7 +11,7 @@ use tracing::info;
 
 use coast_core::error::{CoastError, Result};
 use coast_core::protocol::{CoastEvent, PortsRequest, PortsResponse};
-use coast_core::types::PortMapping;
+use coast_core::types::{CoastInstance, PortMapping};
 
 use crate::server::AppState;
 use crate::state::StateDb;
@@ -114,114 +114,147 @@ fn get_ports_with_primary(db: &StateDb, project: &str, name: &str) -> Result<Vec
     Ok(ports)
 }
 
+/// Validate that the instance has a build_id and the service exists in the port list.
+///
+/// Returns the `build_id` on success.
+fn validate_set_primary(
+    instance: &CoastInstance,
+    ports: &[PortMapping],
+    service: &str,
+    name: &str,
+) -> Result<String> {
+    let build_id = instance.build_id.as_ref().ok_or_else(|| CoastError::Port {
+        message: format!(
+            "instance '{name}' has no build_id. Re-run the instance to associate it with a build."
+        ),
+        source: None,
+    })?;
+
+    if !ports.iter().any(|p| p.logical_name == service) {
+        return Err(CoastError::Port {
+            message: format!(
+                "no port allocation '{service}' found for '{}/{name}'. \
+                 Available services: {}",
+                instance.project,
+                ports
+                    .iter()
+                    .map(|p| p.logical_name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            source: None,
+        });
+    }
+
+    Ok(build_id.clone())
+}
+
+/// Handle the `List` sub-command: look up port allocations and primary flag.
+async fn handle_list(name: String, project: String, state: &AppState) -> Result<PortsResponse> {
+    info!(name = %name, project = %project, "handling ports list request");
+    let db = state.db.lock().await;
+    let ports = get_ports_with_primary(&db, &project, &name)?;
+    let subdomain_host = resolve_subdomain_host(&db, &project, &name);
+    info!(name = %name, port_count = ports.len(), "returning port allocations");
+    Ok(PortsResponse {
+        name,
+        ports,
+        message: None,
+        subdomain_host,
+    })
+}
+
+/// Handle the `SetPrimary` sub-command: validate service, store preference, emit event.
+async fn handle_set_primary(
+    name: String,
+    project: String,
+    service: String,
+    state: &AppState,
+) -> Result<PortsResponse> {
+    info!(name = %name, project = %project, service = %service, "handling set-primary request");
+    let db = state.db.lock().await;
+
+    let instance = db.get_instance(&project, &name)?;
+    let instance = instance.ok_or_else(|| CoastError::InstanceNotFound {
+        name: name.clone(),
+        project: project.clone(),
+    })?;
+
+    let allocs = db.get_port_allocations(&project, &name)?;
+    let mut ports: Vec<PortMapping> = allocs.iter().map(PortMapping::from).collect();
+    let build_id = validate_set_primary(&instance, &ports, &service, &name)?;
+
+    let key = primary_port_settings_key(&project, &build_id);
+    db.set_setting(&key, &service)?;
+
+    apply_primary_flag(&mut ports, Some(&service));
+    let subdomain_host = resolve_subdomain_host(&db, &project, &name);
+
+    drop(db);
+    state.emit_event(CoastEvent::PortPrimaryChanged {
+        name: name.clone(),
+        project: project.clone(),
+        service: Some(service.clone()),
+    });
+
+    Ok(PortsResponse {
+        name,
+        ports,
+        message: Some(format!("Primary service set to '{service}'")),
+        subdomain_host,
+    })
+}
+
+/// Handle the `UnsetPrimary` sub-command: clear preference, emit event.
+async fn handle_unset_primary(
+    name: String,
+    project: String,
+    state: &AppState,
+) -> Result<PortsResponse> {
+    info!(name = %name, project = %project, "handling unset-primary request");
+    let db = state.db.lock().await;
+
+    let instance = db.get_instance(&project, &name)?;
+    let instance = instance.ok_or_else(|| CoastError::InstanceNotFound {
+        name: name.clone(),
+        project: project.clone(),
+    })?;
+
+    if let Some(ref build_id) = instance.build_id {
+        let key = primary_port_settings_key(&project, build_id);
+        db.delete_setting(&key)?;
+    }
+
+    let allocs = db.get_port_allocations(&project, &name)?;
+    let ports: Vec<PortMapping> = allocs.iter().map(PortMapping::from).collect();
+    let subdomain_host = resolve_subdomain_host(&db, &project, &name);
+
+    drop(db);
+    state.emit_event(CoastEvent::PortPrimaryChanged {
+        name: name.clone(),
+        project: project.clone(),
+        service: None,
+    });
+
+    Ok(PortsResponse {
+        name,
+        ports,
+        message: Some("Primary service unset".to_string()),
+        subdomain_host,
+    })
+}
+
 /// Handle a ports request.
-#[allow(clippy::cognitive_complexity)]
 pub async fn handle(req: PortsRequest, state: &AppState) -> Result<PortsResponse> {
     match req {
-        PortsRequest::List { name, project } => {
-            info!(name = %name, project = %project, "handling ports list request");
-            let db = state.db.lock().await;
-            let ports = get_ports_with_primary(&db, &project, &name)?;
-            let subdomain_host = resolve_subdomain_host(&db, &project, &name);
-            info!(name = %name, port_count = ports.len(), "returning port allocations");
-            Ok(PortsResponse {
-                name,
-                ports,
-                message: None,
-                subdomain_host,
-            })
-        }
+        PortsRequest::List { name, project } => handle_list(name, project, state).await,
         PortsRequest::SetPrimary {
             name,
             project,
             service,
-        } => {
-            info!(name = %name, project = %project, service = %service, "handling set-primary request");
-            let db = state.db.lock().await;
-
-            let instance = db.get_instance(&project, &name)?;
-            let instance = instance.ok_or_else(|| CoastError::InstanceNotFound {
-                name: name.clone(),
-                project: project.clone(),
-            })?;
-
-            let build_id = instance.build_id.ok_or_else(|| CoastError::Port {
-                message: format!(
-                    "instance '{name}' has no build_id. Re-run the instance to associate it with a build."
-                ),
-                source: None,
-            })?;
-
-            // Verify the service exists in this instance's ports
-            let allocs = db.get_port_allocations(&project, &name)?;
-            if !allocs.iter().any(|a| a.logical_name == service) {
-                return Err(CoastError::Port {
-                    message: format!(
-                        "no port allocation '{service}' found for '{project}/{name}'. \
-                         Available services: {}",
-                        allocs
-                            .iter()
-                            .map(|a| a.logical_name.as_str())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    ),
-                    source: None,
-                });
-            }
-
-            let key = primary_port_settings_key(&project, &build_id);
-            db.set_setting(&key, &service)?;
-
-            let mut ports: Vec<PortMapping> = allocs.iter().map(PortMapping::from).collect();
-            apply_primary_flag(&mut ports, Some(&service));
-            let subdomain_host = resolve_subdomain_host(&db, &project, &name);
-
-            drop(db);
-            state.emit_event(CoastEvent::PortPrimaryChanged {
-                name: name.clone(),
-                project: project.clone(),
-                service: Some(service.clone()),
-            });
-
-            Ok(PortsResponse {
-                name,
-                ports,
-                message: Some(format!("Primary service set to '{service}'")),
-                subdomain_host,
-            })
-        }
+        } => handle_set_primary(name, project, service, state).await,
         PortsRequest::UnsetPrimary { name, project } => {
-            info!(name = %name, project = %project, "handling unset-primary request");
-            let db = state.db.lock().await;
-
-            let instance = db.get_instance(&project, &name)?;
-            let instance = instance.ok_or_else(|| CoastError::InstanceNotFound {
-                name: name.clone(),
-                project: project.clone(),
-            })?;
-
-            if let Some(ref build_id) = instance.build_id {
-                let key = primary_port_settings_key(&project, build_id);
-                db.delete_setting(&key)?;
-            }
-
-            let allocs = db.get_port_allocations(&project, &name)?;
-            let ports: Vec<PortMapping> = allocs.iter().map(PortMapping::from).collect();
-            let subdomain_host = resolve_subdomain_host(&db, &project, &name);
-
-            drop(db);
-            state.emit_event(CoastEvent::PortPrimaryChanged {
-                name: name.clone(),
-                project: project.clone(),
-                service: None,
-            });
-
-            Ok(PortsResponse {
-                name,
-                ports,
-                message: Some("Primary service unset".to_string()),
-                subdomain_host,
-            })
+            handle_unset_primary(name, project, state).await
         }
     }
 }
@@ -230,7 +263,7 @@ pub async fn handle(req: PortsRequest, state: &AppState) -> Result<PortsResponse
 mod tests {
     use super::*;
     use crate::state::StateDb;
-    use coast_core::types::{CoastInstance, InstanceStatus, RuntimeType};
+    use coast_core::types::{InstanceStatus, RuntimeType};
 
     fn test_state() -> AppState {
         AppState::new_for_testing(StateDb::open_in_memory().unwrap())
@@ -451,6 +484,36 @@ mod tests {
         };
         let result = handle(req, &state).await;
         assert!(result.is_err());
+    }
+
+    // --- validate_set_primary tests ---
+
+    #[test]
+    fn test_validate_set_primary_ok() {
+        let instance = make_instance("feat-a", "my-app", Some("build-1"));
+        let ports = vec![pm("web", 3000, 52340), pm("db", 5432, 52341)];
+        let result = validate_set_primary(&instance, &ports, "web", "feat-a");
+        assert_eq!(result.unwrap(), "build-1");
+    }
+
+    #[test]
+    fn test_validate_set_primary_no_build_id() {
+        let instance = make_instance("feat-a", "my-app", None);
+        let ports = vec![pm("web", 3000, 52340)];
+        let result = validate_set_primary(&instance, &ports, "web", "feat-a");
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("no build_id"));
+    }
+
+    #[test]
+    fn test_validate_set_primary_service_not_found() {
+        let instance = make_instance("feat-a", "my-app", Some("build-1"));
+        let ports = vec![pm("web", 3000, 52340), pm("db", 5432, 52341)];
+        let result = validate_set_primary(&instance, &ports, "ghost", "feat-a");
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("ghost"));
     }
 
     #[test]
