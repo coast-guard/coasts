@@ -374,11 +374,18 @@ async fn load_coastfile_resources(
         "loaded artifact Coastfile for run resources"
     );
 
-    let logical_ports = coastfile
+    let shared_service_ports: HashSet<u16> = coastfile
+        .shared_services
+        .iter()
+        .flat_map(|ss| ss.ports.iter().map(|p| p.container_port))
+        .collect();
+
+    let logical_ports: Vec<_> = coastfile
         .ports
         .iter()
+        .filter(|(_, port_num)| !shared_service_ports.contains(port_num))
         .map(|(port_name, port_num)| (port_name.clone(), *port_num))
-        .collect::<Vec<_>>();
+        .collect();
     result.pre_allocated_ports = allocate_pre_allocated_ports(&logical_ports)?;
 
     for vol_config in &coastfile.volumes {
@@ -1330,5 +1337,85 @@ snapshot_source = "seed-volume"
         assert!(resources.shared_services.is_empty());
         assert!(resources.shared_service_targets.is_empty());
         assert!(resources.shared_network.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_load_coastfile_resources_excludes_shared_service_ports() {
+        let dir = tempfile::tempdir().unwrap();
+        let coastfile_path = dir.path().join("coastfile.toml");
+        std::fs::write(
+            &coastfile_path,
+            r#"
+[coast]
+name = "proj"
+compose = "./docker-compose.yml"
+
+[ports]
+web = 3000
+postgres = 5432
+redis = 6379
+
+[shared_services.postgres]
+image = "postgres:16-alpine"
+ports = [5432]
+env = { POSTGRES_PASSWORD = "dev" }
+
+[shared_services.redis]
+image = "redis:7-alpine"
+ports = [6379]
+"#,
+        )
+        .unwrap();
+
+        let state = AppState::new_for_testing(StateDb::open_in_memory().unwrap());
+        let progress = discard_progress();
+        let resources =
+            load_coastfile_resources(&coastfile_path, &sample_run_request(), &state, &progress)
+                .await
+                .unwrap();
+
+        assert_eq!(
+            resources.pre_allocated_ports.len(),
+            1,
+            "only non-shared-service ports should be pre-allocated"
+        );
+        assert_eq!(resources.pre_allocated_ports[0].0, "web");
+        assert_eq!(resources.pre_allocated_ports[0].1, 3000);
+        assert!(resources.pre_allocated_ports[0].2 > 0);
+
+        assert_eq!(resources.shared_services.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_load_coastfile_resources_no_shared_services_keeps_all_ports() {
+        let dir = tempfile::tempdir().unwrap();
+        let coastfile_path = dir.path().join("coastfile.toml");
+        std::fs::write(
+            &coastfile_path,
+            r#"
+[coast]
+name = "proj"
+compose = "./docker-compose.yml"
+
+[ports]
+web = 3000
+postgres = 5432
+redis = 6379
+"#,
+        )
+        .unwrap();
+
+        let state = AppState::new_for_testing(StateDb::open_in_memory().unwrap());
+        let progress = discard_progress();
+        let resources =
+            load_coastfile_resources(&coastfile_path, &sample_run_request(), &state, &progress)
+                .await
+                .unwrap();
+
+        assert_eq!(
+            resources.pre_allocated_ports.len(),
+            3,
+            "all ports allocated when no shared services overlap"
+        );
     }
 }
