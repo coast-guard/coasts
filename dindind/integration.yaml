@@ -105,6 +105,10 @@ tests:
     script: integrated-examples/test_volume_shared_services.sh
     status: pass
     cached_seconds: 127
+  test_shared_service_ports:
+    script: integrated-examples/test_shared_service_ports.sh
+    timeout: 300
+    note: "shared service ports must not get dynamic allocation"
   test_volume_source:
     script: integrated-examples/test_volume_source.sh
     status: pass
