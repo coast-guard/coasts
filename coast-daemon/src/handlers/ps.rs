@@ -134,7 +134,7 @@ pub async fn handle(req: PsRequest, state: &AppState) -> Result<PsResponse> {
         CoastError::docker("Docker is not available. Ensure Docker is running and restart coastd.")
     })?;
 
-    let has_bare = crate::bare_services::has_bare_services(docker, &container_id).await;
+    let has_bare = crate::bare_services::has_bare_services(&docker, &container_id).await;
     let has_compose = super::assign::has_compose(&req.project);
 
     let runtime = coast_docker::dind::DindRuntime::with_client(docker.clone());

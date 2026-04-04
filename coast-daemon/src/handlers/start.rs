@@ -462,9 +462,9 @@ pub async fn handle(
 
     // Phase 2: Docker operations (unlocked)
     if let Some(ref container_id) = instance.container_id {
-        if let Some(ref docker) = state.docker {
+        if let Some(docker) = state.docker.as_ref() {
             if let Err(e) = run_docker_operations(
-                docker,
+                &docker,
                 container_id,
                 &req,
                 instance.build_id.as_deref(),

@@ -49,7 +49,7 @@ async fn list_images(
 
     // Bare-service instances have no compose — no relevant Docker images to show.
     if let Some(docker) = state.docker.as_ref() {
-        if crate::bare_services::has_bare_services(docker, container_id).await {
+        if crate::bare_services::has_bare_services(&docker, container_id).await {
             return Ok(Json(vec![]));
         }
     }

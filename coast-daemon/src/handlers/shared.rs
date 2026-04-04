@@ -70,7 +70,7 @@ pub async fn fetch_shared_services(project: &str, state: &AppState) -> Result<Sh
     let futs: Vec<_> = rows
         .iter()
         .map(|row| {
-            let docker = state.docker.clone();
+            let docker = state.docker.as_ref();
             let name = row.service_name.clone();
             let cid = row.container_id.clone();
             let db_status = row.status.clone();
@@ -169,7 +169,7 @@ async fn all_service_names(project: &str, state: &AppState) -> Result<Vec<String
 async fn stop_one(project: &str, service: &str, state: &AppState) -> Result<SharedServiceInfo> {
     let (container_name, _) = resolve_shared_container(project, service, state).await?;
 
-    if let Some(ref docker) = state.docker {
+    if let Some(docker) = state.docker.as_ref() {
         if let Err(e) = docker.stop_container(&container_name, None).await {
             let is_not_found = e.to_string().contains("404")
                 || e.to_string().contains("No such container")
@@ -210,7 +210,7 @@ async fn stop_one(project: &str, service: &str, state: &AppState) -> Result<Shar
 async fn start_one(project: &str, service: &str, state: &AppState) -> Result<SharedServiceInfo> {
     let (container_name, _) = resolve_shared_container(project, service, state).await?;
 
-    if let Some(ref docker) = state.docker {
+    if let Some(docker) = state.docker.as_ref() {
         docker
             .start_container::<String>(&container_name, None)
             .await
@@ -237,7 +237,7 @@ async fn start_one(project: &str, service: &str, state: &AppState) -> Result<Sha
 async fn restart_one(project: &str, service: &str, state: &AppState) -> Result<SharedServiceInfo> {
     let (container_name, _) = resolve_shared_container(project, service, state).await?;
 
-    if let Some(ref docker) = state.docker {
+    if let Some(docker) = state.docker.as_ref() {
         docker
             .restart_container(&container_name, None)
             .await
@@ -482,7 +482,7 @@ async fn try_remove_dangling_container(
     );
     let volume_names = extract_volume_names_from_inspect(&inspect);
     let runtime = coast_docker::dind::DindRuntime::with_client(docker.clone());
-    remove_shared_container_and_volumes(&runtime, docker, &container_name, &volume_names).await;
+    remove_shared_container_and_volumes(&runtime, &docker, &container_name, &volume_names).await;
 
     let vol_msg = if volume_names.is_empty() {
         String::new()
@@ -529,13 +529,13 @@ async fn handle_rm(project: String, service: String, state: &AppState) -> Result
     let mut volume_names: Vec<String> = Vec::new();
 
     if let Some(ref cid) = container_id {
-        if let Some(ref docker) = state.docker {
+        if let Some(docker) = state.docker.as_ref() {
             if let Ok(inspect) = docker.inspect_container(cid, None).await {
                 volume_names = extract_volume_names_from_inspect(&inspect);
             }
 
             let runtime = coast_docker::dind::DindRuntime::with_client(docker.clone());
-            remove_shared_container_and_volumes(&runtime, docker, cid, &volume_names).await;
+            remove_shared_container_and_volumes(&runtime, &docker, cid, &volume_names).await;
         }
     }
 

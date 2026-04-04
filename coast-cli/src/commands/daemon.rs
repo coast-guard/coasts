@@ -141,8 +141,81 @@ pub(crate) fn read_pid(path: &PathBuf) -> Option<u32> {
 }
 
 /// Check whether a process with the given PID is alive using signal 0.
-pub(crate) fn is_running(pid: u32) -> bool {
+pub(crate) fn is_process_alive(pid: u32) -> bool {
     signal::kill(Pid::from_raw(pid as i32), None).is_ok()
+}
+
+pub(crate) fn is_running(pid: u32) -> bool {
+    is_process_alive(pid)
+}
+
+fn has_command_boundary(rest: &str) -> bool {
+    match rest.chars().next() {
+        None => true,
+        Some('\0') => true,
+        Some(ch) => ch.is_whitespace(),
+    }
+}
+
+fn command_starts_with_executable(command: &str, executable: &str) -> bool {
+    command
+        .strip_prefix(executable)
+        .is_some_and(has_command_boundary)
+}
+
+fn command_matches_daemon(command: &str, daemon_path: &Path) -> bool {
+    let command = command.trim_start();
+    let daemon_path_str = daemon_path.to_string_lossy();
+    let daemon_name = daemon_path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy();
+    let executable = command.split('\0').next().unwrap_or(command).trim();
+
+    if command_starts_with_executable(command, daemon_path_str.as_ref())
+        || command_starts_with_executable(executable, daemon_path_str.as_ref())
+        || command_starts_with_executable(command, daemon_name.as_ref())
+        || command_starts_with_executable(executable, daemon_name.as_ref())
+    {
+        return true;
+    }
+
+    let first_token = executable.split_whitespace().next().unwrap_or(executable);
+
+    Path::new(first_token)
+        .file_name()
+        .map(|name| name == std::ffi::OsStr::new(daemon_name.as_ref()))
+        .unwrap_or(false)
+}
+
+#[cfg(target_os = "linux")]
+fn process_command(pid: u32) -> Option<String> {
+    let cmdline = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+    if cmdline.is_empty() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&cmdline).into_owned())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn process_command(pid: u32) -> Option<String> {
+    let output = std::process::Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "command="])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let command = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!command.is_empty()).then_some(command)
+}
+
+fn is_daemon_process_running(pid: u32) -> bool {
+    let daemon_path = resolve_coastd_path();
+    is_process_alive(pid)
+        && process_command(pid)
+            .map(|command| command_matches_daemon(&command, &daemon_path))
+            .unwrap_or(false)
 }
 
 fn daemon_status() -> Result<DaemonStatus> {
@@ -150,7 +223,7 @@ fn daemon_status() -> Result<DaemonStatus> {
     let sock_file = socket_path()?;
 
     let pid = read_pid(&pid_file);
-    let running = pid.is_some_and(is_running);
+    let running = pid.is_some_and(is_daemon_process_running);
     let socket_exists = sock_file.exists();
 
     Ok(DaemonStatus {
@@ -251,10 +324,30 @@ pub(crate) async fn execute_kill(force: bool) -> Result<()> {
 
     if force {
         eprint!("force-killing coastd (pid: {pid})...");
-        signal::kill(nix_pid, Signal::SIGKILL).context("Failed to send SIGKILL to coastd")?;
+        match signal::kill(nix_pid, Signal::SIGKILL) {
+            Ok(()) => {}
+            Err(nix::errno::Errno::ESRCH) => {
+                eprintln!();
+                cleanup_stale_files()?;
+                kill_all_coastd_processes();
+                println!("coastd is not running (cleaned up stale PID file)");
+                return Ok(());
+            }
+            Err(e) => return Err(e).context("Failed to send SIGKILL to coastd"),
+        }
     } else {
         eprint!("stopping coastd (pid: {pid})...");
-        signal::kill(nix_pid, Signal::SIGTERM).context("Failed to send SIGTERM to coastd")?;
+        match signal::kill(nix_pid, Signal::SIGTERM) {
+            Ok(()) => {}
+            Err(nix::errno::Errno::ESRCH) => {
+                eprintln!();
+                cleanup_stale_files()?;
+                kill_all_coastd_processes();
+                println!("coastd is not running (cleaned up stale PID file)");
+                return Ok(());
+            }
+            Err(e) => return Err(e).context("Failed to send SIGTERM to coastd"),
+        }
     }
 
     let graceful_timeout = std::time::Duration::from_secs(10);
@@ -262,7 +355,7 @@ pub(crate) async fn execute_kill(force: bool) -> Result<()> {
     let poll_interval = std::time::Duration::from_millis(100);
 
     loop {
-        if !is_running(pid) {
+        if !is_daemon_process_running(pid) {
             eprintln!();
             println!("{}", "coastd stopped".green());
             cleanup_stale_files()?;
@@ -283,7 +376,7 @@ pub(crate) async fn execute_kill(force: bool) -> Result<()> {
             let kill_timeout = std::time::Duration::from_secs(5);
             let kill_start = std::time::Instant::now();
             loop {
-                if !is_running(pid) {
+                if !is_daemon_process_running(pid) {
                     println!("{}", "coastd killed".green());
                     cleanup_stale_files()?;
                     kill_all_coastd_processes();
@@ -355,7 +448,7 @@ pub(crate) async fn execute_start() -> Result<()> {
 
     loop {
         if let Some(pid) = read_pid(&pid_file) {
-            if is_running(pid) {
+            if is_daemon_process_running(pid) {
                 reload_service_manager();
                 println!("{} (pid: {pid})", "coastd started".green());
                 return Ok(());
@@ -931,15 +1024,15 @@ mod tests {
     }
 
     #[test]
-    fn test_is_running_current_process() {
+    fn test_is_process_alive_current_process() {
         let pid = std::process::id();
-        assert!(is_running(pid));
+        assert!(is_process_alive(pid));
     }
 
     #[test]
-    fn test_is_running_dead_pid() {
+    fn test_is_process_alive_dead_pid() {
         // PID 99999999 is almost certainly not running
-        assert!(!is_running(99_999_999));
+        assert!(!is_process_alive(99_999_999));
     }
 
     #[test]
@@ -950,7 +1043,39 @@ mod tests {
 
         let pid = read_pid(&path.to_path_buf());
         assert_eq!(pid, Some(99_999_999));
-        assert!(!is_running(pid.unwrap()));
+        assert!(!is_process_alive(pid.unwrap()));
+    }
+
+    #[test]
+    fn test_command_matches_daemon_for_absolute_path() {
+        assert!(command_matches_daemon(
+            "/usr/local/bin/coastd --flag",
+            Path::new("coastd")
+        ));
+    }
+
+    #[test]
+    fn test_command_matches_daemon_for_linux_cmdline() {
+        assert!(command_matches_daemon(
+            "/usr/local/bin/coastd\0--foreground\0",
+            Path::new("coastd")
+        ));
+    }
+
+    #[test]
+    fn test_command_matches_daemon_for_path_with_spaces() {
+        assert!(command_matches_daemon(
+            "/Volumes/Coast Tools/coastd --foreground",
+            Path::new("/Volumes/Coast Tools/coastd")
+        ));
+    }
+
+    #[test]
+    fn test_command_matches_daemon_rejects_other_processes() {
+        assert!(!command_matches_daemon(
+            "/usr/bin/bash -lc coastd",
+            Path::new("coastd")
+        ));
     }
 
     #[test]

@@ -265,7 +265,7 @@ async fn run_service_collector(
     };
 
     let Some(inner_name) =
-        resolve_inner_container(docker, &coast_container_id, &project, &service).await
+        resolve_inner_container(&docker, &coast_container_id, &project, &service).await
     else {
         warn!(
             key = %key,

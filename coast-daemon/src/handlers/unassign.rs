@@ -142,7 +142,7 @@ pub async fn handle(
     )
     .await;
 
-    if let Some(ref docker) = state.docker {
+    if let Some(docker) = state.docker.as_ref() {
         let rt = coast_docker::dind::DindRuntime::with_client(docker.clone());
 
         let health_timeout = tokio::time::Duration::from_secs(10);
@@ -204,7 +204,7 @@ pub async fn handle(
         )
         .map(|cf| cf.services)
         .unwrap_or_default();
-        crate::bare_services::stop_before_remount(docker, &container_id, &bare_svc_list).await;
+        crate::bare_services::stop_before_remount(&docker, &container_id, &bare_svc_list).await;
         let unmount_cache =
             coast_core::coastfile::Coastfile::build_cache_unmount_commands(&bare_svc_list);
         let unmount_private =
@@ -275,7 +275,7 @@ pub async fn handle(
             }
         }
 
-        if crate::bare_services::has_bare_services(docker, &container_id).await {
+        if crate::bare_services::has_bare_services(&docker, &container_id).await {
             let stop_cmd = crate::bare_services::generate_stop_command();
             match rt
                 .exec_in_coast(&container_id, &["sh", "-c", &stop_cmd])

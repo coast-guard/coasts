@@ -143,7 +143,7 @@ pub async fn handle(req: LogsRequest, state: &AppState) -> Result<LogsResponse> 
         CoastError::docker("Docker is not available. Ensure Docker is running and restart coastd.")
     })?;
 
-    let has_bare = crate::bare_services::has_bare_services(docker, &container_id).await;
+    let has_bare = crate::bare_services::has_bare_services(&docker, &container_id).await;
     let has_compose = super::assign::has_compose(&req.project);
 
     let runtime = coast_docker::dind::DindRuntime::with_client(docker.clone());
@@ -151,7 +151,7 @@ pub async fn handle(req: LogsRequest, state: &AppState) -> Result<LogsResponse> 
     if let Some(ref service) = req.service {
         if has_bare && has_compose {
             let cmd_parts = resolve_service_log_command(
-                docker,
+                &docker,
                 &container_id,
                 service,
                 &req,
@@ -264,13 +264,13 @@ pub async fn handle_with_progress(
         CoastError::docker("Docker is not available. Ensure Docker is running and restart coastd.")
     })?;
 
-    let has_bare = crate::bare_services::has_bare_services(docker, &container_id).await;
+    let has_bare = crate::bare_services::has_bare_services(&docker, &container_id).await;
     let has_compose = super::assign::has_compose(&req.project);
 
     // In mixed mode with a service filter, route to the right log source
     let use_bare = if has_bare && has_compose {
         if let Some(ref service) = req.service {
-            is_service_bare(docker, &container_id, service).await
+            is_service_bare(&docker, &container_id, service).await
         } else {
             false
         }

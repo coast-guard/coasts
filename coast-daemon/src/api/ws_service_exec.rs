@@ -264,7 +264,7 @@ async fn handle_ws(
     };
 
     let Some(inner_container) =
-        resolve_inner_container(docker, &container_id, &project, &service).await
+        resolve_inner_container(&docker, &container_id, &project, &service).await
     else {
         let _ = socket
             .send(Message::Text(

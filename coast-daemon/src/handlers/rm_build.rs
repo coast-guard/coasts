@@ -62,8 +62,10 @@ pub async fn handle(
         build_ids: Vec::new(),
     });
 
-    let (containers_removed, volumes_removed, images_removed) =
-        remove_docker_resources(state.docker.as_ref(), &project, &progress, total).await;
+    let (containers_removed, volumes_removed, images_removed) = {
+        let docker = state.docker.as_ref();
+        remove_docker_resources(docker.as_ref(), &project, &progress, total).await
+    };
 
     emit(
         &progress,
@@ -183,8 +185,8 @@ async fn handle_remove_specific_builds(
         if remove_build_dir(&project_dir, build_id, is_latest) {
             builds_removed += 1;
         }
-        if let Some(docker) = &state.docker {
-            if remove_build_image(docker, project, build_id).await {
+        if let Some(docker) = state.docker.as_ref() {
+            if remove_build_image(&docker, project, build_id).await {
                 images_removed += 1;
             }
         }

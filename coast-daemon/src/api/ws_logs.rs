@@ -105,7 +105,7 @@ async fn handle_logs_socket(
         return;
     };
 
-    let has_bare = crate::bare_services::has_bare_services(docker, &container_id).await;
+    let has_bare = crate::bare_services::has_bare_services(&docker, &container_id).await;
     let has_compose = crate::handlers::assign::has_compose(&params.project);
 
     let cmd_parts = if has_bare && has_compose && params.service.is_none() {

@@ -732,7 +732,7 @@ async fn handle_docker_images(
 
 /// Query bollard for Docker images matching a project.
 async fn list_project_docker_images(project: &str, state: &AppState) -> Vec<DockerImageInfo> {
-    let Some(ref docker) = state.docker else {
+    let Some(docker) = state.docker.as_ref() else {
         return Vec::new();
     };
 

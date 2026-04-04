@@ -93,7 +93,7 @@ pub async fn handle(
 
     let mut services_restarted = Vec::new();
 
-    if let Some(ref docker) = state.docker {
+    if let Some(docker) = state.docker.as_ref() {
         let dind_rt = coast_docker::dind::DindRuntime::with_client(docker.clone());
 
         if has_compose {

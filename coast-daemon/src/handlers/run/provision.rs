@@ -407,11 +407,11 @@ async fn load_coastfile_resources(
     result.shared_services = coastfile.shared_services.clone();
 
     if !coastfile.shared_services.is_empty() {
-        if let Some(ref docker) = state.docker {
+        if let Some(docker) = state.docker.as_ref() {
             let shared = shared_services_setup::start_shared_services(
                 &req.project,
                 &coastfile.shared_services,
-                docker,
+                &docker,
                 state,
             )
             .await?;
@@ -862,7 +862,7 @@ async fn connect_shared_network(
     let Some(ref net_name) = shared_network else {
         return;
     };
-    let Some(ref docker) = state.docker else {
+    let Some(docker) = state.docker.as_ref() else {
         return;
     };
     let nm = coast_docker::network::NetworkManager::with_client(docker.clone());

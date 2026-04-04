@@ -2,7 +2,7 @@
 /// when the daemon comes up or goes down. Polls every 5 seconds.
 use std::sync::Arc;
 
-use tracing::debug;
+use tracing::{debug, warn};
 
 use coast_core::protocol::CoastEvent;
 
@@ -18,10 +18,31 @@ pub fn spawn_docker_watcher(state: Arc<AppState>) {
         loop {
             interval.tick().await;
 
-            let connected = match state.docker.as_ref() {
-                Some(docker) => docker.ping().await.is_ok(),
-                None => false,
-            };
+            let mut connected = false;
+
+            if let Some(docker) = state.docker.as_ref() {
+                connected = docker.ping().await.is_ok();
+            }
+
+            if !connected {
+                match coast_docker::host::connect_to_host_docker() {
+                    Ok(docker) => {
+                        if docker.ping().await.is_ok() {
+                            state.docker.set(Some(docker));
+                            connected = true;
+                        } else {
+                            state.docker.set(None);
+                        }
+                    }
+                    Err(error) => {
+                        state.docker.set(None);
+                        debug!(error = %error, "docker reconnect attempt failed");
+                        if state.docker.is_none() && was_connected != Some(false) {
+                            warn!(error = %error, "Docker is unavailable while coastd is running");
+                        }
+                    }
+                }
+            }
 
             if was_connected != Some(connected) {
                 debug!(connected, "docker status changed");

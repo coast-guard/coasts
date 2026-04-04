@@ -124,12 +124,12 @@ pub async fn handle_with_status(
     )
     .await;
 
-    if let Some(ref docker) = state.docker {
+    if let Some(docker) = state.docker.as_ref() {
         let result = services::run_docker_steps(services::DockerStepsParams {
             req: &req,
             state,
             progress: &progress,
-            docker,
+            docker: &docker,
             container_id: &container_id,
             instance_status: &instance.status,
             instance_build_id: instance.build_id.as_deref(),

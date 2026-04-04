@@ -500,7 +500,7 @@ pub async fn handle_run_with_progress(
 async fn cleanup_failed_provision(name: &str, project: &str, state: &AppState) {
     let container_name = format!("{project}-coasts-{name}");
 
-    if let Some(ref docker) = state.docker {
+    if let Some(docker) = state.docker.as_ref() {
         let rm_opts = bollard::container::RemoveContainerOptions {
             force: true,
             v: true,

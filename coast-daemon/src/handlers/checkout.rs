@@ -257,7 +257,9 @@ pub async fn handle(req: CheckoutRequest, state: &AppState) -> Result<CheckoutRe
     // Pre-flight: verify the inner Docker daemon is responsive before routing
     // traffic to this instance. Status is not yet set to CheckedOut so early
     // returns here leave the DB in a consistent state.
-    if let (Some(ref container_id), Some(ref docker)) = (&target.container_id, &state.docker) {
+    if let (Some(container_id), Some(docker)) =
+        (target.container_id.as_ref(), state.docker.as_ref())
+    {
         let rt = coast_docker::dind::DindRuntime::with_client(docker.clone());
         let health_timeout = tokio::time::Duration::from_secs(10);
         let health_check = rt.exec_in_coast(container_id, &["docker", "info"]);

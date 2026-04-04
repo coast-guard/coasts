@@ -64,9 +64,10 @@ pub(super) async fn cache_images(
         .dir
         .as_deref()
         .unwrap_or_else(|| std::path::Path::new("."));
+    let docker = state.docker.as_ref();
     let context = ImageBuildContext {
         refresh: req.refresh,
-        docker: state.docker.as_ref(),
+        docker: docker.as_ref(),
         cache_dir: &cache_dir,
         compose_dir,
         progress,

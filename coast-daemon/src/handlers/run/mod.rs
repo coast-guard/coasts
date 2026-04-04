@@ -206,9 +206,9 @@ pub async fn handle(
     let mut container_id = format!("{}-coasts-{}", req.project, req.name);
     let mut pre_allocated_ports: Vec<(String, u16, u16)> = Vec::new();
 
-    if let Some(ref docker) = state.docker {
+    if let Some(docker) = state.docker.as_ref() {
         let result =
-            provision::provision_instance(docker, &validated, &req, state, &progress).await?;
+            provision::provision_instance(&docker, &validated, &req, state, &progress).await?;
         container_id = result.container_id;
         pre_allocated_ports = result.pre_allocated_ports;
     }

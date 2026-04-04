@@ -189,7 +189,7 @@ pub async fn handle(req: ExecRequest, state: &AppState) -> Result<ExecResponse> 
             user_spec.as_deref(),
         );
         exec_in_container(
-            docker,
+            &docker,
             &container_id,
             &["sh".to_string(), "-c".to_string(), script],
             None,
@@ -197,7 +197,7 @@ pub async fn handle(req: ExecRequest, state: &AppState) -> Result<ExecResponse> 
         .await?
     } else {
         let user_spec = if req.root { None } else { Some(host_uid_gid()) };
-        exec_in_container(docker, &container_id, &command, user_spec.as_deref()).await?
+        exec_in_container(&docker, &container_id, &command, user_spec.as_deref()).await?
     };
 
     info!(

@@ -94,7 +94,7 @@ pub async fn handle_explain(
     let project_root = read_project_root(&req.project);
 
     let all_service_names: Vec<String> = if cf_data.has_compose {
-        if let Some(ref docker) = state.docker {
+        if let Some(docker) = state.docker.as_ref() {
             let rt = coast_docker::dind::DindRuntime::with_client(docker.clone());
             let svc_ctx =
                 crate::handlers::compose_context_for_build(&req.project, build_id.as_deref());

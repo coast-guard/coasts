@@ -146,21 +146,21 @@ fn cleanup_socat_and_ports(db: &crate::state::StateDb, project: &str, name: &str
 
 /// Run all Docker teardown steps: stop services, remove container, delete volumes.
 async fn docker_teardown(instance: &CoastInstance, state: &AppState, project: &str, name: &str) {
-    let Some(ref docker) = state.docker else {
+    let Some(docker) = state.docker.as_ref() else {
         return;
     };
     let is_active =
         instance.status == InstanceStatus::Running || instance.status == InstanceStatus::CheckedOut;
     if is_active {
         if let Some(ref cid) = instance.container_id {
-            stop_running_services(docker, cid).await;
+            stop_running_services(&docker, cid).await;
         }
         info!(name = %name, "stopped running instance before removal");
     }
     if let Some(ref cid) = instance.container_id {
-        remove_container(docker, cid).await;
+        remove_container(&docker, cid).await;
     }
-    remove_isolated_volumes(docker, project, name).await;
+    remove_isolated_volumes(&docker, project, name).await;
 }
 
 /// Handle an rm request.
@@ -184,8 +184,8 @@ pub async fn handle(req: RmRequest, state: &AppState) -> Result<RmResponse> {
         let db = state.db.lock().await;
         let inst = db.get_instance(&req.project, &req.name)?;
         let Some(inst) = inst else {
-            if let Some(ref docker) = state.docker {
-                if cleanup_dangling_container(docker, &req.project, &req.name).await? {
+            if let Some(docker) = state.docker.as_ref() {
+                if cleanup_dangling_container(&docker, &req.project, &req.name).await? {
                     return Ok(RmResponse { name: req.name });
                 }
             }

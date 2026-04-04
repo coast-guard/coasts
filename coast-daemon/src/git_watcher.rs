@@ -239,7 +239,7 @@ async fn restart_container_for_recovery(state: &AppState, project: &str, instanc
         }
     };
 
-    let (Some(ref docker), Some(ref cid)) = (&state.docker, &container_id) else {
+    let (Some(docker), Some(cid)) = (state.docker.as_ref(), container_id.as_ref()) else {
         warn!(
             instance,
             project, "no Docker client or container ID, cannot recover"

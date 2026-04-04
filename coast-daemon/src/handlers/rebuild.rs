@@ -60,7 +60,7 @@ pub async fn handle(req: RebuildRequest, state: &AppState) -> Result<RebuildResp
     // Phase 2: Docker operations (unlocked)
     let mut services_rebuilt = Vec::new();
 
-    if let Some(ref docker) = state.docker {
+    if let Some(docker) = state.docker.as_ref() {
         let compose_rt = coast_docker::dind::DindRuntime::with_client(docker.clone());
 
         // Step 2: docker compose build inside DinD

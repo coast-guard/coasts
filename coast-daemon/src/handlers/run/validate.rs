@@ -131,7 +131,7 @@ async fn check_dangling_container(
     progress: &tokio::sync::mpsc::Sender<BuildProgressEvent>,
 ) -> Result<()> {
     let expected_container_name = format!("{}-coasts-{}", req.project, req.name);
-    let Some(ref docker) = state.docker else {
+    let Some(docker) = state.docker.as_ref() else {
         return Ok(());
     };
 

@@ -113,13 +113,42 @@ impl Drop for UpdateOperationGuard {
     }
 }
 
+pub struct DockerHandle(std::sync::RwLock<Option<bollard::Docker>>);
+
+impl DockerHandle {
+    pub fn new(docker: Option<bollard::Docker>) -> Self {
+        Self(std::sync::RwLock::new(docker))
+    }
+
+    pub fn as_ref(&self) -> Option<bollard::Docker> {
+        self.0.read().ok().and_then(|docker| docker.clone())
+    }
+
+    pub fn is_some(&self) -> bool {
+        self.0
+            .read()
+            .map(|docker| docker.is_some())
+            .unwrap_or(false)
+    }
+
+    pub fn is_none(&self) -> bool {
+        !self.is_some()
+    }
+
+    pub fn set(&self, docker: Option<bollard::Docker>) {
+        if let Ok(mut slot) = self.0.write() {
+            *slot = docker;
+        }
+    }
+}
+
 /// Shared application state accessible from all handler tasks.
 pub struct AppState {
     /// The SQLite state database.
     pub db: Mutex<StateDb>,
     /// Bollard Docker client connected to the host daemon.
     /// None in test environments where Docker is not available.
-    pub docker: Option<bollard::Docker>,
+    pub docker: DockerHandle,
     /// Broadcast channel for WebSocket event notifications.
     pub event_bus: tokio::sync::broadcast::Sender<CoastEvent>,
     /// Persistent PTY sessions for the host terminal feature.
@@ -213,7 +242,7 @@ impl AppState {
 
         Self {
             db: Mutex::new(db),
-            docker,
+            docker: DockerHandle::new(docker),
             event_bus,
             pty_sessions: Mutex::new(std::collections::HashMap::new()),
             exec_sessions: Mutex::new(std::collections::HashMap::new()),
@@ -248,7 +277,7 @@ impl AppState {
         let (analytics_enabled_tx, _analytics_enabled_rx) = tokio::sync::watch::channel(true);
         Self {
             db: Mutex::new(db),
-            docker: None,
+            docker: DockerHandle::new(None),
             event_bus,
             pty_sessions: Mutex::new(std::collections::HashMap::new()),
             exec_sessions: Mutex::new(std::collections::HashMap::new()),
@@ -281,15 +310,15 @@ impl AppState {
     /// port availability checks.
     #[cfg(test)]
     pub fn new_for_testing_with_docker(db: StateDb) -> Self {
-        let mut s = Self::new_for_testing(db);
-        s.docker = Some(
+        let s = Self::new_for_testing(db);
+        s.docker.set(Some(
             bollard::Docker::connect_with_http(
                 "http://127.0.0.1:0",
                 1,
                 bollard::API_DEFAULT_VERSION,
             )
             .expect("bollard stub client creation should not fail"),
-        );
+        ));
         s
     }
 

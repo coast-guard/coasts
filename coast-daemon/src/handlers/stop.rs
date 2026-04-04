@@ -93,7 +93,7 @@ pub async fn handle(
             // Instance not in DB — check if a dangling Docker container exists.
             // If so, treat stop as a silent no-op (use `coast rm` to clean up).
             let expected = format!("{}-coasts-{}", req.project, req.name);
-            if let Some(ref docker) = state.docker {
+            if let Some(docker) = state.docker.as_ref() {
                 if docker.inspect_container(&expected, None).await.is_ok() {
                     warn!(
                         name = %req.name,
@@ -155,7 +155,7 @@ pub async fn handle(
     );
 
     if let Some(ref container_id) = instance.container_id {
-        if let Some(ref docker) = state.docker {
+        if let Some(docker) = state.docker.as_ref() {
             let rt = coast_docker::dind::DindRuntime::with_client(docker.clone());
 
             let health_timeout = tokio::time::Duration::from_secs(10);
@@ -188,7 +188,7 @@ pub async fn handle(
             }
 
             // Stop bare services if the supervisor directory exists
-            if crate::bare_services::has_bare_services(docker, container_id).await {
+            if crate::bare_services::has_bare_services(&docker, container_id).await {
                 let stop_cmd = crate::bare_services::generate_stop_command();
                 let _ = rt
                     .exec_in_coast(container_id, &["sh", "-c", &stop_cmd])
@@ -212,7 +212,7 @@ pub async fn handle(
         BuildProgressEvent::started("Stopping container", 2, TOTAL_STOP_STEPS),
     );
     if let Some(ref container_id) = instance.container_id {
-        if let Some(ref docker) = state.docker {
+        if let Some(docker) = state.docker.as_ref() {
             let runtime = coast_docker::dind::DindRuntime::with_client(docker.clone());
             if let Err(e) = runtime.stop_coast_container(container_id).await {
                 warn!(container_id = %container_id, error = %e, "failed to stop container, it may already be stopped");
