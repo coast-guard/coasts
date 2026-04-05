@@ -13,6 +13,7 @@
   "error.dangling_container": "Um contêiner Docker órfão '%{container_name}' foi encontrado para a instância '%{name}' no projeto '%{project}', mas não existe registro correspondente no banco de dados Coast. Provavelmente é resíduo de uma execução anterior que falhou ou de uma remoção interrompida.\nPara removê-lo e prosseguir, execute novamente com --force-remove-dangling:\n  coast run %{name} --force-remove-dangling",
   "error.runtime_unavailable": "O runtime '%{runtime}' não está disponível: %{reason}",
   "error.protocol": "Erro de protocolo: %{message}",
+  "error.remote": "Remote error: %{message}",
   "error.invalid_language": "Idioma '%{code}' não suportado. Idiomas suportados: en, zh, ja, ko, ru, pt, es.",
   "error.daemon_not_running": "coastd não está em execução. Inicie-o com: coast daemon start",
   "error.daemon_connect_failed": "Falha ao conectar ao coastd em %{path}: %{message}",

@@ -579,6 +579,7 @@ fn test_protocol_roundtrip_all_response_variants() {
                     primary_port_dynamic: None,
                     primary_port_url: None,
                     down_service_count: 0,
+                    remote_name: None,
                 },
                 InstanceSummary {
                     name: "feature-oauth".to_string(),
@@ -597,6 +598,7 @@ fn test_protocol_roundtrip_all_response_variants() {
                     primary_port_dynamic: None,
                     primary_port_url: None,
                     down_service_count: 0,
+                    remote_name: None,
                 },
             ],
             known_projects: vec![],
@@ -850,6 +852,7 @@ fn test_coast_instance_json_roundtrip() {
         worktree_name: None,
         build_id: None,
         coastfile_type: None,
+        remote_name: None,
     };
 
     let json = serde_json::to_string(&instance).unwrap();

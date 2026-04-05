@@ -13,6 +13,7 @@
   "error.dangling_container": "プロジェクト '%{project}' のインスタンス '%{name}' に対する残存 Docker コンテナ '%{container_name}' が見つかりましたが、Coast データベースに対応するインスタンスが存在しません。以前の実行失敗や中断された削除の残りと考えられます。\nこのコンテナを削除して続行するには、--force-remove-dangling を付けて再実行してください:\n  coast run %{name} --force-remove-dangling",
   "error.runtime_unavailable": "ランタイム '%{runtime}' は利用できません: %{reason}",
   "error.protocol": "プロトコルエラー: %{message}",
+  "error.remote": "Remote error: %{message}",
   "error.invalid_language": "サポートされていない言語 '%{code}'。サポートされている言語: en, zh, ja, ko, ru, pt, es。",
   "error.daemon_not_running": "coastd が起動していません。次のコマンドで起動してください: coast daemon start",
   "error.daemon_connect_failed": "%{path} の coastd に接続できませんでした: %{message}",

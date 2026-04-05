@@ -167,6 +167,7 @@ mod tests {
             worktree_name: worktree.map(str::to_string),
             build_id: None,
             coastfile_type: None,
+            remote_name: None,
         }
     }
 

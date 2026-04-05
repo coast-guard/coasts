@@ -152,6 +152,7 @@ fn test_coast_instance_serialization() {
         worktree_name: None,
         build_id: None,
         coastfile_type: None,
+        remote_name: None,
     };
 
     let json = serde_json::to_string(&instance).unwrap();

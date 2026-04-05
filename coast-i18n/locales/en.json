@@ -13,6 +13,7 @@
   "error.dangling_container": "A dangling Docker container '%{container_name}' was found for instance '%{name}' in project '%{project}', but no matching instance exists in the Coast database. This is likely left over from a previous failed run or interrupted removal.\nTo remove it and proceed, re-run with --force-remove-dangling:\n  coast run %{name} --force-remove-dangling",
   "error.runtime_unavailable": "Runtime '%{runtime}' is not available: %{reason}",
   "error.protocol": "Protocol error: %{message}",
+  "error.remote": "Remote error: %{message}",
   "error.invalid_language": "Unsupported language '%{code}'. Supported languages: en, zh, ja, ko, ru, pt, es.",
   "error.daemon_not_running": "coastd is not running. Start it with: coast daemon start",
   "error.daemon_connect_failed": "Failed to connect to coastd at %{path}: %{message}",

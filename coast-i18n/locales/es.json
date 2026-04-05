@@ -13,6 +13,7 @@
   "error.dangling_container": "Se encontró un contenedor Docker huérfano '%{container_name}' para la instancia '%{name}' en el proyecto '%{project}', pero no existe un registro correspondiente en la base de datos de Coast. Probablemente es un residuo de una ejecución anterior fallida o una eliminación interrumpida.\nPara eliminarlo y continuar, vuelva a ejecutar con --force-remove-dangling:\n  coast run %{name} --force-remove-dangling",
   "error.runtime_unavailable": "El runtime '%{runtime}' no está disponible: %{reason}",
   "error.protocol": "Error de protocolo: %{message}",
+  "error.remote": "Remote error: %{message}",
   "error.invalid_language": "Idioma '%{code}' no soportado. Idiomas soportados: en, zh, ja, ko, ru, pt, es.",
   "error.daemon_not_running": "coastd no está en ejecución. Inícielo con: coast daemon start",
   "error.daemon_connect_failed": "No se pudo conectar a coastd en %{path}: %{message}",

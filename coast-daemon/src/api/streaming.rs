@@ -212,6 +212,7 @@ async fn run_sse(
                 worktree_name: None,
                 build_id: req.build_id.clone(),
                 coastfile_type: req.coastfile_type.clone(),
+                remote_name: None,
             };
             if let Err(e) = db.insert_instance(&enqueued_inst) {
                 let _ = result_tx.send(Err(e));

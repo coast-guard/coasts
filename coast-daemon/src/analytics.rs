@@ -286,7 +286,9 @@ pub fn request_context(req: &Request) -> (Option<&str>, Option<&str>) {
         | Request::SetLanguage(_)
         | Request::SetAnalytics(_)
         | Request::IsSafeToUpdate(_)
-        | Request::PrepareForUpdate(_) => (None, None),
+        | Request::PrepareForUpdate(_)
+        | Request::Remote(_)
+        | Request::Sync(_) => (None, None),
         Request::Lookup(r) => (Some(&r.project), None),
         Request::RerunExtractors(r) => (Some(&r.project), None),
         Request::Run(r) => (Some(&r.project), Some(&r.name)),
@@ -492,6 +494,31 @@ pub fn request_command_name(req: &Request) -> String {
         Request::Lookup(_) => "lookup".into(),
         Request::IsSafeToUpdate(_) => "update/is_safe_to_update".into(),
         Request::PrepareForUpdate(_) => "update/prepare_for_update".into(),
+        Request::Remote(r) => {
+            use coast_core::protocol::RemoteRequest;
+            match r {
+                RemoteRequest::Add(_) => "remote/add",
+                RemoteRequest::Remove(_) => "remote/remove",
+                RemoteRequest::List(_) => "remote/list",
+                RemoteRequest::Setup(_) => "remote/setup",
+                RemoteRequest::Ping(_) => "remote/ping",
+                RemoteRequest::Connect(_) => "remote/connect",
+                RemoteRequest::Disconnect(_) => "remote/disconnect",
+            }
+            .into()
+        }
+        Request::Sync(s) => {
+            use coast_core::protocol::SyncRequest;
+            match s {
+                SyncRequest::Status(_) => "sync/status",
+                SyncRequest::Pause(_) => "sync/pause",
+                SyncRequest::Resume(_) => "sync/resume",
+                SyncRequest::Flush(_) => "sync/flush",
+                SyncRequest::Create(_) => "sync/create",
+                SyncRequest::Terminate(_) => "sync/terminate",
+            }
+            .into()
+        }
     }
 }
 

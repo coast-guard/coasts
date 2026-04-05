@@ -23,6 +23,9 @@ pub struct CoastInstance {
     pub build_id: Option<String>,
     #[serde(default)]
     pub coastfile_type: Option<String>,
+    /// Name of the remote where this instance is running (None = local).
+    #[serde(default)]
+    pub remote_name: Option<String>,
 }
 
 /// Status of a coast instance.

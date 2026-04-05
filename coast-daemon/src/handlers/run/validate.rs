@@ -101,6 +101,7 @@ pub(super) async fn validate_and_insert(
             worktree_name: None,
             build_id: resolved_build_id.clone(),
             coastfile_type: req.coastfile_type.clone(),
+            remote_name: None,
         };
         db.insert_instance(&instance)?;
         state.emit_event(coast_core::protocol::CoastEvent::InstanceStatusChanged {
@@ -303,6 +304,7 @@ mod tests {
             worktree_name: None,
             build_id: None,
             coastfile_type: None,
+            remote_name: None,
         })
         .unwrap();
         let state = AppState::new_for_testing(db);

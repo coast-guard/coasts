@@ -26,6 +26,7 @@ mod handlers;
 mod image_loader;
 #[allow(dead_code)]
 mod port_manager;
+mod remote;
 pub mod server;
 #[allow(dead_code)]
 mod shared_services;
@@ -931,6 +932,7 @@ mod tests {
             worktree_name: None,
             build_id: None,
             coastfile_type: None,
+            remote_name: None,
         }
     }
 

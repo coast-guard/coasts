@@ -431,6 +431,7 @@ mod tests {
             worktree_name: worktree.map(String::from),
             build_id: None,
             coastfile_type: None,
+            remote_name: None,
         }
     }
 

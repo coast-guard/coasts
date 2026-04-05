@@ -113,6 +113,10 @@ pub enum CoastError {
         #[source]
         source: Option<Box<dyn std::error::Error + Send + Sync>>,
     },
+
+    /// Error with remote VM operations (SSH, tunnels, sync).
+    #[error("Remote error: {message}")]
+    Remote { message: String },
 }
 
 /// Convenience alias for Results using CoastError.

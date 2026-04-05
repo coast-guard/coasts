@@ -86,6 +86,7 @@ pub async fn handle(req: LsRequest, state: &AppState) -> Result<LsResponse> {
                 primary_port_dynamic: pp.dynamic,
                 primary_port_url: pp.url,
                 down_service_count,
+                remote_name: row.remote_name.clone(),
             }
         })
         .collect();
@@ -258,6 +259,7 @@ mod tests {
             worktree_name: None,
             build_id: None,
             coastfile_type: None,
+            remote_name: None,
         }
     }
 
@@ -287,6 +289,7 @@ mod tests {
                 worktree_name: None,
                 build_id: None,
                 coastfile_type: None,
+                remote_name: None,
             })
             .unwrap();
             db.insert_instance(&CoastInstance {
@@ -301,6 +304,7 @@ mod tests {
                 worktree_name: None,
                 build_id: None,
                 coastfile_type: None,
+                remote_name: None,
             })
             .unwrap();
             db.insert_instance(&CoastInstance {
@@ -315,6 +319,7 @@ mod tests {
                 worktree_name: None,
                 build_id: None,
                 coastfile_type: None,
+                remote_name: None,
             })
             .unwrap();
         }

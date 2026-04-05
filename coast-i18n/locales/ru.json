@@ -13,6 +13,7 @@
   "error.dangling_container": "Обнаружен висячий Docker-контейнер '%{container_name}' для экземпляра '%{name}' в проекте '%{project}', но соответствующая запись в базе данных Coast отсутствует. Вероятно, он остался после неудачного запуска или прерванного удаления.\nДля его удаления и продолжения повторите команду с --force-remove-dangling:\n  coast run %{name} --force-remove-dangling",
   "error.runtime_unavailable": "Среда выполнения '%{runtime}' недоступна: %{reason}",
   "error.protocol": "Ошибка протокола: %{message}",
+  "error.remote": "Remote error: %{message}",
   "error.invalid_language": "Неподдерживаемый язык '%{code}'. Поддерживаемые языки: en, zh, ja, ko, ru, pt, es.",
   "error.daemon_not_running": "coastd не запущен. Запустите его командой: coast daemon start",
   "error.daemon_connect_failed": "Не удалось подключиться к coastd по адресу %{path}: %{message}",

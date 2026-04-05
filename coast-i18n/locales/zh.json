@@ -13,6 +13,7 @@
   "error.dangling_container": "发现项目 '%{project}' 中实例 '%{name}' 的残留 Docker 容器 '%{container_name}'，但 Coast 数据库中不存在对应的实例记录。这可能是之前运行失败或中断删除留下的。\n要移除该容器并继续，请使用 --force-remove-dangling 重新运行：\n  coast run %{name} --force-remove-dangling",
   "error.runtime_unavailable": "运行时 '%{runtime}' 不可用：%{reason}",
   "error.protocol": "协议错误：%{message}",
+  "error.remote": "Remote error: %{message}",
   "error.invalid_language": "不支持的语言 '%{code}'。支持的语言：en, zh, ja, ko, ru, pt, es。",
   "error.daemon_not_running": "coastd 未运行。请运行以下命令启动：coast daemon start",
   "error.daemon_connect_failed": "无法连接到 %{path} 上的 coastd：%{message}",

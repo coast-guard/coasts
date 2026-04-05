@@ -108,6 +108,7 @@ mod tests {
             worktree_name: None,
             build_id: build_id.map(std::string::ToString::to_string),
             coastfile_type: None,
+            remote_name: None,
         })
         .unwrap();
         AppState::new_for_testing(db)

@@ -10,9 +10,11 @@
 /// - [`shared_services`]: Shared service records
 /// - [`settings`]: Key-value settings and project archival
 /// - [`agent_shells`]: Agent shell session management
+/// - [`remotes`]: Remote VM configurations and tunnel state
 mod agent_shells;
 mod instances;
 mod ports;
+pub mod remotes;
 mod settings;
 mod shared_services;
 mod user_config;
@@ -147,6 +149,60 @@ impl StateDb {
                     UNIQUE(project, instance_name, shell_id),
                     FOREIGN KEY (project, instance_name) REFERENCES instances(project, name) ON DELETE CASCADE
                 );
+
+                -- Remote VM configurations
+                CREATE TABLE IF NOT EXISTS remotes (
+                    name TEXT PRIMARY KEY,
+                    host TEXT NOT NULL,
+                    user TEXT NOT NULL,
+                    port INTEGER NOT NULL DEFAULT 22,
+                    workspace_root TEXT NOT NULL,
+                    ssh_key_path TEXT,
+                    created_at TEXT NOT NULL
+                );
+
+                -- SSH tunnel state for remote connections
+                CREATE TABLE IF NOT EXISTS tunnels (
+                    remote_name TEXT PRIMARY KEY,
+                    local_port INTEGER NOT NULL,
+                    ssh_pid INTEGER,
+                    status TEXT NOT NULL,
+                    connected_at TEXT,
+                    FOREIGN KEY (remote_name) REFERENCES remotes(name) ON DELETE CASCADE
+                );
+
+                -- Project execution mode (local vs remote)
+                CREATE TABLE IF NOT EXISTS project_modes (
+                    project TEXT PRIMARY KEY,
+                    mode TEXT NOT NULL,
+                    remote_name TEXT,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (remote_name) REFERENCES remotes(name) ON DELETE SET NULL
+                );
+
+                -- Mutagen sync sessions for remote projects
+                CREATE TABLE IF NOT EXISTS sync_sessions (
+                    project TEXT PRIMARY KEY,
+                    remote_name TEXT NOT NULL,
+                    mutagen_session_id TEXT,
+                    local_path TEXT NOT NULL,
+                    remote_path TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    last_sync_at TEXT,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (remote_name) REFERENCES remotes(name) ON DELETE CASCADE
+                );
+
+                -- Local port forwards for accessing remote container ports
+                CREATE TABLE IF NOT EXISTS local_port_forwards (
+                    project TEXT NOT NULL,
+                    instance_name TEXT NOT NULL,
+                    service_name TEXT,
+                    local_port INTEGER NOT NULL,
+                    remote_port INTEGER NOT NULL,
+                    ssh_pid INTEGER,
+                    PRIMARY KEY (project, instance_name, local_port)
+                );
                 ",
             )
             .map_err(|e| CoastError::State {
@@ -159,6 +215,7 @@ impl StateDb {
         self.migrate_add_agent_shell_local_id()?;
         self.migrate_add_port_is_primary()?;
         self.migrate_preferred_language_to_user_config()?;
+        self.migrate_add_instance_remote_name()?;
 
         Ok(())
     }
@@ -333,6 +390,26 @@ impl StateDb {
         }
         Ok(())
     }
+
+    /// Migration: add `remote_name` column to the instances table if it doesn't exist.
+    ///
+    /// This column tracks which remote VM an instance is running on (None = local).
+    fn migrate_add_instance_remote_name(&self) -> Result<()> {
+        let has_column = self
+            .conn
+            .prepare("SELECT remote_name FROM instances LIMIT 0")
+            .is_ok();
+        if !has_column {
+            self.conn
+                .execute_batch("ALTER TABLE instances ADD COLUMN remote_name TEXT;")
+                .map_err(|e| CoastError::State {
+                    message: format!("failed to add remote_name column to instances: {e}"),
+                    source: Some(Box::new(e)),
+                })?;
+            debug!("added remote_name column to instances table");
+        }
+        Ok(())
+    }
 }
 
 /// Check if a rusqlite error is a UNIQUE constraint violation.
@@ -374,6 +451,7 @@ pub(crate) mod test_helpers {
             worktree_name: None,
             build_id: None,
             coastfile_type: None,
+            remote_name: None,
         }
     }
 

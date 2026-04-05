@@ -9,7 +9,7 @@ use super::{is_unique_violation, StateDb};
 
 /// Convert a SQLite row into a `CoastInstance`.
 ///
-/// Column order: name, project, status, branch, commit_sha, container_id, runtime, created_at, worktree_name, build_id, coastfile_type
+/// Column order: name, project, status, branch, commit_sha, container_id, runtime, created_at, worktree_name, build_id, coastfile_type, remote_name
 pub(super) fn row_to_instance(row: &rusqlite::Row<'_>) -> rusqlite::Result<CoastInstance> {
     let status_str: String = row.get(2)?;
     let runtime_str: String = row.get(6)?;
@@ -24,6 +24,7 @@ pub(super) fn row_to_instance(row: &rusqlite::Row<'_>) -> rusqlite::Result<Coast
     let worktree_name: Option<String> = row.get(8).unwrap_or(None);
     let build_id: Option<String> = row.get(9).unwrap_or(None);
     let coastfile_type: Option<String> = row.get(10).unwrap_or(None);
+    let remote_name: Option<String> = row.get(11).unwrap_or(None);
 
     Ok(CoastInstance {
         name: row.get(0)?,
@@ -37,6 +38,7 @@ pub(super) fn row_to_instance(row: &rusqlite::Row<'_>) -> rusqlite::Result<Coast
         worktree_name,
         build_id,
         coastfile_type,
+        remote_name,
     })
 }
 
@@ -48,8 +50,8 @@ impl StateDb {
     pub fn insert_instance(&self, instance: &CoastInstance) -> Result<()> {
         self.conn
             .execute(
-                "INSERT INTO instances (name, project, status, branch, commit_sha, container_id, runtime, created_at, worktree_name, build_id, coastfile_type)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                "INSERT INTO instances (name, project, status, branch, commit_sha, container_id, runtime, created_at, worktree_name, build_id, coastfile_type, remote_name)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                 params![
                     instance.name,
                     instance.project,
@@ -62,6 +64,7 @@ impl StateDb {
                     instance.worktree_name,
                     instance.build_id,
                     instance.coastfile_type,
+                    instance.remote_name,
                 ],
             )
             .map_err(|e| {
@@ -89,7 +92,7 @@ impl StateDb {
     pub fn get_instance(&self, project: &str, name: &str) -> Result<Option<CoastInstance>> {
         self.conn
             .query_row(
-                "SELECT name, project, status, branch, commit_sha, container_id, runtime, created_at, worktree_name, build_id, coastfile_type
+                "SELECT name, project, status, branch, commit_sha, container_id, runtime, created_at, worktree_name, build_id, coastfile_type, remote_name
                  FROM instances
                  WHERE project = ?1 AND name = ?2",
                 params![project, name],
@@ -108,7 +111,7 @@ impl StateDb {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT name, project, status, branch, commit_sha, container_id, runtime, created_at, worktree_name, build_id, coastfile_type
+                "SELECT name, project, status, branch, commit_sha, container_id, runtime, created_at, worktree_name, build_id, coastfile_type, remote_name
                  FROM instances
                  ORDER BY project, name",
             )
@@ -141,7 +144,7 @@ impl StateDb {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT name, project, status, branch, commit_sha, container_id, runtime, created_at, worktree_name, build_id, coastfile_type
+                "SELECT name, project, status, branch, commit_sha, container_id, runtime, created_at, worktree_name, build_id, coastfile_type, remote_name
                  FROM instances
                  WHERE project = ?1
                  ORDER BY name",
@@ -266,6 +269,28 @@ impl StateDb {
             )
             .map_err(|e| CoastError::State {
                 message: format!("failed to set branch for '{name}': {e}"),
+                source: Some(Box::new(e)),
+            })?;
+        Ok(())
+    }
+
+    /// Set the remote name for an instance (None = local).
+    ///
+    /// This tracks which remote VM an instance is running on.
+    #[instrument(skip(self))]
+    pub fn set_remote_name(
+        &self,
+        project: &str,
+        name: &str,
+        remote_name: Option<&str>,
+    ) -> Result<()> {
+        self.conn
+            .execute(
+                "UPDATE instances SET remote_name = ?1 WHERE project = ?2 AND name = ?3",
+                params![remote_name, project, name],
+            )
+            .map_err(|e| CoastError::State {
+                message: format!("failed to set remote_name for '{name}': {e}"),
                 source: Some(Box::new(e)),
             })?;
         Ok(())
@@ -413,6 +438,7 @@ mod tests {
             worktree_name: None,
             build_id: None,
             coastfile_type: None,
+            remote_name: None,
         };
 
         db.insert_instance(&instance).unwrap();
@@ -677,6 +703,7 @@ mod tests {
             worktree_name: None,
             build_id: None,
             coastfile_type: None,
+            remote_name: None,
         };
 
         db.insert_instance(&instance).unwrap();
@@ -712,6 +739,7 @@ mod tests {
                 worktree_name: None,
                 build_id: None,
                 coastfile_type: None,
+                remote_name: None,
             };
 
             db.insert_instance(&instance).unwrap();
@@ -745,6 +773,7 @@ mod tests {
                 worktree_name: None,
                 build_id: None,
                 coastfile_type: None,
+                remote_name: None,
             };
 
             db.insert_instance(&instance).unwrap();

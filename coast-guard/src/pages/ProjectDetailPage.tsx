@@ -24,6 +24,7 @@ import ConfirmModal from '../components/ConfirmModal';
 import AssignModal from '../components/AssignModal';
 import CreateCoastModal from '../components/CreateCoastModal';
 import StatusBadge from '../components/StatusBadge';
+import RemoteBadge from '../components/RemoteBadge';
 import PersistentTerminal from '../components/PersistentTerminal';
 import SharedServicesPanel from '../components/SharedServicesPanel';
 import Modal from '../components/Modal';
@@ -182,6 +183,7 @@ export default function ProjectDetailPage() {
         render: (r) => (
           <div className="flex items-center gap-2 min-w-0">
             <span className="font-semibold truncate">{r.name}</span>
+            {r.remote_name != null && <RemoteBadge remoteName={r.remote_name} />}
             {r.checked_out ? (
               <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-[var(--primary)]">
                 <ArrowRight size={12} />

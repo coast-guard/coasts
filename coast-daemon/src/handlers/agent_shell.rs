@@ -583,6 +583,7 @@ mod tests {
             worktree_name: None,
             build_id: None,
             coastfile_type: None,
+            remote_name: None,
         }
     }
 

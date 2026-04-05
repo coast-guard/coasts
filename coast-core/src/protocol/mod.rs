@@ -12,6 +12,7 @@
 /// - [`mcp`]: MCP server/tool/location types
 /// - [`agent_shell`]: Agent shell session types
 /// - [`events`]: ErrorResponse and CoastEvent
+/// - [`remote`]: Remote VM and sync management types
 pub mod agent_shell;
 pub mod api_types;
 pub mod build;
@@ -20,6 +21,7 @@ pub mod events;
 pub mod instance;
 pub mod mcp;
 pub mod query;
+pub mod remote;
 pub mod secret_shared;
 
 #[cfg(test)]
@@ -33,6 +35,7 @@ pub use events::*;
 pub use instance::*;
 pub use mcp::*;
 pub use query::*;
+pub use remote::*;
 pub use secret_shared::*;
 
 use serde::{Deserialize, Serialize};
@@ -109,6 +112,10 @@ pub enum Request {
     IsSafeToUpdate(UpdateSafetyRequest),
     /// Drain mutating work and prepare the daemon for self-update.
     PrepareForUpdate(PrepareForUpdateRequest),
+    /// Manage remote VM configurations.
+    Remote(RemoteRequest),
+    /// Manage file sync sessions.
+    Sync(SyncRequest),
 }
 
 /// A response from the daemon to the CLI.
@@ -202,6 +209,10 @@ pub enum Response {
     UpdateSafety(UpdateSafetyResponse),
     /// Result of preparing the daemon for self-update.
     PrepareForUpdate(PrepareForUpdateResponse),
+    /// Remote VM management result.
+    Remote(RemoteResponse),
+    /// Sync management result.
+    Sync(SyncResponse),
     /// Error response.
     Error(ErrorResponse),
 }
