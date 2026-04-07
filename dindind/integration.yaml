@@ -319,3 +319,6 @@ tests:
   test_remote_port_recovery_after_restart:
     script: integrated-examples/remote/test_remote_port_recovery_after_restart.sh
     timeout: 300
+  test_remote_tunnel_heal_isolation:
+    script: integrated-examples/remote/test_remote_tunnel_heal_isolation.sh
+    timeout: 300

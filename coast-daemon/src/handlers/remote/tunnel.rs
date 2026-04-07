@@ -182,12 +182,37 @@ impl Drop for SshTunnel {
     }
 }
 
+/// Kill SSH tunnel processes for specific dynamic ports (per-instance, not global).
+pub fn kill_tunnels_for_ports(dynamic_ports: &[u16]) {
+    for port in dynamic_ports {
+        let pattern = format!("ssh -N -L {}:", port);
+        let _ = Command::new("pkill").args(["-f", &pattern]).output();
+    }
+}
+
+/// Invalidate the tunnel cache for a specific remote host.
+pub async fn invalidate_cache_for_host(config: &RemoteConnection) {
+    let key = tunnel_cache_key(config);
+    let mut cache = TUNNEL_CACHE.lock().await;
+    if let Some(entry) = cache.remove(&key) {
+        if let Some(pid) = entry.ssh_pid {
+            debug!(pid, host = %config.host, "killing cached tunnel for host");
+            unsafe {
+                libc::kill(pid as i32, libc::SIGTERM);
+            }
+        }
+    }
+}
+
 /// Set up SSH port forwards for individual service ports.
 ///
 /// For each `(local_port, remote_port)` pair, creates an SSH tunnel that
 /// forwards `localhost:{local_port}` to the remote's `localhost:{remote_port}`.
-/// Returns the PIDs of the spawned SSH processes. Nothing in the daemon persists these today;
-/// retain the returned slice if you need to signal them explicitly.
+/// Returns the PIDs of the spawned SSH processes.
+///
+/// Each tunnel is verified after spawn: if the SSH process exits immediately
+/// (e.g. due to SSH rate limiting or MaxStartups), it is retried once after
+/// a brief delay.
 pub async fn forward_ports(
     config: &RemoteConnection,
     port_mappings: &[(u16, u16)],
@@ -195,45 +220,92 @@ pub async fn forward_ports(
     let mut pids = Vec::new();
 
     for &(local_port, remote_port) in port_mappings {
-        let ssh_key_str = config.ssh_key.display().to_string();
-        let mut cmd = tokio::process::Command::new("ssh");
-        cmd.args([
-            "-N",
-            "-L",
-            &format!("{local_port}:localhost:{remote_port}"),
-            "-p",
-            &config.port.to_string(),
-            "-i",
-            &ssh_key_str,
-            "-o",
-            "StrictHostKeyChecking=no",
-            "-o",
-            "BatchMode=yes",
-            "-o",
-            "ExitOnForwardFailure=yes",
-            "-o",
-            "ServerAliveInterval=30",
-            "-o",
-            "ServerAliveCountMax=3",
-            &format!("{}@{}", config.user, config.host),
-        ]);
-        cmd.stdin(Stdio::null());
-        cmd.stdout(Stdio::null());
-        cmd.stderr(Stdio::null());
-
-        let child = cmd.spawn().map_err(|e| {
-            CoastError::state(format!(
-                "failed to start port forward {local_port}->{remote_port}: {e}"
-            ))
-        })?;
-
-        if let Some(pid) = child.id() {
-            pids.push(pid);
-            debug!(local_port, remote_port, pid, "port forward established");
+        match spawn_forward_tunnel(config, local_port, remote_port).await {
+            Ok(pid) => pids.push(pid),
+            Err(e) => {
+                tracing::warn!(
+                    local_port,
+                    remote_port,
+                    error = %e,
+                    "tunnel spawn failed on first attempt, retrying after 1s"
+                );
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                match spawn_forward_tunnel(config, local_port, remote_port).await {
+                    Ok(pid) => pids.push(pid),
+                    Err(e2) => {
+                        tracing::warn!(
+                            local_port,
+                            remote_port,
+                            error = %e2,
+                            "tunnel spawn failed on retry"
+                        );
+                    }
+                }
+            }
         }
     }
 
     Ok(pids)
+}
+
+async fn spawn_forward_tunnel(
+    config: &RemoteConnection,
+    local_port: u16,
+    remote_port: u16,
+) -> std::result::Result<u32, String> {
+    let ssh_key_str = config.ssh_key.display().to_string();
+    let mut cmd = tokio::process::Command::new("ssh");
+    cmd.args([
+        "-N",
+        "-L",
+        &format!("{local_port}:localhost:{remote_port}"),
+        "-p",
+        &config.port.to_string(),
+        "-i",
+        &ssh_key_str,
+        "-o",
+        "StrictHostKeyChecking=no",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "ExitOnForwardFailure=yes",
+        "-o",
+        "ServerAliveInterval=30",
+        "-o",
+        "ServerAliveCountMax=3",
+        &format!("{}@{}", config.user, config.host),
+    ]);
+    cmd.stdin(Stdio::null());
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::piped());
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("failed to start SSH: {e}"))?;
+
+    let pid = child.id().ok_or("no PID for SSH process")?;
+
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    match child.try_wait() {
+        Ok(Some(status)) => {
+            let stderr_msg = if let Some(mut stderr) = child.stderr.take() {
+                let mut buf = String::new();
+                let _ = tokio::io::AsyncReadExt::read_to_string(&mut stderr, &mut buf).await;
+                buf
+            } else {
+                String::new()
+            };
+            Err(format!(
+                "SSH exited immediately with {status}: {stderr_msg}"
+            ))
+        }
+        Ok(None) => {
+            debug!(local_port, remote_port, pid, "port forward established");
+            Ok(pid)
+        }
+        Err(e) => Err(format!("failed to check SSH status: {e}")),
+    }
 }
 
 /// Set up SSH **reverse** port forwards for shared service ports.

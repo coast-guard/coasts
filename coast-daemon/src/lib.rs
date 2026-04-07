@@ -534,6 +534,12 @@ async fn port_health_cache_loop(state: Arc<server::AppState>) {
             let port_count = statuses.len();
             let healthy_count = statuses.iter().filter(|s| s.healthy).count();
 
+            let dead_dynamic_ports: Vec<u16> = statuses
+                .iter()
+                .filter(|s| !s.healthy)
+                .map(|s| s.dynamic_port)
+                .collect();
+
             state
                 .port_health_cache
                 .lock()
@@ -546,32 +552,125 @@ async fn port_health_cache_loop(state: Arc<server::AppState>) {
                 });
             }
 
-            if remote_host.is_some() && port_count > 0 && healthy_count == 0 {
-                {
-                    let now = tokio::time::Instant::now();
-                    let cooldown_ok = tunnel_heal_cooldown
-                        .get(&key)
-                        .map(|last| now.duration_since(*last).as_secs() >= 30)
-                        .unwrap_or(true);
-
-                    if cooldown_ok {
-                        warn!(
-                            instance = %name,
-                            project = %project,
-                            ports = port_count,
-                            "all remote ports unhealthy — re-establishing SSH tunnels"
-                        );
-                        tunnel_heal_cooldown.insert(key.clone(), now);
-                        handlers::remote::tunnel::cleanup_orphaned_ssh_tunnels();
-
-                        heal_remote_tunnels(&state, project, name).await;
-                        heal_shared_service_tunnels(&state, project).await;
-                    }
+            let unhealthy_count = port_count - healthy_count;
+            if remote_host.is_some() && unhealthy_count > 0 {
+                if healthy_count == 0 {
+                    heal_unhealthy_instance(
+                        &state,
+                        project,
+                        name,
+                        &key,
+                        &dead_dynamic_ports,
+                        &mut tunnel_heal_cooldown,
+                    )
+                    .await;
+                } else {
+                    heal_partial_tunnels(
+                        &state,
+                        project,
+                        name,
+                        &key,
+                        &allocs,
+                        &dead_dynamic_ports,
+                        &mut tunnel_heal_cooldown,
+                    )
+                    .await;
                 }
             }
         }
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
     }
+}
+
+/// Re-establish SSH tunnels for specific unhealthy ports on a remote instance
+/// where some other ports are still healthy (partial failure).
+async fn heal_partial_tunnels(
+    state: &Arc<server::AppState>,
+    project: &str,
+    name: &str,
+    key: &str,
+    allocs: &[state::PortAllocationRecord],
+    dead_ports: &[u16],
+    cooldown: &mut std::collections::HashMap<String, tokio::time::Instant>,
+) {
+    let now = tokio::time::Instant::now();
+    let cooldown_ok = cooldown
+        .get(key)
+        .map(|last| now.duration_since(*last).as_secs() >= 30)
+        .unwrap_or(true);
+
+    if !cooldown_ok {
+        return;
+    }
+
+    let tunnel_pairs: Vec<(u16, u16)> = allocs
+        .iter()
+        .filter(|a| dead_ports.contains(&a.dynamic_port))
+        .filter_map(|a| a.remote_dynamic_port.map(|rdp| (a.dynamic_port, rdp)))
+        .collect();
+
+    if tunnel_pairs.is_empty() {
+        return;
+    }
+
+    warn!(
+        instance = %name,
+        project = %project,
+        dead = dead_ports.len(),
+        "some remote ports unhealthy — re-establishing missing tunnels"
+    );
+    cooldown.insert(key.to_owned(), now);
+
+    handlers::remote::tunnel::kill_tunnels_for_ports(dead_ports);
+
+    if let Ok(remote_config) =
+        handlers::remote::resolve_remote_for_instance(project, name, state).await
+    {
+        forward_and_log_tunnels(&remote_config, &tunnel_pairs, name).await;
+    }
+}
+
+/// Heal a single remote instance whose ports are all unhealthy.
+///
+/// Kills only the SSH tunnel processes for this instance's dynamic ports,
+/// invalidates the tunnel cache for the specific remote host, and
+/// re-establishes both forward and reverse tunnels.
+async fn heal_unhealthy_instance(
+    state: &Arc<server::AppState>,
+    project: &str,
+    name: &str,
+    key: &str,
+    dynamic_ports: &[u16],
+    cooldown: &mut std::collections::HashMap<String, tokio::time::Instant>,
+) {
+    let now = tokio::time::Instant::now();
+    let cooldown_ok = cooldown
+        .get(key)
+        .map(|last| now.duration_since(*last).as_secs() >= 30)
+        .unwrap_or(true);
+
+    if !cooldown_ok {
+        return;
+    }
+
+    warn!(
+        instance = %name,
+        project = %project,
+        ports = dynamic_ports.len(),
+        "all remote ports unhealthy — re-establishing SSH tunnels"
+    );
+    cooldown.insert(key.to_owned(), now);
+
+    handlers::remote::tunnel::kill_tunnels_for_ports(dynamic_ports);
+
+    if let Ok(remote_config) =
+        handlers::remote::resolve_remote_for_instance(project, name, state).await
+    {
+        handlers::remote::tunnel::invalidate_cache_for_host(&remote_config).await;
+    }
+
+    heal_remote_tunnels(state, project, name).await;
+    heal_shared_service_tunnels(state, project).await;
 }
 
 /// Re-establish shared service reverse tunnels for a specific remote instance.
