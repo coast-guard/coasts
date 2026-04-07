@@ -70,6 +70,15 @@ jobs:
       - name: Generate TypeScript types from Rust
         run: cd coast-guard && npm run generate:types
 
+      - name: Verify generated types
+        run: |
+          count=$(ls coast-guard/src/types/generated/*.ts 2>/dev/null | wc -l)
+          echo "Generated $count type files"
+          if [ "$count" -lt 2 ]; then
+            echo "::error::generate:types produced fewer than 2 files — Rust export_bindings likely failed"
+            exit 1
+          fi
+
       - name: Generate docs manifest
         run: cd coast-guard && node scripts/generate-docs.mjs
 
