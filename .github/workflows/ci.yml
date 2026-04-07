@@ -40,7 +40,7 @@ jobs:
         run: cargo test --workspace
 
   frontend:
-    name: typecheck + lint
+    name: frontend build + lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
