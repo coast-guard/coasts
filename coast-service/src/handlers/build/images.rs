@@ -138,11 +138,17 @@ pub async fn cache_images(
     })
 }
 
+/// Parse an image reference into `(from_image, tag)` for the Docker pull API.
+///
+/// Handles the `tag@sha256:digest` format by treating the full reference as
+/// `from_image` with an empty tag, avoiding incorrect splits on the colon
+/// inside `sha256:...`.
 fn parse_image_ref(image_ref: &str) -> (String, String) {
+    if image_ref.contains('@') {
+        return (image_ref.to_string(), String::new());
+    }
     match image_ref.rsplit_once(':') {
-        Some((img, t)) if !img.contains('/') || !t.contains('/') => {
-            (img.to_string(), t.to_string())
-        }
+        Some((img, t)) if !t.contains('/') => (img.to_string(), t.to_string()),
         _ => (image_ref.to_string(), "latest".to_string()),
     }
 }
@@ -289,5 +295,28 @@ mod tests {
         let cache = Path::new("/cache");
         let p = tar_path_for_image(cache, "redis");
         assert_eq!(p, PathBuf::from("/cache/redis.tar"));
+    }
+
+    #[test]
+    fn test_parse_image_ref_digest_only() {
+        let (img, tag) = parse_image_ref("postgres@sha256:abc123def456");
+        assert_eq!(img, "postgres@sha256:abc123def456");
+        assert_eq!(tag, "");
+    }
+
+    #[test]
+    fn test_parse_image_ref_tag_and_digest() {
+        let input = "postgres:16.11-alpine3.23@sha256:23e88eb049fd5d54894d70100df61d38a49ed97909263f79d4ff4c30a5d5fca2";
+        let (img, tag) = parse_image_ref(input);
+        assert_eq!(img, input);
+        assert_eq!(tag, "");
+    }
+
+    #[test]
+    fn test_parse_image_ref_registry_tag_and_digest() {
+        let input = "ghcr.io/org/app:v2.0@sha256:deadbeef";
+        let (img, tag) = parse_image_ref(input);
+        assert_eq!(img, input);
+        assert_eq!(tag, "");
     }
 }

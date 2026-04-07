@@ -117,6 +117,26 @@ pub(super) fn parse_ttl_to_seconds(s: &str) -> Option<i64> {
     }
 }
 
+/// Parse an image reference into `(from_image, tag)` for the Docker pull API.
+///
+/// Handles the `tag@sha256:digest` format by treating the full reference as
+/// `from_image` with an empty tag, avoiding incorrect splits on the colon
+/// inside `sha256:...`.
+fn parse_pull_image_ref(image: &str) -> (&str, &str) {
+    if image.contains('@') {
+        (image, "")
+    } else if let Some(pos) = image.rfind(':') {
+        let after = &image[pos + 1..];
+        if after.contains('/') {
+            (image, "latest")
+        } else {
+            (&image[..pos], after)
+        }
+    } else {
+        (image, "latest")
+    }
+}
+
 /// Pull a Docker image and save it as a tarball in the cache directory.
 pub(super) async fn pull_and_cache_image(
     docker: &bollard::Docker,
@@ -126,11 +146,7 @@ pub(super) async fn pull_and_cache_image(
     use bollard::image::CreateImageOptions;
     use futures_util::StreamExt;
 
-    let (name, tag) = if let Some(pos) = image.rfind(':') {
-        (&image[..pos], &image[pos + 1..])
-    } else {
-        (image, "latest")
-    };
+    let (name, tag) = parse_pull_image_ref(image);
 
     info!(image = %image, "pulling image for cache");
 
@@ -376,5 +392,48 @@ mod tests {
             dir.path().join("arm-build-03").exists(),
             "newest aarch64 kept"
         );
+    }
+
+    #[test]
+    fn test_parse_pull_image_ref_simple_tag() {
+        let (name, tag) = parse_pull_image_ref("postgres:16");
+        assert_eq!(name, "postgres");
+        assert_eq!(tag, "16");
+    }
+
+    #[test]
+    fn test_parse_pull_image_ref_no_tag() {
+        let (name, tag) = parse_pull_image_ref("redis");
+        assert_eq!(name, "redis");
+        assert_eq!(tag, "latest");
+    }
+
+    #[test]
+    fn test_parse_pull_image_ref_digest_only() {
+        let (name, tag) = parse_pull_image_ref("postgres@sha256:abc123def456");
+        assert_eq!(name, "postgres@sha256:abc123def456");
+        assert_eq!(tag, "");
+    }
+
+    #[test]
+    fn test_parse_pull_image_ref_tag_and_digest() {
+        let input = "postgres:16.11-alpine3.23@sha256:23e88eb049fd5d54894d70100df61d38a49ed97909263f79d4ff4c30a5d5fca2";
+        let (name, tag) = parse_pull_image_ref(input);
+        assert_eq!(name, input);
+        assert_eq!(tag, "");
+    }
+
+    #[test]
+    fn test_parse_pull_image_ref_registry_with_port() {
+        let (name, tag) = parse_pull_image_ref("myregistry.com:5000/myapp:v1");
+        assert_eq!(name, "myregistry.com:5000/myapp");
+        assert_eq!(tag, "v1");
+    }
+
+    #[test]
+    fn test_parse_pull_image_ref_registry_port_no_tag() {
+        let (name, tag) = parse_pull_image_ref("myregistry.com:5000/myapp");
+        assert_eq!(name, "myregistry.com:5000/myapp");
+        assert_eq!(tag, "latest");
     }
 }
