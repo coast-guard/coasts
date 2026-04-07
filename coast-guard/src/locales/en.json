@@ -627,5 +627,12 @@
   "docs.nav.harnessMultipleHarnesses": "Multiple Harnesses",
   "docs.nav.recipes": "Recipes",
   "docs.nav.recipesFullstackMonorepo": "Full-Stack Monorepo",
-  "docs.nav.recipesNextjs": "Next.js Application"
+  "docs.nav.recipesNextjs": "Next.js Application",
+  "docs.nav.remotes": "Remotes",
+  "docs.nav.remoteCoasts": "Remote Coasts",
+  "docs.nav.remoteArchitecture": "Architecture",
+  "docs.nav.remoteSetup": "Setup",
+  "docs.nav.remoteFileSync": "File Sync",
+  "docs.nav.remoteBuilds": "Builds",
+  "docs.nav.remoteCli": "CLI & Configuration"
 }

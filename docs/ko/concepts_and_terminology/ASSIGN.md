@@ -98,3 +98,9 @@ worker = ["Dockerfile", "package.json"]
 > 내부적으로, 새로운 worktree에 대한 첫 할당은 선택된 gitignored 파일들을 해당 worktree로 부트스트랩하며, `[assign.rebuild_triggers]`가 있는 서비스는 rebuild가 필요한지 결정하기 위해 `git diff --name-only`를 실행할 수 있습니다. 대규모 코드베이스에서는 이 부트스트랩 단계와 불필요한 rebuild가 할당 시간을 지배하는 경향이 있습니다.
 >
 > Coastfile의 `exclude_paths`를 사용해 gitignored 부트스트랩 범위를 줄이고, 파일 워처가 있는 서비스에는 `"hot"`을 사용하며, `[assign.rebuild_triggers]`는 진짜 빌드 타임 입력에만 집중시키세요. 기존 worktree에 대해 ignored-file 부트스트랩을 수동으로 새로 고쳐야 한다면 `coast assign --force-sync`를 실행하세요. 전체 가이드는 [Performance Optimizations](PERFORMANCE_OPTIMIZATIONS.md)을 참고하세요.
+
+---
+
+> **원격 할당**
+>
+> [원격 coast](REMOTES.md)의 경우, `coast assign`은 할당 요청을 `coast-service`로 전달하기 전에 새로운 worktree 내용을 원격 호스트로 rsync합니다. 동일한 할당 전략이 적용됩니다. 초기 rsync 이후에는 mutagen이 파일 변경 사항을 실시간으로 계속 동기화합니다.

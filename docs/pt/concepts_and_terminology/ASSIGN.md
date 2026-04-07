@@ -95,6 +95,12 @@ Se um worktree atribuído for excluído, o daemon `coastd` automaticamente desat
 
 > **Dica: Reduzindo a latência de atribuição em grandes bases de código**
 >
-> Por baixo dos panos, a primeira atribuição para um novo worktree inicializa arquivos selecionados ignorados pelo git (gitignored) nesse worktree, e serviços com `[assign.rebuild_triggers]` podem executar `git diff --name-only` para decidir se um rebuild é necessário. Em grandes bases de código, essa etapa de inicialização e rebuilds desnecessários tendem a dominar o tempo de atribuição.
+> Por baixo dos panos, a primeira atribuição para um novo worktree inicializa arquivos selecionados ignorados pelo Git nesse worktree, e serviços com `[assign.rebuild_triggers]` podem executar `git diff --name-only` para decidir se um rebuild é necessário. Em grandes bases de código, essa etapa de inicialização e rebuilds desnecessários tendem a dominar o tempo de atribuição.
 >
-> Use `exclude_paths` no seu Coastfile para reduzir a superfície de inicialização de arquivos ignorados pelo git, use `"hot"` para serviços com file watchers e mantenha `[assign.rebuild_triggers]` focado em verdadeiras entradas de tempo de build. Se você precisar atualizar manualmente a inicialização de arquivos ignorados para um worktree existente, execute `coast assign --force-sync`. Veja [Performance Optimizations](PERFORMANCE_OPTIMIZATIONS.md) para um guia completo.
+> Use `exclude_paths` no seu Coastfile para reduzir a superfície de inicialização de arquivos ignorados pelo Git, use `"hot"` para serviços com file watchers e mantenha `[assign.rebuild_triggers]` focado em verdadeiras entradas de tempo de build. Se você precisar atualizar manualmente a inicialização de arquivos ignorados para um worktree existente, execute `coast assign --force-sync`. Veja [Performance Optimizations](PERFORMANCE_OPTIMIZATIONS.md) para um guia completo.
+
+---
+
+> **Atribuição remota**
+>
+> Para [coasts remotos](REMOTES.md), `coast assign` faz rsync do conteúdo do novo worktree para o host remoto antes de encaminhar a solicitação de atribuição para `coast-service`. As mesmas estratégias de atribuição se aplicam. Após o rsync inicial, o mutagen continua sincronizando alterações de arquivos em tempo real.

@@ -15,9 +15,9 @@ localhost:3000  ──→  dev-1
 localhost:5432  ──→  dev-1
 ```
 
-Isso significa que seu navegador, clientes de API, ferramentas de banco de dados e suítes de teste funcionam exatamente como normalmente funcionariam — sem necessidade de mudar números de porta.
+Isso significa que seu navegador, clientes de API, ferramentas de banco de dados e suítes de teste funcionam exatamente como normalmente funcionariam — sem necessidade de alterar números de porta.
 
-No Linux, portas canônicas abaixo de `1024` podem exigir configuração no host antes que [`coast checkout`](CHECKOUT.md) possa vinculá-las. Portas dinâmicas não têm essa restrição.
+No Linux, portas canônicas abaixo de `1024` podem exigir configuração do host antes que [`coast checkout`](CHECKOUT.md) possa vinculá-las. Portas dinâmicas não têm essa restrição.
 
 ## Portas Dinâmicas
 
@@ -45,7 +45,7 @@ As portas dinâmicas permitem que você dê uma olhada em qualquer Coast sem col
 ┌──────────────────────────────────────────────────┐
 │  Sua máquina                                     │
 │                                                  │
-│  Canônicas (apenas o Coast em checkout):         │
+│  Canônicas (apenas Coast em checkout):           │
 │    localhost:3000 ──→ dev-1 web                  │
 │    localhost:5432 ──→ dev-1 db                   │
 │                                                  │
@@ -61,11 +61,16 @@ Alternar o [checkout](CHECKOUT.md) é instantâneo. O Coast encerra e recria enc
 
 ## Variáveis de Ambiente de Porta Dinâmica
 
-O Coast injeta variáveis de ambiente em cada instância que expõem a porta dinâmica de cada serviço. O nome da variável é derivado da chave `[ports]`: `web` se torna `WEB_DYNAMIC_PORT`, `backend-test` se torna `BACKEND_TEST_DYNAMIC_PORT`.
+O Coast injeta variáveis de ambiente em cada instância que expõem a porta dinâmica de cada serviço. O nome da variável é derivado da chave `[ports]`: `web` torna-se `WEB_DYNAMIC_PORT`, `backend-test` torna-se `BACKEND_TEST_DYNAMIC_PORT`.
 
-Elas são úteis quando um serviço precisa saber sua porta acessível externamente, por exemplo, para definir `AUTH_URL` para redirecionamentos de callback de autenticação. Veja [Variáveis de Ambiente de Porta Dinâmica](DYNAMIC_PORT_ENVIRONMENT_VARIABLES.md) para a referência completa.
+Elas são úteis quando um serviço precisa conhecer sua porta externamente acessível, por exemplo para definir `AUTH_URL` para redirecionamentos de callback de autenticação. Veja [Variáveis de Ambiente de Porta Dinâmica](DYNAMIC_PORT_ENVIRONMENT_VARIABLES.md) para a referência completa.
+
+## Portas e Coasts Remotos
+
+Para [coasts remotos](REMOTES.md), as portas passam por uma camada adicional de túnel SSH. Cada porta dinâmica local é encaminhada via `ssh -L` para uma porta dinâmica remota correspondente, que por sua vez é mapeada para a porta canônica dentro do contêiner DinD remoto. Isso é transparente -- `coast ports` e `coast checkout` funcionam de forma idêntica para instâncias locais e remotas.
 
 ## Veja Também
 
-- [Porta Primária e DNS](PRIMARY_PORT_AND_DNS.md) - links rápidos, roteamento por subdomínio e modelos de URL
+- [Porta Primária & DNS](PRIMARY_PORT_AND_DNS.md) - links rápidos, roteamento por subdomínio e modelos de URL
 - [Variáveis de Ambiente de Porta Dinâmica](DYNAMIC_PORT_ENVIRONMENT_VARIABLES.md) - usando `WEB_DYNAMIC_PORT` e variáveis relacionadas em comandos de serviço
+- [Remotos](REMOTES.md) - como o encaminhamento de portas funciona para coasts remotos

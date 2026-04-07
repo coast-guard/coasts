@@ -65,7 +65,12 @@ Coast injects environment variables into every instance that expose the dynamic 
 
 These are useful when a service needs to know its externally-reachable port, for example to set `AUTH_URL` for auth callback redirects. See [Dynamic Port Environment Variables](DYNAMIC_PORT_ENVIRONMENT_VARIABLES.md) for the full reference.
 
+## Ports and Remote Coasts
+
+For [remote coasts](REMOTES.md), ports pass through an additional SSH tunnel layer. Each local dynamic port is forwarded via `ssh -L` to a corresponding remote dynamic port, which in turn maps to the canonical port inside the remote DinD container. This is transparent -- `coast ports` and `coast checkout` work identically for local and remote instances.
+
 ## See Also
 
 - [Primary Port & DNS](PRIMARY_PORT_AND_DNS.md) - quick-links, subdomain routing, and URL templates
 - [Dynamic Port Environment Variables](DYNAMIC_PORT_ENVIRONMENT_VARIABLES.md) - using `WEB_DYNAMIC_PORT` and related variables in service commands
+- [Remotes](REMOTES.md) - how port forwarding works for remote coasts

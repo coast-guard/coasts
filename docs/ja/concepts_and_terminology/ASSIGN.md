@@ -98,3 +98,9 @@ worker = ["Dockerfile", "package.json"]
 > 内部的には、新しい worktree への最初の assign で、選択された gitignored ファイルがその worktree にブートストラップされ、`[assign.rebuild_triggers]` を持つサービスは再ビルドが必要かどうか判断するために `git diff --name-only` を実行する場合があります。大規模コードベースでは、このブートストラップ手順と不要な再ビルドが assign 時間の大半を占めがちです。
 >
 > Coastfile の `exclude_paths` を使って gitignored のブートストラップ対象範囲を縮小し、ファイルウォッチャーを持つサービスには `"hot"` を使用し、`[assign.rebuild_triggers]` は真のビルド時入力に絞ってください。既存の worktree に対して ignored-file のブートストラップを手動で更新する必要がある場合は、`coast assign --force-sync` を実行します。完全なガイドは [Performance Optimizations](PERFORMANCE_OPTIMIZATIONS.md) を参照してください。
+
+---
+
+> **リモートでの assign**
+>
+> [remote coasts](REMOTES.md) では、`coast assign` は assign リクエストを `coast-service` に転送する前に、新しい worktree の内容を rsync でリモートホストに同期します。同じ assign 戦略が適用されます。最初の rsync の後は、mutagen がファイル変更の同期をリアルタイムで継続します。

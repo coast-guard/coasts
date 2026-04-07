@@ -98,3 +98,9 @@ If an assigned worktree is deleted, the `coastd` daemon automatically unassigns 
 > Under the hood, the first assign to a new worktree bootstraps selected gitignored files into that worktree, and services with `[assign.rebuild_triggers]` may run `git diff --name-only` to decide whether a rebuild is necessary. In large codebases, that bootstrap step and unnecessary rebuilds tend to dominate assign time.
 >
 > Use `exclude_paths` in your Coastfile to shrink the gitignored bootstrap surface, use `"hot"` for services with file watchers, and keep `[assign.rebuild_triggers]` focused on true build-time inputs. If you need to refresh the ignored-file bootstrap manually for an existing worktree, run `coast assign --force-sync`. See [Performance Optimizations](PERFORMANCE_OPTIMIZATIONS.md) for a full guide.
+
+---
+
+> **Remote assign**
+>
+> For [remote coasts](REMOTES.md), `coast assign` rsyncs the new worktree content to the remote host before forwarding the assign request to `coast-service`. The same assign strategies apply. After the initial rsync, mutagen continues syncing file changes in real time.

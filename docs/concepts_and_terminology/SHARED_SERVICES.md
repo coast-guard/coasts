@@ -59,3 +59,7 @@ If your shared services appear to be pointing at the wrong host volume:
 4. Click **Refresh Shared Services** to recreate them from your current Coastfile configuration.
 
 This tears down and recreates the shared service containers, reattaching them to the correct host volumes.
+
+## Shared Services and Remote Coasts
+
+When running [remote coasts](REMOTES.md), shared services still run on your local machine. The daemon establishes SSH reverse tunnels (`ssh -R`) so the remote DinD containers can reach them via `host.docker.internal`. This keeps your local database shared with remote instances. The remote host's sshd must have `GatewayPorts clientspecified` enabled for the reverse tunnels to bind correctly.

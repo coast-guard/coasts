@@ -98,3 +98,9 @@ Si se elimina un worktree asignado, el daemon `coastd` desasigna automáticament
 > Internamente, la primera asignación a un nuevo worktree inicializa determinados archivos ignorados por git en ese worktree, y los servicios con `[assign.rebuild_triggers]` pueden ejecutar `git diff --name-only` para decidir si es necesaria una reconstrucción. En bases de código grandes, ese paso de inicialización y las reconstrucciones innecesarias tienden a dominar el tiempo de asignación.
 >
 > Usa `exclude_paths` en tu Coastfile para reducir la superficie de inicialización de archivos ignorados por git, usa `"hot"` para servicios con observadores de archivos y mantén `[assign.rebuild_triggers]` centrado en verdaderas entradas de tiempo de compilación. Si necesitas refrescar manualmente la inicialización de archivos ignorados para un worktree existente, ejecuta `coast assign --force-sync`. Consulta [Performance Optimizations](PERFORMANCE_OPTIMIZATIONS.md) para una guía completa.
+
+---
+
+> **Asignación remota**
+>
+> Para [remote coasts](REMOTES.md), `coast assign` hace rsync del contenido del nuevo worktree al host remoto antes de reenviar la solicitud de asignación a `coast-service`. Se aplican las mismas estrategias de asignación. Después del rsync inicial, mutagen continúa sincronizando los cambios de archivos en tiempo real.

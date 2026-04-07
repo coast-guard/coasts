@@ -103,3 +103,7 @@ coast build --type snap  # uses Coastfile.snap, updates "latest-snap"
 ```
 
 Pruning a `snap` build never touches `default` builds, and vice versa.
+
+## Remote Builds
+
+When building for a [remote coast](REMOTES.md), the build runs on the remote machine via `coast-service` so images use the remote's native architecture. The artifact is then transferred back to your local machine for reuse. Remote builds maintain their own `latest-remote` symlink and are pruned per architecture. See [Remotes](REMOTES.md) for details.

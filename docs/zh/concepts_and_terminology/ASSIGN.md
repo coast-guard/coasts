@@ -97,4 +97,10 @@ worker = ["Dockerfile", "package.json"]
 >
 > 在底层，对新 worktree 的首次分配会将选定的被 gitignore 忽略的文件引导（bootstrap）到该 worktree 中，并且带有 `[assign.rebuild_triggers]` 的服务可能会运行 `git diff --name-only` 来决定是否需要重建。在大型代码库中，该引导步骤和不必要的重建往往是分配耗时的主要来源。
 >
-> 在你的 Coastfile 中使用 `exclude_paths` 来缩小被 gitignore 忽略文件的引导范围；对带有文件监视器的服务使用 `"hot"`；并让 `[assign.rebuild_triggers]` 聚焦于真正的构建时输入。如果你需要为已有 worktree 手动刷新被忽略文件的引导内容，请运行 `coast assign --force-sync`。完整指南参见 [Performance Optimizations](PERFORMANCE_OPTIMIZATIONS.md)。
+> 在你的 Coastfile 中使用 `exclude_paths` 来缩小被 gitignore 忽略文件的引导范围，对带有文件监视器的服务使用 `"hot"`，并让 `[assign.rebuild_triggers]` 聚焦于真正的构建时输入。如果你需要为已有 worktree 手动刷新被忽略文件的引导内容，请运行 `coast assign --force-sync`。完整指南参见 [Performance Optimizations](PERFORMANCE_OPTIMIZATIONS.md)。
+
+---
+
+> **远程分配**
+>
+> 对于[远程 coast](REMOTES.md)，`coast assign` 会先将新 worktree 的内容通过 rsync 同步到远程主机，然后再将分配请求转发给 `coast-service`。同样的分配策略仍然适用。初始 rsync 完成后，mutagen 会继续实时同步文件变更。
