@@ -48,6 +48,8 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/rm-build", post(rm_build))
         .route("/archive", post(archive_project))
         .route("/unarchive", post(unarchive_project))
+        .route("/remote/add", post(remote_add))
+        .route("/remote/rm", post(remote_rm))
 }
 
 pub(crate) fn to_api_response(resp: Response) -> axum::response::Response {
@@ -729,6 +731,46 @@ async fn resolve_container_id(
     })
 }
 
+async fn try_remote_service_control(
+    state: &AppState,
+    project: &str,
+    name: &str,
+    service: &str,
+    action: &str,
+) -> Option<Result<(), String>> {
+    let db = state.db.lock().await;
+    let is_remote = db
+        .get_instance(project, name)
+        .ok()
+        .flatten()
+        .is_some_and(|i| i.remote_host.is_some());
+    drop(db);
+
+    if !is_remote {
+        return None;
+    }
+
+    let remote_config =
+        match crate::handlers::remote::resolve_remote_for_instance(project, name, state).await {
+            Ok(c) => c,
+            Err(e) => return Some(Err(e.to_string())),
+        };
+    let client = match crate::handlers::remote::RemoteClient::connect(&remote_config).await {
+        Ok(c) => c,
+        Err(e) => return Some(Err(e.to_string())),
+    };
+    let req = coast_core::protocol::RemoteServiceControlRequest {
+        project: project.to_string(),
+        name: name.to_string(),
+        service: service.to_string(),
+        action: action.to_string(),
+    };
+    match crate::handlers::remote::forward::forward_service_control(&client, &req).await {
+        Ok(_) => Some(Ok(())),
+        Err(e) => Some(Err(e.to_string())),
+    }
+}
+
 async fn run_compose_in_coast(
     state: &AppState,
     container_id: &str,
@@ -808,16 +850,45 @@ async fn service_stop(
         Ok(guard) => guard,
         Err(response) => return *response,
     };
-    let container_id = match resolve_container_id(&state, &req.project, &req.name).await {
-        Ok(id) => id,
-        Err(e) => return e.into_response(),
-    };
 
     state.emit_event(CoastEvent::ServiceStopping {
         name: req.name.clone(),
         project: req.project.clone(),
         service: req.service.clone(),
     });
+
+    if let Some(result) =
+        try_remote_service_control(&state, &req.project, &req.name, &req.service, "stop").await
+    {
+        return match result {
+            Ok(()) => {
+                state.emit_event(CoastEvent::ServiceStopped {
+                    name: req.name,
+                    project: req.project,
+                    service: req.service,
+                });
+                (StatusCode::OK, Json(SuccessResponse { success: true })).into_response()
+            }
+            Err(e) => {
+                state.emit_event(CoastEvent::ServiceError {
+                    name: req.name,
+                    project: req.project,
+                    service: req.service.clone(),
+                    error: e.clone(),
+                });
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": e })),
+                )
+                    .into_response()
+            }
+        };
+    }
+
+    let container_id = match resolve_container_id(&state, &req.project, &req.name).await {
+        Ok(id) => id,
+        Err(e) => return e.into_response(),
+    };
 
     match run_compose_in_coast(
         &state,
@@ -864,16 +935,45 @@ async fn service_start(
         Ok(guard) => guard,
         Err(response) => return *response,
     };
-    let container_id = match resolve_container_id(&state, &req.project, &req.name).await {
-        Ok(id) => id,
-        Err(e) => return e.into_response(),
-    };
 
     state.emit_event(CoastEvent::ServiceStarting {
         name: req.name.clone(),
         project: req.project.clone(),
         service: req.service.clone(),
     });
+
+    if let Some(result) =
+        try_remote_service_control(&state, &req.project, &req.name, &req.service, "start").await
+    {
+        return match result {
+            Ok(()) => {
+                state.emit_event(CoastEvent::ServiceStarted {
+                    name: req.name,
+                    project: req.project,
+                    service: req.service,
+                });
+                (StatusCode::OK, Json(SuccessResponse { success: true })).into_response()
+            }
+            Err(e) => {
+                state.emit_event(CoastEvent::ServiceError {
+                    name: req.name,
+                    project: req.project,
+                    service: req.service.clone(),
+                    error: e.clone(),
+                });
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": e })),
+                )
+                    .into_response()
+            }
+        };
+    }
+
+    let container_id = match resolve_container_id(&state, &req.project, &req.name).await {
+        Ok(id) => id,
+        Err(e) => return e.into_response(),
+    };
 
     match run_compose_in_coast(
         &state,
@@ -920,16 +1020,45 @@ async fn service_restart(
         Ok(guard) => guard,
         Err(response) => return *response,
     };
-    let container_id = match resolve_container_id(&state, &req.project, &req.name).await {
-        Ok(id) => id,
-        Err(e) => return e.into_response(),
-    };
 
     state.emit_event(CoastEvent::ServiceRestarting {
         name: req.name.clone(),
         project: req.project.clone(),
         service: req.service.clone(),
     });
+
+    if let Some(result) =
+        try_remote_service_control(&state, &req.project, &req.name, &req.service, "restart").await
+    {
+        return match result {
+            Ok(()) => {
+                state.emit_event(CoastEvent::ServiceRestarted {
+                    name: req.name,
+                    project: req.project,
+                    service: req.service,
+                });
+                (StatusCode::OK, Json(SuccessResponse { success: true })).into_response()
+            }
+            Err(e) => {
+                state.emit_event(CoastEvent::ServiceError {
+                    name: req.name,
+                    project: req.project,
+                    service: req.service.clone(),
+                    error: e.clone(),
+                });
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": e })),
+                )
+                    .into_response()
+            }
+        };
+    }
+
+    let container_id = match resolve_container_id(&state, &req.project, &req.name).await {
+        Ok(id) => id,
+        Err(e) => return e.into_response(),
+    };
 
     match run_compose_in_coast(
         &state,
@@ -1258,4 +1387,22 @@ async fn port_health(
     let cache = state.port_health_cache.lock().await;
     let ports = cache.get(&key).cloned().unwrap_or_default();
     Json(json!({ "ports": ports }))
+}
+
+// ---------------------------------------------------------------------------
+// Remote management
+// ---------------------------------------------------------------------------
+
+async fn remote_add(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<RemoteRequest>,
+) -> impl IntoResponse {
+    to_api_response(handlers::handle_remote(req, &state).await)
+}
+
+async fn remote_rm(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<RemoteRequest>,
+) -> impl IntoResponse {
+    to_api_response(handlers::handle_remote(req, &state).await)
 }

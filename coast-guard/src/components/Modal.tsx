@@ -28,11 +28,10 @@ export default function Modal({ open, title, onClose, children, actions, wide }:
   return (
     <div
       className="fixed inset-0 z-[100] flex items-center justify-center bg-[var(--overlay)] backdrop-blur-sm"
-      onClick={onClose}
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div
         className={`glass-panel ${wide ? 'max-w-lg' : 'max-w-md'} w-full mx-4 border border-[var(--border-strong)] shadow-[var(--shadow-modal)] dark:shadow-[var(--shadow-modal-dark)]`}
-        onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--border)]">
           <h3 className="text-base font-semibold text-main">{title}</h3>

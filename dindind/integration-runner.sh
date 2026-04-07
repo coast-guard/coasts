@@ -130,6 +130,7 @@ echo "==> Installing coast wrapper..."
 mkdir -p /opt/coast
 cp /workspace/target/release/coast /opt/coast/coast
 cp /workspace/target/release/coastd /opt/coast/coastd
+cp /workspace/target/release/coast-service /opt/coast/coast-service 2>/dev/null || true
 cp /workspace/dindind/lib/coast-wrapper.sh /opt/coast/coast-wrapper
 chmod +x /opt/coast/coast-wrapper
 # Replace target/release/coast with a symlink to the wrapper

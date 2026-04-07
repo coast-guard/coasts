@@ -43,6 +43,10 @@ pub struct RunArgs {
     #[arg(short = 't', long = "type")]
     pub coastfile_type: Option<String>,
 
+    /// Which registered remote to use (only for --type remote).
+    #[arg(long)]
+    pub remote: Option<String>,
+
     /// Force-remove any dangling Docker container with the same name before creating.
     #[arg(long)]
     pub force_remove_dangling: bool,
@@ -174,7 +178,9 @@ pub async fn execute(args: &RunArgs, project: &str) -> Result<()> {
             worktree: args.worktree.clone(),
             build_id: None,
             coastfile_type: args.coastfile_type.clone(),
+            remote: args.remote.clone(),
             force_remove_dangling: args.force_remove_dangling,
+            shared_service_ports: Vec::new(),
         });
 
         let mut display = ProgressDisplay::new(verbosity);

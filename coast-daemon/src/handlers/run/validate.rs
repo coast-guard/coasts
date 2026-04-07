@@ -101,6 +101,7 @@ pub(super) async fn validate_and_insert(
             worktree_name: None,
             build_id: resolved_build_id.clone(),
             coastfile_type: req.coastfile_type.clone(),
+            remote_host: req.remote.clone(),
         };
         db.insert_instance(&instance)?;
         state.emit_event(coast_core::protocol::CoastEvent::InstanceStatusChanged {
@@ -130,19 +131,20 @@ async fn check_dangling_container(
     state: &AppState,
     progress: &tokio::sync::mpsc::Sender<BuildProgressEvent>,
 ) -> Result<()> {
-    let expected_container_name = format!("{}-coasts-{}", req.project, req.name);
     let Some(docker) = state.docker.as_ref() else {
         return Ok(());
     };
 
-    match docker
-        .inspect_container(&expected_container_name, None)
-        .await
-    {
-        Ok(_) => {
+    let containers_to_check = [
+        format!("{}-coasts-{}", req.project, req.name),
+        format!("{}-coasts-{}-shell", req.project, req.name),
+    ];
+
+    for container_name in &containers_to_check {
+        if docker.inspect_container(container_name, None).await.is_ok() {
             if req.force_remove_dangling {
                 warn!(
-                    container = %expected_container_name,
+                    container = %container_name,
                     "force-removing dangling Docker container before run"
                 );
                 let opts = bollard::container::RemoveContainerOptions {
@@ -150,12 +152,9 @@ async fn check_dangling_container(
                     v: true,
                     ..Default::default()
                 };
-                if let Err(e) = docker
-                    .remove_container(&expected_container_name, Some(opts))
-                    .await
-                {
+                if let Err(e) = docker.remove_container(container_name, Some(opts)).await {
                     warn!(
-                        container = %expected_container_name,
+                        container = %container_name,
                         error = %e,
                         "failed to remove dangling container"
                     );
@@ -166,7 +165,7 @@ async fn check_dangling_container(
                     progress,
                     BuildProgressEvent::item(
                         "Preparing instance",
-                        format!("Removed dangling container {expected_container_name}"),
+                        format!("Removed dangling container {container_name}"),
                         "warn",
                     ),
                 );
@@ -174,11 +173,10 @@ async fn check_dangling_container(
                 return Err(CoastError::DanglingContainerDetected {
                     name: req.name.clone(),
                     project: req.project.clone(),
-                    container_name: expected_container_name,
+                    container_name: container_name.clone(),
                 });
             }
         }
-        Err(_) => { /* No dangling container */ }
     }
     Ok(())
 }
@@ -208,6 +206,8 @@ mod tests {
             commit_sha: None,
             coastfile_type: None,
             force_remove_dangling: false,
+            remote: None,
+            shared_service_ports: Vec::new(),
         };
 
         let result = validate_and_insert(&req, &state, &progress).await;
@@ -233,6 +233,8 @@ mod tests {
             commit_sha: None,
             coastfile_type: None,
             force_remove_dangling: false,
+            remote: None,
+            shared_service_ports: Vec::new(),
         };
 
         let _ = validate_and_insert(&req, &state, &progress).await.unwrap();
@@ -258,6 +260,8 @@ mod tests {
             commit_sha: None,
             coastfile_type: None,
             force_remove_dangling: false,
+            remote: None,
+            shared_service_ports: Vec::new(),
         };
         let req_b = coast_core::protocol::RunRequest {
             name: "main".to_string(),
@@ -268,6 +272,8 @@ mod tests {
             commit_sha: None,
             coastfile_type: None,
             force_remove_dangling: false,
+            remote: None,
+            shared_service_ports: Vec::new(),
         };
 
         validate_and_insert(&req_a, &state, &progress)
@@ -303,6 +309,7 @@ mod tests {
             worktree_name: None,
             build_id: None,
             coastfile_type: None,
+            remote_host: None,
         })
         .unwrap();
         let state = AppState::new_for_testing(db);
@@ -317,6 +324,8 @@ mod tests {
             commit_sha: None,
             coastfile_type: None,
             force_remove_dangling: false,
+            remote: None,
+            shared_service_ports: Vec::new(),
         };
 
         let result = validate_and_insert(&req, &state, &progress).await;
@@ -342,6 +351,8 @@ mod tests {
             commit_sha: None,
             coastfile_type: None,
             force_remove_dangling: false,
+            remote: None,
+            shared_service_ports: Vec::new(),
         };
 
         let _ = validate_and_insert(&req, &state, &tx).await.unwrap();
@@ -369,6 +380,8 @@ mod tests {
             commit_sha: None,
             coastfile_type: None,
             force_remove_dangling: false,
+            remote: None,
+            shared_service_ports: Vec::new(),
         };
 
         let _ = validate_and_insert(&req, &state, &tx).await.unwrap();

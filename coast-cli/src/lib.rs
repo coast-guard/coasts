@@ -47,6 +47,8 @@ pub enum Commands {
     Dns(commands::dns::DnsArgs),
     /// Manage Coast configuration.
     Config(commands::config::ConfigArgs),
+    /// Manage registered remote machines.
+    Remote(commands::remote::RemoteArgs),
     /// Inspect and export the active install's root certificate.
     Cert(commands::cert::CertArgs),
     /// Check for updates and apply them.
@@ -255,6 +257,7 @@ async fn dispatch(cli: Cli) -> Result<()> {
         Commands::Ui(args) => commands::ui::execute(&args).await,
         Commands::Dns(args) => commands::dns::execute(&args).await,
         Commands::Config(args) => commands::config::execute(&args).await,
+        Commands::Remote(args) => commands::remote::execute(&args).await,
         Commands::Cert(args) => commands::cert::execute(&args).await,
         Commands::Update(args) => commands::update::execute(&args).await,
         Commands::Docs(args) => commands::docs::execute(&args).await,

@@ -1507,5 +1507,214 @@ SERVERJS_V2_EOF
 
 setup_coast_private_paths_bare
 
+# --- coast-remote ---
+# Minimal project for remote coast integration testing.
+# Uses a bare Node.js service with a Coastfile.remote.toml variant.
+
+setup_coast_remote() {
+    local dir="$PROJECTS_DIR/remote/coast-remote-basic"
+    echo "Setting up coast-remote-basic..."
+
+    rm -rf "$dir/.git"
+
+    cd "$dir"
+    git init -b main
+    git config user.name "Coast Dev"
+    git config user.email "dev@coasts.dev"
+    git add -A
+    git commit -m "initial commit: remote coast test project"
+
+    git checkout -b feature-sync-test
+    sed -i 's/Hello from Remote Coast!/Hello from feature branch!/' server.js
+    git add -A
+    git commit -m "feature: change greeting for sync test"
+    git checkout main
+
+    echo "  coast-remote-basic ready (branches: main, feature-sync-test)"
+}
+
+setup_coast_remote
+
+# --- coast-remote-compose-build ---
+setup_coast_remote_compose_build() {
+    local dir="$PROJECTS_DIR/remote/coast-remote-compose-build"
+    echo "Setting up coast-remote-compose-build..."
+
+    rm -rf "$dir/.git"
+
+    cd "$dir"
+    git init -b main
+    git add -A
+    git commit -m "initial commit: remote compose build test project"
+
+    echo "  coast-remote-compose-build ready (branch: main)"
+}
+
+setup_coast_remote_compose_build
+
+# --- coast-remote-assign ---
+# Project for testing remote assign with external worktrees and compose services.
+# Has two branches (main, feature-assign-test) and an external worktree.
+
+setup_coast_remote_assign() {
+    local dir="$PROJECTS_DIR/remote/coast-remote-assign"
+    echo "Setting up coast-remote-assign..."
+
+    rm -rf "$dir/.git"
+
+    cd "$dir"
+    git init -b main
+    git config user.name "Coast Dev"
+    git config user.email "dev@coasts.dev"
+    git add -A
+    git commit -m "initial commit: remote assign test project"
+
+    # Add a main-only marker file (deleted on feature branch)
+    echo "this file only exists on main" > MAIN_ONLY_MARKER.txt
+    git add -A
+    git commit --amend --no-edit
+
+    git checkout -b feature-assign-test
+    sed -i 's/Hello from main branch!/Hello from feature branch!/' app/server.js
+    rm -f MAIN_ONLY_MARKER.txt
+    git add -A
+    git commit -m "feature: change greeting for assign test"
+    git checkout main
+
+    # Create external worktree (simulates ~/conductor/workspaces/... pattern)
+    mkdir -p /tmp/coast-assign-worktrees
+    git worktree add /tmp/coast-assign-worktrees/feature-assign-test feature-assign-test 2>/dev/null || true
+
+    echo "  coast-remote-assign ready (branches: main, feature-assign-test; external worktree at /tmp/coast-assign-worktrees/)"
+}
+
+setup_coast_remote_assign
+
+# --- coast-remote-hot ---
+# Project for testing hot-reload assign strategy on remote coasts.
+# Server re-reads data.json on every request. Feature branch changes data.json.
+
+setup_coast_remote_hot() {
+    local dir="$PROJECTS_DIR/remote/coast-remote-hot"
+    echo "Setting up coast-remote-hot..."
+
+    rm -rf "$dir/.git"
+
+    cd "$dir"
+    git init -b main
+    git config user.name "Coast Dev"
+    git config user.email "dev@coasts.dev"
+    git add -A
+    git commit -m "initial commit: remote hot test project"
+
+    git checkout -b feature-hot-test
+    printf '{"message": "feature-data", "version": 2}\n' > data.json
+    git add -A
+    git commit -m "feature: update data.json for hot test"
+    git checkout main
+
+    mkdir -p .worktrees
+    git worktree add .worktrees/feature-hot-test feature-hot-test 2>/dev/null || true
+
+    echo "  coast-remote-hot ready (branches: main, feature-hot-test)"
+}
+
+setup_coast_remote_hot
+
+# --- coast-remote-rebuild ---
+# Project for testing rebuild assign strategy on remote coasts.
+# Feature branch changes version.txt (a rebuild trigger), forcing image rebuild.
+
+setup_coast_remote_rebuild() {
+    local dir="$PROJECTS_DIR/remote/coast-remote-rebuild"
+    echo "Setting up coast-remote-rebuild-test..."
+
+    rm -rf "$dir/.git"
+
+    cd "$dir"
+    git init -b main
+    git config user.name "Coast Dev"
+    git config user.email "dev@coasts.dev"
+    git add -A
+    git commit -m "initial commit: remote rebuild test project"
+
+    git checkout -b feature-rebuild-test
+    echo "v2-feature" > app/version.txt
+    git add -A
+    git commit -m "feature: bump version for rebuild test"
+    git checkout main
+
+    mkdir -p .worktrees
+    git worktree add .worktrees/feature-rebuild-test feature-rebuild-test 2>/dev/null || true
+
+    echo "  coast-remote-rebuild ready (branches: main, feature-rebuild-test)"
+}
+
+setup_coast_remote_rebuild
+
+# --- coast-remote-file-watcher ---
+setup_coast_remote_file_watcher() {
+    local dir="$PROJECTS_DIR/remote/coast-remote-file-watcher"
+    echo "Setting up coast-remote-file-watcher..."
+
+    rm -rf "$dir/.git"
+
+    cd "$dir"
+    chmod +x watcher.sh
+    git init -b main
+    git config user.name "Coast Dev"
+    git config user.email "dev@coasts.dev"
+    git add -A
+    git commit -m "initial commit: file watcher race test project"
+
+    git checkout -b feature-watcher-test
+    sed -i 's/Hello from main branch!/Hello from feature branch!/' server.js
+    git add -A
+    git commit -m "feature: change greeting for watcher race test"
+    git checkout main
+
+    echo "  coast-remote-file-watcher ready (branches: main, feature-watcher-test)"
+}
+
+setup_coast_remote_file_watcher
+
+# --- coast-remote-compose ---
+# Project for testing inner compose service healing.
+# Has a "fragile-cache" service without restart policy.
+
+setup_coast_remote_compose() {
+    local dir="$PROJECTS_DIR/remote/coast-remote-compose"
+    echo "Setting up coast-remote-compose..."
+
+    rm -rf "$dir/.git"
+
+    cd "$dir"
+    git init -b main
+    git config user.name "Coast Dev"
+    git config user.email "dev@coasts.dev"
+    git add -A
+    git commit -m "initial commit: compose service healing test project"
+
+    echo "  coast-remote-compose ready"
+}
+
+setup_coast_remote_compose
+
+# --- coast-remote-stale-test ---
+setup_coast_remote_stale_test() {
+    local dir="$PROJECTS_DIR/remote/coast-remote-stale-test"
+    echo "Setting up coast-remote-stale-test..."
+    rm -rf "$dir/.git"
+    cd "$dir"
+    git init -b main
+    git config user.name "Coast Dev"
+    git config user.email "dev@coasts.dev"
+    git add -A
+    git commit -m "initial commit: stale sshd recovery test project"
+    echo "  coast-remote-stale-test ready"
+}
+
+setup_coast_remote_stale_test
+
 echo ""
 echo "All examples initialized. Run 'coast build' inside any example to get started."

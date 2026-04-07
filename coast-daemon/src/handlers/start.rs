@@ -436,6 +436,13 @@ pub async fn handle(
             project: req.project.clone(),
         })?;
         validate_startable(&inst.status, &req.name)?;
+
+        if inst.remote_host.is_some() {
+            db.update_instance_status(&req.project, &req.name, &InstanceStatus::Starting)?;
+            drop(db);
+            return handle_remote_start(req, &inst, state, &progress).await;
+        }
+
         db.update_instance_status(&req.project, &req.name, &InstanceStatus::Starting)?;
         inst
     };
@@ -653,6 +660,104 @@ fn find_external_wt_mount_src(
     None
 }
 
+async fn reestablish_forward_tunnels(
+    config: &coast_core::types::RemoteConnection,
+    name: &str,
+    allocs: &[crate::state::PortAllocationRecord],
+) {
+    let pairs: Vec<(u16, u16)> = allocs
+        .iter()
+        .filter_map(|a| a.remote_dynamic_port.map(|rdp| (a.dynamic_port, rdp)))
+        .collect();
+    if pairs.is_empty() {
+        return;
+    }
+    match super::remote::tunnel::forward_ports(config, &pairs).await {
+        Ok(pids) => {
+            info!(instance = %name, tunnels = pairs.len(), pids = ?pids, "re-established port tunnels")
+        }
+        Err(e) => warn!(instance = %name, error = %e, "failed to re-establish port tunnels"),
+    }
+}
+
+async fn reestablish_shared_service_tunnels(
+    config: &coast_core::types::RemoteConnection,
+    project: &str,
+    name: &str,
+) {
+    let pairs = crate::shared_service_reverse_pairs(project);
+    if pairs.is_empty() {
+        return;
+    }
+    match super::remote::tunnel::reverse_forward_ports(config, &pairs).await {
+        Ok(pids) => {
+            info!(instance = %name, tunnels = pairs.len(), pids = ?pids, "re-established shared service tunnels")
+        }
+        Err(e) => {
+            warn!(instance = %name, error = %e, "failed to re-establish shared service tunnels")
+        }
+    }
+}
+
+fn allocs_to_port_mappings(allocs: &[crate::state::PortAllocationRecord]) -> Vec<PortMapping> {
+    allocs
+        .iter()
+        .map(|a| PortMapping {
+            logical_name: a.logical_name.clone(),
+            canonical_port: a.canonical_port,
+            dynamic_port: a.dynamic_port,
+            is_primary: false,
+        })
+        .collect()
+}
+
+async fn handle_remote_start(
+    req: StartRequest,
+    instance: &coast_core::types::CoastInstance,
+    state: &AppState,
+    progress: &Option<tokio::sync::mpsc::Sender<BuildProgressEvent>>,
+) -> Result<StartResponse> {
+    info!(
+        name = %req.name,
+        remote_host = ?instance.remote_host,
+        "starting remote instance"
+    );
+
+    let remote_config =
+        super::remote::resolve_remote_for_instance(&req.project, &req.name, state).await?;
+    let client = super::remote::RemoteClient::connect(&remote_config).await?;
+    let _ = super::remote::forward::forward_start(&client, &req).await;
+
+    let allocs = {
+        let db = state.db.lock().await;
+        db.get_port_allocations(&req.project, &req.name)
+            .unwrap_or_default()
+    };
+
+    reestablish_forward_tunnels(&remote_config, &req.name, &allocs).await;
+    reestablish_shared_service_tunnels(&remote_config, &req.project, &req.name).await;
+
+    let db = state.db.lock().await;
+    db.update_instance_status(&req.project, &req.name, &InstanceStatus::Running)?;
+    drop(db);
+
+    state.emit_event(CoastEvent::InstanceStatusChanged {
+        name: req.name.clone(),
+        project: req.project.clone(),
+        status: "running".to_string(),
+    });
+
+    emit(
+        progress,
+        BuildProgressEvent::done("Starting remote instance", "ok"),
+    );
+
+    Ok(StartResponse {
+        name: req.name,
+        ports: allocs_to_port_mappings(&allocs),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -679,6 +784,7 @@ mod tests {
             worktree_name: None,
             build_id: None,
             coastfile_type: None,
+            remote_host: None,
         }
     }
 

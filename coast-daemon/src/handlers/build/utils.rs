@@ -10,8 +10,9 @@ pub(super) fn shell_single_quote(value: &str) -> String {
 
 /// Remove old builds from a project directory, keeping the most recent `keep` builds.
 /// Builds whose IDs appear in `in_use` are never pruned regardless of the keep limit.
-/// Only considers builds matching the given `coastfile_type` (per-type pruning).
-pub(super) fn auto_prune_builds(
+/// Pruning is partitioned by `(coastfile_type, arch)` so builds for different
+/// architectures don't compete with each other.
+pub(crate) fn auto_prune_builds(
     project_dir: &Path,
     keep: usize,
     in_use: &std::collections::HashSet<String>,
@@ -21,7 +22,9 @@ pub(super) fn auto_prune_builds(
         return;
     };
 
-    let mut builds: Vec<(String, String)> = Vec::new();
+    let mut arch_groups: std::collections::HashMap<Option<String>, Vec<(String, String)>> =
+        std::collections::HashMap::new();
+
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
         if name.starts_with("latest") {
@@ -50,16 +53,30 @@ pub(super) fn auto_prune_builds(
         if build_type.as_deref() != coastfile_type {
             continue;
         }
+        let arch = manifest
+            .get("arch")
+            .and_then(|value| value.as_str())
+            .map(std::string::ToString::to_string);
         let timestamp = manifest
             .get("build_timestamp")
             .and_then(|value| value.as_str())
             .unwrap_or("")
             .to_string();
-        builds.push((name, timestamp));
+        arch_groups.entry(arch).or_default().push((name, timestamp));
     }
 
-    builds.sort_by(|a, b| b.1.cmp(&a.1));
+    for builds in arch_groups.values_mut() {
+        builds.sort_by(|a, b| b.1.cmp(&a.1));
+        prune_sorted_builds(project_dir, builds, keep, in_use);
+    }
+}
 
+fn prune_sorted_builds(
+    project_dir: &Path,
+    builds: &[(String, String)],
+    keep: usize,
+    in_use: &std::collections::HashSet<String>,
+) {
     for (dirname, _) in builds.iter().skip(keep) {
         if in_use.contains(dirname) {
             info!(
@@ -173,12 +190,22 @@ mod tests {
     use super::*;
 
     fn write_manifest(dir: &Path, timestamp: &str, coastfile_type: Option<&str>) {
+        write_manifest_with_arch(dir, timestamp, coastfile_type, None);
+    }
+
+    fn write_manifest_with_arch(
+        dir: &Path,
+        timestamp: &str,
+        coastfile_type: Option<&str>,
+        arch: Option<&str>,
+    ) {
         std::fs::create_dir_all(dir).unwrap();
         std::fs::write(
             dir.join("manifest.json"),
             serde_json::json!({
                 "build_timestamp": timestamp,
                 "coastfile_type": coastfile_type,
+                "arch": arch,
             })
             .to_string(),
         )
@@ -254,5 +281,100 @@ mod tests {
         assert!(dir.path().join("default-new").exists());
         assert!(!dir.path().join("dev-old").exists());
         assert!(dir.path().join("dev-new").exists());
+    }
+
+    #[test]
+    fn test_auto_prune_builds_remote_type() {
+        let dir = tempfile::tempdir().unwrap();
+        for i in 1..=7 {
+            write_manifest(
+                &dir.path().join(format!("remote-build-{i:02}")),
+                &format!("2024-0{i}-01T00:00:00Z"),
+                Some("remote"),
+            );
+        }
+        write_manifest(
+            &dir.path().join("local-build-01"),
+            "2024-01-15T00:00:00Z",
+            None,
+        );
+
+        auto_prune_builds(
+            dir.path(),
+            5,
+            &std::collections::HashSet::new(),
+            Some("remote"),
+        );
+
+        assert!(
+            !dir.path().join("remote-build-01").exists(),
+            "oldest remote pruned"
+        );
+        assert!(
+            !dir.path().join("remote-build-02").exists(),
+            "2nd oldest remote pruned"
+        );
+        assert!(
+            dir.path().join("remote-build-03").exists(),
+            "3rd oldest kept"
+        );
+        assert!(dir.path().join("remote-build-07").exists(), "newest kept");
+        assert!(
+            dir.path().join("local-build-01").exists(),
+            "local build untouched"
+        );
+    }
+
+    #[test]
+    fn test_auto_prune_builds_partitions_by_arch() {
+        let dir = tempfile::tempdir().unwrap();
+
+        for i in 1..=7 {
+            write_manifest_with_arch(
+                &dir.path().join(format!("x86-build-{i:02}")),
+                &format!("2024-0{i}-01T00:00:00Z"),
+                Some("remote"),
+                Some("x86_64"),
+            );
+        }
+        for i in 1..=3 {
+            write_manifest_with_arch(
+                &dir.path().join(format!("arm-build-{i:02}")),
+                &format!("2024-0{i}-01T00:00:00Z"),
+                Some("remote"),
+                Some("aarch64"),
+            );
+        }
+
+        auto_prune_builds(
+            dir.path(),
+            5,
+            &std::collections::HashSet::new(),
+            Some("remote"),
+        );
+
+        assert!(
+            !dir.path().join("x86-build-01").exists(),
+            "oldest x86 pruned"
+        );
+        assert!(
+            !dir.path().join("x86-build-02").exists(),
+            "2nd oldest x86 pruned"
+        );
+        assert!(
+            dir.path().join("x86-build-03").exists(),
+            "3rd oldest x86 kept (within keep=5)"
+        );
+        assert!(dir.path().join("x86-build-07").exists(), "newest x86 kept");
+
+        assert!(
+            dir.path().join("arm-build-01").exists(),
+            "oldest aarch64 kept (only 3 total, under keep=5)"
+        );
+        assert!(dir.path().join("arm-build-02").exists(), "2nd aarch64 kept");
+        assert!(
+            dir.path().join("arm-build-03").exists(),
+            "newest aarch64 kept"
+        );
     }
 }

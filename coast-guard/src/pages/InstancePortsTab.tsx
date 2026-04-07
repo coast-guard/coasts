@@ -200,7 +200,7 @@ export default function InstancePortsTab({ project, name, checkedOut }: Props) {
         },
       },
     ],
-    [t, i18n.language, getTemplate, applySubdomainRouting, openEdit, checkedOut, togglePrimary],
+    [t, i18n.language, getTemplate, applySubdomainRouting, openEdit, checkedOut, togglePrimary, healthData],
   );
 
   if (isLoading) return <p className="text-sm text-subtle-ui py-4">{t('ports.loading')}</p>;

@@ -204,6 +204,10 @@ pub async fn handle(req: RmRequest, state: &AppState) -> Result<RmResponse> {
         return Ok(RmResponse { name: req.name });
     }
 
+    if instance.remote_host.is_some() {
+        return handle_remote_rm(req, &instance, state).await;
+    }
+
     if instance.status == InstanceStatus::Running || instance.status == InstanceStatus::CheckedOut {
         set_stopping_transition(&instance, state, &req.project, &req.name).await?;
     }
@@ -232,6 +236,60 @@ pub async fn handle(req: RmRequest, state: &AppState) -> Result<RmResponse> {
     Ok(RmResponse { name: req.name })
 }
 
+/// Handle rm for a remote coast instance.
+///
+/// Forwards rm to coast-service, kills local tunnels, removes the shadow instance.
+async fn handle_remote_rm(
+    req: RmRequest,
+    instance: &coast_core::types::CoastInstance,
+    state: &AppState,
+) -> Result<RmResponse> {
+    info!(
+        name = %req.name,
+        remote_host = ?instance.remote_host,
+        "removing remote instance"
+    );
+
+    let session_name = super::remote::sync::mutagen_session_name(&req.project, &req.name);
+    let shell_container = format!("{}-coasts-{}-shell", req.project, req.name);
+    if let Some(docker) = state.docker.as_ref() {
+        let _ =
+            super::remote::sync::stop_mutagen_in_shell(&docker, &shell_container, &session_name)
+                .await;
+    }
+
+    if let Ok(remote_config) =
+        super::remote::resolve_remote_for_instance(&req.project, &req.name, state).await
+    {
+        if let Ok(client) = super::remote::RemoteClient::connect(&remote_config).await {
+            let _ = super::remote::forward::forward_rm(&client, &req).await;
+        }
+    }
+
+    if let Some(docker) = state.docker.as_ref() {
+        let opts = bollard::container::RemoveContainerOptions {
+            force: true,
+            v: true,
+            ..Default::default()
+        };
+        let _ = docker.remove_container(&shell_container, Some(opts)).await;
+    }
+
+    let db = state.db.lock().await;
+    db.delete_port_allocations(&req.project, &req.name)?;
+    db.delete_instance(&req.project, &req.name)?;
+    drop(db);
+
+    state.emit_event(CoastEvent::InstanceRemoved {
+        name: req.name.clone(),
+        project: req.project.clone(),
+    });
+
+    info!(name = %req.name, "remote instance removed");
+
+    Ok(RmResponse { name: req.name })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -255,6 +313,7 @@ mod tests {
             worktree_name: None,
             build_id: None,
             coastfile_type: None,
+            remote_host: None,
         }
     }
 

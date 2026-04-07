@@ -9,7 +9,7 @@ use ts_rs::TS;
 
 use coast_core::protocol::{ImageInspectResponse, ImageSummary};
 
-use super::{exec_in_coast, resolve_coast_container};
+use super::resolve_coast_container;
 use crate::server::AppState;
 
 pub fn routes() -> Router<Arc<AppState>> {
@@ -45,33 +45,17 @@ async fn list_images(
     Query(params): Query<ImagesParams>,
 ) -> Result<Json<Vec<ImageSummary>>, (StatusCode, Json<serde_json::Value>)> {
     let resolved = resolve_coast_container(&state, &params.project, &params.name).await?;
-    let container_id = &resolved.container_id;
 
-    // Bare-service instances have no compose — no relevant Docker images to show.
-    if let Some(docker) = state.docker.as_ref() {
-        if crate::bare_services::has_bare_services(&docker, container_id).await {
-            return Ok(Json(vec![]));
+    // Bare-service instances have no compose — skip for remote (local Docker can't see remote container).
+    if resolved.remote_host.is_none() {
+        if let Some(docker) = state.docker.as_ref() {
+            if crate::bare_services::has_bare_services(&docker, &resolved.container_id).await {
+                return Ok(Json(vec![]));
+            }
         }
     }
 
-    // Get the list of images referenced by compose services.
-    let compose_ctx =
-        crate::handlers::compose_context_for_build(&params.project, resolved.build_id.as_deref());
-    let config_images_cmd = compose_ctx.compose_shell("config --images");
-    let referenced_images: std::collections::HashSet<String> =
-        match exec_in_coast(&state, container_id, config_images_cmd).await {
-            Ok(output) => output
-                .lines()
-                .map(|l| l.trim().to_string())
-                .filter(|l| !l.is_empty())
-                .collect(),
-            Err(_) => std::collections::HashSet::new(),
-        };
-
-    // If no compose images found (idle instance, or compose config failed), return empty.
-    if referenced_images.is_empty() {
-        return Ok(Json(vec![]));
-    }
+    let referenced_images = resolve_referenced_images(&state, &resolved, &params.project).await;
 
     let cmd = vec![
         "docker".to_string(),
@@ -80,7 +64,7 @@ async fn list_images(
         "{{json .}}".to_string(),
     ];
 
-    let output = exec_in_coast(&state, container_id, cmd)
+    let output = super::exec_in_resolved_coast(&state, &resolved, cmd)
         .await
         .map_err(|e| {
             (
@@ -105,11 +89,12 @@ async fn list_images(
             let tag = val.get("Tag").and_then(|v| v.as_str()).unwrap_or("<none>");
 
             let full_ref = format!("{repository}:{tag}");
-            let is_referenced = referenced_images.contains(repository)
+            let is_referenced = referenced_images.is_empty()
+                || referenced_images.contains(repository)
                 || referenced_images.contains(&full_ref)
                 || repository.starts_with(&project_built_prefix);
 
-            if !is_referenced {
+            if !is_referenced || repository == "<none>" {
                 continue;
             }
 
@@ -139,12 +124,51 @@ async fn list_images(
     Ok(Json(images))
 }
 
+async fn resolve_referenced_images(
+    state: &AppState,
+    resolved: &super::ResolvedCoast,
+    project: &str,
+) -> std::collections::HashSet<String> {
+    let cmd = if resolved.remote_host.is_some() {
+        vec![
+            "sh".into(),
+            "-c".into(),
+            concat!(
+                "CF=/coast-artifact/compose.coast-shared.yml; ",
+                "[ -f \"$CF\" ] || CF=/coast-artifact/compose.yml; ",
+                "[ -f \"$CF\" ] || exit 0; ",
+                "PD=/workspace; ",
+                "if [ -f /coast-artifact/coastfile.toml ]; then ",
+                "  cd=$(grep -o 'compose *= *\"[^\"]*\"' /coast-artifact/coastfile.toml | head -1 | sed 's/.*\"\\(.*\\)\"/\\1/'); ",
+                "  if [ -n \"$cd\" ]; then d=$(dirname \"$cd\"); ",
+                "    [ \"$d\" != \".\" ] && [ -n \"$d\" ] && PD=\"/workspace/$(echo $d | sed 's|^\\./||')\"; ",
+                "  fi; ",
+                "fi; ",
+                "docker compose -f \"$CF\" --project-directory \"$PD\" config --images 2>/dev/null",
+            )
+            .to_string(),
+        ]
+    } else {
+        let compose_ctx =
+            crate::handlers::compose_context_for_build(project, resolved.build_id.as_deref());
+        compose_ctx.compose_shell("config --images")
+    };
+
+    match super::exec_in_resolved_coast(state, resolved, cmd).await {
+        Ok(output) => output
+            .lines()
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty())
+            .collect(),
+        Err(_) => std::collections::HashSet::new(),
+    }
+}
+
 async fn inspect_image(
     State(state): State<Arc<AppState>>,
     Query(params): Query<ImageInspectParams>,
 ) -> Result<Json<ImageInspectResponse>, (StatusCode, Json<serde_json::Value>)> {
     let resolved = resolve_coast_container(&state, &params.project, &params.name).await?;
-    let container_id = &resolved.container_id;
 
     let cmd = vec![
         "docker".to_string(),
@@ -152,7 +176,7 @@ async fn inspect_image(
         params.image.clone(),
     ];
 
-    let output = exec_in_coast(&state, container_id, cmd)
+    let output = super::exec_in_resolved_coast(&state, &resolved, cmd)
         .await
         .map_err(|e| {
             (
@@ -178,7 +202,7 @@ async fn inspect_image(
         "{{json .}}".to_string(),
     ];
 
-    let containers_output = exec_in_coast(&state, container_id, containers_cmd)
+    let containers_output = super::exec_in_resolved_coast(&state, &resolved, containers_cmd)
         .await
         .unwrap_or_default();
 

@@ -28,6 +28,7 @@ pub(super) async fn write_manifest_and_finalize(input: ManifestInput<'_>) -> Res
         "build_id": &input.artifact.build_id,
         "project": &input.coastfile.name,
         "coastfile_type": &input.coastfile.coastfile_type,
+        "arch": std::env::consts::ARCH,
         "project_root": input.coastfile.project_root.display().to_string(),
         "build_timestamp": input.artifact.build_timestamp.to_rfc3339(),
         "coastfile_hash": input.artifact.coastfile_hash,

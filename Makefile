@@ -3,7 +3,7 @@ export
 
 .PHONY: lint fix test coverage coverage-text coverage-lcov check zip-projects unpack-projects merge-zip watch \
        docs-version docs-status translate translate-all doc-search doc-search-all \
-       prune run-dind-integration
+       prune coast-service-keygen coast-service-dev-build coast-service-dev run-dind-integration
 
 # Check formatting and run clippy. Matches CI: -D warnings promotes all
 # warnings to errors so local lint catches what CI catches.
@@ -139,6 +139,39 @@ ifdef DOCKER
 endif
 	@echo "Done. Run 'df -h /Users' to check free space."
 	@echo "Note: Docker Desktop may need a restart to compact its disk image."
+
+# --- coast-service ---
+
+# Generate SSH keys for dev testing. Idempotent.
+coast-service-keygen:
+	@mkdir -p .dev/ssh
+	@if [ ! -f .dev/ssh/coast_dev_key ]; then \
+		ssh-keygen -t ed25519 -f .dev/ssh/coast_dev_key -N "" -q; \
+		echo "Generated .dev/ssh/coast_dev_key"; \
+	else \
+		echo "SSH keys already exist in .dev/ssh/"; \
+	fi
+
+# Build the coast-service dev image.
+coast-service-dev-build:
+	docker build -t coast-service-dev -f Dockerfile.coast-service.dev .
+
+# Run coast-service in dev mode with DinD + SSH. Ctrl-C to stop.
+# Bind-mounts source, cargo-watch auto-rebuilds on changes.
+# SSH on port 2222, coast-service HTTP on port 31420.
+coast-service-dev: coast-service-keygen coast-service-dev-build
+	docker run --rm -it \
+		--privileged \
+		--name coast-service-dev \
+		-p 31420:31420 \
+		-p 2222:22 \
+		-v $(CURDIR):/workspace \
+		-v $(CURDIR)/.dev/ssh/coast_dev_key.pub:/root/.ssh/authorized_keys:ro \
+		-v coast-service-dev-docker:/var/lib/docker \
+		-v coast-service-data:/data \
+		-v coast-service-dev-cargo:/usr/local/cargo/registry \
+		-v coast-service-dev-target:/workspace/target \
+		coast-service-dev
 
 # --- DinD integration tests ---
 

@@ -5,8 +5,9 @@ use std::path::{Component, Path, PathBuf};
 use crate::error::{CoastError, Result};
 use crate::types::{
     AssignAction, AssignConfig, BareServiceConfig, InjectType, McpClientConnectorConfig,
-    McpClientFormat, McpProxyMode, McpServerConfig, RestartPolicy, SecretConfig, SetupFileConfig,
-    SharedServiceConfig, SharedServicePort, VolumeConfig, VolumeStrategy,
+    McpClientFormat, McpProxyMode, McpServerConfig, RemoteConfig, RestartPolicy, SecretConfig,
+    SetupFileConfig, SharedServiceConfig, SharedServicePort, SyncStrategy, VolumeConfig,
+    VolumeStrategy,
 };
 
 use super::raw_types::*;
@@ -398,5 +399,19 @@ impl Coastfile {
             rebuild_triggers: raw.rebuild_triggers,
             exclude_paths: raw.exclude_paths,
         })
+    }
+
+    pub(super) fn parse_remote_config(raw: &RawRemoteConfig) -> Result<RemoteConfig> {
+        let workspace_sync = match raw.workspace_sync.as_deref() {
+            Some(s) => SyncStrategy::from_str_value(s).ok_or_else(|| {
+                CoastError::coastfile(format!(
+                    "remote.workspace_sync: invalid value '{}'. Expected one of: rsync, mutagen",
+                    s
+                ))
+            })?,
+            None => SyncStrategy::default(),
+        };
+
+        Ok(RemoteConfig { workspace_sync })
     }
 }

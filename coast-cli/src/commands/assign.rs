@@ -64,6 +64,7 @@ pub async fn execute(args: &AssignArgs, project: &str) -> Result<()> {
         commit_sha,
         explain: args.explain,
         force_sync: args.force_sync,
+        service_actions: Default::default(),
     });
 
     if args.explain {

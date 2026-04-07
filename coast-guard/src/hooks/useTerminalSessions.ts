@@ -50,6 +50,28 @@ export function buildExecTerminalConfig(
   };
 }
 
+export function buildLocalExecTerminalConfig(
+  project: string,
+  name: string,
+): PersistentTerminalConfig {
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const host = window.location.host;
+  const ep = encodeURIComponent(project);
+  const en = encodeURIComponent(name);
+  return {
+    listSessionsUrl: `/api/v1/exec/sessions?project=${ep}&name=${en}&local=true`,
+    deleteSessionUrl: (id) => `/api/v1/exec/sessions?id=${encodeURIComponent(id)}`,
+    wsUrl: (sid) => {
+      let url = `${proto}//${host}/api/v1/exec/interactive?project=${ep}&name=${en}&local=true`;
+      if (sid != null) url += `&session_id=${encodeURIComponent(sid)}`;
+      return url;
+    },
+    uploadUrl: `/api/v1/upload`,
+    uploadMeta: { project, name },
+    configKey: `local-exec:${project}:${name}`,
+  };
+}
+
 export function buildServiceExecTerminalConfig(
   project: string,
   name: string,
@@ -93,6 +115,27 @@ export function buildHostServiceExecTerminalConfig(
     uploadUrl: `/api/v1/upload`,
     uploadMeta: { project, name: `host:${service}` },
     configKey: `host-service:${project}:${service}`,
+  };
+}
+
+export function buildRemoteExecTerminalConfig(
+  remoteName: string,
+): PersistentTerminalConfig {
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const host = window.location.host;
+  const en = encodeURIComponent(remoteName);
+  const sc = encodeURIComponent(`remote-exec:${remoteName}`);
+  return {
+    listSessionsUrl: `/api/v1/remote/exec/sessions?name=${en}&scope=${sc}`,
+    deleteSessionUrl: (id) => `/api/v1/remote/exec/sessions?id=${encodeURIComponent(id)}`,
+    wsUrl: (sid) => {
+      let url = `${proto}//${host}/api/v1/remote/exec/interactive?name=${en}&scope=${sc}`;
+      if (sid != null) url += `&session_id=${encodeURIComponent(sid)}`;
+      return url;
+    },
+    uploadUrl: null,
+    uploadMeta: null,
+    configKey: `remote-exec:${remoteName}`,
   };
 }
 

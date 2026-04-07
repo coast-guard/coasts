@@ -145,6 +145,7 @@ async fn ws_handler(
         ));
     }
 
+    let remote_host = instance.remote_host.clone();
     let container_id = instance.container_id.clone().ok_or_else(|| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -158,6 +159,14 @@ async fn ws_handler(
     let project = params.project.clone();
     let name = params.name.clone();
     let service = params.service.clone();
+
+    if let Some(ref rh) = remote_host {
+        let remote_name = rh.clone();
+        let svc = service.clone();
+        return Ok(ws.on_upgrade(move |socket| {
+            handle_remote_service_ws(socket, state, remote_name, project, name, svc)
+        }));
+    }
 
     Ok(ws.on_upgrade(move |socket| {
         handle_ws(
@@ -366,6 +375,134 @@ async fn handle_ws(
 
     bridge_ws(&mut socket, &output_tx, write_fd, read_fd, &scrollback).await;
     debug!(session_id = %sid, "service exec WS disconnected, session kept alive");
+}
+
+async fn handle_remote_service_ws(
+    mut socket: WebSocket,
+    state: Arc<AppState>,
+    remote_name: String,
+    project: String,
+    instance_name: String,
+    service: String,
+) {
+    debug!(
+        remote = %remote_name, project = %project,
+        instance = %instance_name, service = %service,
+        "remote service exec WS connected"
+    );
+
+    let db = state.db.lock().await;
+    let remotes = db.list_remotes().unwrap_or_default();
+    let entry = remotes
+        .into_iter()
+        .find(|r| r.name == remote_name || r.host == remote_name);
+    drop(db);
+
+    let Some(entry) = entry else {
+        let _ = socket
+            .send(Message::Text(
+                format!("Remote '{}' not found", remote_name).into(),
+            ))
+            .await;
+        return;
+    };
+
+    let artifact_dir = crate::handlers::run::paths::project_images_dir(&project);
+    let compose_project_dir =
+        crate::handlers::run::read_compose_project_dir_from_artifact(&artifact_dir);
+
+    let dind_container = format!("{}-coasts-{}", project, instance_name);
+
+    let remote_command = format!(
+        "docker exec -it {dind} sh -c 'CF=/coast-artifact/compose.coast-shared.yml; \
+         [ -f \"$CF\" ] || CF=/coast-artifact/compose.yml; \
+         docker compose -f \"$CF\" --project-directory {pd} exec {svc} sh'",
+        dind = dind_container,
+        pd = compose_project_dir,
+        svc = service,
+    );
+
+    let host = entry.host.clone();
+    let user = entry.user.clone();
+    let port = entry.port.to_string();
+    let ssh_key = entry.ssh_key.clone();
+
+    let pty_result = tokio::task::spawn_blocking(move || {
+        super::ws_remote_exec::open_ssh_pty_with_command_pub(
+            &user,
+            &host,
+            &port,
+            ssh_key.as_deref(),
+            &remote_command,
+        )
+    })
+    .await;
+
+    let (master_fd, _child_pid) = match pty_result {
+        Ok(Ok(result)) => result,
+        Ok(Err(e)) => {
+            let _ = socket
+                .send(Message::Text(
+                    format!("Failed to open remote service exec: {e}").into(),
+                ))
+                .await;
+            return;
+        }
+        Err(e) => {
+            let _ = socket
+                .send(Message::Text(format!("PTY task panicked: {e}").into()))
+                .await;
+            return;
+        }
+    };
+
+    let read_fd = master_fd.as_raw_fd();
+    let write_fd = nix::unistd::dup(read_fd).expect("dup master PTY fd");
+
+    let init_msg = serde_json::to_string(&TerminalSessionInit {
+        session_id: format!("remote-service-{}-{}-{}", project, instance_name, service),
+    })
+    .unwrap();
+    if socket.send(Message::Text(init_msg.into())).await.is_err() {
+        return;
+    }
+
+    let (output_tx, _) = broadcast::channel::<Vec<u8>>(256);
+    let scrollback = Arc::new(Mutex::new(VecDeque::<u8>::new()));
+
+    std::mem::forget(master_fd);
+    tokio::spawn({
+        let scrollback = scrollback.clone();
+        let output_tx = output_tx.clone();
+        async move {
+            let mut reader =
+                tokio::fs::File::from_std(unsafe { std::fs::File::from_raw_fd(read_fd) });
+            let mut buf = [0u8; 4096];
+            loop {
+                match reader.read(&mut buf).await {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        let data = buf[..n].to_vec();
+                        {
+                            let mut sb = scrollback.lock().await;
+                            sb.extend(&data);
+                            while sb.len() > SCROLLBACK_CAP {
+                                sb.pop_front();
+                            }
+                        }
+                        let _ = output_tx.send(data);
+                    }
+                    Err(_) => break,
+                }
+            }
+        }
+    });
+
+    bridge_ws(&mut socket, &output_tx, write_fd, read_fd, &scrollback).await;
+    debug!(
+        remote = %remote_name, service = %service,
+        "remote service exec WS disconnected"
+    );
 }
 
 async fn reconnect_session(socket: &mut WebSocket, state: &Arc<AppState>, session_id: &str) {

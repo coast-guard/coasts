@@ -17,7 +17,7 @@ use super::worktree::{
 
 /// Describes where a worktree lives on the host and how it maps into the container.
 #[derive(Debug, Clone)]
-pub(super) struct WorktreeLocation {
+pub(crate) struct WorktreeLocation {
     /// The worktree dir string (e.g. ".worktrees" or "~/.codex/worktrees").
     pub wt_dir: String,
     /// Absolute path to the worktree on the host.
@@ -244,7 +244,7 @@ async fn discover_and_classify(
     (actions, all_hot)
 }
 
-async fn detect_worktree_path(
+pub(crate) async fn detect_worktree_path(
     project_root: &Option<std::path::PathBuf>,
     worktree_dirs: &[String],
     default_wt_dir: &str,
@@ -730,7 +730,7 @@ async fn discover_service_names(
     names
 }
 
-async fn diff_changed_files(
+pub(super) async fn diff_changed_files(
     assign_config: &AssignConfig,
     project_root: &Option<std::path::PathBuf>,
     previous_branch: &Option<String>,

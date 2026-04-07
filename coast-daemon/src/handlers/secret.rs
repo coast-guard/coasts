@@ -92,24 +92,65 @@ fn merge_secrets(
 pub async fn handle(req: SecretRequest, state: &AppState) -> Result<SecretResponse> {
     match req {
         SecretRequest::Set {
-            instance,
-            project,
-            name,
-            value,
-        } => handle_set(instance, project, name, value, state).await,
+            ref instance,
+            ref project,
+            ref name,
+            ref value,
+        } => {
+            handle_set(
+                instance.clone(),
+                project.clone(),
+                name.clone(),
+                value.clone(),
+                state,
+                Some(&req),
+            )
+            .await
+        }
         SecretRequest::List { instance, project } => handle_list(instance, project, state).await,
+    }
+}
+
+/// Forward a secret to the remote coast-service if the instance is remote.
+async fn forward_secret_to_remote(
+    project: &str,
+    instance: &str,
+    state: &AppState,
+    req: &SecretRequest,
+) {
+    let is_remote = {
+        let db = state.db.lock().await;
+        db.get_instance(project, instance)
+            .ok()
+            .flatten()
+            .is_some_and(|inst| inst.remote_host.is_some())
+    };
+
+    if !is_remote {
+        return;
+    }
+
+    let Ok(remote_config) =
+        super::remote::resolve_remote_for_instance(project, instance, state).await
+    else {
+        return;
+    };
+    if let Ok(client) = super::remote::RemoteClient::connect(&remote_config).await {
+        let _ = super::remote::forward::forward_secret(&client, req).await;
     }
 }
 
 /// Set a per-instance secret override.
 ///
 /// Stores the secret value in the keystore, scoped to the specific instance.
+/// If the instance is remote, also forwards the secret to the remote coast-service.
 async fn handle_set(
     instance: String,
     project: String,
     name: String,
     value: String,
     state: &AppState,
+    original_req: Option<&SecretRequest>,
 ) -> Result<SecretResponse> {
     info!(
         instance = %instance,
@@ -118,11 +159,9 @@ async fn handle_set(
         "handling secret set request"
     );
 
-    // Phase 1: DB read (locked) — verify instance exists
     {
         let db = state.db.lock().await;
-        let inst = db.get_instance(&project, &instance)?;
-        if inst.is_none() {
+        if db.get_instance(&project, &instance)?.is_none() {
             return Err(CoastError::InstanceNotFound {
                 name: instance.clone(),
                 project: project.clone(),
@@ -130,9 +169,6 @@ async fn handle_set(
         }
     }
 
-    // Phase 2: Keystore I/O (unlocked)
-    // Per-instance overrides use "{project}/{instance}" as the coast_image key.
-    // Only interact with the keystore when a Docker client is available (i.e., not in tests).
     if state.docker.is_some() {
         let coast_image = format!("{project}/{instance}");
         if try_store_secret_in_keystore(&coast_image, &name, value.as_bytes()).is_some() {
@@ -142,6 +178,10 @@ async fn handle_set(
                 "secret override stored in keystore"
             );
         }
+    }
+
+    if let Some(req) = original_req {
+        forward_secret_to_remote(&project, &instance, state, req).await;
     }
 
     info!(
@@ -271,6 +311,7 @@ mod tests {
             worktree_name: None,
             build_id: None,
             coastfile_type: None,
+            remote_host: None,
         }
     }
 

@@ -59,6 +59,7 @@
   "projectTab.coasts": "Coasts",
   "projectTab.sharedServices": "共有サービス",
   "projectTab.builds": "ビルド",
+  "projectTab.remotes": "リモート",
   "projectTab.terminal": "ターミナル",
   "build.newBuild": "新規ビルド",
   "build.createNewBuild": "新規ビルドを作成",

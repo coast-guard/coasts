@@ -24,6 +24,7 @@ fn test_build_request_roundtrip() {
     roundtrip_request(Request::Build(BuildRequest {
         coastfile_path: PathBuf::from("/home/user/Coastfile"),
         refresh: true,
+        remote: None,
     }));
 }
 
@@ -54,6 +55,8 @@ fn test_run_request_roundtrip() {
         build_id: None,
         coastfile_type: None,
         force_remove_dangling: false,
+        remote: None,
+        shared_service_ports: Vec::new(),
     }));
 }
 
@@ -68,6 +71,8 @@ fn test_run_request_without_commit_sha_roundtrip() {
         build_id: None,
         coastfile_type: None,
         force_remove_dangling: false,
+        remote: None,
+        shared_service_ports: Vec::new(),
     }));
 }
 
@@ -82,6 +87,8 @@ fn test_run_request_with_worktree_roundtrip() {
         build_id: None,
         coastfile_type: None,
         force_remove_dangling: false,
+        remote: None,
+        shared_service_ports: Vec::new(),
     }));
 }
 
@@ -94,6 +101,7 @@ fn test_assign_request_roundtrip() {
         commit_sha: Some("deadbeef".to_string()),
         explain: false,
         force_sync: false,
+        service_actions: Default::default(),
     }));
 }
 
@@ -106,6 +114,7 @@ fn test_assign_request_without_commit_sha_roundtrip() {
         commit_sha: None,
         explain: false,
         force_sync: false,
+        service_actions: Default::default(),
     }));
 }
 
@@ -613,6 +622,7 @@ fn test_ls_response_roundtrip() {
             primary_port_dynamic: None,
             primary_port_url: None,
             down_service_count: 0,
+            remote_host: None,
         }],
         known_projects: Vec::new(),
     }));
@@ -768,6 +778,8 @@ fn test_builds_ls_response_roundtrip() {
                 archived: false,
                 instances_using: 2,
                 coastfile_type: None,
+                arch: None,
+                is_remote: false,
             }],
         },
     ))));
@@ -1386,6 +1398,7 @@ fn test_assign_request_explain_roundtrip() {
         commit_sha: None,
         explain: true,
         force_sync: false,
+        service_actions: Default::default(),
     }));
 }
 
@@ -1398,6 +1411,7 @@ fn test_assign_request_force_sync_roundtrip() {
         commit_sha: None,
         explain: false,
         force_sync: true,
+        service_actions: Default::default(),
     }));
 }
 

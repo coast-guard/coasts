@@ -20,6 +20,7 @@ pub mod events;
 pub mod instance;
 pub mod mcp;
 pub mod query;
+pub mod remote;
 pub mod secret_shared;
 
 #[cfg(test)]
@@ -33,6 +34,7 @@ pub use events::*;
 pub use instance::*;
 pub use mcp::*;
 pub use query::*;
+pub use remote::*;
 pub use secret_shared::*;
 
 use serde::{Deserialize, Serialize};
@@ -105,6 +107,8 @@ pub enum Request {
     SetAnalytics(SetAnalyticsRequest),
     /// Look up coast instances for the caller's current worktree.
     Lookup(LookupRequest),
+    /// Manage registered remote machines.
+    Remote(RemoteRequest),
     /// Query whether the daemon is in a safe state for self-update.
     IsSafeToUpdate(UpdateSafetyRequest),
     /// Drain mutating work and prepare the daemon for self-update.
@@ -202,6 +206,8 @@ pub enum Response {
     UpdateSafety(UpdateSafetyResponse),
     /// Result of preparing the daemon for self-update.
     PrepareForUpdate(PrepareForUpdateResponse),
+    /// Remote machine management result.
+    Remote(RemoteResponse),
     /// Error response.
     Error(ErrorResponse),
 }

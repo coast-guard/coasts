@@ -9,7 +9,7 @@ use tracing::{info, warn};
 
 use coast_core::error::{CoastError, Result};
 use coast_core::protocol::{BuildProgressEvent, CoastEvent, UnassignRequest, UnassignResponse};
-use coast_core::types::InstanceStatus;
+use coast_core::types::{AssignAction, InstanceStatus};
 use coast_docker::runtime::Runtime;
 
 use crate::server::AppState;
@@ -106,6 +106,146 @@ pub async fn handle(
         })?;
 
         validate_unassignable(&inst.status, &req.name)?;
+
+        if inst.remote_host.is_some() {
+            db.update_instance_status(&req.project, &req.name, &InstanceStatus::Unassigning)?;
+            drop(db);
+
+            state.emit_event(CoastEvent::InstanceStatusChanged {
+                name: req.name.clone(),
+                project: req.project.clone(),
+                status: "unassigning".into(),
+            });
+
+            let project_root = super::assign::read_project_root(&req.project);
+            let display_branch = if let Some(ref root) = project_root {
+                read_host_branch(root).await
+            } else {
+                None
+            };
+
+            emit(
+                &progress,
+                BuildProgressEvent::build_plan(vec![
+                    "Validating instance".into(),
+                    "Resetting workspace".into(),
+                    "Syncing and notifying remote".into(),
+                ]),
+            )
+            .await;
+            emit(
+                &progress,
+                BuildProgressEvent::done("Validating instance", "ok"),
+            )
+            .await;
+            emit(
+                &progress,
+                BuildProgressEvent::started("Resetting workspace", 2, 3),
+            )
+            .await;
+
+            // Reset shell container /workspace to project root
+            let shell_container = format!("{}-coasts-{}-shell", req.project, req.name);
+            if let Some(docker) = state.docker.as_ref() {
+                let rt = coast_docker::dind::DindRuntime::with_client(docker.clone());
+                let mount_cmd = "umount -l /workspace 2>/dev/null; \
+                    mount --bind /host-project /workspace && \
+                    mount --make-rshared /workspace";
+                match rt
+                    .exec_in_coast(&shell_container, &["sh", "-c", mount_cmd])
+                    .await
+                {
+                    Ok(r) if !r.success() => {
+                        warn!(stderr = %r.stderr, "shell /workspace reset returned non-zero");
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "failed to reset shell /workspace");
+                    }
+                    _ => {
+                        info!("shell /workspace reset to project root");
+                    }
+                }
+            }
+
+            emit(
+                &progress,
+                BuildProgressEvent::done("Resetting workspace", "ok"),
+            )
+            .await;
+
+            // Forward assign to coast-service with hot actions (no service restart needed).
+            // Mutagen handles the file sync; we just need to tell coast-service the mount changed.
+            emit(
+                &progress,
+                BuildProgressEvent::started("Syncing and notifying remote", 3, 3),
+            )
+            .await;
+
+            let cf_data = super::assign::load_coastfile_data(&req.project);
+            let service_actions: std::collections::HashMap<String, AssignAction> = cf_data
+                .assign
+                .services
+                .keys()
+                .map(|svc| (svc.clone(), AssignAction::Hot))
+                .collect();
+
+            let remote_config =
+                super::remote::resolve_remote_for_instance(&req.project, &req.name, state).await?;
+            let client = super::remote::RemoteClient::connect(&remote_config).await?;
+
+            if let Some(ref root) = project_root {
+                let service_home = client.query_service_home().await;
+                let remote_workspace =
+                    super::remote::remote_workspace_path(&service_home, &req.project, &req.name);
+                if let Err(e) = client.sync_workspace(root, &remote_workspace).await {
+                    warn!(error = %e, "failed to rsync project root to remote workspace");
+                }
+            }
+
+            let assign_req = coast_core::protocol::AssignRequest {
+                name: req.name.clone(),
+                project: req.project.clone(),
+                worktree: display_branch.clone().unwrap_or_default(),
+                commit_sha: None,
+                explain: false,
+                force_sync: false,
+                service_actions,
+            };
+            let _ = super::remote::forward::forward_assign(&client, &assign_req).await;
+
+            emit(
+                &progress,
+                BuildProgressEvent::done("Syncing and notifying remote", "ok"),
+            )
+            .await;
+
+            // Final DB update: set branch to project root branch, clear worktree, restore status
+            let final_status = inst.status.clone();
+            {
+                let db = state.db.lock().await;
+                db.update_instance_branch(
+                    &req.project,
+                    &req.name,
+                    display_branch.as_deref(),
+                    None,
+                    &final_status,
+                )?;
+                db.set_worktree(&req.project, &req.name, None)?;
+            }
+
+            state.emit_event(CoastEvent::InstanceStatusChanged {
+                name: req.name.clone(),
+                project: req.project.clone(),
+                status: final_status.as_db_str().into(),
+            });
+
+            return Ok(UnassignResponse {
+                name: req.name,
+                worktree: display_branch.unwrap_or_else(|| "project root".to_string()),
+                previous_worktree: inst.worktree_name,
+                time_elapsed_ms: started_at.elapsed().as_millis() as u64,
+            });
+        }
 
         db.update_instance_status(&req.project, &req.name, &InstanceStatus::Unassigning)?;
         inst
@@ -431,6 +571,7 @@ mod tests {
             worktree_name: worktree.map(String::from),
             build_id: None,
             coastfile_type: None,
+            remote_host: None,
         }
     }
 

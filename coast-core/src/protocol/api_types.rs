@@ -80,7 +80,7 @@ pub struct GitFileStatus {
 }
 
 /// Live container resource stats (CPU, memory, disk, network).
-#[derive(Debug, Clone, Serialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct ContainerStats {
     pub timestamp: String,
@@ -171,7 +171,7 @@ pub struct CloseAgentShellResponse {
 }
 
 /// Response for revealing a secret value.
-#[derive(Debug, Clone, Serialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct RevealSecretResponse {
     pub name: String,
@@ -441,6 +441,43 @@ pub struct PrepareForUpdateResponse {
     pub timed_out: bool,
     pub actions: Vec<String>,
     pub report: UpdateSafetyResponse,
+}
+
+/// Per-service control request forwarded to coast-service for remote instances.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoteServiceControlRequest {
+    pub project: String,
+    pub name: String,
+    pub service: String,
+    pub action: String,
+}
+
+/// Per-service control response from coast-service.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoteServiceControlResponse {
+    pub success: bool,
+}
+
+/// Request to prune orphaned resources on a remote machine.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PruneRequest {
+    pub dry_run: bool,
+}
+
+/// A single orphaned resource identified during prune.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PruneItem {
+    pub kind: String,
+    pub name: String,
+    pub size_bytes: u64,
+}
+
+/// Response from a prune operation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PruneResponse {
+    pub items: Vec<PruneItem>,
+    pub total_freed_bytes: u64,
+    pub dry_run: bool,
 }
 
 /// Client-to-server resize command (sent after 0x01 prefix byte).

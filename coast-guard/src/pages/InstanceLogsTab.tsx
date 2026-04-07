@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ArrowDown, Trash, MagnifyingGlass, Asterisk, CornersOut, CornersIn } from '@phosphor-icons/react';
+import { ArrowDown, Trash, MagnifyingGlass, Asterisk, CornersOut, CornersIn, Copy } from '@phosphor-icons/react';
 import type { ProjectName, InstanceName } from '../types/branded';
 import { api } from '../api/endpoints';
 import { parseLine, renderInstanceLogLine } from '../components/InstanceLogLine';
@@ -20,6 +20,7 @@ export default function InstanceLogsTab({ project, name }: Props) {
   const [searchText, setSearchText] = useState('');
   const [isRegex, setIsRegex] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
+  const [copied, setCopied] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const autoScrollRef = useRef(true);
@@ -132,6 +133,15 @@ export default function InstanceLogsTab({ project, name }: Props) {
     return result;
   }, [allParsed, serviceFilter, searchRegex]);
 
+  const handleCopy = useCallback(async () => {
+    const text = filtered.map((p) => p.raw).join('\n');
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch { /* ignore */ }
+  }, [filtered]);
+
   return (
     <div className={fullscreen
       ? 'fixed inset-0 z-[200] flex flex-col gap-2 p-4 bg-[var(--surface-solid)] backdrop-blur-2xl'
@@ -203,6 +213,14 @@ export default function InstanceLogsTab({ project, name }: Props) {
               : `${allParsed.length}`
             } {t('logs.lines')}
           </span>
+          <button
+            type="button"
+            className="btn btn-outline !px-2 !py-1 !text-xs inline-flex items-center gap-1.5"
+            onClick={() => void handleCopy()}
+          >
+            <Copy size={14} />
+            {copied ? t('action.copied') : t('action.copy')}
+          </button>
           <button
             type="button"
             className="btn btn-outline !px-2 !py-1 !text-xs inline-flex items-center gap-1.5"

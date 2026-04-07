@@ -35,6 +35,15 @@ pub struct SecretResponse {
     pub secrets: Vec<SecretInfo>,
 }
 
+/// Request to reveal a secret's plaintext value from the remote keystore.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct RevealSecretRequest {
+    pub project: String,
+    pub name: String,
+    pub secret: String,
+}
+
 /// Request to manage shared services.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]

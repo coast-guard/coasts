@@ -1,0 +1,36 @@
+FROM rust:1-bookworm
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        docker.io \
+        iptables \
+        rsync \
+        openssh-server && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install mutagen for continuous file sync.
+RUN ARCH=$(dpkg --print-architecture) && \
+    curl -fsSL "https://github.com/mutagen-io/mutagen/releases/download/v0.18.1/mutagen_linux_${ARCH}_v0.18.1.tar.gz" \
+    | tar xz -C /usr/local/bin && chmod +x /usr/local/bin/mutagen
+
+# Generate sshd host keys and prepare runtime dirs.
+RUN ssh-keygen -A && mkdir -p /run/sshd /root/.ssh
+
+RUN cargo install cargo-watch
+
+WORKDIR /workspace
+
+COPY dev/coast-service-entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+ENV COAST_SERVICE_HOME=/data
+ENV COAST_SERVICE_PORT=31420
+
+EXPOSE 31420 22
+
+VOLUME ["/data", "/var/lib/docker"]
+
+ENTRYPOINT ["entrypoint.sh"]

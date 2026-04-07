@@ -52,7 +52,8 @@ export default function BuildModal({ open, project, onClose, onComplete }: Build
   useEffect(() => {
     if (open && project) {
       api.buildsCoastfileTypes(project).then((resp) => {
-        setCoastfileTypes(resp.types ?? []);
+        const all = resp.types ?? [];
+        setCoastfileTypes(all.filter((t) => !t.startsWith('remote')));
       }).catch(() => {
         setCoastfileTypes(['default']);
       });
@@ -91,13 +92,16 @@ export default function BuildModal({ open, project, onClose, onComplete }: Build
       if (result.error) {
         setErrorMsg(result.error.error);
         setPhase('error');
-      } else {
+      } else if (result.complete) {
         setPhase('done');
         void queryClient.invalidateQueries({ queryKey: ['buildsLs'] });
         void queryClient.invalidateQueries({ queryKey: ['buildsInspect'] });
         setTimeout(() => {
           onComplete();
         }, 1500);
+      } else {
+        setErrorMsg('Build stream ended unexpectedly without a result.');
+        setPhase('error');
       }
     } catch (e) {
       setErrorMsg(e instanceof Error ? e.message : String(e));

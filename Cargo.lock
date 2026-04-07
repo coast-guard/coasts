@@ -548,6 +548,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "coast-service"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "bollard",
+ "chrono",
+ "coast-core",
+ "coast-docker",
+ "coast-secrets",
+ "dirs",
+ "futures-util",
+ "hex",
+ "http-body-util",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "toml",
+ "tower",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "coast-update"
 version = "0.1.0"
 dependencies = [

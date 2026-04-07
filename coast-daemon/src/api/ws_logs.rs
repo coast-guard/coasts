@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Query, State};
@@ -17,7 +18,7 @@ use rust_i18n::t;
 
 use coast_docker::runtime::Runtime;
 
-use crate::handlers::compose_context;
+use crate::handlers::{compose_context, compose_context_for_build};
 use crate::server::AppState;
 
 #[derive(Deserialize, Serialize, TS)]
@@ -66,6 +67,14 @@ async fn ws_handler(
             )
             .to_string(),
         ));
+    }
+
+    if instance.remote_host.is_some() {
+        let build_id = instance.build_id.clone();
+        drop(db);
+        return Ok(
+            ws.on_upgrade(move |socket| handle_remote_logs_socket(socket, state, params, build_id))
+        );
     }
 
     let container_id = instance.container_id.clone().ok_or_else(|| {
@@ -229,5 +238,114 @@ async fn handle_logs_socket(
     debug!(
         name = %params.name,
         "logs stream websocket disconnected"
+    );
+}
+
+fn remote_compose_log_cmd(
+    project: &str,
+    build_id: Option<&str>,
+    time_flag: &str,
+    service: Option<&str>,
+) -> Vec<String> {
+    let ctx = compose_context_for_build(project, build_id);
+    let project_dir = match &ctx.compose_rel_dir {
+        Some(dir) => format!("/workspace/{dir}"),
+        None => "/workspace".to_string(),
+    };
+    let svc = service.unwrap_or("");
+    let script = format!(
+        "CF=/coast-artifact/compose.coast-shared.yml; \
+         [ -f \"$CF\" ] || CF=/coast-artifact/compose.yml; \
+         docker compose -f \"$CF\" --project-directory {project_dir} logs {time_flag} {svc}"
+    );
+    vec!["sh".into(), "-c".into(), script]
+}
+
+/// Execute a remote compose log command and send the output over a WebSocket.
+///
+/// Returns `Ok(true)` if output was sent, `Ok(false)` if output was empty,
+/// and `Err(msg)` with a human-readable error if the exec failed or the
+/// socket send failed.
+async fn exec_and_send_logs(
+    socket: &mut WebSocket,
+    state: &AppState,
+    project: &str,
+    name: &str,
+    cmd: Vec<String>,
+) -> Result<bool, String> {
+    match crate::api::query::exec_in_remote_coast(state, project, name, cmd).await {
+        Ok(output) if !output.is_empty() => socket
+            .send(Message::Text(output.into()))
+            .await
+            .map(|()| true)
+            .map_err(|e| format!("websocket send failed: {e}")),
+        Ok(_) => Ok(false),
+        Err(e) => {
+            warn!(error = %e, "remote log exec error");
+            Err(format!("Failed to fetch logs: {e}"))
+        }
+    }
+}
+
+async fn handle_remote_logs_socket(
+    mut socket: WebSocket,
+    state: Arc<AppState>,
+    params: LogsStreamParams,
+    build_id: Option<String>,
+) {
+    debug!(
+        name = %params.name,
+        project = %params.project,
+        "remote logs stream websocket connected"
+    );
+
+    let initial_cmd = remote_compose_log_cmd(
+        &params.project,
+        build_id.as_deref(),
+        "--tail 200",
+        params.service.as_deref(),
+    );
+
+    if let Err(msg) = exec_and_send_logs(
+        &mut socket,
+        &state,
+        &params.project,
+        &params.name,
+        initial_cmd,
+    )
+    .await
+    {
+        let _ = socket.send(Message::Text(msg.into())).await;
+        return;
+    }
+
+    loop {
+        tokio::select! {
+            _ = tokio::time::sleep(Duration::from_secs(2)) => {
+                let poll_cmd = remote_compose_log_cmd(
+                    &params.project,
+                    build_id.as_deref(),
+                    "--since 3s",
+                    params.service.as_deref(),
+                );
+                if exec_and_send_logs(&mut socket, &state, &params.project, &params.name, poll_cmd)
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+            msg = socket.recv() => {
+                match msg {
+                    Some(Ok(Message::Close(_))) | None => break,
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    debug!(
+        name = %params.name,
+        "remote logs stream websocket disconnected"
     );
 }

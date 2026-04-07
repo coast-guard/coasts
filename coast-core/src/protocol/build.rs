@@ -11,6 +11,9 @@ pub struct BuildRequest {
     pub coastfile_path: PathBuf,
     /// Whether to refresh (re-extract secrets, re-pull images).
     pub refresh: bool,
+    /// Which registered remote to build on (for remote types).
+    #[serde(default)]
+    pub remote: Option<String>,
 }
 
 /// Request to re-run secret extractors using the cached build Coastfile.

@@ -14,7 +14,7 @@ use tokio::sync::broadcast;
 use tracing::{debug, info, warn};
 use ts_rs::TS;
 
-use coast_core::protocol::ContainerStats;
+use coast_core::protocol::{ContainerStats, ContainerStatsRequest};
 use coast_core::types::InstanceStatus;
 use rust_i18n::t;
 
@@ -87,6 +87,149 @@ pub async fn stop_stats_collector(state: &AppState, key: &str) {
         handle.abort();
     }
     state.stats_broadcasts.lock().await.remove(key);
+}
+
+pub async fn start_remote_dind_stats_collector(
+    state: Arc<AppState>,
+    key: String,
+    project: String,
+    name: String,
+) {
+    let mut collectors = state.stats_collectors.lock().await;
+    if collectors.contains_key(&key) {
+        return;
+    }
+
+    let (tx, _) = broadcast::channel::<serde_json::Value>(64);
+    state
+        .stats_broadcasts
+        .lock()
+        .await
+        .insert(key.clone(), tx.clone());
+
+    let state2 = state.clone();
+    let key2 = key.clone();
+    let handle = tokio::spawn(async move {
+        run_remote_dind_collector(state2, key2, project, name, tx).await;
+    });
+
+    collectors.insert(key, handle);
+}
+
+/// Apply /proc-based memory, disk I/O, and network counters onto a
+/// `ContainerStats` snapshot, replacing Docker API values that are
+/// unreliable when cgroup controllers are missing.
+fn apply_proc_overlay(cs: &mut ContainerStats, output: &str) -> bool {
+    let parts: Vec<&str> = output.split_whitespace().collect();
+    if parts.len() < 6 {
+        return false;
+    }
+    let rss_kb: u64 = parts[0].parse().unwrap_or(0);
+    let mem_total_kb: u64 = parts[1].parse().unwrap_or(0);
+    cs.memory_used_bytes = rss_kb * 1024;
+    cs.memory_limit_bytes = mem_total_kb * 1024;
+    cs.memory_percent = if cs.memory_limit_bytes > 0 {
+        (cs.memory_used_bytes as f64 / cs.memory_limit_bytes as f64) * 100.0
+    } else {
+        0.0
+    };
+    cs.disk_read_bytes = parts[2].parse().unwrap_or(0);
+    cs.disk_write_bytes = parts[3].parse().unwrap_or(0);
+    cs.network_rx_bytes = parts[4].parse().unwrap_or(0);
+    cs.network_tx_bytes = parts[5].parse().unwrap_or(0);
+    true
+}
+
+async fn push_dind_stats(
+    history: &tokio::sync::Mutex<std::collections::HashMap<String, VecDeque<serde_json::Value>>>,
+    key: &str,
+    tx: &broadcast::Sender<serde_json::Value>,
+    cs: &ContainerStats,
+) {
+    if let Ok(json_val) = serde_json::to_value(cs) {
+        let mut guard = history.lock().await;
+        let ring = guard.entry(key.to_string()).or_insert_with(VecDeque::new);
+        if ring.len() >= HISTORY_CAP {
+            ring.pop_front();
+        }
+        ring.push_back(json_val.clone());
+        drop(guard);
+        let _ = tx.send(json_val);
+    }
+}
+
+const DIND_PROC_SCRIPT: &str = concat!(
+    r#"PSS=0; RB=0; WB=0; "#,
+    r#"for p in /proc/[0-9]*/smaps_rollup; do "#,
+    r#"r=$(awk '/^Pss:/{print $2}' "$p" 2>/dev/null); PSS=$((PSS+${r:-0})); done; "#,
+    r#"for p in /proc/[0-9]*/io; do "#,
+    r#"io=$(cat "$p" 2>/dev/null || true); "#,
+    r#"rb=$(echo "$io" | awk '/^read_bytes:/{print $2}'); RB=$((RB+${rb:-0})); "#,
+    r#"wb=$(echo "$io" | awk '/^write_bytes:/{print $2}'); WB=$((WB+${wb:-0})); done; "#,
+    r#"NR=$(awk 'NR>2&&$1!~/lo:/{s+=$2}END{print s+0}' /proc/1/net/dev 2>/dev/null); "#,
+    r#"NT=$(awk 'NR>2&&$1!~/lo:/{s+=$10}END{print s+0}' /proc/1/net/dev 2>/dev/null); "#,
+    r#"ML=$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null); "#,
+    r#"printf '%s %s %s %s %s %s\n' "$PSS" "$ML" "$RB" "$WB" "${NR:-0}" "${NT:-0}""#,
+);
+
+async fn fetch_remote_dind_stats(
+    state: &AppState,
+    project: &str,
+    name: &str,
+    key: &str,
+    stats_req: &ContainerStatsRequest,
+) -> Option<ContainerStats> {
+    let docker_stats = async {
+        let remote_config =
+            crate::handlers::remote::resolve_remote_for_instance(project, name, state).await?;
+        let client = crate::handlers::remote::RemoteClient::connect(&remote_config).await?;
+        crate::handlers::remote::forward::forward_container_stats(&client, stats_req).await
+    }
+    .await;
+
+    let mut cs = match docker_stats {
+        Ok(resp) => resp.stats,
+        Err(e) => {
+            warn!(key = %key, error = %e, "remote DinD stats poll failed");
+            return None;
+        }
+    };
+
+    let cmd = vec!["sh".into(), "-c".into(), DIND_PROC_SCRIPT.to_string()];
+    match crate::api::query::exec_in_remote_coast(state, project, name, cmd).await {
+        Err(e) => {
+            warn!(key = %key, error = %e, "DinD /proc stats exec failed, using Docker API values");
+        }
+        Ok(output) => {
+            if !apply_proc_overlay(&mut cs, &output) {
+                warn!(key = %key, output = %output.trim(), "DinD /proc stats: unexpected output format");
+            }
+        }
+    }
+
+    Some(cs)
+}
+
+async fn run_remote_dind_collector(
+    state: Arc<AppState>,
+    key: String,
+    project: String,
+    name: String,
+    tx: broadcast::Sender<serde_json::Value>,
+) {
+    info!(key = %key, "remote DinD stats collector started");
+
+    let stats_req = ContainerStatsRequest {
+        name: name.clone(),
+        project: project.clone(),
+    };
+
+    loop {
+        if let Some(cs) = fetch_remote_dind_stats(&state, &project, &name, &key, &stats_req).await {
+            push_dind_stats(&state.stats_history, &key, &tx, &cs).await;
+        }
+        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+    }
 }
 
 #[allow(clippy::cognitive_complexity)]
@@ -196,12 +339,20 @@ async fn ws_handler(
         ));
     }
 
+    let key = stats_key(&params.project, &params.name);
     drop(db);
 
-    let key = stats_key(&params.project, &params.name);
-
-    // Ensure collector is running
-    if !state.stats_collectors.lock().await.contains_key(&key) {
+    if instance.remote_host.is_some() {
+        if !state.stats_collectors.lock().await.contains_key(&key) {
+            start_remote_dind_stats_collector(
+                state.clone(),
+                key.clone(),
+                params.project.clone(),
+                params.name.clone(),
+            )
+            .await;
+        }
+    } else if !state.stats_collectors.lock().await.contains_key(&key) {
         if let Some(cid) = instance.container_id.as_deref() {
             start_stats_collector(state.clone(), cid.to_string(), key.clone()).await;
         }
@@ -362,5 +513,81 @@ fn extract_stats(
         network_rx_bytes,
         network_tx_bytes,
         pids,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn blank_stats() -> ContainerStats {
+        ContainerStats {
+            timestamp: String::new(),
+            cpu_percent: 0.0,
+            memory_used_bytes: 0,
+            memory_limit_bytes: 0,
+            memory_percent: 0.0,
+            disk_read_bytes: 0,
+            disk_write_bytes: 0,
+            network_rx_bytes: 0,
+            network_tx_bytes: 0,
+            pids: 0,
+        }
+    }
+
+    #[test]
+    fn test_apply_proc_overlay_valid_output() {
+        let mut cs = blank_stats();
+        let output = "1024 2048000 500 600 700 800\n";
+        assert!(apply_proc_overlay(&mut cs, output));
+        assert_eq!(cs.memory_used_bytes, 1024 * 1024);
+        assert_eq!(cs.memory_limit_bytes, 2048000 * 1024);
+        assert!(cs.memory_percent > 0.0);
+        assert_eq!(cs.disk_read_bytes, 500);
+        assert_eq!(cs.disk_write_bytes, 600);
+        assert_eq!(cs.network_rx_bytes, 700);
+        assert_eq!(cs.network_tx_bytes, 800);
+    }
+
+    #[test]
+    fn test_apply_proc_overlay_too_few_fields() {
+        let mut cs = blank_stats();
+        assert!(!apply_proc_overlay(&mut cs, "1024 2048"));
+        assert_eq!(cs.memory_used_bytes, 0);
+    }
+
+    #[test]
+    fn test_apply_proc_overlay_empty_input() {
+        let mut cs = blank_stats();
+        assert!(!apply_proc_overlay(&mut cs, ""));
+    }
+
+    #[test]
+    fn test_apply_proc_overlay_zero_mem_total() {
+        let mut cs = blank_stats();
+        let output = "1024 0 100 200 300 400";
+        assert!(apply_proc_overlay(&mut cs, output));
+        assert_eq!(cs.memory_percent, 0.0);
+    }
+
+    #[test]
+    fn test_apply_proc_overlay_non_numeric_falls_back_to_zero() {
+        let mut cs = blank_stats();
+        let output = "abc def 100 200 300 400";
+        assert!(apply_proc_overlay(&mut cs, output));
+        assert_eq!(cs.memory_used_bytes, 0);
+        assert_eq!(cs.memory_limit_bytes, 0);
+        assert_eq!(cs.disk_read_bytes, 100);
+    }
+
+    #[test]
+    fn test_apply_proc_overlay_preserves_cpu_and_pids() {
+        let mut cs = blank_stats();
+        cs.cpu_percent = 42.5;
+        cs.pids = 7;
+        let output = "1024 2048 100 200 300 400";
+        apply_proc_overlay(&mut cs, output);
+        assert_eq!(cs.cpu_percent, 42.5);
+        assert_eq!(cs.pids, 7);
     }
 }

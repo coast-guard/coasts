@@ -41,6 +41,8 @@ pub struct ExecParams {
     pub name: String,
     #[serde(default)]
     pub session_id: Option<String>,
+    #[serde(default)]
+    pub local: Option<bool>,
 }
 
 #[derive(Deserialize, Serialize, TS)]
@@ -492,14 +494,39 @@ async fn ws_handler(
         ));
     }
 
+    if let Some(remote_host) = instance
+        .remote_host
+        .as_ref()
+        .filter(|_| params.local != Some(true))
+    {
+        let remotes = db.list_remotes().unwrap_or_default();
+        let remote_name = remotes
+            .iter()
+            .find(|r| r.name == *remote_host || r.host == *remote_host)
+            .map(|r| r.name.clone());
+        drop(db);
+
+        if let Some(name) = remote_name {
+            return Ok(ws.on_upgrade(move |socket| {
+                crate::api::ws_remote_exec::handle_remote_exec_socket_for_instance(
+                    socket,
+                    state,
+                    name,
+                    params.project,
+                    params.name,
+                )
+            }));
+        }
+    } else {
+        drop(db);
+    }
+
     let container_id = instance.container_id.clone().ok_or_else(|| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             t!("error.no_container_id", locale = &lang).to_string(),
         )
     })?;
-
-    drop(db);
 
     let session_id = params.session_id.clone();
     let project = params.project.clone();

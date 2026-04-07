@@ -157,9 +157,24 @@ pub struct AppState {
     /// Persistent exec sessions for coast instance terminals.
     pub exec_sessions:
         Mutex<std::collections::HashMap<String, crate::api::ws_host_terminal::PtySession>>,
+    /// Persistent exec sessions for remote SSH terminals.
+    pub remote_exec_sessions:
+        Mutex<std::collections::HashMap<String, crate::api::ws_host_terminal::PtySession>>,
     /// Persistent exec sessions for inner compose service terminals.
     pub service_exec_sessions:
         Mutex<std::collections::HashMap<String, crate::api::ws_host_terminal::PtySession>>,
+    /// Cached system stats per remote machine (keyed by remote name).
+    pub remote_stats_cache:
+        Mutex<std::collections::HashMap<String, coast_core::types::RemoteStats>>,
+    /// Ring buffer of streaming stats per remote (keyed by remote name).
+    pub remote_streaming_history:
+        Mutex<std::collections::HashMap<String, std::collections::VecDeque<serde_json::Value>>>,
+    /// Live streaming stats broadcast channels per remote (keyed by remote name).
+    pub remote_streaming_broadcasts:
+        Mutex<std::collections::HashMap<String, tokio::sync::broadcast::Sender<serde_json::Value>>>,
+    /// Background streaming stats collector task handles per remote (keyed by remote name).
+    pub remote_streaming_collectors:
+        Mutex<std::collections::HashMap<String, tokio::task::JoinHandle<()>>>,
     /// Ring buffer of recent stats per container (keyed by "project:name").
     pub stats_history:
         Mutex<std::collections::HashMap<String, std::collections::VecDeque<serde_json::Value>>>,
@@ -246,6 +261,11 @@ impl AppState {
             event_bus,
             pty_sessions: Mutex::new(std::collections::HashMap::new()),
             exec_sessions: Mutex::new(std::collections::HashMap::new()),
+            remote_exec_sessions: Mutex::new(std::collections::HashMap::new()),
+            remote_stats_cache: Mutex::new(std::collections::HashMap::new()),
+            remote_streaming_history: Mutex::new(std::collections::HashMap::new()),
+            remote_streaming_broadcasts: Mutex::new(std::collections::HashMap::new()),
+            remote_streaming_collectors: Mutex::new(std::collections::HashMap::new()),
             service_exec_sessions: Mutex::new(std::collections::HashMap::new()),
             stats_history: Mutex::new(std::collections::HashMap::new()),
             stats_broadcasts: Mutex::new(std::collections::HashMap::new()),
@@ -281,6 +301,11 @@ impl AppState {
             event_bus,
             pty_sessions: Mutex::new(std::collections::HashMap::new()),
             exec_sessions: Mutex::new(std::collections::HashMap::new()),
+            remote_exec_sessions: Mutex::new(std::collections::HashMap::new()),
+            remote_stats_cache: Mutex::new(std::collections::HashMap::new()),
+            remote_streaming_history: Mutex::new(std::collections::HashMap::new()),
+            remote_streaming_broadcasts: Mutex::new(std::collections::HashMap::new()),
+            remote_streaming_collectors: Mutex::new(std::collections::HashMap::new()),
             service_exec_sessions: Mutex::new(std::collections::HashMap::new()),
             stats_history: Mutex::new(std::collections::HashMap::new()),
             stats_broadcasts: Mutex::new(std::collections::HashMap::new()),
@@ -723,7 +748,22 @@ async fn handle_build_streaming(
 
     let (tx, mut rx) = tokio::sync::mpsc::channel::<BuildProgressEvent>(64);
 
-    let mut build_future = std::pin::pin!(handlers::handle_build_with_progress(req, state, tx));
+    let is_remote = req.remote.is_some();
+    let build_handler: std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = std::result::Result<
+                        coast_core::protocol::BuildResponse,
+                        coast_core::error::CoastError,
+                    >,
+                > + Send,
+        >,
+    > = if is_remote {
+        Box::pin(handlers::handle_remote_build_with_progress(req, state, tx))
+    } else {
+        Box::pin(handlers::handle_build_with_progress(req, state, tx))
+    };
+    let mut build_future = std::pin::pin!(build_handler);
     let mut build_done = false;
     let mut build_result: Option<
         std::result::Result<coast_core::protocol::BuildResponse, coast_core::error::CoastError>,
@@ -853,6 +893,7 @@ async fn handle_run_streaming(
             worktree_name: None,
             build_id: req.build_id.clone(),
             coastfile_type: req.coastfile_type.clone(),
+            remote_host: None,
         };
         if let Err(e) = db.insert_instance(&enqueued_inst) {
             let resp = Response::Error(ErrorResponse {
@@ -1558,6 +1599,7 @@ async fn dispatch_request(request: Request, state: &Arc<AppState>) -> Response {
         Request::AgentShell(req) => handlers::handle_agent_shell(req, state).await,
         Request::SetLanguage(req) => handlers::handle_set_language(req, state).await,
         Request::SetAnalytics(req) => handlers::handle_set_analytics(req, state).await,
+        Request::Remote(req) => handlers::handle_remote(req, state).await,
         Request::IsSafeToUpdate(req) => handlers::handle_is_safe_to_update(req, state).await,
         Request::PrepareForUpdate(req) => handlers::handle_prepare_for_update(req, state).await,
     }
@@ -1755,6 +1797,7 @@ mod tests {
                 worktree_name: None,
                 build_id: None,
                 coastfile_type: None,
+                remote_host: None,
             };
             db.insert_instance(&inst).unwrap();
         }
@@ -1771,6 +1814,8 @@ mod tests {
             build_id: None,
             coastfile_type: None,
             force_remove_dangling: false,
+            remote: None,
+            shared_service_ports: Vec::new(),
         });
         let encoded = protocol::encode_request(&request).unwrap();
         writer.write_all(&encoded).await.unwrap();

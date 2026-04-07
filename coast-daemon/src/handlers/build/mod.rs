@@ -8,7 +8,7 @@ mod images;
 mod manifest;
 mod plan;
 mod secrets;
-mod utils;
+pub(crate) mod utils;
 
 use tracing::info;
 
@@ -45,6 +45,7 @@ pub async fn handle(
     );
 
     let coastfile = Coastfile::from_file(&req.coastfile_path)?;
+
     let home = coast_home()?;
     std::fs::create_dir_all(&home).map_err(|error| CoastError::Io {
         message: format!("failed to create Coast home directory: {error}"),
@@ -233,6 +234,7 @@ mod tests {
         let req = BuildRequest {
             coastfile_path: PathBuf::from("/tmp/nonexistent/Coastfile"),
             refresh: false,
+            remote: None,
         };
         let result = handle(req, &state, test_progress_sender()).await;
         assert!(result.is_err());
@@ -257,6 +259,7 @@ compose = "./docker-compose.yml"
         let req = BuildRequest {
             coastfile_path,
             refresh: false,
+            remote: None,
         };
         let resp = handle(req, &state, test_progress_sender()).await.unwrap();
         assert_eq!(resp.project, "test-build");
@@ -289,6 +292,7 @@ compose = "./docker-compose.yml"
         let req = BuildRequest {
             coastfile_path,
             refresh: false,
+            remote: None,
         };
         let resp = handle(req, &state, test_progress_sender()).await.unwrap();
 
@@ -322,6 +326,7 @@ mount = "/var/lib/postgresql/data"
         let req = BuildRequest {
             coastfile_path,
             refresh: false,
+            remote: None,
         };
         let result = handle(req, &state, test_progress_sender()).await.unwrap();
         assert!(!result.warnings.is_empty());
@@ -350,6 +355,7 @@ files = ["/tmp/nonexistent_coast_test_file_12345"]
         let req = BuildRequest {
             coastfile_path,
             refresh: false,
+            remote: None,
         };
         let result = handle(req, &state, test_progress_sender()).await.unwrap();
         assert!(result
@@ -384,6 +390,7 @@ compose = "./docker-compose.yml"
         let req = BuildRequest {
             coastfile_path,
             refresh: false,
+            remote: None,
         };
         let result = handle(req, &state, test_progress_sender()).await.unwrap();
 
@@ -423,6 +430,7 @@ run = ["echo hello"]
         let req = BuildRequest {
             coastfile_path,
             refresh: false,
+            remote: None,
         };
         let result = handle(req, &state, test_progress_sender()).await;
         if let Ok(resp) = result {
@@ -450,6 +458,7 @@ compose = "./docker-compose.yml"
         let req = BuildRequest {
             coastfile_path,
             refresh: false,
+            remote: None,
         };
         let result = handle(req, &state, test_progress_sender()).await.unwrap();
         assert!(result.coast_image.is_none());
@@ -474,6 +483,7 @@ compose = "./docker-compose.yml"
         let req = BuildRequest {
             coastfile_path,
             refresh: false,
+            remote: None,
         };
         let result = handle(req, &state, test_progress_sender()).await.unwrap();
 
@@ -513,6 +523,7 @@ compose = "./docker-compose.yml"
         let req = BuildRequest {
             coastfile_path,
             refresh: false,
+            remote: None,
         };
         let (tx, mut rx) = tokio::sync::mpsc::channel(64);
         let _result = handle(req, &state, tx).await.unwrap();
@@ -622,6 +633,7 @@ ttl = "1h"
         let req = BuildRequest {
             coastfile_path,
             refresh: false,
+            remote: None,
         };
         let (tx, mut rx) = tokio::sync::mpsc::channel(64);
         let result = handle(req, &state, tx).await.unwrap();
@@ -678,6 +690,7 @@ compose = "./docker-compose.yml"
         let req = BuildRequest {
             coastfile_path,
             refresh: false,
+            remote: None,
         };
         let (tx, mut rx) = tokio::sync::mpsc::channel(64);
         let result = handle(req, &state, tx).await.unwrap();
@@ -753,6 +766,7 @@ volumes:
         let req = BuildRequest {
             coastfile_path,
             refresh: false,
+            remote: None,
         };
         let result = handle(req, &state, test_progress_sender()).await.unwrap();
 

@@ -27,6 +27,20 @@ pub async fn handle(req: RebuildRequest, state: &AppState) -> Result<RebuildResp
         "handling rebuild request"
     );
 
+    {
+        let db = state.db.lock().await;
+        if let Some(instance) = db.get_instance(&req.project, &req.name)? {
+            if instance.remote_host.is_some() {
+                drop(db);
+                return Err(CoastError::state(
+                    "Rebuild for remote instances is not yet supported. \
+                     Use `coast build --type remote` to rebuild the remote build artifact, \
+                     then `coast assign` to apply changes.",
+                ));
+            }
+        }
+    }
+
     // Phase 1: DB read (locked)
     let container_id = {
         let db = state.db.lock().await;
@@ -228,6 +242,7 @@ mod tests {
             worktree_name: None,
             build_id: None,
             coastfile_type: None,
+            remote_host: None,
         }
     }
 
@@ -318,6 +333,7 @@ mod tests {
             worktree_name: None,
             build_id: None,
             coastfile_type: None,
+            remote_host: None,
         })
         .unwrap();
         let state = AppState::new_for_testing(db);

@@ -285,6 +285,7 @@ pub fn request_context(req: &Request) -> (Option<&str>, Option<&str>) {
         | Request::SearchDocs(_)
         | Request::SetLanguage(_)
         | Request::SetAnalytics(_)
+        | Request::Remote(_)
         | Request::IsSafeToUpdate(_)
         | Request::PrepareForUpdate(_) => (None, None),
         Request::Lookup(r) => (Some(&r.project), None),
@@ -489,6 +490,18 @@ pub fn request_command_name(req: &Request) -> String {
             AnalyticsAction::Status => "analytics/status",
         }
         .into(),
+        Request::Remote(r) => {
+            use RemoteRequest::*;
+            match r {
+                Add { .. } => "remote/add",
+                Prune { .. } => "remote/prune",
+                Ls => "remote/ls",
+                Rm { .. } => "remote/rm",
+                Test { .. } => "remote/test",
+                Setup { .. } => "remote/setup",
+            }
+        }
+        .into(),
         Request::Lookup(_) => "lookup".into(),
         Request::IsSafeToUpdate(_) => "update/is_safe_to_update".into(),
         Request::PrepareForUpdate(_) => "update/prepare_for_update".into(),
@@ -520,6 +533,7 @@ mod tests {
             Request::Build(BuildRequest {
                 coastfile_path: std::path::PathBuf::new(),
                 refresh: false,
+                remote: None,
             }),
             Request::RerunExtractors(RerunExtractorsRequest {
                 project: String::new(),
@@ -534,6 +548,8 @@ mod tests {
                 build_id: None,
                 coastfile_type: None,
                 force_remove_dangling: false,
+                remote: None,
+                shared_service_ports: Vec::new(),
             }),
             Request::Stop(StopRequest {
                 project: String::new(),
@@ -598,6 +614,7 @@ mod tests {
                 commit_sha: None,
                 explain: false,
                 force_sync: false,
+                service_actions: Default::default(),
             }),
             Request::Unassign(UnassignRequest {
                 project: String::new(),
@@ -642,6 +659,10 @@ mod tests {
             Request::SetAnalytics(SetAnalyticsRequest {
                 action: AnalyticsAction::Status,
             }),
+            Request::Remote(RemoteRequest::Setup {
+                name: String::new(),
+                docker: false,
+            }),
             Request::IsSafeToUpdate(UpdateSafetyRequest::default()),
             Request::PrepareForUpdate(PrepareForUpdateRequest::default()),
         ];
@@ -653,7 +674,7 @@ mod tests {
 
         // Verify count matches enum variant count (compile error if a new
         // variant is added without updating the match above)
-        assert_eq!(variants.len(), 31);
+        assert_eq!(variants.len(), 32);
     }
 
     #[tokio::test]

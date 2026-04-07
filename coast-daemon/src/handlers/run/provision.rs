@@ -1081,6 +1081,8 @@ mod tests {
             commit_sha: None,
             coastfile_type: None,
             force_remove_dangling: false,
+            remote: None,
+            shared_service_ports: Vec::new(),
         }
     }
 

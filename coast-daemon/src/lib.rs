@@ -26,6 +26,7 @@ mod handlers;
 mod image_loader;
 #[allow(dead_code)]
 mod port_manager;
+mod remote_stats;
 pub mod server;
 #[allow(dead_code)]
 mod shared_services;
@@ -243,8 +244,9 @@ async fn run_daemon(cli: Cli) -> Result<()> {
     // Write PID file
     server::write_pid_file(&pid_path)?;
 
-    // Clean up any orphaned socat processes from a previous daemon session
+    // Clean up any orphaned socat/SSH processes from a previous daemon session
     port_manager::cleanup_orphaned_socat();
+    handlers::remote::tunnel::cleanup_orphaned_ssh_tunnels();
     if port_manager::running_in_wsl() {
         port_manager::cleanup_orphaned_checkout_bridges();
     }
@@ -264,6 +266,9 @@ async fn run_daemon(cli: Cli) -> Result<()> {
 
     // Start background Docker connectivity watcher
     docker_watcher::spawn_docker_watcher(Arc::clone(&state));
+
+    // Start background remote stats poller
+    remote_stats::spawn_remote_stats_poller(Arc::clone(&state));
 
     // Set up shutdown signal handling
     let (shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
@@ -397,7 +402,7 @@ async fn service_health_cache_loop(state: Arc<server::AppState>) {
                     let down = resp
                         .services
                         .iter()
-                        .filter(|s| s.status != "running")
+                        .filter(|s| !s.status.starts_with("running"))
                         .count() as u32;
                     state.service_health_cache.lock().await.insert(key, down);
                 }
@@ -413,20 +418,24 @@ async fn service_health_cache_loop(state: Arc<server::AppState>) {
 /// Load healthcheck paths from the build artifact coastfile for a project.
 fn load_healthcheck_paths(project: &str) -> std::collections::HashMap<String, String> {
     let home = dirs::home_dir().unwrap_or_default();
-    let cf_path = home
-        .join(".coast")
-        .join("images")
-        .join(project)
-        .join("latest")
-        .join("coastfile.toml");
-    coast_core::coastfile::Coastfile::from_file(&cf_path)
-        .map(|cf| cf.healthcheck)
-        .unwrap_or_default()
+    let images_dir = home.join(".coast").join("images").join(project);
+    for link_name in &["latest", "latest-remote"] {
+        let cf_path = images_dir.join(link_name).join("coastfile.toml");
+        if let Ok(cf) = coast_core::coastfile::Coastfile::from_file(&cf_path) {
+            if !cf.healthcheck.is_empty() {
+                return cf.healthcheck;
+            }
+        }
+    }
+    std::collections::HashMap::new()
 }
 
 /// Background loop that probes each port's dynamic_port every 5 seconds.
 /// Uses HTTP GET for ports with a `[healthcheck]` path configured, falls back
 /// to TCP connect for ports without one. Any HTTP response = healthy.
+///
+/// For remote instances, when all ports go unhealthy, automatically kills
+/// stale SSH tunnels and re-establishes them (auto-heal).
 async fn port_health_cache_loop(state: Arc<server::AppState>) {
     use coast_core::types::PortHealthStatus;
     let http_client = reqwest::Client::builder()
@@ -436,8 +445,11 @@ async fn port_health_cache_loop(state: Arc<server::AppState>) {
         .build()
         .unwrap_or_default();
 
+    let mut tunnel_heal_cooldown: std::collections::HashMap<String, tokio::time::Instant> =
+        std::collections::HashMap::new();
+
     loop {
-        let running: Vec<(String, String)> = {
+        let running: Vec<(String, String, Option<String>)> = {
             let db = state.db.lock().await;
             db.list_instances()
                 .unwrap_or_default()
@@ -450,10 +462,10 @@ async fn port_health_cache_loop(state: Arc<server::AppState>) {
                             | coast_core::types::InstanceStatus::Idle
                     )
                 })
-                .map(|i| (i.project, i.name))
+                .map(|i| (i.project, i.name, i.remote_host))
                 .collect()
         };
-        for (project, name) in &running {
+        for (project, name, remote_host) in &running {
             let healthcheck_paths = load_healthcheck_paths(project);
             let allocs = {
                 let db = state.db.lock().await;
@@ -461,11 +473,30 @@ async fn port_health_cache_loop(state: Arc<server::AppState>) {
             };
             let key = format!("{project}:{name}");
             let mut statuses: Vec<PortHealthStatus> = Vec::new();
+
+            let remote_tunnels_dead = if remote_host.is_some() && !allocs.is_empty() {
+                let pattern = format!("ssh -N -L {}:", allocs[0].dynamic_port);
+                let result = tokio::process::Command::new("pgrep")
+                    .args(["-f", &pattern])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+                    .await;
+                match result {
+                    Ok(status) => !status.success(),
+                    Err(_) => false,
+                }
+            } else {
+                false
+            };
+
             for alloc in &allocs {
                 let port = alloc.dynamic_port;
                 let mapping: coast_core::types::PortMapping = alloc.into();
 
-                let healthy = if let Some(path) = healthcheck_paths.get(&mapping.logical_name) {
+                let healthy = if remote_tunnels_dead {
+                    false
+                } else if let Some(path) = healthcheck_paths.get(&mapping.logical_name) {
                     let url = format!("http://127.0.0.1:{}{}", port, path);
                     http_client.get(&url).send().await.is_ok()
                 } else {
@@ -499,15 +530,101 @@ async fn port_health_cache_loop(state: Arc<server::AppState>) {
                     None => true,
                 }
             };
-            state.port_health_cache.lock().await.insert(key, statuses);
+
+            let port_count = statuses.len();
+            let healthy_count = statuses.iter().filter(|s| s.healthy).count();
+
+            state
+                .port_health_cache
+                .lock()
+                .await
+                .insert(key.clone(), statuses);
             if changed {
                 state.emit_event(coast_core::protocol::CoastEvent::PortHealthChanged {
                     name: name.clone(),
                     project: project.clone(),
                 });
             }
+
+            if remote_host.is_some() && port_count > 0 && healthy_count == 0 {
+                {
+                    let now = tokio::time::Instant::now();
+                    let cooldown_ok = tunnel_heal_cooldown
+                        .get(&key)
+                        .map(|last| now.duration_since(*last).as_secs() >= 30)
+                        .unwrap_or(true);
+
+                    if cooldown_ok {
+                        warn!(
+                            instance = %name,
+                            project = %project,
+                            ports = port_count,
+                            "all remote ports unhealthy — re-establishing SSH tunnels"
+                        );
+                        tunnel_heal_cooldown.insert(key.clone(), now);
+                        handlers::remote::tunnel::cleanup_orphaned_ssh_tunnels();
+
+                        heal_remote_tunnels(&state, project, name).await;
+                        heal_shared_service_tunnels(&state, project).await;
+                    }
+                }
+            }
         }
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    }
+}
+
+/// Re-establish shared service reverse tunnels for a specific remote instance.
+async fn heal_shared_service_tunnels(state: &Arc<server::AppState>, project: &str) {
+    let reverse_pairs = shared_service_reverse_pairs(project);
+    if reverse_pairs.is_empty() {
+        return;
+    }
+
+    let (remotes, instances) = {
+        let db = state.db.lock().await;
+        (
+            db.list_remotes().unwrap_or_default(),
+            db.list_instances().unwrap_or_default(),
+        )
+    };
+    let inst = instances
+        .iter()
+        .find(|i| i.project == project && i.remote_host.is_some());
+    let Some(inst) = inst else {
+        return;
+    };
+    let remote_host = inst.remote_host.as_deref().unwrap();
+    let entry = remotes
+        .iter()
+        .find(|r| r.name == remote_host || r.host == remote_host);
+    let Some(entry) = entry else {
+        return;
+    };
+
+    let connection = coast_core::types::RemoteConnection::from_entry(
+        entry,
+        &coast_core::types::RemoteConfig {
+            workspace_sync: coast_core::types::SyncStrategy::default(),
+        },
+    );
+
+    match handlers::remote::tunnel::reverse_forward_ports(&connection, &reverse_pairs).await {
+        Ok(pids) => {
+            tracing::info!(
+                project = %project,
+                tunnels = reverse_pairs.len(),
+                pids = ?pids,
+                "healed shared service reverse tunnels"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(
+                project = %project,
+                error = %e,
+                "failed to heal shared service reverse tunnels"
+            );
+        }
     }
 }
 
@@ -521,18 +638,477 @@ async fn restore_socat_forwarding(
     use coast_docker::runtime::Runtime;
 
     for inst in instances {
-        let cid = inst.container_id.as_ref().unwrap();
-        let coast_ip = match rt.get_container_ip(cid).await {
-            Ok(ip) => ip.to_string(),
-            Err(e) => {
-                warn!(
-                    instance = %inst.name, project = %inst.project, error = %e,
-                    "could not resolve container IP, skipping port restore"
-                );
-                continue;
+        let coast_ip = if inst.remote_host.is_some() {
+            "127.0.0.1".to_string()
+        } else {
+            let cid = inst.container_id.as_ref().unwrap();
+            match rt.get_container_ip(cid).await {
+                Ok(ip) => ip.to_string(),
+                Err(e) => {
+                    warn!(
+                        instance = %inst.name, project = %inst.project, error = %e,
+                        "could not resolve container IP, skipping port restore"
+                    );
+                    continue;
+                }
             }
         };
         restore_socat_for_instance(state, inst, &coast_ip).await;
+    }
+}
+
+/// Parse a remote published port from a Docker ports string like
+/// "0.0.0.0:35969->3000/tcp, 0.0.0.0:39325->4000/tcp" given a target
+/// canonical (container) port.
+fn parse_remote_port_from_docker_ports(ports_str: &str, canonical_port: u16) -> Option<u16> {
+    let target = format!("->{canonical_port}/");
+    for segment in ports_str.split(',') {
+        let segment = segment.trim();
+        if segment.contains(&target) {
+            let colon_pos = segment.find(':')?;
+            let arrow_pos = segment.find("->")?;
+            let host_port_str = &segment[colon_pos + 1..arrow_pos];
+            return host_port_str.parse().ok();
+        }
+    }
+    None
+}
+
+async fn connect_remote_for_heal(
+    state: &Arc<server::AppState>,
+    project: &str,
+    name: &str,
+) -> Option<(
+    coast_core::types::RemoteConnection,
+    coast_core::protocol::PsResponse,
+)> {
+    let remote_config =
+        match handlers::remote::resolve_remote_for_instance(project, name, state).await {
+            Ok(c) => c,
+            Err(e) => {
+                warn!(instance = %name, error = %e, "cannot resolve remote for tunnel heal");
+                return None;
+            }
+        };
+
+    let client = match handlers::remote::RemoteClient::connect(&remote_config).await {
+        Ok(c) => c,
+        Err(e) => {
+            warn!(instance = %name, error = %e, "cannot connect to remote for tunnel heal");
+            return None;
+        }
+    };
+
+    let ps_req = coast_core::protocol::PsRequest {
+        name: name.to_string(),
+        project: project.to_string(),
+    };
+    let ps_resp = match handlers::remote::forward::forward_ps(&client, &ps_req).await {
+        Ok(r) => r,
+        Err(e) => {
+            warn!(instance = %name, error = %e, "failed to query remote ps for tunnel heal");
+            return None;
+        }
+    };
+
+    Some((remote_config, ps_resp))
+}
+
+fn build_heal_tunnel_pairs(
+    allocs: &[state::PortAllocationRecord],
+    ps_resp: &coast_core::protocol::PsResponse,
+) -> Vec<(u16, u16)> {
+    allocs
+        .iter()
+        .filter_map(|a| {
+            if let Some(rdp) = a.remote_dynamic_port {
+                return Some((a.dynamic_port, rdp));
+            }
+            for svc in &ps_resp.services {
+                if let Some(rdp) = parse_remote_port_from_docker_ports(&svc.ports, a.canonical_port)
+                {
+                    return Some((a.dynamic_port, rdp));
+                }
+            }
+            None
+        })
+        .collect()
+}
+
+fn build_restore_tunnel_pairs(allocs: &[state::PortAllocationRecord]) -> Vec<(u16, u16)> {
+    allocs
+        .iter()
+        .filter_map(|a| a.remote_dynamic_port.map(|rdp| (a.dynamic_port, rdp)))
+        .collect()
+}
+
+/// Re-establish SSH tunnels for a single remote instance by querying
+/// coast-service for the current port mappings. Does not depend on the
+/// `remote_dynamic_port` column being populated in the local DB.
+async fn heal_remote_tunnels(state: &Arc<server::AppState>, project: &str, name: &str) {
+    let Some((remote_config, ps_resp)) = connect_remote_for_heal(state, project, name).await else {
+        return;
+    };
+
+    let allocs = {
+        let db = state.db.lock().await;
+        db.get_port_allocations(project, name).unwrap_or_default()
+    };
+
+    let tunnel_pairs = build_heal_tunnel_pairs(&allocs, &ps_resp);
+
+    if tunnel_pairs.is_empty() {
+        warn!(instance = %name, "no port mappings found for tunnel heal");
+        return;
+    }
+
+    match handlers::remote::tunnel::forward_ports(&remote_config, &tunnel_pairs).await {
+        Ok(pids) => {
+            info!(
+                instance = %name,
+                tunnels = tunnel_pairs.len(),
+                pids = ?pids,
+                "SSH tunnels re-established (auto-heal)"
+            );
+        }
+        Err(e) => {
+            warn!(instance = %name, error = %e, "failed to re-establish SSH tunnels");
+        }
+    }
+}
+
+async fn forward_and_log_tunnels(
+    connection: &coast_core::types::RemoteConnection,
+    tunnel_pairs: &[(u16, u16)],
+    instance_name: &str,
+) {
+    match handlers::remote::tunnel::forward_ports(connection, tunnel_pairs).await {
+        Ok(pids) => {
+            tracing::info!(
+                instance = %instance_name,
+                tunnels = tunnel_pairs.len(),
+                pids = ?pids,
+                "restored SSH port tunnels"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(
+                instance = %instance_name,
+                error = %e,
+                "failed to restore SSH port tunnels"
+            );
+        }
+    }
+}
+
+async fn restore_instance_tunnels(
+    state: &Arc<server::AppState>,
+    inst: &coast_core::types::CoastInstance,
+    remotes: &[coast_core::types::RemoteEntry],
+) {
+    let remote_host = inst.remote_host.as_deref().unwrap();
+    let entry = remotes
+        .iter()
+        .find(|r| r.name == remote_host || r.host == remote_host);
+    let Some(entry) = entry else {
+        tracing::warn!(
+            instance = %inst.name,
+            remote = %remote_host,
+            "remote entry not found, skipping tunnel restore"
+        );
+        return;
+    };
+
+    let allocs = {
+        let db = state.db.lock().await;
+        db.get_port_allocations(&inst.project, &inst.name)
+            .unwrap_or_default()
+    };
+
+    let tunnel_pairs = build_restore_tunnel_pairs(&allocs);
+
+    if tunnel_pairs.is_empty() {
+        tracing::debug!(
+            instance = %inst.name,
+            "no remote port mappings stored, skipping tunnel restore"
+        );
+        return;
+    }
+
+    let connection = coast_core::types::RemoteConnection::from_entry(
+        entry,
+        &coast_core::types::RemoteConfig {
+            workspace_sync: coast_core::types::SyncStrategy::default(),
+        },
+    );
+
+    forward_and_log_tunnels(&connection, &tunnel_pairs, &inst.name).await;
+}
+
+/// Re-establish SSH port tunnels for remote instances after daemon restart.
+async fn restore_remote_tunnels(
+    state: &Arc<server::AppState>,
+    instances: &[coast_core::types::CoastInstance],
+) {
+    let remote_instances: Vec<_> = instances
+        .iter()
+        .filter(|inst| inst.remote_host.is_some())
+        .collect();
+
+    if remote_instances.is_empty() {
+        return;
+    }
+
+    let remotes = {
+        let db = state.db.lock().await;
+        db.list_remotes().unwrap_or_default()
+    };
+
+    for inst in remote_instances {
+        restore_instance_tunnels(state, inst, &remotes).await;
+    }
+}
+
+/// Extract shared service reverse tunnel port pairs from a project's Coastfile.
+pub fn shared_service_reverse_pairs(project: &str) -> Vec<(u16, u16)> {
+    let Ok(images_dir) = coast_core::artifact::artifact_dir(project) else {
+        return Vec::new();
+    };
+    let candidates = ["latest-remote", "latest"];
+    let coastfile_path = candidates.iter().find_map(|name| {
+        let p = images_dir.join(name).join("coastfile.toml");
+        if p.exists() {
+            Some(p)
+        } else {
+            None
+        }
+    });
+    let Some(cf_path) = coastfile_path else {
+        return Vec::new();
+    };
+    let Ok(content) = std::fs::read_to_string(&cf_path) else {
+        return Vec::new();
+    };
+    let Ok(cf) = coast_core::coastfile::Coastfile::parse(&content, &images_dir) else {
+        return Vec::new();
+    };
+    cf.shared_services
+        .iter()
+        .flat_map(|svc| {
+            svc.ports
+                .iter()
+                .map(|p| (p.container_port, p.container_port))
+        })
+        .collect()
+}
+
+/// Re-establish SSH reverse tunnels for shared services after daemon restart.
+async fn restore_shared_service_tunnels(
+    state: &Arc<server::AppState>,
+    instances: &[coast_core::types::CoastInstance],
+) {
+    let remote_instances: Vec<_> = instances
+        .iter()
+        .filter(|inst| inst.remote_host.is_some())
+        .collect();
+
+    if remote_instances.is_empty() {
+        return;
+    }
+
+    let remotes = {
+        let db = state.db.lock().await;
+        db.list_remotes().unwrap_or_default()
+    };
+
+    let mut restored_hosts: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for inst in &remote_instances {
+        restore_tunnels_for_instance(inst, &remotes, &mut restored_hosts).await;
+    }
+}
+
+async fn restore_tunnels_for_instance(
+    inst: &coast_core::types::CoastInstance,
+    remotes: &[coast_core::types::RemoteEntry],
+    restored_hosts: &mut std::collections::HashSet<String>,
+) {
+    let reverse_pairs = shared_service_reverse_pairs(&inst.project);
+    if reverse_pairs.is_empty() {
+        return;
+    }
+
+    let Some(remote_host) = inst.remote_host.as_deref() else {
+        return;
+    };
+    let Some(entry) = remotes
+        .iter()
+        .find(|r| r.name == remote_host || r.host == remote_host)
+    else {
+        tracing::warn!(
+            instance = %inst.name,
+            remote = %remote_host,
+            "remote entry not found, skipping shared service tunnel restore"
+        );
+        return;
+    };
+
+    let host_key = format!("{}@{}:{}", entry.user, entry.host, entry.port);
+    if restored_hosts.contains(&host_key) {
+        tracing::info!(
+            instance = %inst.name,
+            host = %entry.host,
+            "shared service tunnels already restored for this remote, skipping"
+        );
+        return;
+    }
+
+    let connection = coast_core::types::RemoteConnection::from_entry(
+        entry,
+        &coast_core::types::RemoteConfig {
+            workspace_sync: coast_core::types::SyncStrategy::default(),
+        },
+    );
+
+    if create_reverse_tunnels(&connection, &reverse_pairs, &inst.name).await {
+        restored_hosts.insert(host_key);
+    }
+}
+
+async fn create_reverse_tunnels(
+    connection: &coast_core::types::RemoteConnection,
+    reverse_pairs: &[(u16, u16)],
+    instance_name: &str,
+) -> bool {
+    match handlers::remote::tunnel::reverse_forward_ports(connection, reverse_pairs).await {
+        Ok(pids) => {
+            tracing::info!(
+                instance = %instance_name,
+                tunnels = reverse_pairs.len(),
+                pids = ?pids,
+                "restored shared service reverse tunnels"
+            );
+            true
+        }
+        Err(e) => {
+            tracing::warn!(
+                instance = %instance_name,
+                error = %e,
+                "failed to restore shared service reverse tunnels"
+            );
+            false
+        }
+    }
+}
+
+/// Resolve worktree path and remount /workspace in the shell container.
+/// Returns the host path to the workspace source for rsync.
+async fn remount_worktree_in_shell(
+    docker: &bollard::Docker,
+    inst: &coast_core::types::CoastInstance,
+) -> Option<std::path::PathBuf> {
+    let shell_container = format!("{}-coasts-{}-shell", inst.project, inst.name);
+    let cf_data = handlers::assign::load_coastfile_data(&inst.project);
+    let project_root = handlers::assign::read_project_root(&inst.project);
+
+    if let Some(ref wt_name) = inst.worktree_name {
+        let wt_path = handlers::assign::services::detect_worktree_path(
+            &project_root,
+            &cf_data.worktree_dirs,
+            &cf_data.default_worktree_dir,
+            wt_name,
+        )
+        .await;
+        let Some(loc) = wt_path.filter(|l| l.host_path.exists()) else {
+            tracing::warn!(instance = %inst.name, wt = %wt_name, "worktree not found, skipping restore");
+            return None;
+        };
+        let mount_cmd = format!(
+            "umount -l /workspace 2>/dev/null; mount --bind {} /workspace && mount --make-rshared /workspace",
+            loc.container_mount_src
+        );
+        let rt = coast_docker::dind::DindRuntime::with_client(docker.clone());
+        use coast_docker::runtime::Runtime;
+        if let Err(e) = rt
+            .exec_in_coast(&shell_container, &["sh", "-c", &mount_cmd])
+            .await
+        {
+            tracing::warn!(instance = %inst.name, error = %e, "failed to remount worktree in shell");
+        }
+        Some(loc.host_path)
+    } else {
+        project_root
+    }
+}
+
+/// Restore worktree mounts and mutagen sessions for remote instances
+/// after daemon restart.
+async fn restore_remote_worktrees(
+    state: &Arc<server::AppState>,
+    instances: &[coast_core::types::CoastInstance],
+) {
+    let Some(docker) = state.docker.as_ref() else {
+        return;
+    };
+
+    let remotes = {
+        let db = state.db.lock().await;
+        db.list_remotes().unwrap_or_default()
+    };
+
+    for inst in instances {
+        let Some(remote_host) = inst.remote_host.as_deref() else {
+            continue;
+        };
+        let Some(entry) = remotes
+            .iter()
+            .find(|r| r.name == remote_host || r.host == remote_host)
+        else {
+            continue;
+        };
+
+        let connection = coast_core::types::RemoteConnection::from_entry(
+            entry,
+            &coast_core::types::RemoteConfig {
+                workspace_sync: coast_core::types::SyncStrategy::default(),
+            },
+        );
+
+        let Some(workspace_source) = remount_worktree_in_shell(&docker, inst).await else {
+            continue;
+        };
+
+        let Ok(client) = handlers::remote::RemoteClient::connect(&connection).await else {
+            tracing::warn!(instance = %inst.name, "failed to connect to remote for worktree restore");
+            continue;
+        };
+
+        let service_home = client.query_service_home().await;
+        let remote_workspace =
+            handlers::remote::remote_workspace_path(&service_home, &inst.project, &inst.name);
+
+        if workspace_source.exists() {
+            let _ = client
+                .sync_workspace_no_delete(&workspace_source, &remote_workspace)
+                .await;
+        }
+
+        let shell_container = format!("{}-coasts-{}-shell", inst.project, inst.name);
+        handlers::run::start_mutagen_in_shell(
+            &docker,
+            &shell_container,
+            &inst.project,
+            &inst.name,
+            &remote_workspace,
+            &connection,
+        )
+        .await;
+
+        tracing::info!(
+            instance = %inst.name,
+            worktree = ?inst.worktree_name,
+            "restored worktree mount and mutagen for remote instance"
+        );
     }
 }
 
@@ -686,12 +1262,25 @@ async fn handle_stats_lifecycle_event(
     use coast_core::protocol::CoastEvent;
 
     match event {
-        CoastEvent::InstanceCreated { name, project }
-        | CoastEvent::InstanceStarted { name, project } => {
+        CoastEvent::InstanceCreated { name, project, .. }
+        | CoastEvent::InstanceStarted { name, project, .. } => {
             let key = api::ws_stats::stats_key(project, name);
             let db = state.db.lock().await;
             if let Ok(Some(inst)) = db.get_instance(project, name) {
-                if let Some(ref cid) = inst.container_id {
+                if inst.remote_host.is_some() {
+                    let project = project.clone();
+                    let name = name.clone();
+                    drop(db);
+                    if !state.stats_collectors.lock().await.contains_key(&key) {
+                        api::ws_stats::start_remote_dind_stats_collector(
+                            Arc::clone(state),
+                            key,
+                            project,
+                            name,
+                        )
+                        .await;
+                    }
+                } else if let Some(ref cid) = inst.container_id {
                     let cid = cid.clone();
                     let project = project.clone();
                     let name = name.clone();
@@ -764,28 +1353,47 @@ async fn restore_running_state(state: &Arc<server::AppState>) {
 
     // Start background stats collectors for all running instances.
     for inst in &active_instances {
-        let cid = inst.container_id.as_ref().unwrap().clone();
         let key = api::ws_stats::stats_key(&inst.project, &inst.name);
-        api::ws_stats::start_stats_collector(Arc::clone(state), cid.clone(), key).await;
-
-        let state_clone = Arc::clone(state);
-        let project = inst.project.clone();
-        let name = inst.name.clone();
-        tokio::spawn(async move {
-            api::ws_service_stats::discover_and_start_service_collectors(
-                state_clone,
-                cid,
-                project,
-                name,
+        if inst.remote_host.is_some() {
+            api::ws_stats::start_remote_dind_stats_collector(
+                Arc::clone(state),
+                key,
+                inst.project.clone(),
+                inst.name.clone(),
             )
             .await;
-        });
+        } else {
+            let cid = inst.container_id.as_ref().unwrap().clone();
+            api::ws_stats::start_stats_collector(Arc::clone(state), cid.clone(), key).await;
+
+            let state_clone = Arc::clone(state);
+            let project = inst.project.clone();
+            let name = inst.name.clone();
+            tokio::spawn(async move {
+                api::ws_service_stats::discover_and_start_service_collectors(
+                    state_clone,
+                    cid,
+                    project,
+                    name,
+                )
+                .await;
+            });
+        }
     }
 
     // Restore socat port forwarding (dynamic + canonical for checked-out).
     if state.docker.is_some() {
         restore_socat_forwarding(state, &active_instances).await;
     }
+
+    // Restore SSH port tunnels for remote instances.
+    restore_remote_tunnels(state, &active_instances).await;
+
+    // Restore SSH reverse tunnels for shared services.
+    restore_shared_service_tunnels(state, &active_instances).await;
+
+    // Restore worktree mounts and mutagen sessions for remote instances.
+    restore_remote_worktrees(state, &active_instances).await;
 
     // Restore agent shells (background tasks -- Docker exec is slow).
     for inst in active_instances {
@@ -931,6 +1539,7 @@ mod tests {
             worktree_name: None,
             build_id: None,
             coastfile_type: None,
+            remote_host: None,
         }
     }
 

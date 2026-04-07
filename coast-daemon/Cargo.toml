@@ -46,7 +46,7 @@ axum = { workspace = true }
 tower-http = { workspace = true }
 async-stream = { workspace = true }
 bytes = { workspace = true }
-sha2 = { workspace = true }
+sha2.workspace = true
 hickory-proto = "0.25"
 rust-embed = { workspace = true }
 mime_guess = "2"

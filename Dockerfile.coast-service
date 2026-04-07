@@ -1,0 +1,72 @@
+FROM rust:1.94-bookworm AS builder
+
+WORKDIR /build
+
+# Copy workspace manifests first for layer caching.
+COPY Cargo.toml Cargo.lock ./
+COPY coast-core/Cargo.toml coast-core/Cargo.toml
+COPY coast-i18n/Cargo.toml coast-i18n/Cargo.toml
+COPY coast-secrets/Cargo.toml coast-secrets/Cargo.toml
+COPY coast-docker/Cargo.toml coast-docker/Cargo.toml
+COPY coast-daemon/Cargo.toml coast-daemon/Cargo.toml
+COPY coast-cli/Cargo.toml coast-cli/Cargo.toml
+COPY coast-update/Cargo.toml coast-update/Cargo.toml
+COPY coast-service/Cargo.toml coast-service/Cargo.toml
+COPY integration-tests/Cargo.toml integration-tests/Cargo.toml
+
+# Stub out all crate lib/main files so cargo can resolve the dependency graph
+# and cache downloaded + compiled dependencies.
+RUN mkdir -p coast-core/src && echo "" > coast-core/src/lib.rs && \
+    mkdir -p coast-i18n/src && echo "" > coast-i18n/src/lib.rs && \
+    mkdir -p coast-secrets/src && echo "" > coast-secrets/src/lib.rs && \
+    mkdir -p coast-docker/src && echo "" > coast-docker/src/lib.rs && \
+    mkdir -p coast-daemon/src && echo "fn main() {}" > coast-daemon/src/main.rs && echo "" > coast-daemon/src/lib.rs && \
+    mkdir -p coast-daemon/src/bin && echo "fn main() {}" > coast-daemon/src/bin/coastd-dev.rs && \
+    mkdir -p coast-cli/src && echo "fn main() {}" > coast-cli/src/main.rs && echo "" > coast-cli/src/lib.rs && \
+    mkdir -p coast-cli/src/bin && echo "fn main() {}" > coast-cli/src/bin/coast-dev.rs && \
+    mkdir -p coast-update/src && echo "" > coast-update/src/lib.rs && \
+    mkdir -p coast-service/src && echo "fn main() {}" > coast-service/src/main.rs && echo "" > coast-service/src/lib.rs && \
+    mkdir -p integration-tests/src && echo "" > integration-tests/src/lib.rs
+
+# Pre-build dependencies (cached unless Cargo.toml/Cargo.lock change).
+RUN cargo build --release -p coast-service 2>/dev/null || true
+
+# Copy real source and build.
+COPY coast-core/ coast-core/
+COPY coast-i18n/ coast-i18n/
+COPY coast-secrets/ coast-secrets/
+COPY coast-docker/ coast-docker/
+COPY coast-service/ coast-service/
+
+# Touch source files so cargo knows they changed.
+RUN find coast-core coast-i18n coast-secrets coast-docker coast-service \
+    -name "*.rs" -exec touch {} +
+
+RUN cargo build --release -p coast-service
+
+# --- Runtime ---
+FROM debian:bookworm-slim
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        docker.io \
+        rsync \
+        openssh-client && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN ARCH=$(dpkg --print-architecture) && \
+    curl -fsSL "https://github.com/mutagen-io/mutagen/releases/download/v0.18.1/mutagen_linux_${ARCH}_v0.18.1.tar.gz" \
+    | tar xz -C /usr/local/bin && chmod +x /usr/local/bin/mutagen
+
+COPY --from=builder /build/target/release/coast-service /usr/local/bin/coast-service
+
+ENV COAST_SERVICE_HOME=/data
+ENV COAST_SERVICE_PORT=31420
+
+EXPOSE 31420
+
+VOLUME ["/data"]
+
+ENTRYPOINT ["coast-service"]

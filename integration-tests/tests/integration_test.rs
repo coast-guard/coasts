@@ -381,6 +381,7 @@ fn test_protocol_roundtrip_all_request_variants() {
         Request::Build(BuildRequest {
             coastfile_path: PathBuf::from("/home/user/Coastfile"),
             refresh: true,
+            remote: None,
         }),
         Request::Run(RunRequest {
             name: "feature-oauth".to_string(),
@@ -391,6 +392,8 @@ fn test_protocol_roundtrip_all_request_variants() {
             build_id: None,
             coastfile_type: None,
             force_remove_dangling: false,
+            remote: None,
+            shared_service_ports: Vec::new(),
         }),
         Request::Stop(StopRequest {
             name: "feature-oauth".to_string(),
@@ -579,6 +582,7 @@ fn test_protocol_roundtrip_all_response_variants() {
                     primary_port_dynamic: None,
                     primary_port_url: None,
                     down_service_count: 0,
+                    remote_host: None,
                 },
                 InstanceSummary {
                     name: "feature-oauth".to_string(),
@@ -597,6 +601,7 @@ fn test_protocol_roundtrip_all_response_variants() {
                     primary_port_dynamic: None,
                     primary_port_url: None,
                     down_service_count: 0,
+                    remote_host: None,
                 },
             ],
             known_projects: vec![],
@@ -850,6 +855,7 @@ fn test_coast_instance_json_roundtrip() {
         worktree_name: None,
         build_id: None,
         coastfile_type: None,
+        remote_host: None,
     };
 
     let json = serde_json::to_string(&instance).unwrap();

@@ -15,6 +15,9 @@ import HostServiceDetailPage from './pages/HostServiceDetailPage';
 import HostImageDetailPage from './pages/HostImageDetailPage';
 import BuildDetailPage from './pages/BuildDetailPage';
 import BareServiceDetailPage from './pages/BareServiceDetailPage';
+import RemoteDetailPage from './pages/RemoteDetailPage';
+import RemoteInstanceDetailPage from './pages/RemoteInstanceDetailPage';
+import RemoteServiceDetailPage from './pages/RemoteServiceDetailPage';
 import DocsPage from './pages/DocsPage';
 
 const queryClient = new QueryClient({
@@ -36,8 +39,16 @@ const router = createHashRouter([
       { path: 'project/:project/host-services/:service', element: <HostServiceDetailPage /> },
       { path: 'project/:project/host-images/:imageId', element: <HostImageDetailPage /> },
       { path: 'project/:project/builds/:buildId', element: <BuildDetailPage /> },
+      { path: 'project/:project/remotes/:remote/:tab', element: <RemoteDetailPage /> },
+      { path: 'project/:project/remotes/:remote', element: <RemoteDetailPage /> },
       { path: 'project/:project/:tab', element: <ProjectDetailPage /> },
       { path: 'project/:project', element: <ProjectDetailPage /> },
+      { path: 'remote-instance/:project/:name/services/:service/:tab', element: <RemoteServiceDetailPage /> },
+      { path: 'remote-instance/:project/:name/services/:service', element: <RemoteServiceDetailPage /> },
+      { path: 'remote-instance/:project/:name/images/:imageId', element: <ImageDetailPage /> },
+      { path: 'remote-instance/:project/:name/volumes/:volumeName', element: <VolumeDetailPage /> },
+      { path: 'remote-instance/:project/:name/:tab', element: <RemoteInstanceDetailPage /> },
+      { path: 'remote-instance/:project/:name', element: <RemoteInstanceDetailPage /> },
       { path: 'instance/:project/:name/services/:service/:tab', element: <ServiceDetailPage /> },
       { path: 'instance/:project/:name/services/:service', element: <ServiceDetailPage /> },
       { path: 'instance/:project/:name/bare-services/:service', element: <BareServiceDetailPage /> },

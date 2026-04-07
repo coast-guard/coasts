@@ -58,6 +58,9 @@ export const qk = {
     ['mcpTools', project, name, server, tool] as const,
   mcpLocations: (project: string, name: string) =>
     ['mcpLocations', project, name] as const,
+  remotesLs: () => ['remotesLs'] as const,
+  remoteStats: () => ['remoteStats'] as const,
+  sshKeys: () => ['sshKeys'] as const,
 } as const;
 
 export function useUpdateCheck() {
@@ -103,6 +106,8 @@ export function useServices(project: ProjectName, name: InstanceName) {
   return useQuery({
     queryKey: qk.services(project, name),
     queryFn: () => api.ps(name, project),
+    refetchInterval: (query) => query.state.status === 'error' ? false : 2_000,
+    retry: 2,
   });
 }
 
@@ -402,7 +407,7 @@ export function usePortHealth(project: string, name: string) {
   return useQuery({
     queryKey: ['portHealth', project, name],
     queryFn: () => api.portHealth(project, name),
-    refetchInterval: 10_000,
+    refetchInterval: (query) => query.state.status === 'error' ? false : 10_000,
     enabled: !!project && !!name,
   });
 }
@@ -486,5 +491,46 @@ export function useMcpLocations(project: string, name: string) {
     queryKey: qk.mcpLocations(project, name),
     queryFn: () => api.mcpLocations(project, name),
     enabled: project.length > 0 && name.length > 0,
+  });
+}
+
+// --- Remotes ---
+
+export function useRemotesLs() {
+  return useQuery({
+    queryKey: qk.remotesLs(),
+    queryFn: () => api.remotesLs(),
+  });
+}
+
+export function useRemoteStats() {
+  return useQuery({
+    queryKey: qk.remoteStats(),
+    queryFn: () => api.remoteStats(),
+    refetchInterval: 30_000,
+  });
+}
+
+export function useSshKeys() {
+  return useQuery({
+    queryKey: qk.sshKeys(),
+    queryFn: () => api.sshKeysLs(),
+  });
+}
+
+export function useRemoteAddMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (params: {
+      name: string;
+      host: string;
+      user: string;
+      port: number;
+      ssh_key: string | null;
+      sync_strategy: string;
+    }) => api.remoteAdd(params),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: qk.remotesLs() });
+    },
   });
 }

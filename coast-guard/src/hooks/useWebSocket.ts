@@ -130,6 +130,10 @@ export function useCoastEvents(): void {
             void qc.invalidateQueries({ queryKey: ['dockerInfo'] });
           }
 
+          if (evt.event === 'remote.added' || evt.event === 'remote.removed') {
+            void qc.invalidateQueries({ queryKey: ['remotesLs'] });
+          }
+
           if (evt.event === 'agent_shell.spawned') {
             window.dispatchEvent(new CustomEvent('coast:agent-shell-changed', { detail: evt }));
           }

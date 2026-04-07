@@ -16,7 +16,7 @@ pub(super) fn image_cache_dir() -> PathBuf {
     active_coast_home().join("image-cache")
 }
 
-pub(super) fn project_images_dir(project: &str) -> PathBuf {
+pub(crate) fn project_images_dir(project: &str) -> PathBuf {
     active_coast_home().join("images").join(project)
 }
 

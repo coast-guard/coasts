@@ -40,12 +40,14 @@ interface BuildsListPanelProps {
 
 export default function BuildsListPanel({ project, builds, t, navigate }: BuildsListPanelProps) {
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
+  const [remoteSelectedIds, setRemoteSelectedIds] = useState<ReadonlySet<string>>(new Set());
   const [confirmRemove, setConfirmRemove] = useState(false);
+  const [confirmRemoteRemove, setConfirmRemoteRemove] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const queryClient = useQueryClient();
   const { removingBuilds } = useRemovingProjects();
 
-  const sorted = useMemo(
+  const allSorted = useMemo(
     () => [...builds].sort((a, b) => {
       if (a.is_latest && !b.is_latest) return -1;
       if (!a.is_latest && b.is_latest) return 1;
@@ -55,6 +57,19 @@ export default function BuildsListPanel({ project, builds, t, navigate }: Builds
     }),
     [builds],
   );
+
+  const sorted = useMemo(() => allSorted.filter((b) => !b.is_remote), [allSorted]);
+  const remoteBuilds = useMemo(() => allSorted.filter((b) => b.is_remote), [allSorted]);
+  const remoteArchGroups = useMemo(() => {
+    const archSet = Array.from(new Set(remoteBuilds.map((b) => b.arch ?? 'unknown'))).sort();
+    return archSet.map((arch) => {
+      const rows = remoteBuilds.filter((b) => (b.arch ?? 'unknown') === arch);
+      if (rows.length > 0 && !rows.some((b) => b.is_latest)) {
+        rows[0] = { ...rows[0], is_latest: true } as BuildSummary;
+      }
+      return { arch, rows };
+    });
+  }, [remoteBuilds]);
   const orderedTypes = useMemo(() => {
     const types = Array.from(
       new Set(sorted.map((b) => b.coastfile_type ?? 'default')),
@@ -109,6 +124,39 @@ export default function BuildsListPanel({ project, builds, t, navigate }: Builds
       setError(e instanceof ApiError ? e.body.error : String(e));
     }
   }, [selectedBuildIds, sorted, project, queryClient]);
+
+  const remoteSelectedCount = remoteSelectedIds.size;
+  const remoteSelectedBuildIds = useMemo(
+    () => remoteBuilds.filter((b) => remoteSelectedIds.has(b.build_id ?? 'legacy')).map((b) => b.build_id).filter((id): id is string => id != null),
+    [remoteBuilds, remoteSelectedIds],
+  );
+
+  const handleRemoteRemove = useCallback(async () => {
+    setConfirmRemoteRemove(false);
+    if (remoteSelectedBuildIds.length === 0) return;
+    try {
+      const result = await api.rmBuild(project, remoteSelectedBuildIds);
+      if (result.error) {
+        setError(result.error.error);
+      } else {
+        setRemoteSelectedIds(new Set());
+      }
+      void queryClient.invalidateQueries({ queryKey: ['buildsLs'] });
+    } catch (e) {
+      setError(e instanceof ApiError ? e.body.error : String(e));
+    }
+  }, [remoteSelectedBuildIds, project, queryClient]);
+
+  const remoteToolbarActions: readonly ToolbarAction[] = useMemo(
+    () => [
+      {
+        label: t('action.remove'),
+        variant: 'danger' as const,
+        onClick: () => setConfirmRemoteRemove(true),
+      },
+    ],
+    [t],
+  );
 
   const toolbarActions: readonly ToolbarAction[] = useMemo(
     () => [
@@ -200,6 +248,67 @@ export default function BuildsListPanel({ project, builds, t, navigate }: Builds
     [t, hasMultipleTypes],
   );
 
+  const remoteColumns: readonly Column<BuildSummary>[] = useMemo(
+    () => [
+      {
+        key: 'buildId',
+        header: t('build.buildId'),
+        className: 'w-auto',
+        headerClassName: 'w-auto',
+        render: (b: BuildSummary) => (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-mono text-xs text-[var(--primary)]">{b.build_id ?? '—'}</span>
+            {b.is_latest && (
+              <span className="inline-block whitespace-nowrap px-1.5 py-0.5 rounded text-[10px] font-medium bg-green-500/15 text-green-700 dark:text-green-300">
+                {t('build.latest')}
+              </span>
+            )}
+            {(b.instances_using ?? 0) > 0 && (
+              <span className="inline-block whitespace-nowrap px-1.5 py-0.5 rounded text-[10px] font-medium bg-[var(--primary)]/15 text-[var(--primary-strong)] dark:text-[var(--primary)]">
+                {t('build.inUse', { count: b.instances_using ?? 0 })}
+              </span>
+            )}
+          </div>
+        ),
+      },
+      {
+        key: 'arch',
+        header: t('build.remoteArch'),
+        className: 'w-28',
+        headerClassName: 'w-28',
+        render: (b: BuildSummary) => (
+          <span className="font-mono text-xs">{b.arch ?? '—'}</span>
+        ),
+      },
+      {
+        key: 'built',
+        header: t('build.built'),
+        className: 'w-44',
+        headerClassName: 'w-44',
+        render: (b: BuildSummary) => (
+          <span className="text-subtle-ui">
+            {b.build_timestamp != null ? relativeTime(b.build_timestamp, t) : '—'}
+          </span>
+        ),
+      },
+      {
+        key: 'images',
+        header: t('build.images'),
+        className: 'w-24',
+        headerClassName: 'w-24',
+        render: (b: BuildSummary) => <>{b.images_built}</>,
+      },
+      {
+        key: 'cache',
+        header: t('build.cache'),
+        className: 'w-28',
+        headerClassName: 'w-28',
+        render: (b: BuildSummary) => <>{formatBytes(b.cache_size_bytes)}</>,
+      },
+    ],
+    [t],
+  );
+
   if (builds.length === 0) {
     return (
       <section className="mt-4">
@@ -271,6 +380,56 @@ export default function BuildsListPanel({ project, builds, t, navigate }: Builds
         )}
       </div>
 
+      {remoteArchGroups.length > 0 && (
+        <div className="mt-4">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-subtle-ui mb-2">
+            {t('build.remoteBuilds')}
+          </h3>
+          <div className="space-y-3">
+            {remoteArchGroups.map((group) => {
+              const groupIds = group.rows.map((b) => b.build_id ?? 'legacy');
+              return (
+                <div key={group.arch} className="glass-panel overflow-hidden">
+                  <Toolbar
+                    actions={remoteToolbarActions}
+                    selectedCount={remoteSelectedCount}
+                    memorySummary={`${t('build.remoteArch')}: `}
+                    memoryHighlight={`${group.arch} (${group.rows.length})`}
+                  />
+                  <DataTable
+                    columns={remoteColumns}
+                    data={group.rows}
+                    getRowId={(b) => b.build_id ?? 'legacy'}
+                    selectable
+                    selectedIds={remoteSelectedIds}
+                    onSelectionChange={(next) => {
+                      setRemoteSelectedIds((prev) => {
+                        const nextSet = new Set(next);
+                        const sectionOnly = [...nextSet].every((id) => groupIds.includes(id));
+                        if (!sectionOnly) return nextSet;
+                        const merged = new Set(prev);
+                        const allSelectedBefore = groupIds.every((id) => prev.has(id));
+                        if (nextSet.size === 0 && allSelectedBefore) {
+                          groupIds.forEach((id) => merged.delete(id));
+                          return merged;
+                        }
+                        if (nextSet.size === groupIds.length) {
+                          groupIds.forEach((id) => merged.add(id));
+                          return merged;
+                        }
+                        return nextSet;
+                      });
+                    }}
+                    onRowClick={(b) => navigate(`/project/${project}/builds/${b.build_id ?? 'latest'}`)}
+                    emptyMessage={t('build.noBuild')}
+                  />
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       <ConfirmModal
         open={confirmRemove}
         title={t('build.removeTitle')}
@@ -283,6 +442,14 @@ export default function BuildsListPanel({ project, builds, t, navigate }: Builds
         }
         onConfirm={() => void handleRemove()}
         onCancel={() => setConfirmRemove(false)}
+      />
+
+      <ConfirmModal
+        open={confirmRemoteRemove}
+        title={t('build.removeTitle')}
+        body={t('build.removeConfirm', { count: remoteSelectedBuildIds.length })}
+        onConfirm={() => void handleRemoteRemove()}
+        onCancel={() => setConfirmRemoteRemove(false)}
       />
 
       {error != null && (

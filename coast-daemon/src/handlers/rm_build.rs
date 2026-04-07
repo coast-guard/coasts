@@ -560,6 +560,7 @@ mod tests {
             worktree_name: None,
             build_id: build_id.map(String::from),
             coastfile_type: None,
+            remote_host: None,
         }
     }
 

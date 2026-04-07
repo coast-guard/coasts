@@ -282,6 +282,7 @@ mod tests {
             worktree_name: None,
             build_id: build_id.map(|s| s.to_string()),
             coastfile_type: None,
+            remote_host: None,
         }
     }
 

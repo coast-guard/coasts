@@ -8,8 +8,9 @@ use clap::{Args, Subcommand};
 use colored::Colorize;
 
 use coast_core::protocol::{
-    BuildsContentResponse, BuildsDockerImagesResponse, BuildsImagesResponse, BuildsInspectResponse,
-    BuildsLsResponse, BuildsRequest, BuildsResponse, DockerImageInfo, Request, Response,
+    BuildSummary, BuildsContentResponse, BuildsDockerImagesResponse, BuildsImagesResponse,
+    BuildsInspectResponse, BuildsLsResponse, BuildsRequest, BuildsResponse, DockerImageInfo,
+    Request, Response,
 };
 
 /// Arguments for `coast builds`.
@@ -216,8 +217,39 @@ fn display_ls(resp: &BuildsLsResponse) {
 }
 
 fn display_ls_all_projects(resp: &BuildsLsResponse) {
-    let w_proj = resp
-        .builds
+    let local_builds: Vec<_> = resp.builds.iter().filter(|b| b.arch.is_none()).collect();
+    let remote_builds: Vec<_> = resp.builds.iter().filter(|b| b.arch.is_some()).collect();
+
+    if !local_builds.is_empty() {
+        display_ls_all_projects_table(&local_builds);
+    }
+
+    if !remote_builds.is_empty() {
+        if !local_builds.is_empty() {
+            println!();
+        }
+        println!("{}", "Remote Builds".bold());
+        let mut archs: Vec<_> = remote_builds
+            .iter()
+            .map(|b| b.arch.as_deref().unwrap())
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+        archs.sort();
+        for arch in archs {
+            let arch_builds: Vec<_> = remote_builds
+                .iter()
+                .filter(|b| b.arch.as_deref() == Some(arch))
+                .copied()
+                .collect();
+            println!("  {} {}", "Arch:".dimmed(), arch);
+            display_ls_all_projects_table(&arch_builds);
+        }
+    }
+}
+
+fn display_ls_all_projects_table(builds: &[&BuildSummary]) {
+    let w_proj = builds
         .iter()
         .map(|b| b.project.len())
         .max()
@@ -227,28 +259,44 @@ fn display_ls_all_projects(resp: &BuildsLsResponse) {
     let w_built = 13;
     let w_images = 10;
     let w_secrets = 7;
-    let w_coast = resp
-        .builds
+    let w_coast = builds
         .iter()
         .map(|b| b.coast_image.as_deref().unwrap_or("(default dind)").len())
         .max()
         .unwrap_or(0)
         .max(11);
     let w_cache = 10;
+    let has_arch = builds.iter().any(|b| b.arch.is_some());
+    let w_arch = 10;
 
-    println!(
-        "  {:<w_proj$}  {:<w_bid$}  {:<w_built$}  {:<w_images$}  {:<w_secrets$}  {:<w_coast$}  {:<w_cache$}  {}",
-        "PROJECT".bold(),
-        "BUILD".bold(),
-        "BUILT".bold(),
-        "IMAGES".bold(),
-        "SECRETS".bold(),
-        "COAST IMAGE".bold(),
-        "CACHE".bold(),
-        "INSTANCES".bold(),
-    );
+    if has_arch {
+        println!(
+            "  {:<w_proj$}  {:<w_bid$}  {:<w_arch$}  {:<w_built$}  {:<w_images$}  {:<w_secrets$}  {:<w_coast$}  {:<w_cache$}  {}",
+            "PROJECT".bold(),
+            "BUILD".bold(),
+            "ARCH".bold(),
+            "BUILT".bold(),
+            "IMAGES".bold(),
+            "SECRETS".bold(),
+            "COAST IMAGE".bold(),
+            "CACHE".bold(),
+            "INSTANCES".bold(),
+        );
+    } else {
+        println!(
+            "  {:<w_proj$}  {:<w_bid$}  {:<w_built$}  {:<w_images$}  {:<w_secrets$}  {:<w_coast$}  {:<w_cache$}  {}",
+            "PROJECT".bold(),
+            "BUILD".bold(),
+            "BUILT".bold(),
+            "IMAGES".bold(),
+            "SECRETS".bold(),
+            "COAST IMAGE".bold(),
+            "CACHE".bold(),
+            "INSTANCES".bold(),
+        );
+    }
 
-    for b in &resp.builds {
+    for b in builds {
         let built = b
             .build_timestamp
             .as_deref()
@@ -271,32 +319,65 @@ fn display_ls_all_projects(resp: &BuildsLsResponse) {
             b.project.clone()
         };
 
-        println!(
-            "  {:<w_proj$}  {:<w_bid$}  {:<w_built$}  {:<w_images$}  {:<w_secrets$}  {:<w_coast$}  {:<w_cache$}  {}",
-            project_str,
-            bid,
-            built,
-            images,
-            b.secrets_count,
-            coast_img,
-            cache,
-            instances,
-        );
+        if has_arch {
+            let arch = b.arch.as_deref().unwrap_or("—");
+            println!(
+                "  {:<w_proj$}  {:<w_bid$}  {:<w_arch$}  {:<w_built$}  {:<w_images$}  {:<w_secrets$}  {:<w_coast$}  {:<w_cache$}  {}",
+                project_str, bid, arch, built, images, b.secrets_count, coast_img, cache, instances,
+            );
+        } else {
+            println!(
+                "  {:<w_proj$}  {:<w_bid$}  {:<w_built$}  {:<w_images$}  {:<w_secrets$}  {:<w_coast$}  {:<w_cache$}  {}",
+                project_str, bid, built, images, b.secrets_count, coast_img, cache, instances,
+            );
+        }
     }
 }
 
 fn display_ls_per_project(resp: &BuildsLsResponse) {
     let project = &resp.builds[0].project;
+    let local_builds: Vec<_> = resp.builds.iter().filter(|b| b.arch.is_none()).collect();
+    let remote_builds: Vec<_> = resp.builds.iter().filter(|b| b.arch.is_some()).collect();
+
     println!("{} {}", "Builds for".bold(), project.bold());
     println!();
 
+    if !local_builds.is_empty() {
+        display_ls_per_project_table(&local_builds);
+    }
+
+    if !remote_builds.is_empty() {
+        if !local_builds.is_empty() {
+            println!();
+        }
+        println!("  {}", "Remote Builds".bold());
+        let mut archs: Vec<_> = remote_builds
+            .iter()
+            .filter_map(|b| b.arch.as_deref())
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+        archs.sort();
+        for arch in archs {
+            let arch_builds: Vec<_> = remote_builds
+                .iter()
+                .filter(|b| b.arch.as_deref() == Some(arch))
+                .copied()
+                .collect();
+            println!("    {} {}", "Arch:".dimmed(), arch);
+            display_ls_per_project_table(&arch_builds);
+        }
+    }
+}
+
+fn display_ls_per_project_table(builds: &[&BuildSummary]) {
     let w_bid = 10;
     let w_built = 16;
     let w_images = 10;
     let w_secrets = 7;
     let w_cache = 10;
 
-    let has_typed = resp.builds.iter().any(|b| b.coastfile_type.is_some());
+    let has_typed = builds.iter().any(|b| b.coastfile_type.is_some());
     let w_type = 10;
 
     if has_typed {
@@ -322,7 +403,7 @@ fn display_ls_per_project(resp: &BuildsLsResponse) {
         );
     }
 
-    for b in &resp.builds {
+    for b in builds {
         let built = b
             .build_timestamp
             .as_deref()
@@ -804,6 +885,8 @@ mod tests {
             archived: false,
             instances_using: 0,
             coastfile_type: None,
+            arch: None,
+            is_remote: false,
         }
     }
 
@@ -825,6 +908,7 @@ mod tests {
             primary_port_dynamic: None,
             primary_port_url: None,
             down_service_count: 0,
+            remote_host: None,
         }
     }
 

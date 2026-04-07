@@ -46,6 +46,7 @@ mod tests {
             worktree_name: None,
             build_id,
             coastfile_type: None,
+            remote_host: None,
         }
     }
 
@@ -254,6 +255,7 @@ mod tests {
         state.emit_event(CoastEvent::InstanceCreated {
             name: "dev-2".to_string(),
             project: "myapp".to_string(),
+            remote_host: None,
         });
 
         let e1 = rx1.recv().await.unwrap();
@@ -347,6 +349,7 @@ mod tests {
         state_clone.emit_event(CoastEvent::InstanceStarted {
             name: "ws-test".to_string(),
             project: "test-proj".to_string(),
+            remote_host: None,
         });
 
         use futures_util::StreamExt;
@@ -1442,6 +1445,7 @@ mod tests {
                 worktree_name: None,
                 build_id: None,
                 coastfile_type: None,
+                remote_host: None,
             })
             .unwrap();
         }

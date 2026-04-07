@@ -1,0 +1,43 @@
+[package]
+name = "coast-service"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "coast_service"
+path = "src/lib.rs"
+
+[[bin]]
+name = "coast-service"
+path = "src/main.rs"
+
+[dependencies]
+coast-core = { path = "../coast-core" }
+coast-secrets = { path = "../coast-secrets" }
+coast-docker = { path = "../coast-docker" }
+bollard = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tokio = { workspace = true }
+rusqlite = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+dirs = { workspace = true }
+axum = { workspace = true }
+tower-http = { workspace = true }
+serde_yaml = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+futures-util = { workspace = true }
+toml.workspace = true
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

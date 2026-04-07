@@ -102,11 +102,113 @@ fn enrich_compose_services(
     }
 }
 
+/// If the instance is remote, forward the ps request via SSH tunnel.
+/// Returns `Some(response)` if forwarded, `None` if the instance is local.
+async fn try_forward_to_remote(req: &PsRequest, state: &AppState) -> Result<Option<PsResponse>> {
+    let db = state.db.lock().await;
+    let is_remote = db
+        .get_instance(&req.project, &req.name)?
+        .is_some_and(|i| i.remote_host.is_some());
+    drop(db);
+
+    if !is_remote {
+        return Ok(None);
+    }
+
+    let remote_config =
+        super::remote::resolve_remote_for_instance(&req.project, &req.name, state).await?;
+    let client = super::remote::RemoteClient::connect(&remote_config).await?;
+    super::remote::forward::forward_ps(&client, req)
+        .await
+        .map(Some)
+}
+
+/// Query compose services inside the container.
+async fn query_compose_services(
+    runtime: &coast_docker::dind::DindRuntime,
+    container_id: &str,
+    instance_name: &str,
+    build_id: Option<&str>,
+    project: &str,
+    shared_names: &HashSet<String>,
+) -> Result<Vec<ServiceStatus>> {
+    let ctx = compose_context_for_build(project, build_id);
+    let cmd_parts = ctx.compose_shell("ps --format json");
+    let cmd_refs: Vec<&str> = cmd_parts.iter().map(std::string::String::as_str).collect();
+
+    let exec_result = runtime
+        .exec_in_coast(container_id, &cmd_refs)
+        .await
+        .map_err(|e| {
+            CoastError::docker(format!(
+                "Failed to get service status for instance '{}': {}",
+                instance_name, e
+            ))
+        })?;
+
+    let mut services = Vec::new();
+    if exec_result.success() {
+        let mut compose_svcs = parse_compose_ps_output(&exec_result.stdout)?;
+        for svc in &mut compose_svcs {
+            svc.kind = Some("compose".to_string());
+        }
+        services.extend(compose_svcs);
+    }
+
+    let config_cmd = ctx.compose_shell("config");
+    let config_refs: Vec<&str> = config_cmd.iter().map(String::as_str).collect();
+    if let Ok(config_result) = runtime.exec_in_coast(container_id, &config_refs).await {
+        if config_result.success() {
+            enrich_compose_services(&mut services, &config_result.stdout, shared_names);
+        }
+    }
+
+    Ok(services)
+}
+
+/// Query bare services inside the container.
+async fn query_bare_services(
+    runtime: &coast_docker::dind::DindRuntime,
+    container_id: &str,
+    instance_name: &str,
+) -> Result<Vec<ServiceStatus>> {
+    let ps_cmd = crate::bare_services::generate_ps_command();
+    let bare_cmd_parts = ["sh".to_string(), "-c".to_string(), ps_cmd];
+    let bare_refs: Vec<&str> = bare_cmd_parts
+        .iter()
+        .map(std::string::String::as_str)
+        .collect();
+
+    let bare_result = runtime
+        .exec_in_coast(container_id, &bare_refs)
+        .await
+        .map_err(|e| {
+            CoastError::docker(format!(
+                "Failed to get bare service status for instance '{}': {}",
+                instance_name, e
+            ))
+        })?;
+
+    let mut services = Vec::new();
+    if bare_result.success() {
+        let mut bare_svcs = parse_compose_ps_output(&bare_result.stdout)?;
+        for svc in &mut bare_svcs {
+            svc.kind = Some("bare".to_string());
+        }
+        services.extend(bare_svcs);
+    }
+
+    Ok(services)
+}
+
 /// Handle a ps request.
 pub async fn handle(req: PsRequest, state: &AppState) -> Result<PsResponse> {
     info!(name = %req.name, project = %req.project, "handling ps request");
 
-    // Phase 1: DB read (locked)
+    if let Some(resp) = try_forward_to_remote(&req, state).await? {
+        return Ok(resp);
+    }
+
     let (container_id, build_id) = {
         let db = state.db.lock().await;
         let instance = db.get_instance(&req.project, &req.name)?;
@@ -129,7 +231,6 @@ pub async fn handle(req: PsRequest, state: &AppState) -> Result<PsResponse> {
         }
     };
 
-    // Phase 2: Docker operations (unlocked)
     let docker = state.docker.as_ref().ok_or_else(|| {
         CoastError::docker("Docker is not available. Ensure Docker is running and restart coastd.")
     })?;
@@ -137,10 +238,14 @@ pub async fn handle(req: PsRequest, state: &AppState) -> Result<PsResponse> {
     let has_bare = crate::bare_services::has_bare_services(&docker, &container_id).await;
     let has_compose = super::assign::has_compose(&req.project);
 
-    let runtime = coast_docker::dind::DindRuntime::with_client(docker.clone());
-    let mut services: Vec<ServiceStatus> = Vec::new();
+    if !has_compose && !has_bare {
+        return Err(CoastError::docker(format!(
+            "No compose or bare services configured for instance '{}'",
+            req.name
+        )));
+    }
 
-    // Load shared service names so we can exclude them
+    let runtime = coast_docker::dind::DindRuntime::with_client(docker.clone());
     let shared_names: HashSet<String> = {
         let db = state.db.lock().await;
         db.list_shared_services(Some(&req.project))
@@ -150,70 +255,24 @@ pub async fn handle(req: PsRequest, state: &AppState) -> Result<PsResponse> {
             .collect()
     };
 
+    let mut services: Vec<ServiceStatus> = Vec::new();
+
     if has_compose {
-        let ctx = compose_context_for_build(&req.project, build_id.as_deref());
-        let cmd_parts = ctx.compose_shell("ps --format json");
-        let cmd_refs: Vec<&str> = cmd_parts.iter().map(std::string::String::as_str).collect();
-
-        let exec_result = runtime
-            .exec_in_coast(&container_id, &cmd_refs)
-            .await
-            .map_err(|e| {
-                CoastError::docker(format!(
-                    "Failed to get service status for instance '{}': {}",
-                    req.name, e
-                ))
-            })?;
-
-        if exec_result.success() {
-            let mut compose_svcs = parse_compose_ps_output(&exec_result.stdout)?;
-            for svc in &mut compose_svcs {
-                svc.kind = Some("compose".to_string());
-            }
-            services.extend(compose_svcs);
-        }
-
-        let config_cmd = ctx.compose_shell("config");
-        let config_refs: Vec<&str> = config_cmd.iter().map(String::as_str).collect();
-        if let Ok(config_result) = runtime.exec_in_coast(&container_id, &config_refs).await {
-            if config_result.success() {
-                enrich_compose_services(&mut services, &config_result.stdout, &shared_names);
-            }
-        }
+        services.extend(
+            query_compose_services(
+                &runtime,
+                &container_id,
+                &req.name,
+                build_id.as_deref(),
+                &req.project,
+                &shared_names,
+            )
+            .await?,
+        );
     }
 
     if has_bare {
-        let ps_cmd = crate::bare_services::generate_ps_command();
-        let bare_cmd_parts = ["sh".to_string(), "-c".to_string(), ps_cmd];
-        let bare_refs: Vec<&str> = bare_cmd_parts
-            .iter()
-            .map(std::string::String::as_str)
-            .collect();
-
-        let bare_result = runtime
-            .exec_in_coast(&container_id, &bare_refs)
-            .await
-            .map_err(|e| {
-                CoastError::docker(format!(
-                    "Failed to get bare service status for instance '{}': {}",
-                    req.name, e
-                ))
-            })?;
-
-        if bare_result.success() {
-            let mut bare_svcs = parse_compose_ps_output(&bare_result.stdout)?;
-            for svc in &mut bare_svcs {
-                svc.kind = Some("bare".to_string());
-            }
-            services.extend(bare_svcs);
-        }
-    }
-
-    if !has_compose && !has_bare {
-        return Err(CoastError::docker(format!(
-            "No compose or bare services configured for instance '{}'",
-            req.name
-        )));
+        services.extend(query_bare_services(&runtime, &container_id, &req.name).await?);
     }
 
     if !shared_names.is_empty() {
@@ -335,6 +394,7 @@ mod tests {
             worktree_name: None,
             build_id: None,
             coastfile_type: None,
+            remote_host: None,
         }
     }
 

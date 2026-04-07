@@ -38,12 +38,20 @@ pub(super) struct RawCoastfile {
     #[serde(default)]
     pub agent_shell: Option<RawAgentShellConfig>,
     #[serde(default)]
+    pub remote: Option<RawRemoteConfig>,
+    #[serde(default)]
     pub unset: Option<RawUnsetConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub(super) struct RawAgentShellConfig {
     pub command: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(super) struct RawRemoteConfig {
+    #[serde(default)]
+    pub workspace_sync: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]

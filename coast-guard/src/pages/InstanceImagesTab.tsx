@@ -9,6 +9,7 @@ import DataTable, { type Column } from '../components/DataTable';
 interface Props {
   readonly project: ProjectName;
   readonly name: InstanceName;
+  readonly basePath?: string;
 }
 
 function truncateId(id: string): string {
@@ -16,7 +17,7 @@ function truncateId(id: string): string {
   return sha.slice(0, 12);
 }
 
-export default function InstanceImagesTab({ project, name }: Props) {
+export default function InstanceImagesTab({ project, name, basePath }: Props) {
   const { t, i18n } = useTranslation();
   const { data, isLoading, error } = useImages(project, name);
 
@@ -29,7 +30,7 @@ export default function InstanceImagesTab({ project, name }: Props) {
         header: t('images.repository'),
         render: (r) => (
           <Link
-            to={`/instance/${project}/${name}/images/${encodeURIComponent(r.id)}`}
+            to={`${basePath ?? `/instance/${project}/${name}`}/images/${encodeURIComponent(r.id)}`}
             className="font-medium text-[var(--primary)] hover:underline"
           >
             {r.repository}
@@ -78,7 +79,7 @@ export default function InstanceImagesTab({ project, name }: Props) {
         data={images as ImageSummary[]}
         getRowId={(r) => r.id}
         onRowClick={(r) => {
-          window.location.hash = `/instance/${project}/${name}/images/${encodeURIComponent(r.id)}`;
+          window.location.hash = `${basePath ?? `/instance/${project}/${name}`}/images/${encodeURIComponent(r.id)}`;
         }}
         emptyMessage={t('images.empty')}
       />

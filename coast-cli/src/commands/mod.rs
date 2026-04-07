@@ -26,6 +26,7 @@ pub mod nuke;
 pub mod ports;
 pub mod ps;
 pub mod rebuild;
+pub mod remote;
 pub mod rerun_extractors;
 pub mod restart_services;
 pub mod rm;

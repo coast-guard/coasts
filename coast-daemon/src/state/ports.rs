@@ -24,6 +24,9 @@ pub struct PortAllocationRecord {
     pub socat_pid: Option<i32>,
     /// Whether this is the primary service for the instance.
     pub is_primary: bool,
+    /// For remote instances: the dynamic port on the remote host.
+    /// SSH tunnels forward `dynamic_port` (local) to this port (remote).
+    pub remote_dynamic_port: Option<u16>,
 }
 
 /// Convert a `PortAllocationRecord` to a `PortMapping` (drops socat_pid).
@@ -61,16 +64,28 @@ impl StateDb {
         instance_name: &str,
         mapping: &PortMapping,
     ) -> Result<()> {
+        self.insert_port_allocation_with_remote(project, instance_name, mapping, None)
+    }
+
+    #[instrument(skip(self))]
+    pub fn insert_port_allocation_with_remote(
+        &self,
+        project: &str,
+        instance_name: &str,
+        mapping: &PortMapping,
+        remote_dynamic_port: Option<u16>,
+    ) -> Result<()> {
         self.conn
             .execute(
-                "INSERT INTO port_allocations (project, instance_name, logical_name, canonical_port, dynamic_port, socat_pid)
-                 VALUES (?1, ?2, ?3, ?4, ?5, NULL)",
+                "INSERT INTO port_allocations (project, instance_name, logical_name, canonical_port, dynamic_port, socat_pid, remote_dynamic_port)
+                 VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6)",
                 params![
                     project,
                     instance_name,
                     mapping.logical_name,
                     mapping.canonical_port as i64,
                     mapping.dynamic_port as i64,
+                    remote_dynamic_port.map(|p| p as i64),
                 ],
             )
             .map_err(|e| {
@@ -117,7 +132,7 @@ impl StateDb {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT project, instance_name, logical_name, canonical_port, dynamic_port, socat_pid
+                "SELECT project, instance_name, logical_name, canonical_port, dynamic_port, socat_pid, remote_dynamic_port
                  FROM port_allocations
                  WHERE project = ?1 AND instance_name = ?2
                  ORDER BY logical_name",
@@ -137,6 +152,7 @@ impl StateDb {
                     dynamic_port: row.get::<_, i64>(4)? as u16,
                     socat_pid: row.get::<_, Option<i64>>(5)?.map(|p| p as i32),
                     is_primary: false,
+                    remote_dynamic_port: row.get::<_, Option<i64>>(6)?.map(|p| p as u16),
                 })
             })
             .map_err(|e| CoastError::State {
@@ -425,6 +441,7 @@ mod tests {
             dynamic_port: 52340,
             socat_pid: Some(12345),
             is_primary: false,
+            remote_dynamic_port: None,
         };
 
         let mapping: PortMapping = PortMapping::from(&record);

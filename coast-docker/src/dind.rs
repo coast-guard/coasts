@@ -49,6 +49,9 @@ pub struct DindConfigParams<'a> {
     pub override_dir: Option<&'a std::path::Path>,
     /// Extra `/etc/hosts` entries to add to the container.
     pub extra_hosts: Vec<String>,
+    /// When true, mount code_path directly at /workspace instead of /host-project.
+    /// Used for remote coasts where the workspace is synced via rsync/mutagen.
+    pub mount_workspace_directly: bool,
 }
 
 impl<'a> DindConfigParams<'a> {
@@ -67,6 +70,7 @@ impl<'a> DindConfigParams<'a> {
             coast_image: None,
             override_dir: None,
             extra_hosts: Vec::new(),
+            mount_workspace_directly: false,
         }
     }
 }
@@ -335,7 +339,7 @@ impl Runtime for DindRuntime {
         };
 
         let host_config = bollard::models::HostConfig {
-            privileged: Some(true),
+            privileged: Some(params.privileged),
             binds: if params.binds.is_empty() {
                 None
             } else {
@@ -599,12 +603,14 @@ pub fn build_dind_config(params: DindConfigParams<'_>) -> ContainerConfig {
     config.tmpfs_mounts = params.tmpfs_mounts;
     config.extra_hosts = params.extra_hosts;
 
-    // Bind-mount the project root at /host-project. The run/start handlers
-    // create a switchable `mount --bind /host-project /workspace` (or a
-    // worktree subdirectory) inside the container after it starts.
+    let workspace_mount_target = if params.mount_workspace_directly {
+        "/workspace"
+    } else {
+        "/host-project"
+    };
     config.bind_mounts.push(BindMount {
         host_path: params.code_path.to_path_buf(),
-        container_path: "/host-project".to_string(),
+        container_path: workspace_mount_target.to_string(),
         read_only: false,
         propagation: None,
     });

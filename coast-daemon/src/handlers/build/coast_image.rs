@@ -1,5 +1,6 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+use sha2::{Digest, Sha256};
 use tracing::info;
 
 use coast_core::coastfile::Coastfile;
@@ -25,8 +26,15 @@ pub(super) async fn build_coast_image(
     info!(image = %image_tag, "building custom coast image from [coast.setup]");
 
     let dockerfile = render_dockerfile(coastfile);
+    let dockerfile_hash = sha256_hex(&dockerfile);
+    let no_cache = has_dockerfile_changed(&coastfile.name, &dockerfile_hash);
+
+    if no_cache {
+        info!("coast image Dockerfile template changed, rebuilding without cache");
+    }
+
     let build_dir = prepare_build_dir(coastfile, &dockerfile)?;
-    let build_output = run_docker_build(&image_tag, build_dir.path()).await?;
+    let build_output = run_docker_build(&image_tag, build_dir.path(), no_cache).await?;
 
     if !build_output.status.success() {
         let stderr = String::from_utf8_lossy(&build_output.stderr);
@@ -43,6 +51,8 @@ pub(super) async fn build_coast_image(
         )));
     }
 
+    save_dockerfile_hash(&coastfile.name, &dockerfile_hash);
+
     emit(
         progress,
         BuildProgressEvent::done("Building coast image", "ok")
@@ -56,9 +66,45 @@ pub(super) async fn build_coast_image(
     Ok(Some(image_tag))
 }
 
+fn sha256_hex(content: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(content.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+fn dockerfile_hash_path(project: &str) -> PathBuf {
+    let coast_home = dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join(".coast");
+    coast_home.join("coast-image-dockerfile-hash").join(project)
+}
+
+fn has_dockerfile_changed(project: &str, current_hash: &str) -> bool {
+    let path = dockerfile_hash_path(project);
+    match std::fs::read_to_string(&path) {
+        Ok(stored) => stored.trim() != current_hash,
+        Err(_) => true,
+    }
+}
+
+fn save_dockerfile_hash(project: &str, hash: &str) {
+    let path = dockerfile_hash_path(project);
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(&path, hash);
+}
+
 fn render_dockerfile(coastfile: &Coastfile) -> String {
     let mut dockerfile = String::from("FROM docker:dind\n");
     dockerfile.push_str("RUN apk add --no-cache ripgrep fd rsync\n");
+    dockerfile.push_str(
+        "RUN ARCH=$(uname -m) && case \"$ARCH\" in x86_64) MA=amd64;; aarch64|arm64) MA=arm64;; esac \
+         && wget -q -O /tmp/mutagen.tar.gz \
+         \"https://github.com/mutagen-io/mutagen/releases/download/v0.18.1/mutagen_linux_${MA}_v0.18.1.tar.gz\" \
+         && tar xzf /tmp/mutagen.tar.gz -C /usr/local/bin mutagen mutagen-agents.tar.gz \
+         && chmod +x /usr/local/bin/mutagen && rm -f /tmp/mutagen.tar.gz\n",
+    );
     if !coastfile.setup.packages.is_empty() {
         dockerfile.push_str(&format!(
             "RUN apk add --no-cache {}\n",
@@ -132,16 +178,22 @@ fn write_setup_files(coastfile: &Coastfile, build_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-async fn run_docker_build(image_tag: &str, build_dir: &Path) -> Result<std::process::Output> {
-    tokio::process::Command::new("docker")
-        .args(["build", "-t", image_tag, build_dir.to_str().unwrap_or(".")])
-        .output()
-        .await
-        .map_err(|error| {
-            CoastError::docker(format!(
-                "failed to run docker build for coast image: {error}. Is Docker running?"
-            ))
-        })
+async fn run_docker_build(
+    image_tag: &str,
+    build_dir: &Path,
+    no_cache: bool,
+) -> Result<std::process::Output> {
+    let mut cmd = tokio::process::Command::new("docker");
+    cmd.arg("build");
+    if no_cache {
+        cmd.arg("--no-cache");
+    }
+    cmd.args(["-t", image_tag, build_dir.to_str().unwrap_or(".")]);
+    cmd.output().await.map_err(|error| {
+        CoastError::docker(format!(
+            "failed to run docker build for coast image: {error}. Is Docker running?"
+        ))
+    })
 }
 
 async fn tag_latest_image(image_tag: &str, latest_tag: &str) {

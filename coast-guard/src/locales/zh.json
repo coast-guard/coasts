@@ -59,6 +59,7 @@
   "projectTab.coasts": "Coasts",
   "projectTab.sharedServices": "共享服务",
   "projectTab.builds": "构建",
+  "projectTab.remotes": "远程主机",
   "projectTab.terminal": "终端",
   "build.newBuild": "新建构建",
   "build.createNewBuild": "创建新构建",

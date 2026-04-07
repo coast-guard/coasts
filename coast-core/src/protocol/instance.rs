@@ -1,7 +1,19 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::types::PortMapping;
+use crate::types::{AssignAction, PortMapping};
+
+/// A shared service port that should be forwarded to the remote DinD container.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SharedServicePortForward {
+    /// Shared service name (e.g. "postgres", "redis").
+    pub name: String,
+    /// Container port to forward (e.g. 5432, 6379).
+    pub port: u16,
+}
 
 /// Request to create and start a new coast instance.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -25,9 +37,15 @@ pub struct RunRequest {
     /// Coastfile type to use for build resolution (None = "default").
     #[serde(default)]
     pub coastfile_type: Option<String>,
+    /// Which registered remote to use (for remote types).
+    #[serde(default)]
+    pub remote: Option<String>,
     /// Force-remove any dangling Docker container with the same name before creating.
     #[serde(default)]
     pub force_remove_dangling: bool,
+    /// Shared service ports forwarded via SSH reverse tunnel to the remote.
+    #[serde(default)]
+    pub shared_service_ports: Vec<SharedServicePortForward>,
 }
 
 /// Response after a successful run.
@@ -61,6 +79,11 @@ pub struct AssignRequest {
     /// When true, refresh the cached ignored-file bootstrap before assigning.
     #[serde(default)]
     pub force_sync: bool,
+    /// Per-service assign actions computed by the daemon. When empty,
+    /// coast-service falls back to restarting all services.
+    #[serde(default)]
+    #[ts(skip)]
+    pub service_actions: HashMap<String, AssignAction>,
 }
 
 /// Response after a successful worktree assignment.
@@ -298,6 +321,8 @@ mod tests {
             build_id: None,
             coastfile_type: None,
             force_remove_dangling: true,
+            remote: None,
+            shared_service_ports: Vec::new(),
         };
         let json = serde_json::to_string(&req).unwrap();
         let deserialized: RunRequest = serde_json::from_str(&json).unwrap();

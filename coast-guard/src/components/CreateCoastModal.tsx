@@ -62,15 +62,14 @@ export default function CreateCoastModal({
   const availableTypes = useMemo(
     () => {
       const safeBuilds = Array.isArray(builds) ? builds : [];
-      return (
-      Array.from(
-        new Set(safeBuilds.map((b) => b.coastfile_type ?? 'default')),
+      const localBuilds = safeBuilds.filter((b) => !b.is_remote);
+      return Array.from(
+        new Set(localBuilds.map((b) => b.coastfile_type ?? 'default')),
       ).sort((a, b) => {
         if (a === 'default' && b !== 'default') return -1;
         if (a !== 'default' && b === 'default') return 1;
         return a.localeCompare(b);
-      })
-      );
+      });
     },
     [builds],
   );

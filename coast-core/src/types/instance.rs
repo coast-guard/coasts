@@ -23,6 +23,10 @@ pub struct CoastInstance {
     pub build_id: Option<String>,
     #[serde(default)]
     pub coastfile_type: Option<String>,
+    /// When set, this instance is a shadow for a remote coast running on the
+    /// specified host. Operations are forwarded via SSH tunnel to coast-service.
+    #[serde(default)]
+    pub remote_host: Option<String>,
 }
 
 /// Status of a coast instance.

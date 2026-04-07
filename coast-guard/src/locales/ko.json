@@ -59,6 +59,7 @@
   "projectTab.coasts": "Coasts",
   "projectTab.sharedServices": "공유 서비스",
   "projectTab.builds": "빌드",
+  "projectTab.remotes": "원격",
   "projectTab.terminal": "터미널",
   "build.newBuild": "새 빌드",
   "build.createNewBuild": "새 빌드 생성",

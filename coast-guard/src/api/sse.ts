@@ -21,6 +21,7 @@ export async function consumeSSE<TProgress, TComplete>(
 
   const decoder = new TextDecoder();
   let buffer = '';
+  let currentEvent: string | null = null;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -28,28 +29,24 @@ export async function consumeSSE<TProgress, TComplete>(
     buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split('\n');
     buffer = lines.pop() ?? '';
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i] ?? '';
-      if (line.startsWith('event: progress') && onProgress) {
-        const dataLine = lines[i + 1];
-        if (dataLine?.startsWith('data: ')) {
-          try { onProgress(JSON.parse(dataLine.slice(6)) as TProgress); } catch { /* ignore */ }
+    for (const line of lines) {
+      if (line.startsWith('event: ')) {
+        currentEvent = line.slice(7).trim();
+      } else if (line.startsWith('data: ') && currentEvent) {
+        const payload = line.slice(6);
+        if (currentEvent === 'progress' && onProgress) {
+          try { onProgress(JSON.parse(payload) as TProgress); } catch { /* ignore */ }
+        } else if (currentEvent === 'complete') {
+          return { complete: JSON.parse(payload) as TComplete };
+        } else if (currentEvent === 'error') {
+          return { error: JSON.parse(payload) as { error: string } };
         }
-      }
-      if (line.startsWith('event: complete')) {
-        const dataLine = lines[i + 1];
-        if (dataLine?.startsWith('data: ')) {
-          return { complete: JSON.parse(dataLine.slice(6)) as TComplete };
-        }
-      }
-      if (line.startsWith('event: error')) {
-        const dataLine = lines[i + 1];
-        if (dataLine?.startsWith('data: ')) {
-          return { error: JSON.parse(dataLine.slice(6)) as { error: string } };
-        }
+        currentEvent = null;
+      } else if (line === '') {
+        currentEvent = null;
       }
     }
   }
 
-  return {};
+  return { error: { error: 'Stream ended without a response' } };
 }

@@ -13,6 +13,7 @@ import {
   useRmMutation,
   useCheckoutMutation,
   useBuildsLs,
+  useRemotesLs,
 } from '../api/hooks';
 import { api } from '../api/endpoints';
 import { buildHostTerminalConfig } from '../hooks/useTerminalSessions';
@@ -36,14 +37,18 @@ import { formatBytes } from '../lib/formatBytes';
 import BuildModal from '../components/BuildModal';
 import DotLoader from '../components/DotLoader';
 import BuildsListPanel from '../components/BuildsListPanel';
+import RemotesListPanel from '../components/RemotesListPanel';
+import AddRemoteModal from '../components/AddRemoteModal';
+import RemoteBuildModal from '../components/RemoteBuildModal';
+import CreateRemoteCoastModal from '../components/CreateRemoteCoastModal';
 
 interface PendingOp {
   readonly type: 'assign' | 'unassign' | 'provision-assign';
   readonly targetWorktree: string;
 }
 
-type ProjectTab = 'coasts' | 'shared-services' | 'builds' | 'terminal';
-const VALID_PROJECT_TABS = new Set<string>(['coasts', 'shared-services', 'builds', 'terminal']);
+type ProjectTab = 'coasts' | 'shared-services' | 'builds' | 'remotes' | 'terminal';
+const VALID_PROJECT_TABS = new Set<string>(['coasts', 'shared-services', 'builds', 'remotes', 'terminal']);
 
 function parseProjectTab(raw: string | undefined): ProjectTab {
   if (raw != null && VALID_PROJECT_TABS.has(raw)) return raw as ProjectTab;
@@ -61,6 +66,7 @@ export default function ProjectDetailPage() {
   const { data: gitInfo, isLoading: gitLoading } = useProjectGit(project);
   const { data: sharedData } = useSharedServices(project as string);
   const { data: buildsLsData } = useBuildsLs(project as string);
+  const { data: remotesLsData } = useRemotesLs();
   const instances = data?.instances ?? [];
   const { removing } = useRemovingProjects();
   const isProjectRemoving = removing.has(rawProject ?? '');
@@ -74,13 +80,37 @@ export default function ProjectDetailPage() {
 
   const queryClient = useQueryClient();
 
-  const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
-  const [confirmRemove, setConfirmRemove] = useState(false);
+  const [sectionSelections, setSectionSelections] = useState<Record<string, ReadonlySet<string>>>({});
+  const getSelection = useCallback((section: string) => sectionSelections[section] ?? new Set<string>(), [sectionSelections]);
+  const setSelection = useCallback((section: string, ids: ReadonlySet<string>) =>
+    setSectionSelections((prev) => ({ ...prev, [section]: ids })), []);
+  const [confirmRemoveSection, setConfirmRemoveSection] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const [assignTarget, setAssignTarget] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [addRemoteOpen, setAddRemoteOpen] = useState(false);
   const [buildModalOpen, setBuildModalOpen] = useState(false);
+  const [remoteBuildModalOpen, setRemoteBuildModalOpen] = useState(false);
+  const [remoteCoastModalOpen, setRemoteCoastModalOpen] = useState(false);
+  const hasRemoteBuilds = useMemo(
+    () => (buildsLsData?.builds ?? []).some((b) => b.is_remote),
+    [buildsLsData],
+  );
+  const [hasRemoteCoastfiles, setHasRemoteCoastfiles] = useState(false);
+
+  useEffect(() => {
+    if (hasRemoteBuilds) {
+      setHasRemoteCoastfiles(true);
+    } else if (project) {
+      api.buildsCoastfileTypes(project as string).then((resp) => {
+        const types = resp.types ?? [];
+        setHasRemoteCoastfiles(types.some((ct: string) => ct.startsWith('remote')));
+      }).catch(() => {
+        setHasRemoteCoastfiles(false);
+      });
+    }
+  }, [project, hasRemoteBuilds]);
 
   const existingNames = useMemo(
     () => new Set(instances.map((i) => i.name as string)),
@@ -142,34 +172,43 @@ export default function ProjectDetailPage() {
     }
   }, [project, queryClient]);
 
-  const selectedNames = useMemo(
-    () => instances.filter((i) => selectedIds.has(i.name as string)).map((i) => i.name),
-    [instances, selectedIds],
-  );
-
-  const batchAction = useCallback(
-    async (action: (vars: { name: typeof instanceName extends (s: string) => infer R ? R : never; project: typeof project }) => Promise<unknown>) => {
+  const sectionBatchAction = useCallback(
+    async (
+      section: string,
+      sectionInstances: readonly InstanceSummary[],
+      action: (vars: { name: typeof instanceName extends (s: string) => infer R ? R : never; project: typeof project }) => Promise<unknown>,
+    ) => {
+      const sel = sectionSelections[section] ?? new Set<string>();
+      const names = sectionInstances.filter((i) => sel.has(i.name as string)).map((i) => i.name);
       const errors: string[] = [];
-      for (const name of selectedNames) {
+      for (const name of names) {
         try {
           await action({ name: instanceName(name), project });
         } catch (e) {
           errors.push(`${name}: ${e instanceof ApiError ? e.body.error : String(e)}`);
         }
       }
-      setSelectedIds(new Set());
+      setSelection(section, new Set());
       if (errors.length > 0) setErrorMsg(errors.join('\n'));
     },
-    [selectedNames, project],
+    [sectionSelections, project, setSelection],
   );
 
-  const toolbarActions: readonly ToolbarAction[] = useMemo(
-    () => [
-      { label: t('action.stop'), variant: 'outline' as const, onClick: () => void batchAction((v) => stopMut.mutateAsync(v)) },
-      { label: t('action.start'), variant: 'outline' as const, onClick: () => void batchAction((v) => startMut.mutateAsync(v)) },
-      { label: t('action.remove'), variant: 'danger' as const, onClick: () => setConfirmRemove(true) },
+  const buildToolbarActions = useCallback(
+    (section: string, sectionInstances: readonly InstanceSummary[]): readonly ToolbarAction[] => [
+      { label: t('action.stop'), variant: 'outline' as const, onClick: () => void sectionBatchAction(section, sectionInstances, (v) => stopMut.mutateAsync(v)) },
+      { label: t('action.start'), variant: 'outline' as const, onClick: () => void sectionBatchAction(section, sectionInstances, (v) => startMut.mutateAsync(v)) },
+      { label: t('action.remove'), variant: 'danger' as const, onClick: () => setConfirmRemoveSection(section) },
     ],
-    [batchAction, stopMut, startMut, t, i18n.language],
+    [sectionBatchAction, stopMut, startMut, t, i18n.language],
+  );
+
+  const sectionSelectedCount = useCallback(
+    (section: string, sectionInstances: readonly InstanceSummary[]) => {
+      const sel = sectionSelections[section] ?? new Set<string>();
+      return sectionInstances.filter((i) => sel.has(i.name as string)).length;
+    },
+    [sectionSelections],
   );
 
   const columns: readonly Column<InstanceSummary>[] = useMemo(
@@ -377,15 +416,17 @@ export default function ProjectDetailPage() {
   const sharedCount = sharedData?.services?.length ?? 0;
   const coastCount = instances.length;
   const buildsCount = buildsLsData?.builds?.length ?? 0;
+  const remotesCount = remotesLsData?.remotes?.length ?? 0;
 
   const tabs: readonly TabDef<ProjectTab>[] = useMemo(
     () => [
       { id: 'coasts' as const, label: `${t('projectTab.coasts')}${coastCount > 0 ? ` (${coastCount})` : ''}`, to: `${basePath}/coasts` },
       { id: 'shared-services' as const, label: `${t('projectTab.sharedServices')}${sharedCount > 0 ? ` (${sharedCount})` : ''}`, to: `${basePath}/shared-services` },
       { id: 'builds' as const, label: `${t('projectTab.builds')}${buildsCount > 0 ? ` (${buildsCount})` : ''}`, to: `${basePath}/builds` },
+      { id: 'remotes' as const, label: `${t('projectTab.remotes')}${remotesCount > 0 ? ` (${remotesCount})` : ''}`, to: `${basePath}/remotes` },
       { id: 'terminal' as const, label: t('projectTab.terminal'), to: `${basePath}/terminal` },
     ],
-    [basePath, buildsCount, coastCount, sharedCount, t, i18n.language],
+    [basePath, buildsCount, coastCount, remotesCount, sharedCount, t, i18n.language],
   );
 
   return (
@@ -399,25 +440,55 @@ export default function ProjectDetailPage() {
               : [
                   { label: t('nav.projects'), to: '/' },
                   { label: project, to: `/project/${project}` },
-                  { label: activeTab === 'shared-services' ? t('projectTab.sharedServices') : activeTab === 'builds' ? t('projectTab.builds') : t('projectTab.terminal') },
+                  { label: activeTab === 'shared-services' ? t('projectTab.sharedServices') : activeTab === 'builds' ? t('projectTab.builds') : activeTab === 'remotes' ? t('projectTab.remotes') : t('projectTab.terminal') },
                 ]
           }
         />
         {activeTab === 'coasts' ? (
-          <button
-            type="button"
-            className="btn btn-primary !h-8 !px-3.5 !py-1.5 !text-[14px] !font-semibold"
-            onClick={() => setCreateOpen(true)}
-          >
-            {t('create.button')}
-          </button>
+          <div className="flex items-center gap-2">
+            {(remotesLsData?.remotes?.length ?? 0) > 0 && hasRemoteCoastfiles && (
+              <button
+                type="button"
+                className="btn btn-outline !h-8 !px-3.5 !py-1.5 !text-[14px] !font-semibold"
+                onClick={() => setRemoteCoastModalOpen(true)}
+              >
+                {t('create.remoteButton')}
+              </button>
+            )}
+            <button
+              type="button"
+              className="btn btn-primary !h-8 !px-3.5 !py-1.5 !text-[14px] !font-semibold"
+              onClick={() => setCreateOpen(true)}
+            >
+              {t('create.button')}
+            </button>
+          </div>
         ) : activeTab === 'builds' ? (
+          <div className="flex items-center gap-2">
+            {(remotesLsData?.remotes?.length ?? 0) > 0 && hasRemoteCoastfiles && (
+              <button
+                type="button"
+                className="btn btn-outline !h-8 !px-3.5 !py-1.5 !text-[14px] !font-semibold"
+                onClick={() => setRemoteBuildModalOpen(true)}
+              >
+                {t('build.createRemoteBuild')}
+              </button>
+            )}
+            <button
+              type="button"
+              className="btn btn-primary !h-8 !px-3.5 !py-1.5 !text-[14px] !font-semibold"
+              onClick={() => setBuildModalOpen(true)}
+            >
+              {t('build.createNewBuild')}
+            </button>
+          </div>
+        ) : activeTab === 'remotes' ? (
           <button
             type="button"
             className="btn btn-primary !h-8 !px-3.5 !py-1.5 !text-[14px] !font-semibold"
-            onClick={() => setBuildModalOpen(true)}
+            onClick={() => setAddRemoteOpen(true)}
           >
-            {t('build.createNewBuild')}
+            {t('remote.addButton')}
           </button>
         ) : activeTab === 'shared-services' ? (
           <button
@@ -459,84 +530,131 @@ export default function ProjectDetailPage() {
 
       <TabBar tabs={tabs} active={activeTab} />
 
-      {activeTab === 'coasts' && (
-        <section>
-          <div className="glass-panel overflow-hidden">
-            <Toolbar
-              actions={toolbarActions}
-              selectedCount={selectedNames.length}
-              memorySummary={totalMemory > 0 ? t('toolbar.memory', { memory: formatBytes(totalMemory) }) : undefined}
-            />
-            {isLoading ? (
-              <div className="p-6 text-sm text-subtle-ui">{t('project.loading')}</div>
-            ) : (() => {
-              const instanceTypes = Array.from(
-                new Set(instances.map((i) => i.coastfile_type ?? 'default')),
-              ).sort((a, b) => a.localeCompare(b));
-              const orderedInstanceTypes = ['default', ...instanceTypes.filter((t) => t !== 'default')].filter(
-                (t, i, arr) => arr.indexOf(t) === i && instanceTypes.includes(t),
-              );
-              const hasMultipleInstanceTypes = orderedInstanceTypes.length > 1;
+      {activeTab === 'coasts' && (() => {
+        const localInstances = instances.filter((i) => !i.remote_host);
+        const remoteInstances = instances.filter((i) => !!i.remote_host);
+        const remoteHosts = Array.from(new Set(remoteInstances.map((i) => i.remote_host!))).sort();
+        const allRemotes = remotesLsData?.remotes ?? [];
 
-              return !hasMultipleInstanceTypes ? (
-                <DataTable
-                  columns={columns}
-                  data={instances}
-                  getRowId={(r) => r.name as string}
-                  selectable
-                  selectedIds={selectedIds}
-                  onSelectionChange={setSelectedIds}
-                  onRowClick={(r) => void navigate(`/instance/${r.project}/${r.name}`)}
-                  emptyMessage={t('project.emptyInstances', { project })}
+        return (
+          <>
+            <section>
+              <div className="glass-panel overflow-hidden">
+                <Toolbar
+                  actions={buildToolbarActions('local', localInstances)}
+                  selectedCount={sectionSelectedCount('local', localInstances)}
+                  memorySummary={totalMemory > 0 ? t('toolbar.memory', { memory: formatBytes(totalMemory) }) : undefined}
                 />
-              ) : (
-                <div className="p-4 space-y-4">
-                  {orderedInstanceTypes.map((type) => {
-                    const group = instances.filter((i) => (i.coastfile_type ?? 'default') === type);
-                    if (group.length === 0) return null;
-                    const groupIds = group.map((i) => i.name as string);
+                {isLoading ? (
+                  <div className="p-6 text-sm text-subtle-ui">{t('project.loading')}</div>
+                ) : (() => {
+                  const instanceTypes = Array.from(
+                    new Set(localInstances.map((i) => i.coastfile_type ?? 'default')),
+                  ).sort((a, b) => a.localeCompare(b));
+                  const orderedInstanceTypes = ['default', ...instanceTypes.filter((t) => t !== 'default')].filter(
+                    (t, i, arr) => arr.indexOf(t) === i && instanceTypes.includes(t),
+                  );
+                  const hasMultipleInstanceTypes = orderedInstanceTypes.length > 1;
+
+                  return !hasMultipleInstanceTypes ? (
+                    <DataTable
+                      columns={columns}
+                      data={localInstances}
+                      getRowId={(r) => r.name as string}
+                      selectable
+                      selectedIds={getSelection('local')}
+                      onSelectionChange={(ids) => setSelection('local', ids)}
+                      onRowClick={(r) => void navigate(`/instance/${r.project}/${r.name}`)}
+                      emptyMessage={t('project.emptyInstances', { project })}
+                    />
+                  ) : (
+                    <div className="p-4 space-y-4">
+                      {orderedInstanceTypes.map((type) => {
+                        const group = localInstances.filter((i) => (i.coastfile_type ?? 'default') === type);
+                        if (group.length === 0) return null;
+                        const groupIds = group.map((i) => i.name as string);
+                        return (
+                          <div key={type} className="rounded-lg border border-[var(--border)] overflow-hidden">
+                            <div className="px-4 py-2 text-xs font-semibold uppercase tracking-wide text-subtle-ui bg-[var(--surface-muted)]">
+                              {t('build.type')}: <span className="font-mono normal-case">{type}</span>
+                            </div>
+                            <DataTable
+                              columns={columns}
+                              data={group}
+                              getRowId={(r) => r.name as string}
+                              tableClassName="table-fixed"
+                              selectable
+                              selectedIds={getSelection('local')}
+                              onSelectionChange={(next) => {
+                                setSectionSelections((prev) => {
+                                  const cur = prev['local'] ?? new Set<string>();
+                                  const nextSet = new Set(next);
+                                  const merged = new Set(cur);
+                                  const allBefore = groupIds.every((id) => cur.has(id));
+                                  if (nextSet.size === 0 && allBefore) {
+                                    groupIds.forEach((id) => merged.delete(id));
+                                    return { ...prev, local: merged };
+                                  }
+                                  if (nextSet.size === groupIds.length) {
+                                    groupIds.forEach((id) => merged.add(id));
+                                    return { ...prev, local: merged };
+                                  }
+                                  groupIds.forEach((id) => merged.delete(id));
+                                  nextSet.forEach((id) => merged.add(id));
+                                  return { ...prev, local: merged };
+                                });
+                              }}
+                              onRowClick={(r) => void navigate(`/instance/${r.project}/${r.name}`)}
+                              emptyMessage={t('project.emptyInstances', { project })}
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+              </div>
+            </section>
+
+            {remoteInstances.length > 0 && (
+              <div className="mt-4">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-subtle-ui mb-2">
+                  {t('instance.remoteCoasts')}
+                </h3>
+                <div className="space-y-3">
+                  {remoteHosts.map((host) => {
+                    const group = remoteInstances.filter((i) => i.remote_host === host);
+                    const remoteName = allRemotes.find(
+                      (r: { name: string; host: string; user: string; port: number }) => r.name === host || r.host === host || `${r.user}@${r.host}:${r.port}` === host,
+                    )?.name ?? host;
+
                     return (
-                      <div key={type} className="rounded-lg border border-[var(--border)] overflow-hidden">
-                        <div className="px-4 py-2 text-xs font-semibold uppercase tracking-wide text-subtle-ui bg-[var(--surface-muted)]">
-                          {t('build.type')}: <span className="font-mono normal-case">{type}</span>
-                        </div>
+                      <div key={host} className="glass-panel overflow-hidden">
+                        <Toolbar
+                          actions={buildToolbarActions(`remote:${host}`, group)}
+                          selectedCount={sectionSelectedCount(`remote:${host}`, group)}
+                          memorySummary={`${t('instance.remoteMachine')}: `}
+                          memoryHighlight={`${remoteName} (${group.length})`}
+                        />
                         <DataTable
                           columns={columns}
                           data={group}
                           getRowId={(r) => r.name as string}
-                          tableClassName="table-fixed"
                           selectable
-                          selectedIds={selectedIds}
-                          onSelectionChange={(next) => {
-                            setSelectedIds((prev) => {
-                              const nextSet = new Set(next);
-                              const sectionOnly = [...nextSet].every((id) => groupIds.includes(id));
-                              if (!sectionOnly) return nextSet;
-                              const merged = new Set(prev);
-                              const allBefore = groupIds.every((id) => prev.has(id));
-                              if (nextSet.size === 0 && allBefore) {
-                                groupIds.forEach((id) => merged.delete(id));
-                                return merged;
-                              }
-                              if (nextSet.size === groupIds.length) {
-                                groupIds.forEach((id) => merged.add(id));
-                                return merged;
-                              }
-                              return nextSet;
-                            });
-                          }}
-                          onRowClick={(r) => void navigate(`/instance/${r.project}/${r.name}`)}
+                          selectedIds={getSelection(`remote:${host}`)}
+                          onSelectionChange={(ids) => setSelection(`remote:${host}`, ids)}
+                          onRowClick={(r) => void navigate(`/remote-instance/${r.project}/${r.name}`)}
                           emptyMessage={t('project.emptyInstances', { project })}
                         />
                       </div>
                     );
                   })}
                 </div>
-              );
-            })()}
-          </div>
-        </section>
-      )}
+              </div>
+            )}
+          </>
+        );
+      })()}
 
       {activeTab === 'shared-services' && (
         <SharedServicesPanel project={project} />
@@ -551,6 +669,14 @@ export default function ProjectDetailPage() {
         />
       )}
 
+      {activeTab === 'remotes' && (
+        <RemotesListPanel
+          project={project as string}
+          remotes={remotesLsData?.remotes ?? []}
+          navigate={navigate}
+        />
+      )}
+
       {activeTab === 'terminal' && (
         <section>
           <PersistentTerminal config={termConfig} />
@@ -558,14 +684,20 @@ export default function ProjectDetailPage() {
       )}
 
       <ConfirmModal
-        open={confirmRemove}
+        open={confirmRemoveSection != null}
         title={t('project.removeTitle')}
-        body={t('project.removeBody', { count: selectedNames.length })}
+        body={t('project.removeBody', { count: confirmRemoveSection != null ? sectionSelectedCount(confirmRemoveSection, instances) : 0 })}
         onConfirm={() => {
-          setConfirmRemove(false);
-          void batchAction((v) => rmMut.mutateAsync(v));
+          const section = confirmRemoveSection;
+          setConfirmRemoveSection(null);
+          if (section) {
+            const sectionInstances = section === 'local'
+              ? instances.filter((i) => !i.remote_host)
+              : instances.filter((i) => i.remote_host === section.replace('remote:', ''));
+            void sectionBatchAction(section, sectionInstances, (v) => rmMut.mutateAsync(v));
+          }
         }}
-        onCancel={() => setConfirmRemove(false)}
+        onCancel={() => setConfirmRemoveSection(null)}
         confirmLabel={t('action.remove')}
         danger
       />
@@ -605,6 +737,27 @@ export default function ProjectDetailPage() {
         onClose={() => setCreateOpen(false)}
       />
 
+      <CreateRemoteCoastModal
+        open={remoteCoastModalOpen}
+        project={project as string}
+        existingNames={existingNames}
+        worktrees={gitInfo?.worktrees ?? []}
+        occupiedWorktrees={occupiedWorktrees}
+        currentBranch={gitInfo?.current_branch}
+        onError={setErrorMsg}
+        onCreated={(name, worktree) => {
+          setRemoteCoastModalOpen(false);
+          if (worktree) {
+            setPendingOps((prev) => ({
+              ...prev,
+              [name]: { type: 'provision-assign', targetWorktree: worktree },
+            }));
+          }
+          void queryClient.invalidateQueries({ queryKey: ['instances'] });
+        }}
+        onClose={() => setRemoteCoastModalOpen(false)}
+      />
+
       <Modal open={errorMsg != null} title={t('error.title')} onClose={() => setErrorMsg(null)}>
         <pre className="whitespace-pre-wrap text-sm font-mono text-rose-600 dark:text-rose-400">{errorMsg}</pre>
       </Modal>
@@ -615,6 +768,22 @@ export default function ProjectDetailPage() {
         onClose={() => setBuildModalOpen(false)}
         onComplete={() => {
           setBuildModalOpen(false);
+          void queryClient.invalidateQueries({ queryKey: ['buildsLs'] });
+        }}
+      />
+
+      <AddRemoteModal
+        open={addRemoteOpen}
+        onAdded={() => setAddRemoteOpen(false)}
+        onClose={() => setAddRemoteOpen(false)}
+      />
+
+      <RemoteBuildModal
+        open={remoteBuildModalOpen}
+        project={project as string}
+        onClose={() => setRemoteBuildModalOpen(false)}
+        onComplete={() => {
+          setRemoteBuildModalOpen(false);
           void queryClient.invalidateQueries({ queryKey: ['buildsLs'] });
         }}
       />

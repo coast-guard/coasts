@@ -17,6 +17,7 @@ interface Props {
   readonly project: ProjectName;
   readonly name: InstanceName;
   readonly checkedOut: boolean;
+  readonly basePath?: string;
 }
 
 const DEFAULT_TEMPLATE = 'http://localhost:<port>';
@@ -35,7 +36,7 @@ function splitPorts(portsStr: string): readonly string[] {
   return portsStr.split(',').map((p) => p.trim()).filter((p) => p.length > 0);
 }
 
-export default function InstanceServicesTab({ project, name, checkedOut }: Props) {
+export default function InstanceServicesTab({ project, name, checkedOut, basePath }: Props) {
   const { t, i18n } = useTranslation();
   const { data, isLoading, error } = useServices(project, name);
   const { data: portsData } = usePorts(project, name);
@@ -117,14 +118,14 @@ export default function InstanceServicesTab({ project, name, checkedOut }: Props
         className: 'w-[22%]',
         render: (r) => {
           const isBare = r.kind === 'bare';
-          const isDown = r.status !== 'running';
+          const isDown = !r.status.startsWith('running');
           return (
             <span className="inline-flex items-center gap-2">
               {isBare ? (
                 <>
                   <HealthDot healthy={healthData?.ports?.find((p) => p.logical_name === r.name)?.healthy} />
                   <Link
-                    to={`/instance/${project}/${name}/bare-services/${encodeURIComponent(r.name)}`}
+                    to={`${basePath ?? `/instance/${project}/${name}`}/bare-services/${encodeURIComponent(r.name)}`}
                     className="font-medium text-[var(--primary)] hover:underline"
                   >
                     {r.name}
@@ -132,7 +133,7 @@ export default function InstanceServicesTab({ project, name, checkedOut }: Props
                 </>
               ) : (
                 <Link
-                  to={`/instance/${project}/${name}/services/${encodeURIComponent(r.name)}`}
+                  to={`${basePath ?? `/instance/${project}/${name}`}/services/${encodeURIComponent(r.name)}`}
                   className="font-medium text-[var(--primary)] hover:underline"
                 >
                   {r.name}
@@ -168,7 +169,7 @@ export default function InstanceServicesTab({ project, name, checkedOut }: Props
           if (op != null && op.status === 'error') {
             return <span className="text-xs text-rose-500 font-medium">{t('service.operationError')}</span>;
           }
-          const isRunning = r.status === 'running';
+          const isRunning = r.status.startsWith('running');
           return (
             <span className={`inline-flex items-center gap-1.5 text-xs ${isRunning ? 'text-emerald-600 dark:text-emerald-400' : 'text-subtle-ui'}`}>
               <span className={`h-1.5 w-1.5 rounded-full ${isRunning ? 'bg-emerald-500' : 'bg-slate-400'}`} />
@@ -253,7 +254,7 @@ export default function InstanceServicesTab({ project, name, checkedOut }: Props
   );
 
   const downSvcs = useMemo(
-    () => services.filter((s) => s.status !== 'running'),
+    () => services.filter((s) => !s.status.startsWith('running')),
     [services],
   );
 
@@ -285,10 +286,11 @@ export default function InstanceServicesTab({ project, name, checkedOut }: Props
           selectedIds={selectedIds}
           onSelectionChange={setSelectedIds}
           onRowClick={(r) => {
+            const base = basePath ?? `/instance/${project}/${name}`;
             if (r.kind === 'bare') {
-              window.location.hash = `/instance/${project}/${name}/bare-services/${encodeURIComponent(r.name)}`;
+              window.location.hash = `${base}/bare-services/${encodeURIComponent(r.name)}`;
             } else {
-              window.location.hash = `/instance/${project}/${name}/services/${encodeURIComponent(r.name)}`;
+              window.location.hash = `${base}/services/${encodeURIComponent(r.name)}`;
             }
           }}
           emptyMessage={t('services.empty')}

@@ -11,7 +11,7 @@
     "preview": "vite preview",
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
-    "generate:types": "cd .. && cargo test -p coast-core export_bindings && cd coast-guard/src/types/generated && ls *.ts | sort | grep -v index.ts | sed 's/\\.ts$//' | awk '{print \"export type { \" $0 \" } from \\\"./\" $0 \"\\\";\"}'  > index.ts",
+    "generate:types": "cd .. && cargo test -p coast-core -p coast-daemon -p coast-service export_bindings && cd coast-guard/src/types/generated && ls *.ts | sort | grep -v index.ts | sed 's/\\.ts$//' | awk '{print \"export type { \" $0 \" } from \\\"./\" $0 \"\\\";\"}'  > index.ts",
     "generate:docs": "node scripts/generate-docs.mjs"
   },
   "dependencies": {

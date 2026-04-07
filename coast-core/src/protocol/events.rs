@@ -15,11 +15,21 @@ pub struct ErrorResponse {
 #[serde(tag = "event")]
 pub enum CoastEvent {
     #[serde(rename = "instance.created")]
-    InstanceCreated { name: String, project: String },
+    InstanceCreated {
+        name: String,
+        project: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        remote_host: Option<String>,
+    },
     #[serde(rename = "instance.removed")]
     InstanceRemoved { name: String, project: String },
     #[serde(rename = "instance.started")]
-    InstanceStarted { name: String, project: String },
+    InstanceStarted {
+        name: String,
+        project: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        remote_host: Option<String>,
+    },
     #[serde(rename = "instance.stopped")]
     InstanceStopped { name: String, project: String },
     #[serde(rename = "instance.assigned")]
@@ -162,4 +172,8 @@ pub enum CoastEvent {
     },
     #[serde(rename = "docker.status_changed")]
     DockerStatusChanged { connected: bool },
+    #[serde(rename = "remote.added")]
+    RemoteAdded { name: String },
+    #[serde(rename = "remote.removed")]
+    RemoteRemoved { name: String },
 }

@@ -28,6 +28,10 @@ pub struct BuildArgs {
     #[arg(long)]
     pub refresh: bool,
 
+    /// Which remote to build on (only used with --type remote).
+    #[arg(long)]
+    pub remote: Option<String>,
+
     /// Suppress all progress output; only print the final summary (or errors).
     #[arg(short = 's', long)]
     pub silent: bool,
@@ -387,6 +391,7 @@ pub async fn execute(args: &BuildArgs) -> Result<()> {
     let request = Request::Build(BuildRequest {
         coastfile_path,
         refresh: args.refresh,
+        remote: args.remote.clone(),
     });
 
     let verbosity = if args.silent {

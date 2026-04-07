@@ -12,6 +12,7 @@ PROJECTS_DIR="$HELPERS_DIR/projects"
 REPO_ROOT="$(cd "$HELPERS_DIR/.." && pwd)"
 COAST="$REPO_ROOT/target/release/coast"
 COASTD="$REPO_ROOT/target/release/coastd"
+COAST_SERVICE="$REPO_ROOT/target/release/coast-service"
 
 # Track instances for cleanup
 CLEANUP_INSTANCES=()
@@ -170,4 +171,60 @@ extract_dynamic_port() {
     # Match port table rows: service_name  canonical_port  dynamic_port
     # $2 must be numeric to avoid matching the "Allocating ports" progress line
     echo "$output" | awk -v svc="$service" '$1 == svc && $2 ~ /^[0-9]+$/ {print $3}'
+}
+
+# --- Remote coast helpers ---
+
+# Start coast-service in the background and wait for it to be healthy.
+start_coast_service() {
+    [ -f "$COAST_SERVICE" ] || { echo "coast-service binary not found at $COAST_SERVICE"; exit 1; }
+
+    export COAST_SERVICE_HOME=/root/.coast-service
+    export COAST_SERVICE_PORT=31420
+    mkdir -p "$COAST_SERVICE_HOME"
+
+    "$COAST_SERVICE" &>/tmp/coast-service-test.log &
+    COAST_SERVICE_PID=$!
+    sleep 2
+
+    if curl -sf http://localhost:31420/health >/dev/null 2>&1; then
+        pass "coast-service started (pid $COAST_SERVICE_PID)"
+    else
+        echo "coast-service log:"
+        cat /tmp/coast-service-test.log 2>/dev/null || true
+        fail "coast-service failed to start"
+    fi
+}
+
+# Stop coast-service.
+stop_coast_service() {
+    pkill -f "coast-service" 2>/dev/null || true
+    sleep 1
+}
+
+# Set up localhost SSH access for remote coast testing.
+# Generates a keypair and configures sshd to accept it.
+setup_localhost_ssh() {
+    mkdir -p ~/.ssh
+    chmod 700 ~/.ssh
+
+    ssh-keygen -t ed25519 -f ~/.ssh/coast_test_key -N "" -q
+    cat ~/.ssh/coast_test_key.pub >> ~/.ssh/authorized_keys
+    chmod 600 ~/.ssh/authorized_keys
+
+    mkdir -p /run/sshd
+    echo "GatewayPorts clientspecified" >> /etc/ssh/sshd_config
+    /usr/sbin/sshd 2>/dev/null || true
+
+    ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes \
+        -i ~/.ssh/coast_test_key localhost exit 2>/dev/null
+
+    pass "localhost SSH configured"
+}
+
+# Clean up remote coast state.
+clean_remote_state() {
+    stop_coast_service
+    rm -rf /root/.coast-service
+    pkill -f "ssh -N -L" 2>/dev/null || true
 }

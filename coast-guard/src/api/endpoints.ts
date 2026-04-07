@@ -33,6 +33,10 @@ import type {
   ImageInspectResponse,
   SecretInfo,
   RevealSecretResponse,
+  RemoteResponse,
+  SshKeysResponse,
+  SshKeyValidateResponse,
+  RemoteStatsResponse,
   RerunExtractorsResponse,
   RestartServicesResponse,
   VolumeSummaryResponse,
@@ -449,6 +453,7 @@ export const api = {
     forceRemoveDangling?: boolean,
     onProgress?: (event: BuildProgressEvent) => void,
     branch?: string | null,
+    remote?: string | null,
   ): Promise<{ complete?: unknown; error?: { error: string } }> {
     return consumeSSE<BuildProgressEvent, unknown>(
       '/api/v1/stream/run',
@@ -460,6 +465,7 @@ export const api = {
         build_id: buildId,
         coastfile_type: coastfileType,
         force_remove_dangling: forceRemoveDangling ?? false,
+        remote: remote ?? undefined,
       },
       onProgress,
     );
@@ -549,6 +555,60 @@ export const api = {
 
   checkUpdate(): Promise<UpdateCheckResponse> {
     return get<UpdateCheckResponse>('/update/check');
+  },
+
+  remotesLs(): Promise<RemoteResponse> {
+    return get<RemoteResponse>('/remotes');
+  },
+
+  remoteStats(): Promise<RemoteStatsResponse> {
+    return get<RemoteStatsResponse>('/remotes/stats');
+  },
+
+  remoteArch(name: string): Promise<{ arch: string }> {
+    return get<{ arch: string }>(`/remotes/arch?name=${encodeURIComponent(name)}`);
+  },
+
+  remoteBuild(
+    remote: string,
+    coastfilePath: string,
+    refresh: boolean,
+    onProgress?: (event: BuildProgressEvent) => void,
+  ): Promise<{ complete?: unknown; error?: { error: string } }> {
+    return consumeSSE<BuildProgressEvent, unknown>(
+      '/api/v1/stream/remote-build',
+      { coastfile_path: coastfilePath, refresh, remote },
+      onProgress,
+    );
+  },
+
+  sshKeysLs(): Promise<SshKeysResponse> {
+    return get<SshKeysResponse>('/ssh-keys');
+  },
+
+  sshKeyValidate(path: string): Promise<SshKeyValidateResponse> {
+    return get<SshKeyValidateResponse>(`/ssh-keys/validate?path=${encodeURIComponent(path)}`);
+  },
+
+  remoteRm(name: string): Promise<RemoteResponse> {
+    return post<{ action: string; name: string }, RemoteResponse>(
+      '/remote/rm',
+      { action: 'Rm', name },
+    );
+  },
+
+  remoteAdd(params: {
+    name: string;
+    host: string;
+    user: string;
+    port: number;
+    ssh_key: string | null;
+    sync_strategy: string;
+  }): Promise<RemoteResponse> {
+    return post<{ action: string; name: string; host: string; user: string; port: number; ssh_key: string | null; sync_strategy: string }, RemoteResponse>(
+      '/remote/add',
+      { action: 'Add', ...params },
+    );
   },
 
   applyUpdate(): Promise<UpdateApplyResponse> {

@@ -57,6 +57,7 @@
   "projectTab.coasts": "Coasts",
   "projectTab.sharedServices": "Общие сервисы",
   "projectTab.builds": "Сборки",
+  "projectTab.remotes": "Удалённые",
   "projectTab.terminal": "Терминал",
   "build.newBuild": "Новая сборка",
   "build.createNewBuild": "Создать новую сборку",

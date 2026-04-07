@@ -66,6 +66,16 @@ pub struct CachedImage {
     pub digest_short: Option<String>,
 }
 
+/// Read the `arch` field from a build manifest.
+///
+/// Returns `None` if the manifest doesn't exist, can't be parsed,
+/// or doesn't contain an `arch` field.
+pub fn read_manifest_arch(manifest_path: &Path) -> Option<String> {
+    let content = fs::read_to_string(manifest_path).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&content).ok()?;
+    json.get("arch").and_then(|v| v.as_str()).map(String::from)
+}
+
 /// The root directory for all coast data.
 ///
 /// Reads `COAST_HOME` if set, otherwise defaults to `~/.coast/`.

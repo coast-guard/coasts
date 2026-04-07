@@ -9,9 +9,10 @@ import DataTable, { type Column } from '../components/DataTable';
 interface Props {
   readonly project: ProjectName;
   readonly name: InstanceName;
+  readonly basePath?: string;
 }
 
-export default function InstanceVolumesTab({ project, name }: Props) {
+export default function InstanceVolumesTab({ project, name, basePath }: Props) {
   const { t, i18n } = useTranslation();
   const { data, isLoading, error } = useVolumes(project, name);
 
@@ -24,7 +25,7 @@ export default function InstanceVolumesTab({ project, name }: Props) {
         header: t('volumes.name'),
         render: (r) => (
           <Link
-            to={`/instance/${project}/${name}/volumes/${encodeURIComponent(r.name)}`}
+            to={`${basePath ?? `/instance/${project}/${name}`}/volumes/${encodeURIComponent(r.name)}`}
             className="font-medium text-[var(--primary)] hover:underline"
           >
             <span className="font-mono text-xs">{r.name}</span>
@@ -68,7 +69,7 @@ export default function InstanceVolumesTab({ project, name }: Props) {
         data={volumes as VolumeSummaryResponse[]}
         getRowId={(r) => r.name}
         onRowClick={(r) => {
-          window.location.hash = `/instance/${project}/${name}/volumes/${encodeURIComponent(r.name)}`;
+          window.location.hash = `${basePath ?? `/instance/${project}/${name}`}/volumes/${encodeURIComponent(r.name)}`;
         }}
         emptyMessage={t('volumes.empty')}
       />

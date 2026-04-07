@@ -22,6 +22,9 @@ RUN sed -i '/universe/d; /multiverse/d' /etc/apt/sources.list \
     socat \
     sudo \
     iptables \
+    openssh-server \
+    psmisc \
+    rsync \
     ${EXTRA_PACKAGES} \
   && rm -rf /var/lib/apt/lists/*
 
@@ -47,6 +50,12 @@ RUN install -m 0755 -d /etc/apt/keyrings \
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
   && apt-get install -y --no-install-recommends nodejs \
   && rm -rf /var/lib/apt/lists/*
+
+# Install mutagen for continuous file sync in remote coast tests.
+# Must extract both the mutagen binary AND the agents bundle.
+RUN curl -fsSL https://github.com/mutagen-io/mutagen/releases/download/v0.18.1/mutagen_linux_amd64_v0.18.1.tar.gz \
+    | tar xz -C /usr/local/bin \
+  && chmod +x /usr/local/bin/mutagen
 
 # Non-root user matching typical WSL/Linux desktop setup
 RUN useradd -m -s /bin/bash testuser \

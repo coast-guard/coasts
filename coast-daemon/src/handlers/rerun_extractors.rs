@@ -816,6 +816,7 @@ mod tests {
             worktree_name: None,
             build_id: build_id.map(str::to_string),
             coastfile_type: None,
+            remote_host: None,
         }
     }
 

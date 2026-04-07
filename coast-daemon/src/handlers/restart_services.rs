@@ -43,6 +43,14 @@ pub async fn handle(
             }
         })?;
 
+        if instance.remote_host.is_some() {
+            drop(db);
+            let remote_config =
+                super::remote::resolve_remote_for_instance(&req.project, &req.name, state).await?;
+            let client = super::remote::RemoteClient::connect(&remote_config).await?;
+            return super::remote::forward::forward_restart_services(&client, &req).await;
+        }
+
         if instance.status != InstanceStatus::Running
             && instance.status != InstanceStatus::CheckedOut
         {
@@ -300,6 +308,7 @@ mod tests {
             worktree_name: None,
             build_id: None,
             coastfile_type: None,
+            remote_host: None,
         }
     }
 
@@ -385,6 +394,7 @@ mod tests {
             worktree_name: None,
             build_id: None,
             coastfile_type: None,
+            remote_host: None,
         })
         .unwrap();
         let state = AppState::new_for_testing(db);

@@ -10,9 +10,10 @@ interface ToolbarProps {
   readonly actions: readonly ToolbarAction[];
   readonly selectedCount: number;
   readonly memorySummary?: string | undefined;
+  readonly memoryHighlight?: string | undefined;
 }
 
-export default function Toolbar({ actions, selectedCount, memorySummary }: ToolbarProps) {
+export default function Toolbar({ actions, selectedCount, memorySummary, memoryHighlight }: ToolbarProps) {
   const { t } = useTranslation();
   return (
     <div className="flex items-center gap-2 flex-wrap px-4 py-2 bg-[var(--surface-muted)] border-b border-[var(--border)]">
@@ -33,7 +34,10 @@ export default function Toolbar({ actions, selectedCount, memorySummary }: Toolb
       <span className="ml-auto text-xs text-subtle-ui">
         {selectedCount > 0
           ? t('toolbar.selected', { count: selectedCount })
-          : memorySummary ?? null}
+          : <>
+              {memorySummary ?? null}
+              {memoryHighlight && <span className="text-main font-semibold">{memoryHighlight}</span>}
+            </>}
       </span>
     </div>
   );

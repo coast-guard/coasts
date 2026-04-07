@@ -19,7 +19,8 @@ use std::path::{Path, PathBuf};
 use crate::error::{CoastError, Result};
 use crate::types::{
     AssignConfig, BareServiceConfig, HostInjectConfig, McpClientConnectorConfig, McpServerConfig,
-    OmitConfig, RuntimeType, SecretConfig, SetupConfig, SharedServiceConfig, VolumeConfig,
+    OmitConfig, RemoteConfig, RuntimeType, SecretConfig, SetupConfig, SharedServiceConfig,
+    VolumeConfig,
 };
 
 use raw_types::*;
@@ -79,6 +80,8 @@ pub struct Coastfile {
     /// Workspace-relative paths that should be per-instance (not shared across Coast instances).
     /// Each path gets its own bind mount from `/coast-private/` inside the container.
     pub private_paths: Vec<String>,
+    /// Remote execution configuration. Present only for `Coastfile.remote` types.
+    pub remote: Option<RemoteConfig>,
 }
 
 /// Configuration for the `[agent_shell]` Coastfile section.
@@ -159,6 +162,24 @@ impl Coastfile {
         }
 
         Ok(None)
+    }
+
+    /// Returns `true` if this coastfile represents a remote coast.
+    ///
+    /// A coastfile is remote when its type is exactly `"remote"` or starts with
+    /// `"remote."` (e.g., `"remote.light"`).
+    pub fn is_remote(&self) -> bool {
+        self.coastfile_type
+            .as_deref()
+            .map(|t| t == "remote" || t.starts_with("remote."))
+            .unwrap_or(false)
+    }
+
+    /// Returns `true` if the given coastfile type string represents a remote coast.
+    pub fn is_remote_type(coastfile_type: Option<&str>) -> bool {
+        coastfile_type
+            .map(|t| t == "remote" || t.starts_with("remote."))
+            .unwrap_or(false)
     }
 
     /// Find a Coastfile on disk, trying the `.toml` variant first.
@@ -317,6 +338,8 @@ impl Coastfile {
 
         result.coastfile_type = coastfile_type;
 
+        Self::validate_remote_constraints(&result)?;
+
         ancestors.remove(&canonical);
         Ok(result)
     }
@@ -351,6 +374,7 @@ impl Coastfile {
             services: vec![],
             agent_shell: None,
             private_paths: vec![],
+            remote: None,
         }
     }
 
@@ -590,6 +614,11 @@ impl Coastfile {
             None => base.private_paths,
         };
 
+        let remote = match raw.remote {
+            Some(ref raw_remote) => Some(Self::parse_remote_config(raw_remote)?),
+            None => base.remote,
+        };
+
         Ok(Coastfile {
             name,
             compose,
@@ -615,6 +644,7 @@ impl Coastfile {
             services,
             agent_shell,
             private_paths,
+            remote,
         })
     }
 
@@ -791,6 +821,31 @@ impl Coastfile {
         format!("{}; ", cmds.join("; "))
     }
 
+    /// Validate remote-specific constraints after the coastfile type is set.
+    ///
+    /// - Remote coastfiles must have a `[remote]` section.
+    /// - Non-remote coastfiles must not have a `[remote]` section.
+    fn validate_remote_constraints(cf: &Coastfile) -> Result<()> {
+        let is_remote = cf.is_remote();
+
+        if is_remote && cf.remote.is_none() {
+            return Err(CoastError::coastfile(
+                "Remote coastfiles (Coastfile.remote) require a [remote] section \
+                 with at least 'host' configured.",
+            ));
+        }
+
+        if !is_remote && cf.remote.is_some() {
+            return Err(CoastError::coastfile(
+                "The [remote] section is only allowed in remote coastfiles \
+                 (Coastfile.remote or Coastfile.remote.*). \
+                 Remove the [remote] section or rename the file to Coastfile.remote.",
+            ));
+        }
+
+        Ok(())
+    }
+
     fn validate_and_build(raw: RawCoastfile, project_root: &Path) -> Result<Self> {
         // Validate project name (required for standalone files)
         let name = raw.coast.name.unwrap_or_default();
@@ -891,6 +946,12 @@ impl Coastfile {
         let private_paths = raw.coast.private_paths.unwrap_or_default();
         Self::validate_private_paths(&private_paths)?;
 
+        let remote = raw
+            .remote
+            .as_ref()
+            .map(Self::parse_remote_config)
+            .transpose()?;
+
         Ok(Coastfile {
             name,
             compose,
@@ -926,6 +987,7 @@ impl Coastfile {
             services,
             agent_shell,
             private_paths,
+            remote,
         })
     }
 }

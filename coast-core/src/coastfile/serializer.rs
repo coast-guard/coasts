@@ -460,7 +460,24 @@ impl Coastfile {
         write_services_section(self, &mut out);
         write_agent_shell_section(self, &mut out);
         write_mcp_clients_section(self, &mut out);
+        write_remote_section(self, &mut out);
         out
+    }
+}
+
+fn write_remote_section(coastfile: &Coastfile, out: &mut String) {
+    let Some(ref remote) = coastfile.remote else {
+        return;
+    };
+
+    writeln!(out, "\n[remote]").unwrap();
+    if remote.workspace_sync != crate::types::SyncStrategy::Rsync {
+        writeln!(
+            out,
+            "workspace_sync = {}",
+            toml_quote(remote.workspace_sync.as_str())
+        )
+        .unwrap();
     }
 }
 
@@ -532,6 +549,7 @@ mod tests {
             }],
             agent_shell: None,
             private_paths: vec![],
+            remote: None,
         };
 
         let serialized = coastfile.to_standalone_toml();

@@ -194,6 +194,7 @@ pub fn find_orphaned_worktrees(
     instances
         .iter()
         .filter(|inst| matches!(inst.status, InstanceStatus::Running | InstanceStatus::Idle))
+        .filter(|inst| inst.remote_host.is_none())
         .filter_map(|inst| {
             let wt = inst.worktree_name.as_ref()?;
             if worktree_listing.contains(wt) {
@@ -490,6 +491,7 @@ mod tests {
             worktree_name: worktree.map(String::from),
             build_id: None,
             coastfile_type: None,
+            remote_host: None,
         }
     }
 
@@ -561,6 +563,20 @@ mod tests {
         let orphans = find_orphaned_worktrees(&instances, &listing);
         assert_eq!(orphans.len(), 1);
         assert_eq!(orphans[0].0, "dev-1");
+    }
+
+    #[test]
+    fn test_find_orphaned_worktrees_ignores_remote() {
+        let mut remote_inst = make_instance("dev-1", InstanceStatus::Running, Some("feature-x"));
+        remote_inst.remote_host = Some("10.0.0.1".to_string());
+
+        let local_inst = make_instance("dev-2", InstanceStatus::Running, Some("feature-x"));
+
+        let instances = vec![remote_inst, local_inst];
+        let listing: Vec<String> = vec![];
+        let orphans = find_orphaned_worktrees(&instances, &listing);
+        assert_eq!(orphans.len(), 1, "only local instance should be orphaned");
+        assert_eq!(orphans[0].0, "dev-2");
     }
 
     #[tokio::test]

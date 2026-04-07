@@ -138,6 +138,10 @@ pub async fn handle(
         status: "stopping".to_string(),
     });
 
+    if instance.remote_host.is_some() {
+        return handle_remote_stop(req, &instance, state, &progress).await;
+    }
+
     emit(
         &progress,
         BuildProgressEvent::build_plan(vec![
@@ -270,6 +274,90 @@ pub async fn handle(
     Ok(StopResponse { name: req.name })
 }
 
+/// Handle stop for a remote coast instance.
+///
+/// Forwards the stop to coast-service, then kills local SSH tunnel processes
+/// and updates the shadow instance status.
+async fn handle_remote_stop(
+    req: StopRequest,
+    instance: &coast_core::types::CoastInstance,
+    state: &AppState,
+    progress: &Option<tokio::sync::mpsc::Sender<BuildProgressEvent>>,
+) -> Result<StopResponse> {
+    info!(
+        name = %req.name,
+        remote_host = ?instance.remote_host,
+        "stopping remote instance"
+    );
+
+    emit(
+        progress,
+        BuildProgressEvent::build_plan(vec![
+            "Stopping file sync".into(),
+            "Forwarding stop to remote".into(),
+            "Killing tunnels".into(),
+        ]),
+    );
+
+    emit(
+        progress,
+        BuildProgressEvent::started("Stopping file sync", 1, 3),
+    );
+
+    let session_name = super::remote::sync::mutagen_session_name(&req.project, &req.name);
+    let shell_container = format!("{}-coasts-{}-shell", req.project, req.name);
+    if let Some(docker) = state.docker.as_ref() {
+        let _ =
+            super::remote::sync::stop_mutagen_in_shell(&docker, &shell_container, &session_name)
+                .await;
+    }
+
+    emit(
+        progress,
+        BuildProgressEvent::done("Stopping file sync", "ok"),
+    );
+
+    emit(
+        progress,
+        BuildProgressEvent::started("Forwarding stop to remote", 2, 3),
+    );
+
+    if let Ok(remote_config) =
+        super::remote::resolve_remote_for_instance(&req.project, &req.name, state).await
+    {
+        if let Ok(client) = super::remote::RemoteClient::connect(&remote_config).await {
+            let _ = super::remote::forward::forward_stop(&client, &req).await;
+        }
+    }
+
+    emit(
+        progress,
+        BuildProgressEvent::done("Forwarding stop to remote", "ok"),
+    );
+
+    // Kill local SSH tunnel forwarding processes
+    emit(
+        progress,
+        BuildProgressEvent::started("Killing tunnels", 3, 3),
+    );
+
+    let db = state.db.lock().await;
+    kill_instance_socat_processes(&db, &req.project, &req.name)?;
+    db.update_instance_status(&req.project, &req.name, &InstanceStatus::Stopped)?;
+
+    state.emit_event(CoastEvent::InstanceStatusChanged {
+        name: req.name.clone(),
+        project: req.project.clone(),
+        status: "stopped".to_string(),
+    });
+
+    emit(progress, BuildProgressEvent::done("Killing tunnels", "ok"));
+
+    info!(name = %req.name, "remote instance stopped");
+
+    Ok(StopResponse { name: req.name })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -293,6 +381,7 @@ mod tests {
             worktree_name: None,
             build_id: None,
             coastfile_type: None,
+            remote_host: None,
         }
     }
 

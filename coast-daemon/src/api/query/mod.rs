@@ -6,9 +6,11 @@ pub mod files;
 pub mod images;
 pub mod mcp;
 pub mod project_git;
+pub mod remotes;
 pub mod secrets;
 pub mod services;
 pub mod settings;
+pub mod ssh_keys;
 pub mod update;
 pub mod volumes;
 
@@ -46,6 +48,8 @@ pub fn router() -> Router<Arc<AppState>> {
         .merge(services::routes())
         .merge(files::routes())
         .merge(builds::routes())
+        .merge(remotes::routes())
+        .merge(ssh_keys::routes())
         .merge(mcp::routes())
         .merge(config::routes())
         .merge(docker::routes())
@@ -74,6 +78,9 @@ async fn ls(
 pub(crate) struct ResolvedCoast {
     pub container_id: String,
     pub build_id: Option<String>,
+    pub remote_host: Option<String>,
+    pub project: String,
+    pub name: String,
 }
 
 pub(crate) async fn resolve_coast_container(
@@ -129,6 +136,9 @@ pub(crate) async fn resolve_coast_container(
     Ok(ResolvedCoast {
         container_id,
         build_id: instance.build_id,
+        remote_host: instance.remote_host,
+        project: project.to_string(),
+        name: name.to_string(),
     })
 }
 
@@ -171,4 +181,47 @@ pub(crate) async fn exec_in_coast(
     }
 
     Ok(stdout)
+}
+
+/// Execute a command inside a remote coast's DinD container via coast-service /exec.
+pub(crate) async fn exec_in_remote_coast(
+    state: &AppState,
+    project: &str,
+    name: &str,
+    cmd: Vec<String>,
+) -> Result<String, String> {
+    let remote_config = crate::handlers::remote::resolve_remote_for_instance(project, name, state)
+        .await
+        .map_err(|e| format!("Failed to resolve remote: {e}"))?;
+    let client = crate::handlers::remote::RemoteClient::connect(&remote_config)
+        .await
+        .map_err(|e| format!("Failed to connect to remote: {e}"))?;
+
+    let exec_req = coast_core::protocol::ExecRequest {
+        name: name.to_string(),
+        project: project.to_string(),
+        service: None,
+        root: false,
+        command: cmd,
+    };
+
+    let resp = crate::handlers::remote::forward::forward_exec(&client, &exec_req)
+        .await
+        .map_err(|e| format!("Remote exec failed: {e}"))?;
+
+    Ok(resp.stdout)
+}
+
+/// Execute in the appropriate context: local Docker for local instances,
+/// coast-service /exec for remote instances.
+pub(crate) async fn exec_in_resolved_coast(
+    state: &AppState,
+    resolved: &ResolvedCoast,
+    cmd: Vec<String>,
+) -> Result<String, String> {
+    if resolved.remote_host.is_some() {
+        exec_in_remote_coast(state, &resolved.project, &resolved.name, cmd).await
+    } else {
+        exec_in_coast(state, &resolved.container_id, cmd).await
+    }
 }

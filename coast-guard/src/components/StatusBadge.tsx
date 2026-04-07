@@ -14,13 +14,36 @@ const STATUS_STYLES: Readonly<Record<InstanceStatus, { readonly dot: string; rea
   idle: { dot: 'bg-amber-500', bg: 'bg-amber-500/12 border border-amber-500/30', text: 'text-amber-700 dark:text-amber-300', label: 'status.idle' },
 };
 
-export default function StatusBadge({ status }: { readonly status: InstanceStatus }) {
+const REMOTE_DOWN_STYLE = {
+  dot: 'bg-red-500',
+  bg: 'bg-red-500/12 border border-red-500/30',
+  text: 'text-red-700 dark:text-red-300',
+};
+
+const WARMING_UP_STYLE = {
+  dot: 'bg-amber-500 animate-pulse',
+  bg: 'bg-amber-500/12 border border-amber-500/30',
+  text: 'text-amber-700 dark:text-amber-300',
+};
+
+interface StatusBadgeProps {
+  readonly status: InstanceStatus;
+  readonly remoteDown?: boolean;
+  readonly warmingUp?: boolean;
+}
+
+export default function StatusBadge({ status, remoteDown, warmingUp }: StatusBadgeProps) {
   const { t } = useTranslation();
-  const s = STATUS_STYLES[status];
+  const s = remoteDown ? REMOTE_DOWN_STYLE : warmingUp ? WARMING_UP_STYLE : STATUS_STYLES[status];
+  const label = remoteDown
+    ? t('status.remoteDown', 'Remote Down')
+    : warmingUp
+      ? t('status.warmingUp', 'Warming Up')
+      : t(STATUS_STYLES[status].label);
   return (
     <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 text-xs font-medium rounded-full ${s.bg} ${s.text}`}>
       <span className={`h-1.5 w-1.5 rounded-full ${s.dot}`} />
-      {t(s.label)}
+      {label}
     </span>
   );
 }

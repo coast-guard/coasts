@@ -131,6 +131,21 @@ async fn exec_in_container(
 pub async fn handle(req: ExecRequest, state: &AppState) -> Result<ExecResponse> {
     info!(name = %req.name, project = %req.project, command = ?req.command, "handling exec request");
 
+    // Check for remote instance — forward to coast-service if so.
+    {
+        let db = state.db.lock().await;
+        if let Some(instance) = db.get_instance(&req.project, &req.name)? {
+            if instance.remote_host.is_some() {
+                drop(db);
+                let remote_config =
+                    super::remote::resolve_remote_for_instance(&req.project, &req.name, state)
+                        .await?;
+                let client = super::remote::RemoteClient::connect(&remote_config).await?;
+                return super::remote::forward::forward_exec(&client, &req).await;
+            }
+        }
+    }
+
     // Phase 1: DB read (locked)
     let (container_id, build_id) = {
         let db = state.db.lock().await;
@@ -237,6 +252,7 @@ mod tests {
             worktree_name: None,
             build_id: None,
             coastfile_type: None,
+            remote_host: None,
         }
     }
 

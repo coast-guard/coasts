@@ -143,6 +143,23 @@ pub struct ExecResponse {
     pub stderr: String,
 }
 
+// --- Container Stats ---
+
+/// Request one-shot Docker stats for a remote DinD container.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ContainerStatsRequest {
+    pub name: String,
+    pub project: String,
+}
+
+/// Response containing a single stats snapshot.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ContainerStatsResponse {
+    pub stats: super::ContainerStats,
+}
+
 // --- Logs ---
 
 /// Request to stream logs from a coast instance.
@@ -268,6 +285,9 @@ pub struct InstanceSummary {
     /// Number of inner services that are not in "running" state.
     #[serde(default)]
     pub down_service_count: u32,
+    /// When set, this instance runs on a remote machine (value is the SSH host spec).
+    #[serde(default)]
+    pub remote_host: Option<String>,
 }
 
 /// A project that has been built (has an image artifact in ~/.coast/images/).

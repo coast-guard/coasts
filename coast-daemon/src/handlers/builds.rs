@@ -409,6 +409,10 @@ fn summary_from_manifest(
         archived,
         instances_using,
         coastfile_type: json_str(manifest, "coastfile_type"),
+        arch: json_str(manifest, "arch"),
+        is_remote: coast_core::coastfile::Coastfile::is_remote_type(
+            json_str(manifest, "coastfile_type").as_deref(),
+        ),
     }
 }
 
@@ -539,6 +543,7 @@ async fn handle_inspect(
                 primary_port_dynamic: None,
                 primary_port_url: None,
                 down_service_count: 0,
+                remote_host: row.remote_host.clone(),
             })
             .collect()
     };
@@ -547,7 +552,7 @@ async fn handle_inspect(
     let built_svcs = json_string_vec(&manifest, "built_services");
     let coast_img = json_str(&manifest, "coast_image");
     let built_prefix = format!("coast-built/{}/", project);
-    let docker_images: Vec<DockerImageInfo> = all_docker_images
+    let mut docker_images: Vec<DockerImageInfo> = all_docker_images
         .into_iter()
         .filter(|img| {
             if let Some(svc) = img.repository.strip_prefix(&built_prefix) {
@@ -562,6 +567,10 @@ async fn handle_inspect(
             false
         })
         .collect();
+
+    if docker_images.is_empty() {
+        docker_images = docker_images_from_manifest(project, &manifest, &art_dir);
+    }
 
     Ok(BuildsResponse::Inspect(Box::new(BuildsInspectResponse {
         project: project.to_string(),
@@ -710,7 +719,7 @@ async fn handle_docker_images(
     let built_svcs = json_string_vec(&manifest, "built_services");
     let coast_img = json_str(&manifest, "coast_image");
     let built_prefix = format!("coast-built/{}/", project);
-    let images: Vec<DockerImageInfo> = all_images
+    let mut images: Vec<DockerImageInfo> = all_images
         .into_iter()
         .filter(|img| {
             if let Some(svc) = img.repository.strip_prefix(&built_prefix) {
@@ -725,9 +734,144 @@ async fn handle_docker_images(
             false
         })
         .collect();
+
+    if images.is_empty() {
+        let art_dir = resolve_build_dir(project, build_id).unwrap_or_default();
+        images = docker_images_from_manifest(project, &manifest, &art_dir);
+    }
+
     Ok(BuildsResponse::DockerImages(BuildsDockerImagesResponse {
         images,
     }))
+}
+
+/// Build `DockerImageInfo` entries from the manifest and artifact tarballs.
+///
+/// Used as a fallback when images aren't loaded into the local Docker daemon
+/// (e.g. remote builds where images exist only as downloaded tarballs).
+fn docker_images_from_manifest(
+    project: &str,
+    manifest: &serde_json::Value,
+    art_dir: &std::path::Path,
+) -> Vec<DockerImageInfo> {
+    let built_svcs = json_string_vec(manifest, "built_services");
+    let pulled = json_string_vec(manifest, "pulled_images");
+    let coast_img = json_str(manifest, "coast_image");
+    let build_ts = json_str(manifest, "build_timestamp").unwrap_or_default();
+
+    let mut images = Vec::new();
+
+    if built_svcs.is_empty() && pulled.is_empty() && coast_img.is_none() {
+        images = images_from_compose(project, art_dir, &build_ts);
+        if !images.is_empty() {
+            return images;
+        }
+    }
+
+    for svc in &built_svcs {
+        let tarball = art_dir.join(format!("{svc}.tar"));
+        let size = tarball.metadata().map(|m| m.len() as i64).unwrap_or(0);
+        images.push(DockerImageInfo {
+            id: String::new(),
+            repository: format!("coast-built/{project}/{svc}"),
+            tag: "latest".to_string(),
+            created: build_ts.clone(),
+            size: format_size(size as u64),
+            size_bytes: size,
+        });
+    }
+
+    for img_ref in &pulled {
+        let (repo, tag) = img_ref
+            .split_once(':')
+            .unwrap_or((img_ref.as_str(), "latest"));
+        let tarball_name = img_ref.replace(['/', ':'], "_");
+        let tarball = art_dir.join(format!("{tarball_name}.tar"));
+        let size = tarball.metadata().map(|m| m.len() as i64).unwrap_or(0);
+        images.push(DockerImageInfo {
+            id: String::new(),
+            repository: repo.to_string(),
+            tag: tag.to_string(),
+            created: build_ts.clone(),
+            size: format_size(size as u64),
+            size_bytes: size,
+        });
+    }
+
+    if let Some(ci) = coast_img {
+        let (repo, tag) = ci.split_once(':').unwrap_or((&ci, "latest"));
+        images.push(DockerImageInfo {
+            id: String::new(),
+            repository: repo.to_string(),
+            tag: tag.to_string(),
+            created: build_ts.clone(),
+            size: String::new(),
+            size_bytes: 0,
+        });
+    }
+
+    images
+}
+
+/// Extract image references from the compose.yml in an artifact directory.
+/// Used when the manifest lacks built_services/pulled_images (remote builds).
+fn images_from_compose(
+    project: &str,
+    art_dir: &std::path::Path,
+    build_ts: &str,
+) -> Vec<DockerImageInfo> {
+    let compose_path = art_dir.join("compose.yml");
+    let Ok(content) = std::fs::read_to_string(&compose_path) else {
+        return Vec::new();
+    };
+
+    let mut images = Vec::new();
+    let built_prefix = format!("coast-built/{project}/");
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if let Some(img_ref) = trimmed.strip_prefix("image: ") {
+            let img_ref = img_ref.trim();
+            let (repo, tag) = img_ref.split_once(':').unwrap_or((img_ref, "latest"));
+
+            let image_type = if repo.starts_with(&built_prefix) {
+                "built"
+            } else {
+                "pulled"
+            };
+
+            if images
+                .iter()
+                .any(|i: &DockerImageInfo| i.repository == repo && i.tag == tag)
+            {
+                continue;
+            }
+
+            images.push(DockerImageInfo {
+                id: String::new(),
+                repository: repo.to_string(),
+                tag: tag.to_string(),
+                created: build_ts.to_string(),
+                size: format!("[{image_type}]"),
+                size_bytes: 0,
+            });
+        }
+    }
+
+    images
+}
+
+fn format_size(bytes: u64) -> String {
+    let b = bytes as f64;
+    if b >= 1_073_741_824.0 {
+        format!("{:.1} GB", b / 1_073_741_824.0)
+    } else if b >= 1_048_576.0 {
+        format!("{:.0} MB", b / 1_048_576.0)
+    } else if b >= 1024.0 {
+        format!("{:.0} KB", b / 1024.0)
+    } else {
+        format!("{bytes} B")
+    }
 }
 
 /// Query bollard for Docker images matching a project.

@@ -93,6 +93,12 @@ pub struct BuildSummary {
     pub instances_using: usize,
     #[serde(default)]
     pub coastfile_type: Option<String>,
+    /// Architecture of the build (e.g. "x86_64", "aarch64"). Present for remote builds.
+    #[serde(default)]
+    pub arch: Option<String>,
+    /// Whether this build targets a remote machine.
+    #[serde(default)]
+    pub is_remote: bool,
 }
 
 /// MCP server info stored in the build manifest.

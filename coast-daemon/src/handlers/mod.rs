@@ -123,6 +123,7 @@ mod compose_context_tests {
             worktree_name: None,
             build_id: None,
             coastfile_type: None,
+            remote_host: None,
         };
         db.insert_instance(&instance).unwrap();
         db.insert_port_allocation(
@@ -165,6 +166,7 @@ mod compose_context_tests {
             worktree_name: None,
             build_id: None,
             coastfile_type: None,
+            remote_host: None,
         };
         db.insert_instance(&instance).unwrap();
 
@@ -198,6 +200,7 @@ mod compose_context_tests {
             worktree_name: None,
             build_id: None,
             coastfile_type: None,
+            remote_host: None,
         };
         db.insert_instance(&instance).unwrap();
         db.insert_port_allocation(
@@ -242,6 +245,7 @@ mod compose_context_tests {
             worktree_name: None,
             build_id: None,
             coastfile_type: None,
+            remote_host: None,
         };
         db.insert_instance(&instance).unwrap();
         db.insert_port_allocation(
@@ -319,6 +323,8 @@ pub mod mcp;
 pub mod ports;
 pub mod ps;
 pub mod rebuild;
+pub mod remote;
+pub mod remote_mgmt;
 pub mod rerun_extractors;
 pub mod restart_services;
 pub mod rm;
@@ -431,10 +437,11 @@ fn error_response_translated(e: &coast_core::error::CoastError, lang: &str) -> R
 
 /// Handle a Build request with a progress sender for streaming.
 pub async fn handle_build_with_progress(
-    req: BuildRequest,
+    mut req: BuildRequest,
     state: &AppState,
     progress: tokio::sync::mpsc::Sender<BuildProgressEvent>,
 ) -> coast_core::error::Result<BuildResponse> {
+    req.coastfile_path = resolve_coastfile_path(&req.coastfile_path);
     let project_hint = req
         .coastfile_path
         .file_stem()
@@ -460,6 +467,157 @@ pub async fn handle_build_with_progress(
     }
 }
 
+/// Resolve a coastfile path, trying the `.toml` extension if the exact path
+/// doesn't exist. This handles the case where the frontend sends
+/// `Coastfile.remote` but the actual file is `Coastfile.remote.toml`.
+fn resolve_coastfile_path(path: &std::path::Path) -> std::path::PathBuf {
+    if path.exists() {
+        return path.to_path_buf();
+    }
+    if let Some(dir) = path.parent() {
+        if let Some(fname) = path.file_name() {
+            let with_toml = dir.join(format!("{}.toml", fname.to_string_lossy()));
+            if with_toml.exists() {
+                return with_toml;
+            }
+        }
+    }
+    path.to_path_buf()
+}
+
+/// Handle a remote Build request with progress streaming.
+///
+/// Connects to the specified remote, syncs the project source, triggers
+/// a build on coast-service, downloads the artifact back, and returns
+/// the build response.
+pub async fn handle_remote_build_with_progress(
+    req: BuildRequest,
+    state: &AppState,
+    progress: tokio::sync::mpsc::Sender<BuildProgressEvent>,
+) -> coast_core::error::Result<BuildResponse> {
+    let remote_name = req.remote.as_deref().ok_or_else(|| {
+        coast_core::error::CoastError::state("remote build requires --remote <name>")
+    })?;
+
+    let resolved_path = resolve_coastfile_path(&req.coastfile_path);
+    let cf = coast_core::coastfile::Coastfile::from_file(&resolved_path)?;
+    let project = cf.name.clone();
+    let cf_remote = cf.remote.as_ref().ok_or_else(|| {
+        coast_core::error::CoastError::coastfile("Coastfile requires a [remote] section")
+    })?;
+
+    state.emit_event(CoastEvent::BuildStarted {
+        project: project.clone(),
+    });
+
+    let plan = vec![
+        "Resolving remote".to_string(),
+        "Connecting to remote".to_string(),
+        "Syncing project source".to_string(),
+        "Building on remote".to_string(),
+        "Downloading artifact".to_string(),
+    ];
+    let total = plan.len() as u32;
+    let _ = progress.send(BuildProgressEvent::build_plan(plan)).await;
+
+    let _ = progress
+        .send(BuildProgressEvent::started("Resolving remote", 1, total))
+        .await;
+    let db = state.db.lock().await;
+    let entry = db.get_remote(remote_name)?.ok_or_else(|| {
+        coast_core::error::CoastError::state(format!("remote '{}' is not registered", remote_name))
+    })?;
+    drop(db);
+    let connection = coast_core::types::RemoteConnection::from_entry(&entry, cf_remote);
+    let _ = progress
+        .send(BuildProgressEvent::done(
+            "Resolving remote",
+            &format!("{}@{}:{}", entry.user, entry.host, entry.port),
+        ))
+        .await;
+
+    let _ = progress
+        .send(BuildProgressEvent::started(
+            "Connecting to remote",
+            2,
+            total,
+        ))
+        .await;
+    let client = remote::RemoteClient::connect(&connection).await?;
+    let _ = progress
+        .send(BuildProgressEvent::done(
+            "Connecting to remote",
+            "tunnel established",
+        ))
+        .await;
+
+    let _ = progress
+        .send(BuildProgressEvent::started(
+            "Syncing project source",
+            3,
+            total,
+        ))
+        .await;
+    let service_home = client.query_service_home().await;
+    let workspace = remote::remote_workspace_path(&service_home, &project, "build");
+    client.sync_workspace(&cf.project_root, &workspace).await?;
+    let _ = progress
+        .send(BuildProgressEvent::done("Syncing project source", "ok"))
+        .await;
+
+    let _ = progress
+        .send(BuildProgressEvent::started("Building on remote", 4, total))
+        .await;
+    let coastfile_name = resolved_path
+        .file_name()
+        .map(|f| f.to_string_lossy().to_string())
+        .unwrap_or_else(|| "Coastfile.remote.toml".to_string());
+    let remote_cf_path = std::path::PathBuf::from(format!(
+        "{service_home}/workspaces/{project}/build/{coastfile_name}"
+    ));
+    let build_req = BuildRequest {
+        coastfile_path: remote_cf_path,
+        refresh: req.refresh,
+        remote: None,
+    };
+    let build_response = remote::forward::forward_build(&client, &build_req).await?;
+    let _ = progress
+        .send(BuildProgressEvent::done(
+            "Building on remote",
+            &format!("project: {}", build_response.project),
+        ))
+        .await;
+
+    let _ = progress
+        .send(BuildProgressEvent::started(
+            "Downloading artifact",
+            5,
+            total,
+        ))
+        .await;
+    let build_id = run::download_remote_artifact(
+        &build_response,
+        &project,
+        cf.coastfile_type.as_deref(),
+        &connection,
+        &cf.project_root,
+        client.has_sudo,
+    )
+    .await?;
+    let _ = progress
+        .send(BuildProgressEvent::done(
+            "Downloading artifact",
+            &format!("build {build_id}"),
+        ))
+        .await;
+
+    state.emit_event(CoastEvent::BuildCompleted {
+        project: project.clone(),
+    });
+
+    Ok(build_response)
+}
+
 /// Handle a rerun-extractors request with a progress sender for streaming.
 pub async fn handle_rerun_extractors_with_progress(
     req: RerunExtractorsRequest,
@@ -482,6 +640,7 @@ pub async fn handle_run_with_progress(
             state.emit_event(CoastEvent::InstanceCreated {
                 name: resp.name.clone(),
                 project,
+                remote_host: None,
             });
             Ok(resp)
         }
@@ -552,6 +711,7 @@ pub async fn handle_start(req: StartRequest, state: &AppState) -> Response {
             state.emit_event(CoastEvent::InstanceStarted {
                 name: name.clone(),
                 project,
+                remote_host: None,
             });
             Response::Start(resp)
         }
@@ -569,7 +729,11 @@ pub async fn handle_start_with_progress(
     let project = req.project.clone();
     match start::handle(req, state, Some(progress)).await {
         Ok(resp) => {
-            state.emit_event(CoastEvent::InstanceStarted { name, project });
+            state.emit_event(CoastEvent::InstanceStarted {
+                name,
+                project,
+                remote_host: None,
+            });
             Ok(resp)
         }
         Err(e) => {
@@ -905,6 +1069,13 @@ pub async fn handle_prepare_for_update(req: PrepareForUpdateRequest, state: &App
         Ok(resp) => Response::PrepareForUpdate(resp),
         Err(e) => error_response(&e),
     }
+}
+
+pub async fn handle_remote(
+    req: coast_core::protocol::RemoteRequest,
+    state: &Arc<AppState>,
+) -> Response {
+    remote_mgmt::handle(req, state).await
 }
 
 #[cfg(test)]

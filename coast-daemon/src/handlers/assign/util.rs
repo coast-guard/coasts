@@ -35,7 +35,16 @@ pub fn load_coastfile_data(project: &str) -> CoastfileData {
         .join("latest")
         .join("coastfile.toml");
     if coastfile_path.exists() {
-        if let Ok(cf) = coast_core::coastfile::Coastfile::from_file(&coastfile_path) {
+        let parse_result = std::fs::read_to_string(&coastfile_path)
+            .ok()
+            .and_then(|content| {
+                coast_core::coastfile::Coastfile::parse(
+                    &content,
+                    coastfile_path.parent().unwrap_or(std::path::Path::new(".")),
+                )
+                .ok()
+            });
+        if let Some(cf) = parse_result {
             return CoastfileData {
                 assign: cf.assign,
                 worktree_dirs: cf.worktree_dirs,
@@ -69,13 +78,17 @@ pub fn has_compose(project: &str) -> bool {
 
 pub fn read_project_root(project: &str) -> Option<std::path::PathBuf> {
     let project_dir = coast_images_dir().join(project);
-    let manifest_path = project_dir.join("latest").join("manifest.json");
-    let content = std::fs::read_to_string(manifest_path).ok()?;
-    let manifest: serde_json::Value = serde_json::from_str(&content).ok()?;
-    manifest
-        .get("project_root")
-        .and_then(|v| v.as_str())
-        .map(std::path::PathBuf::from)
+    for latest_name in &["latest", "latest-remote"] {
+        let manifest_path = project_dir.join(latest_name).join("manifest.json");
+        if let Ok(content) = std::fs::read_to_string(&manifest_path) {
+            if let Ok(manifest) = serde_json::from_str::<serde_json::Value>(&content) {
+                if let Some(root) = manifest.get("project_root").and_then(|v| v.as_str()) {
+                    return Some(std::path::PathBuf::from(root));
+                }
+            }
+        }
+    }
+    None
 }
 
 pub(super) async fn emit(

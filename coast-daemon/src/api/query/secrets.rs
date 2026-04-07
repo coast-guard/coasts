@@ -31,6 +31,50 @@ async fn list_secrets(
     State(state): State<Arc<AppState>>,
     Query(params): Query<SecretsParams>,
 ) -> Result<Json<Vec<SecretInfo>>, (StatusCode, Json<serde_json::Value>)> {
+    let is_remote = {
+        let db = state.db.lock().await;
+        db.get_instance(&params.project, &params.name)
+            .ok()
+            .flatten()
+            .is_some_and(|inst| inst.remote_host.is_some())
+    };
+
+    if is_remote {
+        let req = SecretRequest::List {
+            instance: params.name.clone(),
+            project: params.project.clone(),
+        };
+        let remote_config = crate::handlers::remote::resolve_remote_for_instance(
+            &params.project,
+            &params.name,
+            &state,
+        )
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+        })?;
+        let client = crate::handlers::remote::RemoteClient::connect(&remote_config)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": e.to_string() })),
+                )
+            })?;
+        let resp = crate::handlers::remote::forward::forward_secret_list(&client, &req)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": e.to_string() })),
+                )
+            })?;
+        return Ok(Json(resp.secrets));
+    }
+
     let req = SecretRequest::List {
         instance: params.name,
         project: params.project,
@@ -55,6 +99,51 @@ async fn reveal_secret(
     State(state): State<Arc<AppState>>,
     Query(params): Query<RevealSecretParams>,
 ) -> Result<Json<RevealSecretResponse>, (StatusCode, Json<serde_json::Value>)> {
+    let is_remote = {
+        let db = state.db.lock().await;
+        db.get_instance(&params.project, &params.name)
+            .ok()
+            .flatten()
+            .is_some_and(|inst| inst.remote_host.is_some())
+    };
+
+    if is_remote {
+        let req = coast_core::protocol::RevealSecretRequest {
+            project: params.project.clone(),
+            name: params.name.clone(),
+            secret: params.secret.clone(),
+        };
+        let remote_config = crate::handlers::remote::resolve_remote_for_instance(
+            &params.project,
+            &params.name,
+            &state,
+        )
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+        })?;
+        let client = crate::handlers::remote::RemoteClient::connect(&remote_config)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": e.to_string() })),
+                )
+            })?;
+        let resp = crate::handlers::remote::forward::forward_secrets_reveal(&client, &req)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": e.to_string() })),
+                )
+            })?;
+        return Ok(Json(resp));
+    }
+
     let (build_id, is_override) = {
         let db = state.db.lock().await;
         let instance = db

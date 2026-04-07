@@ -10,9 +10,12 @@
 /// - [`shared_services`]: Shared service records
 /// - [`settings`]: Key-value settings and project archival
 /// - [`agent_shells`]: Agent shell session management
+/// - [`remotes`]: Registered remote machines
 mod agent_shells;
 mod instances;
 mod ports;
+pub(crate) use ports::PortAllocationRecord;
+pub mod remotes;
 mod settings;
 mod shared_services;
 mod user_config;
@@ -147,6 +150,16 @@ impl StateDb {
                     UNIQUE(project, instance_name, shell_id),
                     FOREIGN KEY (project, instance_name) REFERENCES instances(project, name) ON DELETE CASCADE
                 );
+
+                CREATE TABLE IF NOT EXISTS remotes (
+                    name TEXT PRIMARY KEY,
+                    host TEXT NOT NULL,
+                    user TEXT NOT NULL,
+                    port INTEGER NOT NULL DEFAULT 22,
+                    ssh_key TEXT,
+                    sync_strategy TEXT NOT NULL DEFAULT 'rsync',
+                    created_at TEXT NOT NULL
+                );
                 ",
             )
             .map_err(|e| CoastError::State {
@@ -159,6 +172,9 @@ impl StateDb {
         self.migrate_add_agent_shell_local_id()?;
         self.migrate_add_port_is_primary()?;
         self.migrate_preferred_language_to_user_config()?;
+        self.migrate_add_remote_host()?;
+        self.migrate_add_remote_dynamic_port()?;
+        self.migrate_add_remote_arch()?;
 
         Ok(())
     }
@@ -297,6 +313,44 @@ impl StateDb {
         Ok(())
     }
 
+    /// Migration: add `remote_dynamic_port` column to `port_allocations`.
+    fn migrate_add_remote_dynamic_port(&self) -> Result<()> {
+        let has_column = self
+            .conn
+            .prepare("SELECT remote_dynamic_port FROM port_allocations LIMIT 0")
+            .is_ok();
+        if !has_column {
+            self.conn
+                .execute_batch(
+                    "ALTER TABLE port_allocations ADD COLUMN remote_dynamic_port INTEGER;",
+                )
+                .map_err(|e| CoastError::State {
+                    message: format!(
+                        "failed to add remote_dynamic_port column to port_allocations: {e}"
+                    ),
+                    source: Some(Box::new(e)),
+                })?;
+        }
+        Ok(())
+    }
+
+    /// Migration: add `arch` column to `remotes` to cache the remote machine's architecture.
+    fn migrate_add_remote_arch(&self) -> Result<()> {
+        let has_column = self
+            .conn
+            .prepare("SELECT arch FROM remotes LIMIT 0")
+            .is_ok();
+        if !has_column {
+            self.conn
+                .execute_batch("ALTER TABLE remotes ADD COLUMN arch TEXT;")
+                .map_err(|e| CoastError::State {
+                    message: format!("failed to add arch column to remotes: {e}"),
+                    source: Some(Box::new(e)),
+                })?;
+        }
+        Ok(())
+    }
+
     /// Migration: move `preferred_language` from `settings` to `user_config` if present.
     fn migrate_preferred_language_to_user_config(&self) -> Result<()> {
         use rusqlite::OptionalExtension;
@@ -330,6 +384,27 @@ impl StateDb {
                     source: Some(Box::new(e)),
                 })?;
             debug!("migrated preferred_language from settings to user_config");
+        }
+        Ok(())
+    }
+
+    /// Migration: add `remote_host` column to the instances table if it doesn't exist.
+    ///
+    /// When `remote_host IS NOT NULL`, the instance is a shadow record for a
+    /// coast running on a remote `coast-service` host. All operations for that
+    /// instance are forwarded through an SSH tunnel instead of executing locally.
+    fn migrate_add_remote_host(&self) -> Result<()> {
+        let has_column = self
+            .conn
+            .prepare("SELECT remote_host FROM instances LIMIT 0")
+            .is_ok();
+        if !has_column {
+            self.conn
+                .execute_batch("ALTER TABLE instances ADD COLUMN remote_host TEXT;")
+                .map_err(|e| CoastError::State {
+                    message: format!("failed to add remote_host column: {e}"),
+                    source: Some(Box::new(e)),
+                })?;
         }
         Ok(())
     }
@@ -374,6 +449,7 @@ pub(crate) mod test_helpers {
             worktree_name: None,
             build_id: None,
             coastfile_type: None,
+            remote_host: None,
         }
     }
 

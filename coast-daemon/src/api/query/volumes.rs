@@ -9,7 +9,7 @@ use ts_rs::TS;
 
 use coast_core::protocol::{ServiceInspectResponse, VolumeInspectResponse, VolumeSummaryResponse};
 
-use super::{exec_in_coast, resolve_coast_container};
+use super::resolve_coast_container;
 use crate::server::AppState;
 
 pub fn routes() -> Router<Arc<AppState>> {
@@ -44,15 +44,27 @@ pub struct ServiceInspectParams {
 
 pub(super) async fn resolve_inner_container_name(
     state: &crate::server::AppState,
-    container_id: &str,
-    project: &str,
+    resolved: &super::ResolvedCoast,
     service: &str,
-    build_id: Option<&str>,
 ) -> Result<String, (StatusCode, Json<serde_json::Value>)> {
-    let ctx = crate::handlers::compose_context_for_build(project, build_id);
-    let cmd_parts = ctx.compose_shell(&format!("ps --format json {service}"));
+    let ctx =
+        crate::handlers::compose_context_for_build(&resolved.project, resolved.build_id.as_deref());
+    let cmd_parts = if resolved.remote_host.is_some() {
+        let project_dir = match &ctx.compose_rel_dir {
+            Some(dir) => format!("/workspace/{dir}"),
+            None => "/workspace".to_string(),
+        };
+        let script = format!(
+            "CF=/coast-artifact/compose.coast-shared.yml; \
+             [ -f \"$CF\" ] || CF=/coast-artifact/compose.yml; \
+             docker compose -f \"$CF\" --project-directory {project_dir} ps --format json {service}"
+        );
+        vec!["sh".into(), "-c".into(), script]
+    } else {
+        ctx.compose_shell(&format!("ps --format json {service}"))
+    };
 
-    let output = exec_in_coast(state, container_id, cmd_parts)
+    let output = super::exec_in_resolved_coast(state, resolved, cmd_parts)
         .await
         .map_err(|e| {
             (
@@ -86,7 +98,6 @@ async fn list_volumes(
     Query(params): Query<VolumesParams>,
 ) -> Result<Json<Vec<VolumeSummaryResponse>>, (StatusCode, Json<serde_json::Value>)> {
     let resolved = resolve_coast_container(&state, &params.project, &params.name).await?;
-    let container_id = &resolved.container_id;
 
     let cmd = vec![
         "docker".to_string(),
@@ -96,7 +107,7 @@ async fn list_volumes(
         "{{json .}}".to_string(),
     ];
 
-    let output = exec_in_coast(&state, container_id, cmd)
+    let output = super::exec_in_resolved_coast(&state, &resolved, cmd)
         .await
         .map_err(|e| {
             (
@@ -150,7 +161,6 @@ async fn inspect_volume(
     Query(params): Query<VolumeInspectParams>,
 ) -> Result<Json<VolumeInspectResponse>, (StatusCode, Json<serde_json::Value>)> {
     let resolved = resolve_coast_container(&state, &params.project, &params.name).await?;
-    let container_id = &resolved.container_id;
 
     let inspect_cmd = vec![
         "docker".to_string(),
@@ -159,7 +169,7 @@ async fn inspect_volume(
         params.volume.clone(),
     ];
 
-    let inspect_output = exec_in_coast(&state, container_id, inspect_cmd)
+    let inspect_output = super::exec_in_resolved_coast(&state, &resolved, inspect_cmd)
         .await
         .map_err(|e| {
             (
@@ -185,7 +195,7 @@ async fn inspect_volume(
         "{{json .}}".to_string(),
     ];
 
-    let containers_output = exec_in_coast(&state, container_id, containers_cmd)
+    let containers_output = super::exec_in_resolved_coast(&state, &resolved, containers_cmd)
         .await
         .unwrap_or_default();
 
@@ -248,20 +258,12 @@ async fn inspect_service_container(
     Query(params): Query<ServiceInspectParams>,
 ) -> Result<Json<ServiceInspectResponse>, (StatusCode, Json<serde_json::Value>)> {
     let resolved = resolve_coast_container(&state, &params.project, &params.name).await?;
-    let container_id = &resolved.container_id;
 
-    let inner_name = resolve_inner_container_name(
-        &state,
-        container_id,
-        &params.project,
-        &params.service,
-        resolved.build_id.as_deref(),
-    )
-    .await?;
+    let inner_name = resolve_inner_container_name(&state, &resolved, &params.service).await?;
 
     let cmd = vec!["docker".to_string(), "inspect".to_string(), inner_name];
 
-    let output = exec_in_coast(&state, container_id, cmd)
+    let output = super::exec_in_resolved_coast(&state, &resolved, cmd)
         .await
         .map_err(|e| {
             (

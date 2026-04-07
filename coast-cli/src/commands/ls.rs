@@ -56,11 +56,28 @@ pub async fn execute(args: &LsArgs, project: &Option<String>) -> Result<()> {
 ///
 /// Column widths are computed dynamically from the data so that long branch
 /// names, instance names, etc. never break alignment.
-pub fn format_instance_table(instances: &[InstanceSummary]) -> String {
-    if instances.is_empty() {
-        return t!("cli.info.no_instances_found").to_string();
-    }
+struct TableLayout<'a> {
+    branches: Vec<&'a str>,
+    worktrees: Vec<&'a str>,
+    roots: Vec<String>,
+    types: Vec<&'a str>,
+    machines: Vec<&'a str>,
+    show_root: bool,
+    has_non_default_type: bool,
+    has_remote: bool,
+    w_name: usize,
+    w_proj: usize,
+    w_type: usize,
+    w_stat: usize,
+    w_branch: usize,
+    w_rt: usize,
+    w_wt: usize,
+    w_co: usize,
+    w_machine: usize,
+    co_label: &'static str,
+}
 
+fn compute_table_layout<'a>(instances: &'a [InstanceSummary]) -> TableLayout<'a> {
     let projects: std::collections::HashSet<&str> =
         instances.iter().map(|i| i.project.as_str()).collect();
     let show_root = projects.len() > 1 || instances.iter().any(|i| i.project_root.is_some());
@@ -83,7 +100,6 @@ pub fn format_instance_table(instances: &[InstanceSummary]) -> String {
         })
         .collect();
 
-    // Dynamic column widths: max(header_label_len, max_data_len)
     let w_name = instances
         .iter()
         .map(|i| i.name.len())
@@ -134,27 +150,77 @@ pub fn format_instance_table(instances: &[InstanceSummary]) -> String {
     let co_label = if show_root { "CO" } else { "CHECKED OUT" };
     let w_co = 1_usize.max(co_label.len());
 
+    let has_remote = instances.iter().any(|i| i.remote_host.is_some());
+    let machines: Vec<&str> = instances
+        .iter()
+        .map(|i| i.remote_host.as_deref().unwrap_or("local"))
+        .collect();
+    let w_machine = machines
+        .iter()
+        .map(|m| m.len())
+        .max()
+        .unwrap_or(0)
+        .max("MACHINE".len());
+
+    TableLayout {
+        branches,
+        worktrees,
+        roots,
+        types,
+        machines,
+        show_root,
+        has_non_default_type,
+        has_remote,
+        w_name,
+        w_proj,
+        w_type,
+        w_stat,
+        w_branch,
+        w_rt,
+        w_wt,
+        w_co,
+        w_machine,
+        co_label,
+    }
+}
+
+pub fn format_instance_table(instances: &[InstanceSummary]) -> String {
+    if instances.is_empty() {
+        return t!("cli.info.no_instances_found").to_string();
+    }
+
+    let l = compute_table_layout(instances);
+
     let sep = "  ";
+
+    let w_root = l.roots.iter().map(String::len).max().unwrap_or(0).max(4);
 
     // Header
     let mut hdr: Vec<String> = vec![
-        pad_colored(&"NAME".bold().to_string(), 4, w_name),
-        pad_colored(&"PROJECT".bold().to_string(), 7, w_proj),
+        pad_colored(&"NAME".bold().to_string(), 4, l.w_name),
+        pad_colored(&"PROJECT".bold().to_string(), 7, l.w_proj),
     ];
-    if has_non_default_type {
-        hdr.push(pad_colored(&"TYPE".bold().to_string(), 4, w_type));
+    if l.has_non_default_type {
+        hdr.push(pad_colored(&"TYPE".bold().to_string(), 4, l.w_type));
     }
     hdr.extend([
-        pad_colored(&"STATUS".bold().to_string(), 6, w_stat),
-        pad_colored(&"BRANCH".bold().to_string(), 6, w_branch),
-        pad_colored(&"RUNTIME".bold().to_string(), 7, w_rt),
-        pad_colored(&"WORKTREE".bold().to_string(), 8, w_wt),
+        pad_colored(&"STATUS".bold().to_string(), 6, l.w_stat),
+        pad_colored(&"BRANCH".bold().to_string(), 6, l.w_branch),
+        pad_colored(&"RUNTIME".bold().to_string(), 7, l.w_rt),
+        pad_colored(&"WORKTREE".bold().to_string(), 8, l.w_wt),
     ]);
-    if show_root {
-        hdr.push(pad_colored(&"CO".bold().to_string(), 2, w_co));
-        hdr.push("ROOT".bold().to_string());
+    if l.show_root {
+        hdr.push(pad_colored(&"CO".bold().to_string(), 2, l.w_co));
+        hdr.push(pad_colored(&"ROOT".bold().to_string(), 4, w_root));
     } else {
-        hdr.push(co_label.bold().to_string());
+        hdr.push(pad_colored(
+            &l.co_label.bold().to_string(),
+            l.co_label.len(),
+            l.w_co,
+        ));
+    }
+    if l.has_remote {
+        hdr.push("MACHINE".bold().to_string());
     }
     let mut lines = vec![hdr.join(sep)];
 
@@ -163,27 +229,32 @@ pub fn format_instance_table(instances: &[InstanceSummary]) -> String {
         let status_colored = colorize_instance_status(&inst.status);
         let status_vis_len = status_plain_len(&inst.status);
         let checked = if inst.checked_out {
-            pad_colored(&"*".green().bold().to_string(), 1, w_co)
+            pad_colored(&"*".green().bold().to_string(), 1, l.w_co)
         } else {
-            " ".repeat(w_co)
+            " ".repeat(l.w_co)
         };
 
-        let mut cols: Vec<String> =
-            vec![pad_str(&inst.name, w_name), pad_str(&inst.project, w_proj)];
-        if has_non_default_type {
-            cols.push(pad_str(types[i], w_type));
+        let mut cols: Vec<String> = vec![
+            pad_str(&inst.name, l.w_name),
+            pad_str(&inst.project, l.w_proj),
+        ];
+        if l.has_non_default_type {
+            cols.push(pad_str(l.types[i], l.w_type));
         }
         cols.extend([
-            pad_colored(&status_colored, status_vis_len, w_stat),
-            pad_str(branches[i], w_branch),
-            pad_str(inst.runtime.as_str(), w_rt),
-            pad_str(worktrees[i], w_wt),
+            pad_colored(&status_colored, status_vis_len, l.w_stat),
+            pad_str(l.branches[i], l.w_branch),
+            pad_str(inst.runtime.as_str(), l.w_rt),
+            pad_str(l.worktrees[i], l.w_wt),
         ]);
-        if show_root {
+        if l.show_root {
             cols.push(checked);
-            cols.push(roots[i].clone());
+            cols.push(pad_str(&l.roots[i], w_root));
         } else {
             cols.push(checked);
+        }
+        if l.has_remote {
+            cols.push(pad_str(l.machines[i], l.w_machine));
         }
         lines.push(cols.join(sep));
     }
@@ -299,6 +370,7 @@ mod tests {
             primary_port_dynamic: None,
             primary_port_url: None,
             down_service_count: 0,
+            remote_host: None,
         }];
 
         let output = format_instance_table(&instances);
@@ -335,6 +407,7 @@ mod tests {
                 primary_port_dynamic: None,
                 primary_port_url: None,
                 down_service_count: 0,
+                remote_host: None,
             },
             InstanceSummary {
                 name: "feature-x".to_string(),
@@ -353,6 +426,7 @@ mod tests {
                 primary_port_dynamic: None,
                 primary_port_url: None,
                 down_service_count: 0,
+                remote_host: None,
             },
             InstanceSummary {
                 name: "snapshot-1".to_string(),
@@ -371,6 +445,7 @@ mod tests {
                 primary_port_dynamic: None,
                 primary_port_url: None,
                 down_service_count: 0,
+                remote_host: None,
             },
         ];
 
@@ -403,6 +478,7 @@ mod tests {
                 primary_port_dynamic: None,
                 primary_port_url: None,
                 down_service_count: 0,
+                remote_host: None,
             },
             InstanceSummary {
                 name: "dev-2".to_string(),
@@ -421,6 +497,7 @@ mod tests {
                 primary_port_dynamic: None,
                 primary_port_url: None,
                 down_service_count: 0,
+                remote_host: None,
             },
         ];
 

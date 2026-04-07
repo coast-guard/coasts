@@ -20,6 +20,7 @@ use crate::server::{AppState, UpdateOperationKind};
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/build", post(build_sse))
+        .route("/remote-build", post(remote_build_sse))
         .route("/rerun-extractors", post(rerun_extractors_sse))
         .route("/run", post(run_sse))
         .route("/assign", post(assign_sse))
@@ -146,6 +147,24 @@ async fn build_sse(
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
+async fn remote_build_sse(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<BuildRequest>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let (tx, rx) = mpsc::channel::<BuildProgressEvent>(64);
+
+    let state_clone = Arc::clone(&state);
+    let (result_tx, result_rx) = tokio::sync::oneshot::channel();
+
+    tokio::spawn(async move {
+        let result = handlers::handle_remote_build_with_progress(req, &state_clone, tx).await;
+        let _ = result_tx.send(result);
+    });
+
+    let stream = build_event_stream(rx, result_rx);
+    Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
 fn build_event_stream(
     mut rx: mpsc::Receiver<BuildProgressEvent>,
     result_rx: tokio::sync::oneshot::Receiver<
@@ -212,6 +231,7 @@ async fn run_sse(
                 worktree_name: None,
                 build_id: req.build_id.clone(),
                 coastfile_type: req.coastfile_type.clone(),
+                remote_host: None,
             };
             if let Err(e) = db.insert_instance(&enqueued_inst) {
                 let _ = result_tx.send(Err(e));

@@ -135,6 +135,16 @@ pub async fn handle(req: LogsRequest, state: &AppState) -> Result<LogsResponse> 
         "handling logs request"
     );
 
+    {
+        let db = state.db.lock().await;
+        if let Some(instance) = db.get_instance(&req.project, &req.name)? {
+            if instance.remote_host.is_some() {
+                drop(db);
+                return handle_remote_logs(&req, state).await;
+            }
+        }
+    }
+
     // Phase 1: DB read (locked)
     let (container_id, build_id) = resolve_logs_target(&req, state).await?;
 
@@ -364,6 +374,20 @@ pub async fn handle_with_progress(
     })
 }
 
+/// Handle logs for a remote coast instance by forwarding to coast-service.
+async fn handle_remote_logs(req: &LogsRequest, state: &AppState) -> Result<LogsResponse> {
+    info!(
+        name = %req.name,
+        project = %req.project,
+        "forwarding logs request to coast-service"
+    );
+
+    let remote_config =
+        super::remote::resolve_remote_for_instance(&req.project, &req.name, state).await?;
+    let client = super::remote::RemoteClient::connect(&remote_config).await?;
+    super::remote::forward::forward_logs(&client, req).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -391,6 +415,7 @@ mod tests {
             worktree_name: None,
             build_id: None,
             coastfile_type: None,
+            remote_host: None,
         }
     }
 

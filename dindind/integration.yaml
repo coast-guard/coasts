@@ -167,3 +167,155 @@ tests:
     script: integrated-examples/test_mixed_assign.sh
     status: pass
     cached_seconds: 89
+
+  # --- remote coast tests ---
+  test_remote_basic:
+    script: integrated-examples/remote/test_remote_basic.sh
+    timeout: 300
+  test_remote_sync:
+    script: integrated-examples/remote/test_remote_sync.sh
+    timeout: 300
+  test_remote_assign:
+    script: integrated-examples/remote/test_remote_assign.sh
+    timeout: 300
+  test_remote_errors:
+    script: integrated-examples/remote/test_remote_errors.sh
+    timeout: 300
+  test_remote_build_errors:
+    script: integrated-examples/remote/test_remote_build_errors.sh
+    timeout: 300
+  test_remote_run_errors:
+    script: integrated-examples/remote/test_remote_run_errors.sh
+    timeout: 300
+  test_remote_multi_instance:
+    script: integrated-examples/remote/test_remote_multi_instance.sh
+    timeout: 300
+  test_remote_exec_errors:
+    script: integrated-examples/remote/test_remote_exec_errors.sh
+    timeout: 300
+  test_remote_assign_errors:
+    script: integrated-examples/remote/test_remote_assign_errors.sh
+    timeout: 300
+  test_remote_secret_errors:
+    script: integrated-examples/remote/test_remote_secret_errors.sh
+    timeout: 300
+  test_remote_lifecycle_errors:
+    script: integrated-examples/remote/test_remote_lifecycle_errors.sh
+    timeout: 300
+  test_remote_resilience:
+    script: integrated-examples/remote/test_remote_resilience.sh
+    timeout: 300
+  test_remote_sync_edge_cases:
+    script: integrated-examples/remote/test_remote_sync_edge_cases.sh
+    timeout: 300
+  test_remote_state_consistency:
+    script: integrated-examples/remote/test_remote_state_consistency.sh
+    timeout: 300
+  test_remote_shared_services:
+    script: integrated-examples/remote/test_remote_shared_services.sh
+    timeout: 300
+  test_remote_compose_build:
+    script: integrated-examples/remote/test_remote_compose_build.sh
+    timeout: 300
+  test_remote_restart:
+    script: integrated-examples/remote/test_remote_restart.sh
+    timeout: 300
+  test_remote_assign_worktree:
+    script: integrated-examples/remote/test_remote_assign_worktree.sh
+    timeout: 300
+  test_remote_hot:
+    script: integrated-examples/remote/test_remote_hot.sh
+    timeout: 300
+  test_remote_rebuild:
+    script: integrated-examples/remote/test_remote_rebuild.sh
+    timeout: 300
+  test_remote_restart_strategy:
+    script: integrated-examples/remote/test_remote_restart_strategy.sh
+    timeout: 300
+  test_remote_tunnel_no_dupes:
+    script: integrated-examples/remote/test_remote_tunnel_no_dupes.sh
+    timeout: 300
+  test_remote_unassign_speed:
+    script: integrated-examples/remote/test_remote_unassign_speed.sh
+    timeout: 300
+  test_remote_tunnel_autoheal:
+    script: integrated-examples/remote/test_remote_tunnel_autoheal.sh
+    timeout: 300
+  test_remote_secrets:
+    script: integrated-examples/remote/test_remote_secrets.sh
+    timeout: 300
+  test_remote_mcp:
+    script: integrated-examples/remote/test_remote_mcp.sh
+    timeout: 300
+  test_remote_exec_session_scope:
+    script: integrated-examples/remote/test_remote_exec_session_scope.sh
+    timeout: 300
+  test_remote_checkout_socat_restore:
+    script: integrated-examples/remote/test_remote_checkout_socat_restore.sh
+    timeout: 300
+  test_remote_service_control:
+    script: integrated-examples/remote/test_remote_service_control.sh
+    timeout: 300
+  test_remote_shared_service_tunnel_heal:
+    script: integrated-examples/remote/test_remote_shared_service_tunnel_heal.sh
+    timeout: 300
+  test_remote_production_topology:
+    script: integrated-examples/remote/test_remote_production_topology.sh
+    timeout: 600
+  test_remote_assign_race:
+    script: integrated-examples/remote/test_remote_assign_race.sh
+    timeout: 300
+  test_remote_rsync_sudo:
+    script: integrated-examples/remote/test_remote_rsync_sudo.sh
+    timeout: 300
+  test_remote_daemon_restart_worktree:
+    script: integrated-examples/remote/test_remote_daemon_restart_worktree.sh
+    timeout: 300
+  test_remote_assign_error_revert:
+    script: integrated-examples/remote/test_remote_assign_error_revert.sh
+    timeout: 300
+  test_remote_orphan_reconcile:
+    script: integrated-examples/remote/test_remote_orphan_reconcile.sh
+    timeout: 300
+  test_remote_tunnel_exhaustion:
+    script: integrated-examples/remote/test_remote_tunnel_exhaustion.sh
+    timeout: 300
+  test_remote_assign_stuck_status:
+    script: integrated-examples/remote/test_remote_assign_stuck_status.sh
+    timeout: 300
+  test_remote_inner_service_heal:
+    script: integrated-examples/remote/test_remote_inner_service_heal.sh
+    timeout: 300
+  test_remote_restore_preserves_generated:
+    script: integrated-examples/remote/test_remote_restore_preserves_generated.sh
+    timeout: 300
+  test_remote_assign_preserves_generated:
+    script: integrated-examples/remote/test_remote_assign_preserves_generated.sh
+    timeout: 300
+  test_remote_assign_hot_services_healthy:
+    script: integrated-examples/remote/test_remote_assign_hot_services_healthy.sh
+    timeout: 300
+  test_remote_reconciler_ignores_clean_exit:
+    script: integrated-examples/remote/test_remote_reconciler_ignores_clean_exit.sh
+    timeout: 300
+  test_remote_rsync_controlmaster:
+    script: integrated-examples/remote/test_remote_rsync_controlmaster.sh
+    timeout: 300
+  test_remote_second_instance_shared_services:
+    script: integrated-examples/remote/test_remote_second_instance_shared_services.sh
+    timeout: 300
+  test_remote_rm_cleans_volumes:
+    script: integrated-examples/remote/test_remote_rm_cleans_volumes.sh
+    timeout: 300
+  test_remote_prune:
+    script: integrated-examples/remote/test_remote_prune.sh
+    timeout: 300
+  test_remote_run_syncs_generated:
+    script: integrated-examples/remote/test_remote_run_syncs_generated.sh
+    timeout: 300
+  test_remote_shared_tunnel_reuse:
+    script: integrated-examples/remote/test_remote_shared_tunnel_reuse.sh
+    timeout: 300
+  test_remote_port_recovery_after_restart:
+    script: integrated-examples/remote/test_remote_port_recovery_after_restart.sh
+    timeout: 300

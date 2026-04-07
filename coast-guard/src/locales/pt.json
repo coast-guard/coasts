@@ -57,6 +57,7 @@
   "projectTab.coasts": "Coasts",
   "projectTab.sharedServices": "Serviços compartilhados",
   "projectTab.builds": "Builds",
+  "projectTab.remotes": "Remotos",
   "projectTab.terminal": "Terminal",
   "build.newBuild": "Nova Build",
   "build.createNewBuild": "Criar Nova Build",
