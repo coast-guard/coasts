@@ -63,6 +63,9 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - name: Ensure target is installed
+        run: rustup target add ${{ matrix.target }}
+
       - name: Cache cargo registry & build artifacts
         uses: actions/cache@v5
         with:

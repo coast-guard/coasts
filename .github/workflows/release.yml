@@ -36,6 +36,9 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - name: Ensure target is installed
+        run: rustup target add ${{ matrix.target }}
+
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:
@@ -100,6 +103,9 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+
+      - name: Ensure target is installed
+        run: rustup target add ${{ matrix.target }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v5
