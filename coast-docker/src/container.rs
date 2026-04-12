@@ -24,6 +24,25 @@ pub const DOCKER_INFO_CMD: &[&str] = &["docker", "info"];
 /// The command used to check if the inner Podman daemon is ready.
 pub const PODMAN_INFO_CMD: &[&str] = &["podman", "info"];
 
+/// Result of a single inner daemon readiness check.
+#[derive(Debug, PartialEq)]
+enum DaemonCheckResult {
+    /// The inner daemon responded successfully.
+    Ready,
+    /// The inner daemon is not ready yet (non-zero exit or exec error).
+    NotReady,
+}
+
+/// Build the timeout error returned when the inner daemon never becomes ready.
+fn inner_daemon_timeout_error(container_id: &str, timeout_secs: u64) -> CoastError {
+    CoastError::docker(format!(
+        "Inner daemon in container '{container_id}' did not become ready \
+         within {timeout_secs}s. The coast container may have failed to start \
+         its Docker daemon. Try `coast exec <name> docker info` to diagnose, \
+         or increase the timeout.",
+    ))
+}
+
 /// High-level container manager that wraps a `Runtime` implementation.
 ///
 /// Provides additional lifecycle functionality on top of raw runtime
@@ -119,6 +138,31 @@ impl<R: Runtime> ContainerManager<R> {
         self.runtime.get_container_ip(container_id).await
     }
 
+    /// Run a single inner daemon readiness check.
+    async fn check_inner_daemon_once(&self, container_id: &str) -> DaemonCheckResult {
+        let info_cmd = self.inner_daemon_info_cmd();
+        match self.runtime.exec_in_coast(container_id, info_cmd).await {
+            Ok(result) if result.success() => DaemonCheckResult::Ready,
+            Ok(result) => {
+                debug!(
+                    container_id = %container_id,
+                    exit_code = result.exit_code,
+                    stderr = %result.stderr,
+                    "Inner daemon not ready yet, retrying..."
+                );
+                DaemonCheckResult::NotReady
+            }
+            Err(e) => {
+                debug!(
+                    container_id = %container_id,
+                    error = %e,
+                    "Inner daemon check failed, retrying..."
+                );
+                DaemonCheckResult::NotReady
+            }
+        }
+    }
+
     /// Wait for the inner Docker/Podman daemon inside a coast container to become ready.
     ///
     /// Polls the inner daemon by running `docker info` (or `podman info` for Podman
@@ -126,9 +170,7 @@ impl<R: Runtime> ContainerManager<R> {
     ///
     /// Returns Ok(()) when the inner daemon is ready, or an error if the timeout
     /// is exceeded.
-    #[allow(clippy::cognitive_complexity)]
     pub async fn wait_for_inner_daemon(&self, container_id: &str) -> Result<()> {
-        let info_cmd = self.inner_daemon_info_cmd();
         let timeout = self.inner_daemon_timeout;
         let start = tokio::time::Instant::now();
 
@@ -141,39 +183,16 @@ impl<R: Runtime> ContainerManager<R> {
         loop {
             let elapsed = start.elapsed();
             if elapsed >= timeout {
-                return Err(CoastError::docker(format!(
-                    "Inner daemon in container '{container_id}' did not become ready \
-                     within {timeout_secs}s. The coast container may have failed to start \
-                     its Docker daemon. Try `coast exec <name> docker info` to diagnose, \
-                     or increase the timeout.",
-                    timeout_secs = timeout.as_secs()
-                )));
+                return Err(inner_daemon_timeout_error(container_id, timeout.as_secs()));
             }
 
-            match self.runtime.exec_in_coast(container_id, info_cmd).await {
-                Ok(result) if result.success() => {
-                    info!(
-                        container_id = %container_id,
-                        elapsed_secs = elapsed.as_secs(),
-                        "Inner daemon is ready"
-                    );
-                    return Ok(());
-                }
-                Ok(result) => {
-                    debug!(
-                        container_id = %container_id,
-                        exit_code = result.exit_code,
-                        stderr = %result.stderr,
-                        "Inner daemon not ready yet, retrying..."
-                    );
-                }
-                Err(e) => {
-                    debug!(
-                        container_id = %container_id,
-                        error = %e,
-                        "Inner daemon check failed, retrying..."
-                    );
-                }
+            if self.check_inner_daemon_once(container_id).await == DaemonCheckResult::Ready {
+                info!(
+                    container_id = %container_id,
+                    elapsed_secs = elapsed.as_secs(),
+                    "Inner daemon is ready"
+                );
+                return Ok(());
             }
 
             tokio::time::sleep(self.poll_interval).await;
@@ -568,6 +587,67 @@ mod tests {
 
         let result = manager.wait_for_inner_daemon("test-id").await;
         assert!(result.is_ok());
+    }
+
+    // --- inner_daemon_timeout_error tests ---
+
+    #[test]
+    fn test_inner_daemon_timeout_error_contains_container_id() {
+        let err = inner_daemon_timeout_error("my-container-123", 120);
+        let msg = err.to_string();
+        assert!(msg.contains("my-container-123"));
+        assert!(msg.contains("120"));
+    }
+
+    #[test]
+    fn test_inner_daemon_timeout_error_mentions_diagnostic_steps() {
+        let err = inner_daemon_timeout_error("cid", 60);
+        let msg = err.to_string();
+        assert!(msg.contains("coast exec"));
+        assert!(msg.contains("docker info"));
+    }
+
+    // --- check_inner_daemon_once tests ---
+
+    #[tokio::test]
+    async fn test_check_inner_daemon_once_ready() {
+        let runtime = MockRuntime::new_dind();
+        runtime.push_exec_result(Ok(ExecResult {
+            exit_code: 0,
+            stdout: "ok".to_string(),
+            stderr: String::new(),
+        }));
+        let manager = ContainerManager::new(runtime);
+        assert_eq!(
+            manager.check_inner_daemon_once("cid").await,
+            DaemonCheckResult::Ready
+        );
+    }
+
+    #[tokio::test]
+    async fn test_check_inner_daemon_once_non_zero_exit() {
+        let runtime = MockRuntime::new_dind();
+        runtime.push_exec_result(Ok(ExecResult {
+            exit_code: 1,
+            stdout: String::new(),
+            stderr: "not ready".to_string(),
+        }));
+        let manager = ContainerManager::new(runtime);
+        assert_eq!(
+            manager.check_inner_daemon_once("cid").await,
+            DaemonCheckResult::NotReady
+        );
+    }
+
+    #[tokio::test]
+    async fn test_check_inner_daemon_once_exec_error() {
+        let runtime = MockRuntime::new_dind();
+        runtime.push_exec_result(Err(CoastError::docker("exec failed")));
+        let manager = ContainerManager::new(runtime);
+        assert_eq!(
+            manager.check_inner_daemon_once("cid").await,
+            DaemonCheckResult::NotReady
+        );
     }
 
     #[tokio::test]
