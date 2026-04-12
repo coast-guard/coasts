@@ -168,6 +168,16 @@ tests:
     status: pass
     cached_seconds: 89
 
+  # --- bug report reproduction (aw-studio-app probes 03-05) ---
+  test_daemon_cwd_isolation:
+    script: integrated-examples/test_daemon_cwd_isolation.sh
+    timeout: 300
+    note: "probes 03+04: verifies daemon startup cwd does not leak into /workspace"
+  test_external_worktree_assign:
+    script: integrated-examples/test_external_worktree_assign.sh
+    timeout: 300
+    note: "probe 05: verifies coast assign with external worktree_dir remounts /workspace"
+
   # --- remote coast tests ---
   test_remote_basic:
     script: integrated-examples/remote/test_remote_basic.sh
