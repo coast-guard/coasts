@@ -347,6 +347,8 @@ projects/coast-egress/Coastfile
 projects/coast-egress/Dockerfile
 projects/coast-egress/docker-compose.yml
 projects/coast-egress/server.js
+projects/coast-envvar/Coastfile
+projects/coast-envvar/server.js
 projects/coast-hmr/.git/COMMIT_EDITMSG
 projects/coast-hmr/.git/HEAD
 projects/coast-hmr/.git/config
@@ -514,6 +516,7 @@ projects/coast-mixed/Dockerfile
 projects/coast-mixed/docker-compose.yml
 projects/coast-mixed/server.js
 projects/coast-mixed/vite-server.js
+projects/coast-no-coastfile/server.js
 projects/coast-noautostart/.git/COMMIT_EDITMSG
 projects/coast-noautostart/.git/HEAD
 projects/coast-noautostart/.git/config
@@ -634,6 +637,8 @@ projects/coast-volumes/Dockerfile
 projects/coast-volumes/docker-compose.yml
 projects/coast-volumes/package.json
 projects/coast-volumes/server.js
+projects/coast-working-dir/Coastfile
+projects/coast-working-dir/server.js
 projects/host-shared-services-volume/.git/COMMIT_EDITMSG
 projects/host-shared-services-volume/.git/HEAD
 projects/host-shared-services-volume/.git/config

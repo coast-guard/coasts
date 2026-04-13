@@ -1,14 +1,20 @@
 #!/usr/bin/env bash
 #
-# Integration test: shared service socat DNS resolution
+# Integration test: shared service socat routing with subnet collision
 #
-# Verifies that the daemon resolves shared service container IPs on the host
-# Docker daemon and passes them (not container names) to socat inside DinD.
+# Reproduces the Docker Desktop bug where the shared service network subnet
+# collides with the inner DinD's docker0 subnet. On Docker Desktop, Docker
+# assigns 172.18.0.0/16 to user-created networks AND the inner dockerd picks
+# the same range for docker0, so resolved container IPs route to docker0
+# instead of the outer network interface.
+#
+# To simulate this in DinDinD (which uses non-default subnets), the test
+# pre-creates the shared network on 172.17.1.0/24 — a subnet within the
+# inner DinD's default docker0 range (172.17.0.0/16). This forces the
+# same routing collision that Docker Desktop users hit.
 #
 # This test bypasses the coast-wrapper (uses $REAL_COAST directly) so the
-# daemon's socat proxy is the ONLY forwarding path. Before the fix, socat
-# used container names that don't resolve inside DinD (the inner dockerd's
-# DNS shadows the host's), causing "unexpected EOF" errors.
+# daemon's socat proxy is the ONLY forwarding path.
 
 set -euo pipefail
 
@@ -18,7 +24,7 @@ register_cleanup
 
 echo ""
 echo "=========================================="
-echo " Test: Shared Service DNS Resolution"
+echo " Test: Shared Service Subnet Collision"
 echo "=========================================="
 
 # --- Setup ---
@@ -29,6 +35,16 @@ clean_slate
 docker rm -f coast-volumes-ss-shared-services-db coast-volumes-ss-shared-services-cache 2>/dev/null || true
 docker volume rm coast-vol-test-pg 2>/dev/null || true
 docker network rm coast-shared-coast-volumes-ss 2>/dev/null || true
+
+# Pre-create the shared network on a subnet that collides with the inner
+# DinD's default docker0 (172.17.0.0/16). The daemon will reuse this
+# network instead of creating a new one, so shared service containers
+# get IPs like 172.17.1.x — which route to docker0 inside the Coast
+# DinD container instead of the outer network interface.
+echo ""
+echo "=== Force subnet collision ==="
+docker network create --subnet 172.17.1.0/24 coast-shared-coast-volumes-ss
+pass "pre-created shared network on colliding subnet 172.17.1.0/24"
 
 "$HELPERS_DIR/setup.sh"
 
@@ -66,10 +82,10 @@ SS_PS=$(docker ps --filter "name=coast-volumes-ss-shared-services" --format '{{.
 assert_contains "$SS_PS" "coast-volumes-ss-shared-services-db" "shared postgres running on host"
 assert_contains "$SS_PS" "coast-volumes-ss-shared-services-cache" "shared redis running on host"
 
-# --- Key assertion: socat targets are IPs, not hostnames ---
+# --- Verify socat targets use host.docker.internal ---
 
 echo ""
-echo "=== Verify socat upstream targets are IPs ==="
+echo "=== Verify socat upstream targets ==="
 
 CONTAINER_NAME="coast-volumes-ss-coasts-inst-a"
 SOCAT_PS=$(docker exec "$CONTAINER_NAME" ps aux 2>/dev/null | grep "socat TCP-LISTEN" | grep -v grep || true)
@@ -79,17 +95,12 @@ if [ -z "$SOCAT_PS" ]; then
   fail "No socat processes found inside DinD container"
 fi
 
-# Every socat upstream target (TCP:...:port) should be an IP, not a hostname
-HOSTNAME_TARGETS=$(echo "$SOCAT_PS" | grep -oE 'TCP:[a-zA-Z][a-zA-Z0-9_-]*:' || true)
-if [ -n "$HOSTNAME_TARGETS" ]; then
-  echo "  Found hostname-based socat targets: $HOSTNAME_TARGETS"
-  fail "socat upstream targets should be IPs, not container names"
-fi
-
-IP_TARGETS=$(echo "$SOCAT_PS" | grep -oE 'TCP:[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+' || true)
-echo "  IP-based socat targets: $IP_TARGETS"
-[ -n "$IP_TARGETS" ] || fail "no IP-based socat targets found"
-pass "all socat upstream targets are IPs"
+# socat upstream targets must use host.docker.internal, not resolved IPs
+# (resolved IPs would collide with inner docker0 on the 172.17.x.x subnet)
+HDI_TARGETS=$(echo "$SOCAT_PS" | grep -oE 'TCP:host\.docker\.internal:[0-9]+' || true)
+echo "  host.docker.internal targets: $HDI_TARGETS"
+[ -n "$HDI_TARGETS" ] || fail "socat should use host.docker.internal as upstream, not IPs"
+pass "all socat upstream targets use host.docker.internal"
 
 # --- Verify app health and connectivity ---
 
@@ -119,4 +130,4 @@ COUNT=$(echo "$READ_RESP" | grep -o '"count":[0-9]*' | grep -o '[0-9]*')
 pass "data operations work through daemon socat (count=$COUNT)"
 
 echo ""
-echo "=== All shared service DNS resolution tests passed ==="
+echo "=== All shared service subnet collision tests passed ==="
