@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fmt::Write;
 use std::net::Ipv4Addr;
 
-use tracing::info;
+use tracing::{info, warn};
 
 use coast_core::error::{CoastError, Result};
 use coast_core::types::{SharedServiceConfig, SharedServicePort};
@@ -36,6 +36,7 @@ pub(crate) async fn plan_shared_service_routing(
     container_id: &str,
     shared_services: &[SharedServiceConfig],
     target_containers: &HashMap<String, String>,
+    shared_network: Option<&str>,
 ) -> Result<SharedServiceRoutingPlan> {
     if shared_services.is_empty() {
         return Ok(SharedServiceRoutingPlan {
@@ -44,13 +45,83 @@ pub(crate) async fn plan_shared_service_routing(
         });
     }
 
+    let resolved_targets = match shared_network {
+        Some(network) => resolve_target_ips(docker, target_containers, network).await,
+        None => target_containers.clone(),
+    };
+
     let (docker0_ip, docker0_prefix_len) = resolve_docker0_cidr(docker, container_id).await?;
     build_routing_plan(
         shared_services,
-        target_containers,
+        &resolved_targets,
         docker0_ip,
         docker0_prefix_len,
     )
+}
+
+/// Resolve each shared service container name to its IP on the shared network
+/// using the host Docker API. Falls back to the container name if inspection
+/// fails (graceful degradation for environments where DNS might work).
+async fn resolve_target_ips(
+    docker: &bollard::Docker,
+    target_containers: &HashMap<String, String>,
+    network_name: &str,
+) -> HashMap<String, String> {
+    let mut resolved = HashMap::with_capacity(target_containers.len());
+    for (service_name, container_name) in target_containers {
+        match resolve_container_ip(docker, container_name, network_name).await {
+            Ok(ip) => {
+                info!(
+                    service = %service_name,
+                    container = %container_name,
+                    ip = %ip,
+                    network = %network_name,
+                    "resolved shared service container IP for socat upstream"
+                );
+                resolved.insert(service_name.clone(), ip);
+            }
+            Err(e) => {
+                warn!(
+                    service = %service_name,
+                    container = %container_name,
+                    error = %e,
+                    "failed to resolve container IP, falling back to container name"
+                );
+                resolved.insert(service_name.clone(), container_name.clone());
+            }
+        }
+    }
+    resolved
+}
+
+async fn resolve_container_ip(
+    docker: &bollard::Docker,
+    container_name: &str,
+    network_name: &str,
+) -> Result<String> {
+    let info = docker
+        .inspect_container(container_name, None)
+        .await
+        .map_err(|e| {
+            CoastError::docker(format!(
+                "failed to inspect container '{container_name}': {e}"
+            ))
+        })?;
+
+    let ip = info
+        .network_settings
+        .as_ref()
+        .and_then(|ns| ns.networks.as_ref())
+        .and_then(|nets| nets.get(network_name))
+        .and_then(|net| net.ip_address.as_ref())
+        .filter(|ip| !ip.is_empty())
+        .ok_or_else(|| {
+            CoastError::docker(format!(
+                "container '{container_name}' has no IP on network '{network_name}'"
+            ))
+        })?;
+
+    Ok(ip.clone())
 }
 
 pub(crate) async fn ensure_shared_service_proxies(
@@ -385,6 +456,70 @@ mod tests {
         assert!(script.contains("ip addr add '172.17.255.254/16' dev docker0"));
         assert!(script.contains("TCP-LISTEN:5432,bind=172.17.255.254,fork,reuseaddr"));
         assert!(script.contains("TCP:yc-shared-services-postgis-db:5432"));
+    }
+
+    #[test]
+    fn test_build_proxy_setup_script_with_resolved_ip_target() {
+        let plan = SharedServiceRoutingPlan {
+            docker0_prefix_len: 16,
+            routes: vec![SharedServiceRoute {
+                service_name: "db".to_string(),
+                alias_ip: Ipv4Addr::new(172, 17, 255, 254),
+                target_container: "172.20.0.3".to_string(),
+                ports: vec![SharedServicePort::same(5432)],
+            }],
+        };
+
+        let script = build_proxy_setup_script(&plan);
+
+        assert!(
+            script.contains("TCP:172.20.0.3:5432"),
+            "socat upstream should use the resolved IP, not a container name"
+        );
+        assert!(script.contains("TCP-LISTEN:5432,bind=172.17.255.254,fork,reuseaddr"));
+    }
+
+    #[test]
+    fn test_resolve_target_ips_preserves_service_names() {
+        let targets = HashMap::from([
+            ("db".to_string(), "10.0.0.5".to_string()),
+            ("cache".to_string(), "10.0.0.6".to_string()),
+        ]);
+
+        let plan = build_routing_plan(
+            &[
+                SharedServiceConfig {
+                    name: "db".to_string(),
+                    image: "postgres:16".to_string(),
+                    ports: vec![SharedServicePort::same(5432)],
+                    volumes: vec![],
+                    env: HashMap::new(),
+                    auto_create_db: false,
+                    inject: None,
+                },
+                SharedServiceConfig {
+                    name: "cache".to_string(),
+                    image: "redis:7".to_string(),
+                    ports: vec![SharedServicePort::same(6379)],
+                    volumes: vec![],
+                    env: HashMap::new(),
+                    auto_create_db: false,
+                    inject: None,
+                },
+            ],
+            &targets,
+            Ipv4Addr::new(172, 17, 0, 1),
+            16,
+        )
+        .unwrap();
+
+        let script = build_proxy_setup_script(&plan);
+        assert!(script.contains("TCP:10.0.0.5:5432"));
+        assert!(script.contains("TCP:10.0.0.6:6379"));
+        assert!(
+            !script.contains("shared-services"),
+            "no container names should appear in socat upstream targets"
+        );
     }
 
     #[test]

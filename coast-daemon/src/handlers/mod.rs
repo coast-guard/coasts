@@ -91,14 +91,20 @@ pub fn clear_checked_out_state(
     Ok(true)
 }
 
+/// Shared lock for tests that mutate process-global environment variables.
+/// All test modules under `handlers` that set/remove env vars (e.g. WSL_DISTRO_NAME,
+/// PATH) must hold this lock to prevent cross-test interference from parallel execution.
+#[cfg(test)]
+pub(crate) fn test_env_lock() -> &'static std::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+}
+
 #[cfg(test)]
 mod compose_context_tests {
     use super::*;
-    use std::sync::{Mutex, OnceLock};
-
-    fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
+    fn env_lock() -> &'static std::sync::Mutex<()> {
+        super::test_env_lock()
     }
 
     #[test]

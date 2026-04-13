@@ -162,6 +162,7 @@ async fn setup_shared_services(ctx: &InstanceConfig<'_>) -> Result<()> {
                 ctx.container_id,
                 &ctx.resources.shared_services,
                 &ctx.resources.shared_service_targets,
+                ctx.resources.shared_network.as_deref(),
             )
             .await?,
         )
