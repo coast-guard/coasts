@@ -220,13 +220,11 @@ async fn setup_shared_services(
             )
         })
         .collect();
-    let shared_network = crate::shared_services::shared_network_name(project);
     let routing = plan_shared_service_routing(
         docker,
         container_id,
         &coastfile.shared_services,
         &shared_service_targets,
-        Some(&shared_network),
     )
     .await?;
     ensure_shared_service_proxies(docker, container_id, &routing).await
