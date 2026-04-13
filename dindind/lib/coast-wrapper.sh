@@ -31,13 +31,6 @@ if [ -f Coastfile ]; then
         port=$(echo "$line" | grep -oE '[0-9]+' | head -1)
         [ -n "$port" ] && forward_ports+=("$port")
         ;;
-      "[shared_services."*)
-        if echo "$line" | grep -q "ports"; then
-          for p in $(echo "$line" | grep -oE '[0-9]+'); do
-            forward_ports+=("$p")
-          done
-        fi
-        ;;
     esac
   done < Coastfile
   forward_ports=($(printf '%s\n' "${forward_ports[@]}" | sort -u))

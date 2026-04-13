@@ -105,6 +105,10 @@ tests:
     script: integrated-examples/test_volume_shared_services.sh
     status: pass
     cached_seconds: 127
+  test_shared_service_dns_resolution:
+    script: integrated-examples/test_shared_service_dns_resolution.sh
+    timeout: 300
+    note: "verifies daemon socat uses resolved IPs, not container names (bypasses wrapper)"
   test_shared_service_ports:
     script: integrated-examples/test_shared_service_ports.sh
     timeout: 300
