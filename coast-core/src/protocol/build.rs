@@ -14,6 +14,16 @@ pub struct BuildRequest {
     /// Which registered remote to build on (for remote types).
     #[serde(default)]
     pub remote: Option<String>,
+    /// Inline TOML content to use instead of reading coastfile_path.
+    /// When set, the daemon parses this content directly rather than
+    /// loading a file from disk. Used for coastfile-less CLI builds.
+    #[serde(default)]
+    pub coastfile_content: Option<String>,
+    /// Override the project root directory. When set, this path is
+    /// stored as `project_root` in the manifest instead of deriving
+    /// it from the Coastfile's parent directory.
+    #[serde(default)]
+    pub working_dir: Option<PathBuf>,
 }
 
 /// Request to re-run secret extractors using the cached build Coastfile.

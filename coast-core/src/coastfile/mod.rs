@@ -6,6 +6,7 @@
 /// Submodules:
 /// - [`raw_types`]: Raw TOML serde deserialization structs
 mod field_parsers;
+pub(crate) mod interpolation;
 mod raw_types;
 mod serializer;
 #[cfg(test)]
@@ -82,6 +83,8 @@ pub struct Coastfile {
     pub private_paths: Vec<String>,
     /// Remote execution configuration. Present only for `Coastfile.remote` types.
     pub remote: Option<RemoteConfig>,
+    /// Warnings collected during env var interpolation (undefined variables, etc.).
+    pub interpolation_warnings: Vec<String>,
 }
 
 /// Configuration for the `[agent_shell]` Coastfile section.
@@ -98,7 +101,8 @@ impl Coastfile {
     /// used to resolve relative paths. This method does not support
     /// `extends` or `includes` — use `from_file()` for inheritance.
     pub fn parse(content: &str, project_root: &Path) -> Result<Self> {
-        let raw: RawCoastfile = toml::from_str(content)?;
+        let interp = interpolation::interpolate_env_vars(content);
+        let raw: RawCoastfile = toml::from_str(&interp.content)?;
         if raw.coast.extends.is_some() || raw.coast.includes.is_some() {
             return Err(CoastError::coastfile(
                 "extends and includes require file-based parsing. \
@@ -107,6 +111,7 @@ impl Coastfile {
         }
         let mut cf = Self::validate_and_build(raw, project_root)?;
         cf.coastfile_type = None;
+        cf.interpolation_warnings = interp.warnings;
         Ok(cf)
     }
 
@@ -272,13 +277,15 @@ impl Coastfile {
             .ok_or_else(|| CoastError::coastfile("Coastfile path has no parent directory"))?;
         let project_root = &resolve_repo_root(project_root_raw);
 
-        let content = std::fs::read_to_string(path).map_err(|e| CoastError::Io {
+        let raw_content = std::fs::read_to_string(path).map_err(|e| CoastError::Io {
             message: format!("Failed to read Coastfile: {e}"),
             path: path.to_path_buf(),
             source: Some(e),
         })?;
 
-        let raw: RawCoastfile = toml::from_str(&content)?;
+        let interp = interpolation::interpolate_env_vars(&raw_content);
+        let mut all_interp_warnings = interp.warnings;
+        let raw: RawCoastfile = toml::from_str(&interp.content)?;
 
         let has_extends = raw.coast.extends.is_some();
         let has_includes = raw.coast.includes.is_some();
@@ -299,7 +306,7 @@ impl Coastfile {
             if let Some(ref includes) = includes_ref {
                 for include_path_str in includes {
                     let include_path = project_root.join(include_path_str);
-                    let include_content =
+                    let include_raw_content =
                         std::fs::read_to_string(&include_path).map_err(|e| CoastError::Io {
                             message: format!(
                                 "Failed to read include file '{}': {e}",
@@ -308,7 +315,9 @@ impl Coastfile {
                             path: include_path.clone(),
                             source: Some(e),
                         })?;
-                    let include_raw: RawCoastfile = toml::from_str(&include_content)?;
+                    let include_interp = interpolation::interpolate_env_vars(&include_raw_content);
+                    all_interp_warnings.extend(include_interp.warnings);
+                    let include_raw: RawCoastfile = toml::from_str(&include_interp.content)?;
                     if include_raw.coast.extends.is_some() || include_raw.coast.includes.is_some() {
                         return Err(CoastError::coastfile(format!(
                             "included file '{}' cannot use extends or includes. \
@@ -337,6 +346,7 @@ impl Coastfile {
         };
 
         result.coastfile_type = coastfile_type;
+        result.interpolation_warnings = all_interp_warnings;
 
         Self::validate_remote_constraints(&result)?;
 
@@ -375,6 +385,7 @@ impl Coastfile {
             agent_shell: None,
             private_paths: vec![],
             remote: None,
+            interpolation_warnings: vec![],
         }
     }
 
@@ -645,6 +656,7 @@ impl Coastfile {
             agent_shell,
             private_paths,
             remote,
+            interpolation_warnings: vec![],
         })
     }
 
@@ -988,6 +1000,7 @@ impl Coastfile {
             agent_shell,
             private_paths,
             remote,
+            interpolation_warnings: vec![],
         })
     }
 }

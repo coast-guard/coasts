@@ -579,6 +579,8 @@ pub async fn handle_remote_build_with_progress(
         coastfile_path: remote_cf_path,
         refresh: req.refresh,
         remote: None,
+        coastfile_content: None,
+        working_dir: None,
     };
     let build_response = remote::forward::forward_build(&client, &build_req).await?;
     let _ = progress

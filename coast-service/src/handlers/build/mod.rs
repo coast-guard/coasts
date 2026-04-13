@@ -127,6 +127,8 @@ mod tests {
             coastfile_path: coastfile_path.clone(),
             refresh: false,
             remote: None,
+            coastfile_content: None,
+            working_dir: None,
         };
 
         let resp = handle(req, &state).await.unwrap();

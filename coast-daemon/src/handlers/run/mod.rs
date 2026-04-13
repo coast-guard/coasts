@@ -527,6 +527,8 @@ async fn trigger_remote_build(
         coastfile_path: coastfile_path.clone(),
         refresh: false,
         remote: None,
+        coastfile_content: None,
+        working_dir: None,
     };
 
     info!(coastfile_path = %coastfile_path.display(), "triggering remote build on coast-service");

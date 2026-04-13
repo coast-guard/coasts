@@ -2,7 +2,9 @@
 
 A Coastfile is a TOML configuration file that lives at the root of your project. It tells Coast everything it needs to know to build and run isolated development environments for that project — which services to run, which ports to forward, how to handle data, and how to manage secrets.
 
-Every Coast project needs at least one Coastfile. The file is always named `Coastfile` (capital C, no extension). If you need variants for different workflows, you create typed Coastfiles like `Coastfile.light` or `Coastfile.snap` that [inherit from the base](INHERITANCE.md).
+The file is always named `Coastfile` (capital C, no extension). If you need variants for different workflows, you create typed Coastfiles like `Coastfile.light` or `Coastfile.snap` that [inherit from the base](INHERITANCE.md).
+
+Coastfiles are optional. You can build a project entirely from CLI flags by passing `--name` and `--compose` directly to `coast build`. See [Coastfile-less Builds](../concepts_and_terminology/BUILDS.md#coastfile-less-builds) for details.
 
 For a deeper understanding of how Coastfiles relate to the rest of Coast, see [Coasts](../concepts_and_terminology/COASTS.md) and [Builds](../concepts_and_terminology/BUILDS.md).
 
@@ -204,6 +206,7 @@ mount = "/data/db"
 | [Volumes](VOLUMES.md) | `[volumes.*]` | Isolated, shared, and snapshot-seeded volume strategies |
 | [Shared Services](SHARED_SERVICES.md) | `[shared_services.*]` | Host-level databases and infrastructure services |
 | [Secrets](SECRETS.md) | `[secrets.*]`, `[inject]` | Secret extraction, injection, and host env/file forwarding |
+| [Variables](VARIABLES.md) | `${VAR}`, `${VAR:-default}` | Environment variable interpolation in Coastfile values |
 | [Bare Services](SERVICES.md) | `[services.*]` | Running processes directly without Docker Compose |
 | [Agent Shell](AGENT_SHELL.md) | `[agent_shell]` | Containerized agent TUI runtimes |
 | [MCP Servers](MCP.md) | `[mcp.*]`, `[mcp_clients.*]` | Internal and host-proxied MCP servers, client connectors |

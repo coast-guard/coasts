@@ -24,6 +24,7 @@ coast-update = { path = "../coast-update" }
 rust-i18n = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+toml = { workspace = true }
 clap = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }

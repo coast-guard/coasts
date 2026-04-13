@@ -69,9 +69,14 @@ export default function BuildModal({ open, project, onClose, onComplete }: Build
     }
 
     setPhase('building');
-    const coastfilePath = selectedType === 'default'
-      ? `${projectRoot}/Coastfile`
-      : `${projectRoot}/Coastfile.${selectedType}`;
+    let coastfilePath: string;
+    if (inspectData?.coastfile_path && selectedType === 'default') {
+      coastfilePath = inspectData.coastfile_path;
+    } else if (selectedType === 'default') {
+      coastfilePath = `${projectRoot}/Coastfile`;
+    } else {
+      coastfilePath = `${projectRoot}/Coastfile.${selectedType}`;
+    }
 
     try {
       const result = await api.buildProject(coastfilePath, false, (evt) => {

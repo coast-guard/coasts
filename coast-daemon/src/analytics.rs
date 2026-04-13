@@ -534,6 +534,8 @@ mod tests {
                 coastfile_path: std::path::PathBuf::new(),
                 refresh: false,
                 remote: None,
+                coastfile_content: None,
+                working_dir: None,
             }),
             Request::RerunExtractors(RerunExtractorsRequest {
                 project: String::new(),

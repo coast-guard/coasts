@@ -23,6 +23,11 @@ pub struct Cli {
     #[arg(long, global = true)]
     project: Option<String>,
 
+    /// Override the working directory used as the project root.
+    /// Accepts relative or absolute paths; resolved to an absolute path internally.
+    #[arg(long = "working-dir", alias = "wd", global = true)]
+    working_dir: Option<std::path::PathBuf>,
+
     /// The subcommand to execute.
     #[command(subcommand)]
     command: Commands,
@@ -267,7 +272,7 @@ async fn dispatch(cli: Cli) -> Result<()> {
         Commands::HarnessSetupPrompt(args) => commands::harness_setup_prompt::execute(&args).await,
 
         // --- Project-explicit commands ---
-        Commands::Build(args) => commands::build::execute(&args).await,
+        Commands::Build(args) => commands::build::execute(&args, &cli.working_dir).await,
         Commands::RmBuild(args) => commands::rm_build::execute(&args).await,
         Commands::Builds(args) => commands::builds::execute(&args, &cli.project).await,
         Commands::Archive(args) => commands::archive::execute_archive(&args).await,
@@ -540,6 +545,43 @@ mod tests {
     fn test_cli_global_project_flag() {
         let cli = Cli::try_parse_from(["coast", "--project", "my-app", "ls"]).unwrap();
         assert_eq!(cli.project, Some("my-app".to_string()));
+    }
+
+    #[test]
+    fn test_cli_global_working_dir_flag() {
+        let cli =
+            Cli::try_parse_from(["coast", "--working-dir", "/tmp/my-project", "build"]).unwrap();
+        assert_eq!(
+            cli.working_dir,
+            Some(std::path::PathBuf::from("/tmp/my-project"))
+        );
+    }
+
+    #[test]
+    fn test_cli_global_wd_alias() {
+        let cli = Cli::try_parse_from(["coast", "--wd", "/tmp/proj", "build"]).unwrap();
+        assert_eq!(cli.working_dir, Some(std::path::PathBuf::from("/tmp/proj")));
+    }
+
+    #[test]
+    fn test_cli_working_dir_with_build_flags() {
+        let cli = Cli::try_parse_from([
+            "coast",
+            "--working-dir",
+            "/app",
+            "build",
+            "--name",
+            "proj",
+            "--compose",
+            "./dc.yml",
+        ])
+        .unwrap();
+        assert_eq!(cli.working_dir, Some(std::path::PathBuf::from("/app")));
+        if let Commands::Build(args) = cli.command {
+            assert_eq!(args.project_name, Some("proj".to_string()));
+        } else {
+            panic!("Expected Build command");
+        }
     }
 
     #[test]

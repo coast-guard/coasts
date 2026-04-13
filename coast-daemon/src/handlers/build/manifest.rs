@@ -19,6 +19,8 @@ pub(super) struct ManifestInput<'a> {
     pub state: &'a AppState,
     pub progress: &'a tokio::sync::mpsc::Sender<BuildProgressEvent>,
     pub plan: &'a BuildPlan,
+    /// Original coastfile path used for the build (None for coastfile-less builds).
+    pub coastfile_path: Option<&'a std::path::Path>,
 }
 
 pub(super) async fn write_manifest_and_finalize(input: ManifestInput<'_>) -> Result<()> {
@@ -30,6 +32,7 @@ pub(super) async fn write_manifest_and_finalize(input: ManifestInput<'_>) -> Res
         "coastfile_type": &input.coastfile.coastfile_type,
         "arch": std::env::consts::ARCH,
         "project_root": input.coastfile.project_root.display().to_string(),
+        "coastfile_path": input.coastfile_path.map(|p| p.display().to_string()),
         "build_timestamp": input.artifact.build_timestamp.to_rfc3339(),
         "coastfile_hash": input.artifact.coastfile_hash,
         "images_cached": input.images.images_cached,

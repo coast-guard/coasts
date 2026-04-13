@@ -65,6 +65,7 @@ coastfiles/PORTS.md
 coastfiles/SHARED_SERVICES.md
 coastfiles/SERVICES.md
 coastfiles/SECRETS.md
+coastfiles/VARIABLES.md
 coastfiles/VOLUMES.md
 coastfiles/ASSIGN.md
 coastfiles/INHERITANCE.md

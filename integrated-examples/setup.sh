@@ -1716,5 +1716,53 @@ setup_coast_remote_stale_test() {
 
 setup_coast_remote_stale_test
 
+# --- coast-no-coastfile ---
+setup_coast_no_coastfile() {
+    local dir="$PROJECTS_DIR/coast-no-coastfile"
+    echo "Setting up coast-no-coastfile..."
+    rm -rf "$dir/.git"
+    cd "$dir"
+    git init -b main
+    git config user.name "Coast Dev"
+    git config user.email "dev@coasts.dev"
+    git add -A
+    git commit -m "initial commit: coastfile-less build test project"
+    echo "  coast-no-coastfile ready"
+}
+
+setup_coast_no_coastfile
+
+# --- coast-envvar ---
+setup_coast_envvar() {
+    local dir="$PROJECTS_DIR/coast-envvar"
+    echo "Setting up coast-envvar..."
+    rm -rf "$dir/.git"
+    cd "$dir"
+    git init -b main
+    git config user.name "Coast Dev"
+    git config user.email "dev@coasts.dev"
+    git add -A
+    git commit -m "initial commit: env var interpolation test project"
+    echo "  coast-envvar ready"
+}
+
+setup_coast_envvar
+
+# --- coast-working-dir ---
+setup_coast_working_dir() {
+    local dir="$PROJECTS_DIR/coast-working-dir"
+    echo "Setting up coast-working-dir..."
+    rm -rf "$dir/.git"
+    cd "$dir"
+    git init -b main
+    git config user.name "Coast Dev"
+    git config user.email "dev@coasts.dev"
+    git add -A
+    git commit -m "initial commit: working-dir flag test project"
+    echo "  coast-working-dir ready"
+}
+
+setup_coast_working_dir
+
 echo ""
 echo "All examples initialized. Run 'coast build' inside any example to get started."

@@ -39,6 +39,40 @@ pub struct BuildArgs {
     /// Show verbose build detail (e.g., docker build logs).
     #[arg(short = 'v', long)]
     pub verbose: bool,
+
+    // --- Coastfile-less build flags ---
+    /// Project name (required when building without a Coastfile).
+    #[arg(long = "name")]
+    pub project_name: Option<String>,
+
+    /// Path to docker-compose file (required when building without a Coastfile).
+    #[arg(long)]
+    pub compose: Option<PathBuf>,
+
+    /// Inline docker-compose content (alternative to --compose).
+    #[arg(long = "compose-content", conflicts_with = "compose")]
+    pub compose_content: Option<String>,
+
+    /// Container runtime: dind, sysbox, or podman.
+    #[arg(long)]
+    pub runtime: Option<String>,
+
+    /// Port mapping (repeatable). Format: NAME=PORT (e.g. --port web=3000).
+    #[arg(long = "port", value_name = "NAME=PORT")]
+    pub ports: Vec<String>,
+
+    /// Disable auto-start of compose services during `coast run`.
+    #[arg(long)]
+    pub no_autostart: bool,
+
+    /// Primary port service name.
+    #[arg(long = "primary-port")]
+    pub primary_port: Option<String>,
+
+    /// Inline TOML config for complex sections (secrets, volumes, etc.).
+    /// Merged on top of Coastfile and individual flags.
+    #[arg(long)]
+    pub config: Option<String>,
 }
 
 /// Verbosity level for progress display.
@@ -348,7 +382,7 @@ impl ProgressDisplay {
 ///
 /// The project name is derived from the Coastfile, not from the `--project` flag,
 /// since the Coastfile itself defines the project name.
-pub async fn execute(args: &BuildArgs) -> Result<()> {
+pub async fn execute(args: &BuildArgs, global_working_dir: &Option<PathBuf>) -> Result<()> {
     if let Some(ref t) = args.coastfile_type {
         if t == "default" {
             bail!(
@@ -366,32 +400,62 @@ pub async fn execute(args: &BuildArgs) -> Result<()> {
         }
     }
 
-    let coastfile_path = if let Some(ref t) = args.coastfile_type {
-        let has_custom_file = args.coastfile_path != Path::new("Coastfile");
-        if has_custom_file {
-            bail!(
-                "--type and -f/--file are mutually exclusive. \
-                 Use --type to pick a variant (e.g. Coastfile.light), \
-                 or -f to specify an explicit path."
-            );
-        }
-        let cwd = std::env::current_dir()?;
-        coast_core::coastfile::Coastfile::find_coastfile_for_type(&cwd, Some(t))
-            .unwrap_or_else(|| cwd.join(format!("Coastfile.{t}")))
-    } else if args.coastfile_path == Path::new("Coastfile") {
-        let cwd = std::env::current_dir()?;
-        coast_core::coastfile::Coastfile::find_coastfile(&cwd, "Coastfile")
-            .unwrap_or_else(|| cwd.join("Coastfile"))
-    } else if args.coastfile_path.is_absolute() {
-        args.coastfile_path.clone()
+    let has_inline_flags = args.project_name.is_some()
+        || args.compose.is_some()
+        || args.compose_content.is_some()
+        || !args.ports.is_empty()
+        || args.runtime.is_some()
+        || args.no_autostart
+        || args.primary_port.is_some()
+        || args.config.is_some();
+
+    let cwd = std::env::current_dir()?;
+    let has_custom_file = args.coastfile_path != Path::new("Coastfile");
+
+    let coastfile_on_disk = if has_custom_file {
+        true
     } else {
-        std::env::current_dir()?.join(&args.coastfile_path)
+        coast_core::coastfile::Coastfile::find_coastfile(&cwd, "Coastfile").is_some()
     };
+
+    let (coastfile_path, coastfile_content) = if has_inline_flags && !coastfile_on_disk {
+        args.project_name.as_deref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "--name is required when building without a Coastfile. \
+                 Provide a project name with --name <NAME>."
+            )
+        })?;
+        let toml_content = build_toml_from_flags(args, &cwd)?;
+        (cwd.join("Coastfile"), Some(toml_content))
+    } else if has_inline_flags && coastfile_on_disk {
+        let base_path = resolve_coastfile_path(args, &cwd)?;
+        let base_content = std::fs::read_to_string(&base_path)?;
+        let merged = merge_flags_into_toml(&base_content, args, &cwd)?;
+        (base_path, Some(merged))
+    } else if !coastfile_on_disk && !has_custom_file {
+        bail!(
+            "No Coastfile found in the current directory.\n\
+             Either create a Coastfile, or build without one using:\n  \
+             coast build --name <NAME> [--compose <PATH>] [--port NAME=PORT ...]"
+        );
+    } else {
+        (resolve_coastfile_path(args, &cwd)?, None)
+    };
+
+    let working_dir = global_working_dir.as_ref().map(|wd| {
+        if wd.is_absolute() {
+            wd.clone()
+        } else {
+            cwd.join(wd)
+        }
+    });
 
     let request = Request::Build(BuildRequest {
         coastfile_path,
         refresh: args.refresh,
         remote: args.remote.clone(),
+        coastfile_content,
+        working_dir,
     });
 
     let verbosity = if args.silent {
@@ -444,6 +508,192 @@ pub async fn execute(args: &BuildArgs) -> Result<()> {
             bail!("{}", t!("error.unexpected_response"));
         }
     }
+}
+
+/// Resolve the coastfile path from args when NOT using inline flags.
+fn resolve_coastfile_path(args: &BuildArgs, cwd: &Path) -> anyhow::Result<PathBuf> {
+    if let Some(ref t) = args.coastfile_type {
+        let has_custom_file = args.coastfile_path != Path::new("Coastfile");
+        if has_custom_file {
+            bail!(
+                "--type and -f/--file are mutually exclusive. \
+                 Use --type to pick a variant (e.g. Coastfile.light), \
+                 or -f to specify an explicit path."
+            );
+        }
+        Ok(
+            coast_core::coastfile::Coastfile::find_coastfile_for_type(cwd, Some(t))
+                .unwrap_or_else(|| cwd.join(format!("Coastfile.{t}"))),
+        )
+    } else if args.coastfile_path == Path::new("Coastfile") {
+        Ok(
+            coast_core::coastfile::Coastfile::find_coastfile(cwd, "Coastfile")
+                .unwrap_or_else(|| cwd.join("Coastfile")),
+        )
+    } else if args.coastfile_path.is_absolute() {
+        Ok(args.coastfile_path.clone())
+    } else {
+        Ok(cwd.join(&args.coastfile_path))
+    }
+}
+
+/// Construct a full TOML string from CLI flags (coastfile-less build).
+fn build_toml_from_flags(args: &BuildArgs, cwd: &Path) -> anyhow::Result<String> {
+    let mut toml = String::new();
+
+    toml.push_str("[coast]\n");
+    if let Some(ref name) = args.project_name {
+        toml.push_str(&format!("name = \"{}\"\n", escape_toml_string(name)));
+    }
+    if let Some(ref compose) = args.compose {
+        let compose_path = if compose.is_absolute() {
+            compose.clone()
+        } else {
+            cwd.join(compose)
+        };
+        toml.push_str(&format!(
+            "compose = \"{}\"\n",
+            escape_toml_string(&compose_path.display().to_string())
+        ));
+    }
+    if let Some(ref runtime) = args.runtime {
+        toml.push_str(&format!("runtime = \"{}\"\n", escape_toml_string(runtime)));
+    }
+    if args.no_autostart {
+        toml.push_str("autostart = false\n");
+    }
+    if let Some(ref primary) = args.primary_port {
+        toml.push_str(&format!(
+            "primary_port = \"{}\"\n",
+            escape_toml_string(primary)
+        ));
+    }
+    toml.push('\n');
+
+    if !args.ports.is_empty() {
+        toml.push_str("[ports]\n");
+        for port_spec in &args.ports {
+            let (name, port) = parse_port_spec(port_spec)?;
+            toml.push_str(&format!("{name} = {port}\n"));
+        }
+        toml.push('\n');
+    }
+
+    if let Some(ref config) = args.config {
+        toml.push_str(config);
+        toml.push('\n');
+    }
+
+    Ok(toml)
+}
+
+/// Merge CLI flag overrides into existing Coastfile TOML content.
+fn merge_flags_into_toml(
+    base_content: &str,
+    args: &BuildArgs,
+    cwd: &Path,
+) -> anyhow::Result<String> {
+    let mut overlay = String::new();
+
+    let has_coast_overrides = args.project_name.is_some()
+        || args.compose.is_some()
+        || args.runtime.is_some()
+        || args.no_autostart
+        || args.primary_port.is_some();
+
+    if has_coast_overrides {
+        overlay.push_str("[coast]\n");
+        if let Some(ref name) = args.project_name {
+            overlay.push_str(&format!("name = \"{}\"\n", escape_toml_string(name)));
+        }
+        if let Some(ref compose) = args.compose {
+            let compose_path = if compose.is_absolute() {
+                compose.clone()
+            } else {
+                cwd.join(compose)
+            };
+            overlay.push_str(&format!(
+                "compose = \"{}\"\n",
+                escape_toml_string(&compose_path.display().to_string())
+            ));
+        }
+        if let Some(ref runtime) = args.runtime {
+            overlay.push_str(&format!("runtime = \"{}\"\n", escape_toml_string(runtime)));
+        }
+        if args.no_autostart {
+            overlay.push_str("autostart = false\n");
+        }
+        if let Some(ref primary) = args.primary_port {
+            overlay.push_str(&format!(
+                "primary_port = \"{}\"\n",
+                escape_toml_string(primary)
+            ));
+        }
+        overlay.push('\n');
+    }
+
+    if !args.ports.is_empty() {
+        overlay.push_str("[ports]\n");
+        for port_spec in &args.ports {
+            let (name, port) = parse_port_spec(port_spec)?;
+            overlay.push_str(&format!("{name} = {port}\n"));
+        }
+        overlay.push('\n');
+    }
+
+    if let Some(ref config) = args.config {
+        overlay.push_str(config);
+        overlay.push('\n');
+    }
+
+    if overlay.is_empty() {
+        return Ok(base_content.to_string());
+    }
+
+    // Parse both as TOML tables and merge (overlay wins).
+    let mut base_table: toml::Table = toml::from_str(base_content)?;
+    let overlay_table: toml::Table = toml::from_str(&overlay)?;
+    merge_toml_tables(&mut base_table, &overlay_table);
+    Ok(toml::to_string_pretty(&base_table)?)
+}
+
+fn merge_toml_tables(base: &mut toml::Table, overlay: &toml::Table) {
+    for (key, value) in overlay {
+        match (base.get_mut(key), value) {
+            (Some(toml::Value::Table(base_sub)), toml::Value::Table(overlay_sub)) => {
+                merge_toml_tables(base_sub, overlay_sub);
+            }
+            _ => {
+                base.insert(key.clone(), value.clone());
+            }
+        }
+    }
+}
+
+fn parse_port_spec(spec: &str) -> anyhow::Result<(String, u16)> {
+    let parts: Vec<&str> = spec.splitn(2, '=').collect();
+    if parts.len() != 2 {
+        bail!(
+            "invalid port format '{}'. Expected NAME=PORT (e.g. web=3000)",
+            spec
+        );
+    }
+    let name = parts[0].trim().to_string();
+    let port: u16 = parts[1].trim().parse().map_err(|_| {
+        anyhow::anyhow!(
+            "invalid port number '{}' in '{}'. Port must be 1-65535",
+            parts[1].trim(),
+            spec
+        )
+    })?;
+    if port == 0 {
+        bail!("port 0 is not allowed in '{}'", spec);
+    }
+    Ok((name, port))
+}
+
+fn escape_toml_string(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 #[cfg(test)]
@@ -996,5 +1246,285 @@ mod tests {
         for step in &pd.steps {
             assert_ne!(step.status, StepStatus::InProgress);
         }
+    }
+
+    // -------------------------------------------------------------------
+    // Coastfile-less build flag tests
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn test_build_args_name_flag() {
+        let cli = TestCli::try_parse_from(["test", "--name", "my-project"]).unwrap();
+        assert_eq!(cli.args.project_name, Some("my-project".to_string()));
+    }
+
+    #[test]
+    fn test_build_args_compose_flag() {
+        let cli = TestCli::try_parse_from(["test", "--compose", "./dc.yml"]).unwrap();
+        assert_eq!(cli.args.compose, Some(PathBuf::from("./dc.yml")));
+    }
+
+    #[test]
+    fn test_build_args_port_flags() {
+        let cli =
+            TestCli::try_parse_from(["test", "--port", "web=3000", "--port", "api=8080"]).unwrap();
+        assert_eq!(cli.args.ports, vec!["web=3000", "api=8080"]);
+    }
+
+    #[test]
+    fn test_build_args_config_flag() {
+        let cli = TestCli::try_parse_from([
+            "test",
+            "--config",
+            "[secrets.key]\nextractor = \"env\"\ninject = \"env:KEY\"",
+        ])
+        .unwrap();
+        assert!(cli.args.config.is_some());
+    }
+
+    #[test]
+    fn test_build_args_no_autostart() {
+        let cli = TestCli::try_parse_from(["test", "--no-autostart"]).unwrap();
+        assert!(cli.args.no_autostart);
+    }
+
+    #[test]
+    fn test_build_args_runtime_flag() {
+        let cli = TestCli::try_parse_from(["test", "--runtime", "sysbox"]).unwrap();
+        assert_eq!(cli.args.runtime, Some("sysbox".to_string()));
+    }
+
+    #[test]
+    fn test_build_args_primary_port_flag() {
+        let cli = TestCli::try_parse_from(["test", "--primary-port", "web"]).unwrap();
+        assert_eq!(cli.args.primary_port, Some("web".to_string()));
+    }
+
+    #[test]
+    fn test_build_args_compose_content_conflicts_compose() {
+        let result = TestCli::try_parse_from([
+            "test",
+            "--compose",
+            "./dc.yml",
+            "--compose-content",
+            "services: {}",
+        ]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_build_args_all_new_flags_together() {
+        let cli = TestCli::try_parse_from([
+            "test",
+            "--name",
+            "proj",
+            "--compose",
+            "./dc.yml",
+            "--runtime",
+            "dind",
+            "--port",
+            "web=3000",
+            "--no-autostart",
+            "--primary-port",
+            "web",
+        ])
+        .unwrap();
+        assert_eq!(cli.args.project_name, Some("proj".to_string()));
+        assert_eq!(cli.args.compose, Some(PathBuf::from("./dc.yml")));
+        assert_eq!(cli.args.runtime, Some("dind".to_string()));
+        assert_eq!(cli.args.ports, vec!["web=3000"]);
+        assert!(cli.args.no_autostart);
+        assert_eq!(cli.args.primary_port, Some("web".to_string()));
+    }
+
+    // -------------------------------------------------------------------
+    // TOML construction and merge tests
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_port_spec_valid() {
+        let (name, port) = parse_port_spec("web=3000").unwrap();
+        assert_eq!(name, "web");
+        assert_eq!(port, 3000);
+    }
+
+    #[test]
+    fn test_parse_port_spec_with_spaces() {
+        let (name, port) = parse_port_spec("api = 8080").unwrap();
+        assert_eq!(name, "api");
+        assert_eq!(port, 8080);
+    }
+
+    #[test]
+    fn test_parse_port_spec_invalid_format() {
+        assert!(parse_port_spec("web:3000").is_err());
+    }
+
+    #[test]
+    fn test_parse_port_spec_invalid_port() {
+        assert!(parse_port_spec("web=abc").is_err());
+    }
+
+    #[test]
+    fn test_parse_port_spec_zero_port() {
+        assert!(parse_port_spec("web=0").is_err());
+    }
+
+    #[test]
+    fn test_escape_toml_string() {
+        assert_eq!(escape_toml_string("hello"), "hello");
+        assert_eq!(escape_toml_string(r#"say "hi""#), r#"say \"hi\""#);
+        assert_eq!(escape_toml_string(r"path\to"), r"path\\to");
+    }
+
+    #[test]
+    fn test_build_toml_from_flags_minimal() {
+        let args = BuildArgs {
+            coastfile_path: PathBuf::from("Coastfile"),
+            coastfile_type: None,
+            refresh: false,
+            remote: None,
+            silent: false,
+            verbose: false,
+            project_name: Some("test-proj".to_string()),
+            compose: Some(PathBuf::from("/abs/path/docker-compose.yml")),
+            compose_content: None,
+            runtime: None,
+            ports: vec![],
+            no_autostart: false,
+            primary_port: None,
+            config: None,
+        };
+        let cwd = PathBuf::from("/does-not-matter");
+        let toml = build_toml_from_flags(&args, &cwd).unwrap();
+        assert!(toml.contains("name = \"test-proj\""));
+        assert!(toml.contains("compose = \"/abs/path/docker-compose.yml\""));
+    }
+
+    #[test]
+    fn test_build_toml_from_flags_with_ports_and_config() {
+        let args = BuildArgs {
+            coastfile_path: PathBuf::from("Coastfile"),
+            coastfile_type: None,
+            refresh: false,
+            remote: None,
+            silent: false,
+            verbose: false,
+            project_name: Some("test".to_string()),
+            compose: Some(PathBuf::from("/abs/dc.yml")),
+            compose_content: None,
+            runtime: Some("sysbox".to_string()),
+            ports: vec!["web=3000".to_string(), "api=8080".to_string()],
+            no_autostart: true,
+            primary_port: Some("web".to_string()),
+            config: Some(
+                "[secrets.key]\nextractor = \"env\"\ninject = \"env:KEY\"\nvar = \"MY_KEY\""
+                    .to_string(),
+            ),
+        };
+        let cwd = PathBuf::from("/tmp");
+        let toml = build_toml_from_flags(&args, &cwd).unwrap();
+        assert!(toml.contains("name = \"test\""));
+        assert!(toml.contains("compose = \"/abs/dc.yml\""));
+        assert!(toml.contains("runtime = \"sysbox\""));
+        assert!(toml.contains("autostart = false"));
+        assert!(toml.contains("primary_port = \"web\""));
+        assert!(toml.contains("web = 3000"));
+        assert!(toml.contains("api = 8080"));
+        assert!(toml.contains("[secrets.key]"));
+    }
+
+    #[test]
+    fn test_merge_flags_into_toml_name_override() {
+        let base = r#"
+[coast]
+name = "original"
+compose = "./dc.yml"
+"#;
+        let args = BuildArgs {
+            coastfile_path: PathBuf::from("Coastfile"),
+            coastfile_type: None,
+            refresh: false,
+            remote: None,
+            silent: false,
+            verbose: false,
+            project_name: Some("overridden".to_string()),
+            compose: None,
+            compose_content: None,
+            runtime: None,
+            ports: vec![],
+            no_autostart: false,
+            primary_port: None,
+            config: None,
+        };
+        let cwd = PathBuf::from("/tmp");
+        let merged = merge_flags_into_toml(base, &args, &cwd).unwrap();
+        assert!(merged.contains("overridden"));
+    }
+
+    #[test]
+    fn test_merge_flags_into_toml_adds_ports() {
+        let base = r#"
+[coast]
+name = "proj"
+compose = "./dc.yml"
+"#;
+        let args = BuildArgs {
+            coastfile_path: PathBuf::from("Coastfile"),
+            coastfile_type: None,
+            refresh: false,
+            remote: None,
+            silent: false,
+            verbose: false,
+            project_name: None,
+            compose: None,
+            compose_content: None,
+            runtime: None,
+            ports: vec!["web=3000".to_string()],
+            no_autostart: false,
+            primary_port: None,
+            config: None,
+        };
+        let cwd = PathBuf::from("/tmp");
+        let merged = merge_flags_into_toml(base, &args, &cwd).unwrap();
+        assert!(merged.contains("web = 3000") || merged.contains("web = 3_000"));
+    }
+
+    #[test]
+    fn test_merge_flags_empty_overlay_returns_base() {
+        let base = "[coast]\nname = \"proj\"\n";
+        let args = BuildArgs {
+            coastfile_path: PathBuf::from("Coastfile"),
+            coastfile_type: None,
+            refresh: false,
+            remote: None,
+            silent: false,
+            verbose: false,
+            project_name: None,
+            compose: None,
+            compose_content: None,
+            runtime: None,
+            ports: vec![],
+            no_autostart: false,
+            primary_port: None,
+            config: None,
+        };
+        let cwd = PathBuf::from("/tmp");
+        let merged = merge_flags_into_toml(base, &args, &cwd).unwrap();
+        assert_eq!(merged, base);
+    }
+
+    #[test]
+    fn test_merge_toml_tables_deep_merge() {
+        let mut base: toml::Table =
+            toml::from_str("[coast]\nname = \"a\"\nruntime = \"dind\"\n[ports]\nweb = 3000\n")
+                .unwrap();
+        let overlay: toml::Table =
+            toml::from_str("[coast]\nname = \"b\"\n[ports]\napi = 8080\n").unwrap();
+        merge_toml_tables(&mut base, &overlay);
+        assert_eq!(base["coast"]["name"].as_str(), Some("b"),);
+        assert_eq!(base["coast"]["runtime"].as_str(), Some("dind"),);
+        assert_eq!(base["ports"]["web"].as_integer(), Some(3000));
+        assert_eq!(base["ports"]["api"].as_integer(), Some(8080));
     }
 }

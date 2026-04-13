@@ -17,6 +17,45 @@ When you run `coast build`, the daemon executes these steps in order:
 9. Updates the `latest` symlink to point to the new build.
 10. Auto-prunes old builds beyond the keep limit.
 
+## Coastfile-less Builds
+
+You can build a project without a Coastfile by passing configuration directly as CLI flags:
+
+```bash
+coast build --name my-project --compose ./docker-compose.yml
+```
+
+Required flags when no Coastfile is present:
+- `--name <NAME>` -- the project name
+- `--compose <PATH>` -- path to a docker-compose file
+
+Additional flags for common settings:
+- `--port NAME=PORT` -- port mapping (repeatable)
+- `--runtime <dind|sysbox|podman>` -- container runtime
+- `--no-autostart` -- disable auto-start of compose services
+- `--primary-port <NAME>` -- primary port service name
+
+For complex configuration (secrets, volumes, shared services), use `--config` with inline TOML:
+
+```bash
+coast build --name my-project --compose ./dc.yml \
+  --port web=3000 \
+  --config '[secrets.api_key]
+extractor = "env"
+var = "MY_API_KEY"
+inject = "env:API_KEY"'
+```
+
+### Overriding a Coastfile
+
+When a Coastfile exists on disk, CLI flags override its values. The Coastfile provides the base configuration, and flags take precedence:
+
+```bash
+coast build --name custom-name --port api=9090
+```
+
+This reads the existing Coastfile but replaces `coast.name` with `custom-name` and adds (or overrides) the `api` port.
+
 ## Where Builds Live
 
 ```text
@@ -103,6 +142,20 @@ coast build --type snap  # uses Coastfile.snap, updates "latest-snap"
 ```
 
 Pruning a `snap` build never touches `default` builds, and vice versa.
+
+## Custom Working Directory
+
+By default, `coast build` registers the project at the Coastfile's parent directory. The `--working-dir` flag overrides this, decoupling the build's registered project root from the Coastfile's location:
+
+```bash
+coast --working-dir /home/user/my-project build -f /ci/configs/Coastfile
+```
+
+This builds using the Coastfile at `/ci/configs/Coastfile` but registers the project root as `/home/user/my-project`. The stored `project_root` in the manifest determines where `coast lookup` matches instances, so running `coast lookup` from `/home/user/my-project` will find instances from this build.
+
+`--working-dir` accepts relative or absolute paths. Relative paths are resolved against the current directory.
+
+This is useful for CI pipelines, monorepo setups, or any scenario where the Coastfile lives in a different directory than the project source.
 
 ## Remote Builds
 

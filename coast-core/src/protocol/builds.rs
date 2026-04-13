@@ -152,6 +152,9 @@ pub struct BuildsInspectResponse {
     #[serde(default)]
     pub build_id: Option<String>,
     pub project_root: Option<String>,
+    /// Original coastfile path used for this build (None for coastfile-less builds).
+    #[serde(default)]
+    pub coastfile_path: Option<String>,
     pub build_timestamp: Option<String>,
     pub coastfile_hash: Option<String>,
     pub coast_image: Option<String>,
