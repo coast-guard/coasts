@@ -4,6 +4,8 @@ The `[secrets.*]` sections define credentials that Coast extracts from your host
 
 For how secrets are stored, encrypted, and managed at runtime, see [Secrets](../concepts_and_terminology/SECRETS.md).
 
+Secrets are distinct from [variable interpolation](VARIABLES.md). Variables (`${VAR}`) are resolved at parse time and their values appear in the build artifact. Secrets are extracted at build time and stored encrypted in the keystore -- their values never appear in build artifacts.
+
 ## `[secrets.*]`
 
 Each secret is a named TOML section under `[secrets]`. Two fields are always required: `extractor` and `inject`. Additional fields are passed as parameters to the extractor.

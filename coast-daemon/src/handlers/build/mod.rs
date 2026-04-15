@@ -41,10 +41,25 @@ pub async fn handle(
     info!(
         coastfile_path = %req.coastfile_path.display(),
         refresh = req.refresh,
+        has_inline_content = req.coastfile_content.is_some(),
+        working_dir = ?req.working_dir,
         "handling build request"
     );
 
-    let coastfile = Coastfile::from_file(&req.coastfile_path)?;
+    let mut coastfile = if let Some(ref content) = req.coastfile_content {
+        let project_root = req
+            .working_dir
+            .as_deref()
+            .or_else(|| req.coastfile_path.parent())
+            .unwrap_or_else(|| std::path::Path::new("."));
+        Coastfile::parse(content, project_root)?
+    } else {
+        Coastfile::from_file(&req.coastfile_path)?
+    };
+
+    if let Some(ref wd) = req.working_dir {
+        coastfile.project_root = wd.clone();
+    }
 
     let home = coast_home()?;
     std::fs::create_dir_all(&home).map_err(|error| CoastError::Io {
@@ -88,9 +103,16 @@ pub async fn handle(
     )
     .await?;
 
-    let mut warnings = secret_output.warnings;
+    let mut warnings = coastfile.interpolation_warnings.clone();
+    warnings.extend(secret_output.warnings);
     warnings.extend(artifact_output.warnings.iter().cloned());
     warnings.extend(image_output.warnings.iter().cloned());
+
+    let stored_coastfile_path = if req.coastfile_content.is_some() {
+        None
+    } else {
+        Some(req.coastfile_path.as_path())
+    };
 
     manifest::write_manifest_and_finalize(manifest::ManifestInput {
         coastfile: &coastfile,
@@ -100,6 +122,7 @@ pub async fn handle(
         state,
         progress: &progress,
         plan: &build_plan,
+        coastfile_path: stored_coastfile_path,
     })
     .await?;
 
@@ -235,6 +258,8 @@ mod tests {
             coastfile_path: PathBuf::from("/tmp/nonexistent/Coastfile"),
             refresh: false,
             remote: None,
+            coastfile_content: None,
+            working_dir: None,
         };
         let result = handle(req, &state, test_progress_sender()).await;
         assert!(result.is_err());
@@ -260,6 +285,8 @@ compose = "./docker-compose.yml"
             coastfile_path,
             refresh: false,
             remote: None,
+            coastfile_content: None,
+            working_dir: None,
         };
         let resp = handle(req, &state, test_progress_sender()).await.unwrap();
         assert_eq!(resp.project, "test-build");
@@ -293,6 +320,8 @@ compose = "./docker-compose.yml"
             coastfile_path,
             refresh: false,
             remote: None,
+            coastfile_content: None,
+            working_dir: None,
         };
         let resp = handle(req, &state, test_progress_sender()).await.unwrap();
 
@@ -327,6 +356,8 @@ mount = "/var/lib/postgresql/data"
             coastfile_path,
             refresh: false,
             remote: None,
+            coastfile_content: None,
+            working_dir: None,
         };
         let result = handle(req, &state, test_progress_sender()).await.unwrap();
         assert!(!result.warnings.is_empty());
@@ -356,6 +387,8 @@ files = ["/tmp/nonexistent_coast_test_file_12345"]
             coastfile_path,
             refresh: false,
             remote: None,
+            coastfile_content: None,
+            working_dir: None,
         };
         let result = handle(req, &state, test_progress_sender()).await.unwrap();
         assert!(result
@@ -391,6 +424,8 @@ compose = "./docker-compose.yml"
             coastfile_path,
             refresh: false,
             remote: None,
+            coastfile_content: None,
+            working_dir: None,
         };
         let result = handle(req, &state, test_progress_sender()).await.unwrap();
 
@@ -431,6 +466,8 @@ run = ["echo hello"]
             coastfile_path,
             refresh: false,
             remote: None,
+            coastfile_content: None,
+            working_dir: None,
         };
         let result = handle(req, &state, test_progress_sender()).await;
         if let Ok(resp) = result {
@@ -459,6 +496,8 @@ compose = "./docker-compose.yml"
             coastfile_path,
             refresh: false,
             remote: None,
+            coastfile_content: None,
+            working_dir: None,
         };
         let result = handle(req, &state, test_progress_sender()).await.unwrap();
         assert!(result.coast_image.is_none());
@@ -484,6 +523,8 @@ compose = "./docker-compose.yml"
             coastfile_path,
             refresh: false,
             remote: None,
+            coastfile_content: None,
+            working_dir: None,
         };
         let result = handle(req, &state, test_progress_sender()).await.unwrap();
 
@@ -524,6 +565,8 @@ compose = "./docker-compose.yml"
             coastfile_path,
             refresh: false,
             remote: None,
+            coastfile_content: None,
+            working_dir: None,
         };
         let (tx, mut rx) = tokio::sync::mpsc::channel(64);
         let _result = handle(req, &state, tx).await.unwrap();
@@ -634,6 +677,8 @@ ttl = "1h"
             coastfile_path,
             refresh: false,
             remote: None,
+            coastfile_content: None,
+            working_dir: None,
         };
         let (tx, mut rx) = tokio::sync::mpsc::channel(64);
         let result = handle(req, &state, tx).await.unwrap();
@@ -691,6 +736,8 @@ compose = "./docker-compose.yml"
             coastfile_path,
             refresh: false,
             remote: None,
+            coastfile_content: None,
+            working_dir: None,
         };
         let (tx, mut rx) = tokio::sync::mpsc::channel(64);
         let result = handle(req, &state, tx).await.unwrap();
@@ -767,6 +814,8 @@ volumes:
             coastfile_path,
             refresh: false,
             remote: None,
+            coastfile_content: None,
+            working_dir: None,
         };
         let result = handle(req, &state, test_progress_sender()).await.unwrap();
 

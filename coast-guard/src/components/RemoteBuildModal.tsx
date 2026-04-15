@@ -113,7 +113,9 @@ export default function RemoteBuildModal({
     }
 
     setPhase('building');
-    const coastfilePath = `${projectRoot}/Coastfile.${selectedType}`;
+    const coastfilePath = inspectData?.coastfile_path && selectedType === 'default'
+      ? inspectData.coastfile_path
+      : `${projectRoot}/Coastfile.${selectedType}`;
 
     try {
       const result = await api.remoteBuild(

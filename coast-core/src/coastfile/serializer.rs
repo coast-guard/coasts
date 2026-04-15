@@ -550,6 +550,7 @@ mod tests {
             agent_shell: None,
             private_paths: vec![],
             remote: None,
+            interpolation_warnings: vec![],
         };
 
         let serialized = coastfile.to_standalone_toml();

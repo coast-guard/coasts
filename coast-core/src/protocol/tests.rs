@@ -25,6 +25,8 @@ fn test_build_request_roundtrip() {
         coastfile_path: PathBuf::from("/home/user/Coastfile"),
         refresh: true,
         remote: None,
+        coastfile_content: None,
+        working_dir: None,
     }));
 }
 
@@ -792,6 +794,7 @@ fn test_builds_inspect_response_roundtrip() {
             project: "my-app".to_string(),
             build_id: Some("a3c7d783".to_string()),
             project_root: Some("/home/user/my-app".to_string()),
+            coastfile_path: Some("/home/user/my-app/Coastfile".to_string()),
             build_timestamp: Some("2026-01-01T00:00:00Z".to_string()),
             coastfile_hash: Some("abc123".to_string()),
             coast_image: Some("coast-image/my-app:latest".to_string()),

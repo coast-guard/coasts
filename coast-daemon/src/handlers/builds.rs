@@ -576,6 +576,7 @@ async fn handle_inspect(
         project: project.to_string(),
         build_id: resolved_bid,
         project_root: json_str(&manifest, "project_root"),
+        coastfile_path: json_str(&manifest, "coastfile_path"),
         build_timestamp: json_str(&manifest, "build_timestamp"),
         coastfile_hash: json_str(&manifest, "coastfile_hash"),
         coast_image: json_str(&manifest, "coast_image"),

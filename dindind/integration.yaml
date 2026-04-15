@@ -336,3 +336,12 @@ tests:
   test_remote_tunnel_heal_isolation:
     script: integrated-examples/remote/test_remote_tunnel_heal_isolation.sh
     timeout: 300
+  test_coastfileless_build:
+    script: integrated-examples/test_coastfileless_build.sh
+    timeout: 300
+  test_envvar_interpolation:
+    script: integrated-examples/test_envvar_interpolation.sh
+    timeout: 300
+  test_working_dir:
+    script: integrated-examples/test_working_dir.sh
+    timeout: 300

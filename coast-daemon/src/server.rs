@@ -717,10 +717,20 @@ async fn handle_build_streaming(
     state: &AppState,
     writer: &mut tokio::net::unix::OwnedWriteHalf,
 ) -> Result<()> {
-    // Derive project name from the coastfile to acquire the per-project semaphore.
-    let project_name = coast_core::coastfile::Coastfile::from_file(&req.coastfile_path)
-        .map(|cf| cf.name)
-        .unwrap_or_default();
+    let project_name = if let Some(ref content) = req.coastfile_content {
+        let root = req
+            .working_dir
+            .as_deref()
+            .or_else(|| req.coastfile_path.parent())
+            .unwrap_or_else(|| std::path::Path::new("."));
+        coast_core::coastfile::Coastfile::parse(content, root)
+            .map(|cf| cf.name)
+            .unwrap_or_default()
+    } else {
+        coast_core::coastfile::Coastfile::from_file(&req.coastfile_path)
+            .map(|cf| cf.name)
+            .unwrap_or_default()
+    };
     let sem = if !project_name.is_empty() {
         Some(state.project_semaphore(&project_name).await)
     } else {

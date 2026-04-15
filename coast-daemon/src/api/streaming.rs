@@ -107,9 +107,20 @@ async fn build_sse(
     let (result_tx, result_rx) = tokio::sync::oneshot::channel();
 
     tokio::spawn(async move {
-        let project_name = coast_core::coastfile::Coastfile::from_file(&req.coastfile_path)
-            .map(|cf| cf.name)
-            .unwrap_or_default();
+        let project_name = if let Some(ref content) = req.coastfile_content {
+            let root = req
+                .working_dir
+                .as_deref()
+                .or_else(|| req.coastfile_path.parent())
+                .unwrap_or_else(|| std::path::Path::new("."));
+            coast_core::coastfile::Coastfile::parse(content, root)
+                .map(|cf| cf.name)
+                .unwrap_or_default()
+        } else {
+            coast_core::coastfile::Coastfile::from_file(&req.coastfile_path)
+                .map(|cf| cf.name)
+                .unwrap_or_default()
+        };
         let _operation_guard = match state_clone.begin_update_operation(
             UpdateOperationKind::Build,
             (!project_name.is_empty()).then_some(project_name.as_str()),

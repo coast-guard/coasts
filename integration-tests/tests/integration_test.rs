@@ -382,6 +382,8 @@ fn test_protocol_roundtrip_all_request_variants() {
             coastfile_path: PathBuf::from("/home/user/Coastfile"),
             refresh: true,
             remote: None,
+            coastfile_content: None,
+            working_dir: None,
         }),
         Request::Run(RunRequest {
             name: "feature-oauth".to_string(),
