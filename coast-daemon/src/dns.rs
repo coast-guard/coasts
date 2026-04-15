@@ -17,46 +17,59 @@ const LOCALCOAST_SUFFIX: &str = "localcoast";
 const LOOPBACK: Ipv4Addr = Ipv4Addr::new(127, 0, 0, 1);
 const TTL: u32 = 60;
 
-/// Start the DNS server on the given port. Runs until the task is cancelled.
-#[allow(clippy::cognitive_complexity)]
-pub async fn run_dns_server(port: u16) {
+/// Bind the DNS UDP socket, returning `None` if the bind fails.
+async fn bind_dns_socket(port: u16) -> Option<UdpSocket> {
     let addr = SocketAddr::from((LOOPBACK, port));
-    let socket = match UdpSocket::bind(addr).await {
-        Ok(s) => s,
+    match UdpSocket::bind(addr).await {
+        Ok(s) => {
+            info!(
+                port,
+                "DNS server listening (resolves *.localcoast -> 127.0.0.1)"
+            );
+            Some(s)
+        }
         Err(e) => {
             warn!(
                 port,
                 "failed to bind DNS server: {e} (DNS features disabled)"
             );
+            None
+        }
+    }
+}
+
+/// Receive one DNS request, resolve it, and send the response.
+async fn process_one_request(socket: &UdpSocket, buf: &mut [u8]) {
+    let (len, src) = match socket.recv_from(buf).await {
+        Ok(r) => r,
+        Err(e) => {
+            error!("DNS recv error: {e}");
             return;
         }
     };
-    info!(
-        port,
-        "DNS server listening (resolves *.localcoast -> 127.0.0.1)"
-    );
+
+    let response = match handle_query(&buf[..len]) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            debug!("malformed DNS query from {src}: {e}");
+            return;
+        }
+    };
+
+    if let Err(e) = socket.send_to(&response, src).await {
+        debug!("DNS send error to {src}: {e}");
+    }
+}
+
+/// Start the DNS server on the given port. Runs until the task is cancelled.
+pub async fn run_dns_server(port: u16) {
+    let Some(socket) = bind_dns_socket(port).await else {
+        return;
+    };
 
     let mut buf = vec![0u8; 512];
     loop {
-        let (len, src) = match socket.recv_from(&mut buf).await {
-            Ok(r) => r,
-            Err(e) => {
-                error!("DNS recv error: {e}");
-                continue;
-            }
-        };
-
-        let response = match handle_query(&buf[..len]) {
-            Ok(bytes) => bytes,
-            Err(e) => {
-                debug!("malformed DNS query from {src}: {e}");
-                continue;
-            }
-        };
-
-        if let Err(e) = socket.send_to(&response, src).await {
-            debug!("DNS send error to {src}: {e}");
-        }
+        process_one_request(&socket, &mut buf).await;
     }
 }
 
