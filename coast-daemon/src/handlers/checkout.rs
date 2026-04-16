@@ -169,6 +169,185 @@ fn conflicting_checked_out_instances(
     Ok(conflicts.into_iter().collect())
 }
 
+/// Clear CheckedOut status on all previously checked-out instances in the project.
+fn unchecked_out_previous_instances(
+    db: &crate::state::StateDb,
+    project: &str,
+    instances: &[coast_core::types::CoastInstance],
+) -> Result<()> {
+    for inst in instances {
+        if inst.status == InstanceStatus::CheckedOut {
+            super::clear_checked_out_state(db, project, &inst.name, &InstanceStatus::Running)?;
+            info!(old_instance = %inst.name, "un-checked out previous instance");
+        }
+    }
+    Ok(())
+}
+
+/// Pre-flight check: verify the inner Docker daemon is responsive before routing traffic.
+async fn verify_inner_daemon_healthy(
+    state: &AppState,
+    container_id: &str,
+    target_name: &str,
+) -> Result<()> {
+    let Some(docker) = state.docker.as_ref() else {
+        return Ok(());
+    };
+    let rt = coast_docker::dind::DindRuntime::with_client(docker.clone());
+    let health_timeout = tokio::time::Duration::from_secs(10);
+    let health_check = rt.exec_in_coast(container_id, &["docker", "info"]);
+    match tokio::time::timeout(health_timeout, health_check).await {
+        Ok(Ok(r)) if r.success() => {
+            info!("checkout: inner daemon healthy for '{}'", target_name);
+            Ok(())
+        }
+        Ok(Ok(r)) => Err(CoastError::docker(format!(
+            "Inner Docker daemon in instance '{}' is not healthy (exit {}). \
+             Try `coast stop {} && coast start {}`.",
+            target_name, r.exit_code, target_name, target_name,
+        ))),
+        Ok(Err(e)) => Err(CoastError::docker(format!(
+            "Cannot reach inner Docker daemon in instance '{}': {e}. \
+             Try `coast stop {} && coast start {}`.",
+            target_name, target_name, target_name,
+        ))),
+        Err(_) => Err(CoastError::docker(format!(
+            "Inner Docker daemon in instance '{}' is unresponsive (timed out after {}s). \
+             The DinD container may need to be recreated. Try `coast rm {} && coast run {}`.",
+            target_name,
+            health_timeout.as_secs(),
+            target_name,
+            target_name,
+        ))),
+    }
+}
+
+/// Spawn canonical socat forwarders and rollback on any error.
+fn spawn_canonical_forwarders(
+    db: &crate::state::StateDb,
+    project: &str,
+    target_name: &str,
+    ports: &[PortMapping],
+) -> Result<()> {
+    let use_wsl_bridge = crate::port_manager::running_in_wsl();
+    let canonical_ports: Vec<u16> = ports.iter().map(|p| p.canonical_port).collect();
+    let permission_denied_ports: HashSet<u16> =
+        check_canonical_ports_available(&canonical_ports, target_name)?
+            .into_iter()
+            .collect();
+    let mut spawned_pids: Vec<u32> = Vec::new();
+    let mut spawned_logical_names: Vec<String> = Vec::new();
+    let mut bind_errors: Vec<String> = Vec::new();
+    let mut permission_errors: Vec<u16> = Vec::new();
+
+    if use_wsl_bridge {
+        let bridge_ports = ports
+            .iter()
+            .map(|p| crate::port_manager::CheckoutBridgePort {
+                _logical_name: &p.logical_name,
+                canonical_port: p.canonical_port,
+                dynamic_port: p.dynamic_port,
+            })
+            .collect::<Vec<_>>();
+
+        match crate::port_manager::start_checkout_bridge(project, target_name, &bridge_ports) {
+            Ok(()) => {
+                spawned_logical_names.extend(ports.iter().map(|p| p.logical_name.clone()));
+            }
+            Err(e) => {
+                bind_errors.push(e.to_string());
+            }
+        }
+    } else {
+        for p in ports {
+            let cmd = crate::port_manager::socat_command_canonical(
+                p.canonical_port,
+                "127.0.0.1",
+                p.dynamic_port,
+            );
+            match crate::port_manager::spawn_socat_verified(&cmd, p.canonical_port) {
+                Ok(pid) => {
+                    let _ = db.update_socat_pid(
+                        project,
+                        target_name,
+                        &p.logical_name,
+                        Some(pid as i32),
+                    );
+                    spawned_pids.push(pid);
+                    spawned_logical_names.push(p.logical_name.clone());
+                }
+                Err(e) => {
+                    let error = e.to_string();
+                    if permission_denied_ports.contains(&p.canonical_port)
+                        && !error.contains("Failed to spawn socat process")
+                    {
+                        permission_errors.push(p.canonical_port);
+                    } else {
+                        bind_errors.push(format!("port {}: {error}", p.canonical_port));
+                    }
+                }
+            }
+        }
+    }
+
+    if permission_errors.is_empty() && bind_errors.is_empty() {
+        return Ok(());
+    }
+
+    // Rollback: clean up any socat processes that did succeed.
+    for pid in &spawned_pids {
+        let _ = crate::port_manager::kill_socat(*pid);
+    }
+    if use_wsl_bridge {
+        let _ = crate::port_manager::remove_checkout_bridge(project, target_name);
+    } else {
+        for logical_name in &spawned_logical_names {
+            let _ = db.update_socat_pid(project, target_name, logical_name, None);
+        }
+    }
+    let mut messages = Vec::new();
+    if !permission_errors.is_empty() {
+        permission_errors.sort_unstable();
+        permission_errors.dedup();
+        messages.push(format_linux_permission_error(
+            target_name,
+            &permission_errors,
+        ));
+    }
+    if !bind_errors.is_empty() {
+        messages.push(format_checkout_bind_failure(target_name, &bind_errors));
+    }
+    Err(CoastError::port(messages.join(" ")))
+}
+
+/// Release conflicting checked-out instances from other projects whose
+/// canonical ports overlap the target checkout.
+fn release_conflicting_checkouts(
+    db: &crate::state::StateDb,
+    project: &str,
+    target_name: &str,
+    ports: &[PortMapping],
+) -> Result<()> {
+    let canonical_ports: Vec<u16> = ports.iter().map(|p| p.canonical_port).collect();
+    let conflicts = conflicting_checked_out_instances(db, project, &canonical_ports)?;
+    for (conflict_project, conflict_name) in &conflicts {
+        super::clear_checked_out_state(
+            db,
+            conflict_project,
+            conflict_name,
+            &InstanceStatus::Running,
+        )?;
+        info!(
+            conflicting_project = %conflict_project,
+            conflicting_instance = %conflict_name,
+            target_project = %project,
+            target_instance = %target_name,
+            "auto-unchecked out conflicting instance from another project"
+        );
+    }
+    Ok(())
+}
+
 /// Handle a checkout request.
 ///
 /// Steps:
@@ -180,27 +359,13 @@ fn conflicting_checked_out_instances(
 /// 4. If name is Some, resolve the new coast container IP and spawn
 ///    canonical socat forwarders.
 /// 5. Update instance statuses in state DB.
-#[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 pub async fn handle(req: CheckoutRequest, state: &AppState) -> Result<CheckoutResponse> {
     info!(name = ?req.name, project = %req.project, "handling checkout request");
 
-    // Checkout is fast (socat processes only, no Docker operations)
-    // but we still scope the lock for consistency.
     let db = state.db.lock().await;
 
     let instances = db.list_instances_for_project(&req.project)?;
-    for inst in &instances {
-        if inst.status == InstanceStatus::CheckedOut {
-            super::clear_checked_out_state(
-                &db,
-                &req.project,
-                &inst.name,
-                &InstanceStatus::Running,
-            )?;
-
-            info!(old_instance = %inst.name, "un-checked out previous instance");
-        }
-    }
+    unchecked_out_previous_instances(&db, &req.project, &instances)?;
 
     // Handle --none (unbind all canonical ports)
     let Some(target_name) = req.name else {
@@ -237,153 +402,18 @@ pub async fn handle(req: CheckoutRequest, state: &AppState) -> Result<CheckoutRe
     }
     let ports: Vec<PortMapping> = port_allocs.iter().map(PortMapping::from).collect();
 
-    let canonical_ports: Vec<u16> = port_allocs.iter().map(|a| a.canonical_port).collect();
-    let conflicting_instances =
-        conflicting_checked_out_instances(&db, &req.project, &canonical_ports)?;
-    for (project, name) in &conflicting_instances {
-        super::clear_checked_out_state(&db, project, name, &InstanceStatus::Running)?;
-        info!(
-            conflicting_project = %project,
-            conflicting_instance = %name,
-            target_project = %req.project,
-            target_instance = %target_name,
-            "auto-unchecked out conflicting instance from another project"
-        );
-    }
+    release_conflicting_checkouts(&db, &req.project, &target_name, &ports)?;
 
-    // Pre-flight: verify the inner Docker daemon is responsive before routing
-    // traffic to this instance. Skip for remote instances -- their containers
-    // live on the remote host's Docker, not the local daemon's Docker.
+    // Pre-flight health check (skip for remote instances)
     if target.remote_host.is_none() {
-        if let (Some(ref container_id), Some(docker)) =
-            (&target.container_id, state.docker.as_ref())
-        {
-            let rt = coast_docker::dind::DindRuntime::with_client(docker.clone());
-            let health_timeout = tokio::time::Duration::from_secs(10);
-            let health_check = rt.exec_in_coast(container_id, &["docker", "info"]);
-            match tokio::time::timeout(health_timeout, health_check).await {
-                Ok(Ok(r)) if r.success() => {
-                    info!("checkout: inner daemon healthy for '{}'", target_name);
-                }
-                Ok(Ok(r)) => {
-                    return Err(CoastError::docker(format!(
-                        "Inner Docker daemon in instance '{}' is not healthy (exit {}). \
-                         Try `coast stop {} && coast start {}`.",
-                        target_name, r.exit_code, target_name, target_name,
-                    )));
-                }
-                Ok(Err(e)) => {
-                    return Err(CoastError::docker(format!(
-                        "Cannot reach inner Docker daemon in instance '{}': {e}. \
-                         Try `coast stop {} && coast start {}`.",
-                        target_name, target_name, target_name,
-                    )));
-                }
-                Err(_) => {
-                    return Err(CoastError::docker(format!(
-                        "Inner Docker daemon in instance '{}' is unresponsive (timed out after {}s). \
-                         The DinD container may need to be recreated. Try `coast rm {} && coast run {}`.",
-                        target_name, health_timeout.as_secs(), target_name, target_name,
-                    )));
-                }
-            }
+        if let Some(ref container_id) = target.container_id {
+            verify_inner_daemon_healthy(state, container_id, &target_name).await?;
         }
     }
 
-    // Spawn canonical socat forwarders: canonical_port → localhost:dynamic_port.
-    // Collect errors and revert if any spawn fails.
+    // Spawn canonical socat forwarders
     if state.docker.is_some() {
-        let use_wsl_bridge = crate::port_manager::running_in_wsl();
-        let permission_denied_ports: HashSet<u16> =
-            check_canonical_ports_available(&canonical_ports, &target_name)?
-                .into_iter()
-                .collect();
-        let mut spawned_pids: Vec<u32> = Vec::new();
-        let mut spawned_logical_names: Vec<String> = Vec::new();
-        let mut bind_errors: Vec<String> = Vec::new();
-        let mut permission_errors: Vec<u16> = Vec::new();
-
-        if use_wsl_bridge {
-            let bridge_ports = port_allocs
-                .iter()
-                .map(|alloc| crate::port_manager::CheckoutBridgePort {
-                    _logical_name: &alloc.logical_name,
-                    canonical_port: alloc.canonical_port,
-                    dynamic_port: alloc.dynamic_port,
-                })
-                .collect::<Vec<_>>();
-
-            match crate::port_manager::start_checkout_bridge(
-                &req.project,
-                &target_name,
-                &bridge_ports,
-            ) {
-                Ok(()) => {
-                    spawned_logical_names
-                        .extend(port_allocs.iter().map(|alloc| alloc.logical_name.clone()));
-                }
-                Err(e) => {
-                    bind_errors.push(e.to_string());
-                }
-            }
-        } else {
-            for alloc in &port_allocs {
-                let cmd = crate::port_manager::socat_command_canonical(
-                    alloc.canonical_port,
-                    "127.0.0.1",
-                    alloc.dynamic_port,
-                );
-                match crate::port_manager::spawn_socat_verified(&cmd, alloc.canonical_port) {
-                    Ok(pid) => {
-                        let _ = db.update_socat_pid(
-                            &req.project,
-                            &target_name,
-                            &alloc.logical_name,
-                            Some(pid as i32),
-                        );
-                        spawned_pids.push(pid);
-                        spawned_logical_names.push(alloc.logical_name.clone());
-                    }
-                    Err(e) => {
-                        let error = e.to_string();
-                        if permission_denied_ports.contains(&alloc.canonical_port)
-                            && !error.contains("Failed to spawn socat process")
-                        {
-                            permission_errors.push(alloc.canonical_port);
-                        } else {
-                            bind_errors.push(format!("port {}: {error}", alloc.canonical_port));
-                        }
-                    }
-                }
-            }
-        }
-
-        if !permission_errors.is_empty() || !bind_errors.is_empty() {
-            // Clean up any socat processes that did succeed.
-            for pid in &spawned_pids {
-                let _ = crate::port_manager::kill_socat(*pid);
-            }
-            if use_wsl_bridge {
-                let _ = crate::port_manager::remove_checkout_bridge(&req.project, &target_name);
-            } else {
-                for logical_name in &spawned_logical_names {
-                    let _ = db.update_socat_pid(&req.project, &target_name, logical_name, None);
-                }
-            }
-            let mut messages = Vec::new();
-            if !permission_errors.is_empty() {
-                permission_errors.sort_unstable();
-                permission_errors.dedup();
-                messages.push(format_linux_permission_error(
-                    &target_name,
-                    &permission_errors,
-                ));
-            }
-            if !bind_errors.is_empty() {
-                messages.push(format_checkout_bind_failure(&target_name, &bind_errors));
-            }
-            return Err(CoastError::port(messages.join(" ")));
-        }
+        spawn_canonical_forwarders(&db, &req.project, &target_name, &ports)?;
     }
 
     db.update_instance_status(&req.project, &target_name, &InstanceStatus::CheckedOut)?;
@@ -478,6 +508,41 @@ mod tests {
             coastfile_type: None,
             remote_host: None,
         }
+    }
+
+    // --- unchecked_out_previous_instances tests ---
+
+    #[tokio::test]
+    async fn test_unchecked_out_no_checked_out() {
+        let state = test_state();
+        let db = state.db.lock().await;
+        db.insert_instance(&make_instance("feat-a", "my-app", InstanceStatus::Running))
+            .unwrap();
+        let instances = db.list_instances_for_project("my-app").unwrap();
+        let result = unchecked_out_previous_instances(&db, "my-app", &instances);
+        assert!(result.is_ok());
+        let inst = db.get_instance("my-app", "feat-a").unwrap().unwrap();
+        assert_eq!(inst.status, InstanceStatus::Running);
+    }
+
+    #[tokio::test]
+    async fn test_unchecked_out_one_checked_out() {
+        let state = test_state();
+        let db = state.db.lock().await;
+        db.insert_instance(&make_instance(
+            "feat-a",
+            "my-app",
+            InstanceStatus::CheckedOut,
+        ))
+        .unwrap();
+        add_test_port(&db, "my-app", "feat-a");
+        db.update_socat_pid("my-app", "feat-a", "web", Some(4_194_304))
+            .unwrap();
+        let instances = db.list_instances_for_project("my-app").unwrap();
+        let result = unchecked_out_previous_instances(&db, "my-app", &instances);
+        assert!(result.is_ok());
+        let inst = db.get_instance("my-app", "feat-a").unwrap().unwrap();
+        assert_eq!(inst.status, InstanceStatus::Running);
     }
 
     #[test]
