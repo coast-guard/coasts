@@ -428,27 +428,25 @@ async fn clear_logs(
     }
 }
 
-#[allow(clippy::too_many_lines)]
-async fn upload_to_container(
-    State(state): State<Arc<AppState>>,
-    mut multipart: Multipart,
-) -> impl IntoResponse {
-    use coast_core::types::InstanceStatus;
-
-    let mut project: Option<String> = None;
-    let mut name: Option<String> = None;
-    let mut file_name: Option<String> = None;
-    let mut file_data: Option<Vec<u8>> = None;
+/// Parse multipart fields for an upload request.
+async fn parse_upload_fields(
+    multipart: &mut Multipart,
+) -> (
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<Vec<u8>>,
+) {
+    let mut project = None;
+    let mut name = None;
+    let mut file_name = None;
+    let mut file_data = None;
 
     while let Ok(Some(field)) = multipart.next_field().await {
         let field_name = field.name().unwrap_or("").to_string();
         match field_name.as_str() {
-            "project" => {
-                project = field.text().await.ok();
-            }
-            "name" => {
-                name = field.text().await.ok();
-            }
+            "project" => project = field.text().await.ok(),
+            "name" => name = field.text().await.ok(),
             "file" => {
                 file_name = field.file_name().map(std::string::ToString::to_string);
                 file_data = field.bytes().await.ok().map(|b| b.to_vec());
@@ -457,92 +455,102 @@ async fn upload_to_container(
         }
     }
 
-    let lang = state.language();
+    (project, name, file_name, file_data)
+}
 
-    let Some(project) = project else {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": t!("error.missing_field", locale = &lang, field = "project").to_string() })),
+/// Validate that all required upload fields are present, returning an error response if not.
+fn validate_upload_fields(
+    project: Option<String>,
+    name: Option<String>,
+    file_name: Option<String>,
+    file_data: Option<Vec<u8>>,
+    lang: &str,
+) -> Result<(String, String, String, Vec<u8>), Box<axum::response::Response>> {
+    let bad_request = |field: &str| -> Box<axum::response::Response> {
+        Box::new(
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": t!("error.missing_field", locale = lang, field = field).to_string() })),
+            )
+                .into_response(),
         )
-            .into_response();
     };
-    let Some(name) = name else {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": t!("error.missing_field", locale = &lang, field = "name").to_string() })),
+    let project = project.ok_or_else(|| bad_request("project"))?;
+    let name = name.ok_or_else(|| bad_request("name"))?;
+    let fname = file_name.ok_or_else(|| bad_request("file"))?;
+    let data = file_data.ok_or_else(|| {
+        Box::new(
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": t!("error.empty_file", locale = lang).to_string() })),
+            )
+                .into_response(),
         )
-            .into_response();
-    };
-    let Some(fname) = file_name else {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": t!("error.missing_field", locale = &lang, field = "file").to_string() })),
-        )
-            .into_response();
-    };
-    let Some(data) = file_data else {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": t!("error.empty_file", locale = &lang).to_string() })),
-        )
-            .into_response();
-    };
+    })?;
+    Ok((project, name, fname, data))
+}
 
-    let _operation_guard = match begin_api_update_operation(
-        &state,
-        UpdateOperationKind::UploadToContainer,
-        Some(&project),
-        Some(&name),
-    ) {
-        Ok(guard) => guard,
-        Err(response) => return *response,
-    };
+/// Resolve the target container for an upload, validating the instance is running.
+async fn resolve_upload_target(
+    state: &AppState,
+    project: &str,
+    name: &str,
+    lang: &str,
+) -> Result<String, axum::response::Response> {
+    use coast_core::types::InstanceStatus;
 
     let db = state.db.lock().await;
-    let instance = match db.get_instance(&project, &name) {
+    let instance = match db.get_instance(project, name) {
         Ok(Some(i)) => i,
         Ok(None) => {
-            return (
+            return Err((
                 StatusCode::NOT_FOUND,
-                Json(json!({ "error": t!("error.instance_not_found", locale = &lang, name = &name, project = &project).to_string() })),
+                Json(json!({ "error": t!("error.instance_not_found", locale = lang, name = name, project = project).to_string() })),
             )
-                .into_response()
+                .into_response())
         }
         Err(e) => {
-            return (
+            return Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({ "error": e.to_string() })),
             )
-                .into_response()
+                .into_response())
         }
     };
 
     if instance.status == InstanceStatus::Stopped {
-        return (
+        return Err((
             StatusCode::CONFLICT,
-            Json(json!({ "error": t!("error.instance_stopped", locale = &lang, name = &name).to_string() })),
+            Json(json!({ "error": t!("error.instance_stopped", locale = lang, name = name).to_string() })),
         )
-            .into_response();
+            .into_response());
     }
 
-    let Some(container_id) = instance.container_id.as_deref() else {
-        return (
+    let container_id = instance.container_id.ok_or_else(|| {
+        (
             StatusCode::CONFLICT,
-            Json(json!({ "error": t!("error.no_container_id", locale = &lang).to_string() })),
+            Json(json!({ "error": t!("error.no_container_id", locale = lang).to_string() })),
         )
-            .into_response();
-    };
+            .into_response()
+    })?;
 
-    let Some(_docker) = state.docker.as_ref() else {
-        return (
+    if state.docker.is_none() {
+        return Err((
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": t!("error.docker_not_available", locale = &lang).to_string() })),
+            Json(json!({ "error": t!("error.docker_not_available", locale = lang).to_string() })),
         )
-            .into_response();
-    };
+            .into_response());
+    }
 
-    drop(db);
+    Ok(container_id)
+}
 
+/// Copy a file into a container via docker cp.
+async fn docker_cp_to_container(
+    container_id: &str,
+    data: &[u8],
+    fname: &str,
+) -> axum::response::Response {
     let upload_dir = "/coast-uploads";
     let container_path = format!("{upload_dir}/{fname}");
 
@@ -571,7 +579,7 @@ async fn upload_to_container(
                 .into_response()
         }
     };
-    if let Err(e) = std::fs::write(tmp.path(), &data) {
+    if let Err(e) = std::fs::write(tmp.path(), data) {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({ "error": e.to_string() })),
@@ -610,6 +618,37 @@ async fn upload_to_container(
         )
             .into_response(),
     }
+}
+
+async fn upload_to_container(
+    State(state): State<Arc<AppState>>,
+    mut multipart: Multipart,
+) -> impl IntoResponse {
+    let (project, name, file_name, file_data) = parse_upload_fields(&mut multipart).await;
+    let lang = state.language();
+
+    let (project, name, fname, data) =
+        match validate_upload_fields(project, name, file_name, file_data, &lang) {
+            Ok(fields) => fields,
+            Err(resp) => return *resp,
+        };
+
+    let _operation_guard = match begin_api_update_operation(
+        &state,
+        UpdateOperationKind::UploadToContainer,
+        Some(&project),
+        Some(&name),
+    ) {
+        Ok(guard) => guard,
+        Err(response) => return *response,
+    };
+
+    let container_id = match resolve_upload_target(&state, &project, &name, &lang).await {
+        Ok(cid) => cid,
+        Err(resp) => return resp,
+    };
+
+    docker_cp_to_container(&container_id, &data, &fname).await
 }
 
 async fn upload_to_host(
@@ -1405,4 +1444,73 @@ async fn remote_rm(
     Json(req): Json<RemoteRequest>,
 ) -> impl IntoResponse {
     to_api_response(handlers::handle_remote(req, &state).await)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_upload_fields_all_present() {
+        let result = validate_upload_fields(
+            Some("my-app".into()),
+            Some("feat-a".into()),
+            Some("data.csv".into()),
+            Some(vec![1, 2, 3]),
+            "en",
+        );
+        let (project, name, fname, data) = result.unwrap();
+        assert_eq!(project, "my-app");
+        assert_eq!(name, "feat-a");
+        assert_eq!(fname, "data.csv");
+        assert_eq!(data, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn test_validate_upload_fields_missing_project() {
+        let result = validate_upload_fields(
+            None,
+            Some("a".into()),
+            Some("f".into()),
+            Some(vec![1]),
+            "en",
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_upload_fields_missing_name() {
+        let result = validate_upload_fields(
+            Some("p".into()),
+            None,
+            Some("f".into()),
+            Some(vec![1]),
+            "en",
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_upload_fields_missing_file() {
+        let result = validate_upload_fields(
+            Some("p".into()),
+            Some("n".into()),
+            None,
+            Some(vec![1]),
+            "en",
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_upload_fields_missing_data() {
+        let result = validate_upload_fields(
+            Some("p".into()),
+            Some("n".into()),
+            Some("f".into()),
+            None,
+            "en",
+        );
+        assert!(result.is_err());
+    }
 }
