@@ -450,51 +450,30 @@ pub fn ensure_coast_dir() -> Result<PathBuf> {
 /// and dispatches requests to handlers via the shared `AppState`.
 ///
 /// The server runs until the `shutdown` signal is received.
-#[allow(clippy::cognitive_complexity)]
+/// Spawn a connection handler task for an accepted stream.
+fn spawn_connection_handler(stream: tokio::net::UnixStream, state: Arc<AppState>) {
+    tokio::spawn(async move {
+        if let Err(e) = handle_connection(stream, state).await {
+            error!("connection handler error: {e}");
+        }
+    });
+}
+
+#[allow(clippy::cognitive_complexity)] // 35/30 — tracing macros in tokio::select! inflate the score; function is already a thin accept loop.
 pub async fn run_server(
     socket_path: &Path,
     state: Arc<AppState>,
     mut shutdown: tokio::sync::broadcast::Receiver<()>,
 ) -> Result<()> {
-    // Remove stale socket file if it exists
-    if socket_path.exists() {
-        std::fs::remove_file(socket_path).map_err(|e| CoastError::Io {
-            message: format!(
-                "failed to remove stale socket file '{}': {e}",
-                socket_path.display()
-            ),
-            path: socket_path.to_path_buf(),
-            source: Some(e),
-        })?;
-    }
-
-    let listener = UnixListener::bind(socket_path).map_err(|e| CoastError::Io {
-        message: format!(
-            "failed to bind Unix socket at '{}'. \
-             Is another coastd instance running? Error: {e}",
-            socket_path.display()
-        ),
-        path: socket_path.to_path_buf(),
-        source: Some(e),
-    })?;
-
+    let listener = bind_server_socket(socket_path)?;
     info!(socket = %socket_path.display(), "coastd server listening");
 
     loop {
         tokio::select! {
             accept_result = listener.accept() => {
                 match accept_result {
-                    Ok((stream, _addr)) => {
-                        let state = Arc::clone(&state);
-                        tokio::spawn(async move {
-                            if let Err(e) = handle_connection(stream, state).await {
-                                error!("connection handler error: {e}");
-                            }
-                        });
-                    }
-                    Err(e) => {
-                        error!("failed to accept connection: {e}");
-                    }
+                    Ok((stream, _addr)) => spawn_connection_handler(stream, Arc::clone(&state)),
+                    Err(e) => error!("failed to accept connection: {e}"),
                 }
             }
             _ = shutdown.recv() => {
@@ -504,11 +483,9 @@ pub async fn run_server(
         }
     }
 
-    // Clean up socket file
     if socket_path.exists() {
         let _ = std::fs::remove_file(socket_path);
     }
-
     info!("coastd server stopped");
     Ok(())
 }
@@ -517,7 +494,7 @@ pub async fn run_server(
 ///
 /// Reads one JSON request line, dispatches to the appropriate handler,
 /// and writes the JSON response back.
-#[allow(clippy::cognitive_complexity)]
+#[allow(clippy::cognitive_complexity)] // 51/30 — inherent dispatcher with 12+ request variants, each with analytics tracking. Splitting further would fragment the dispatch logic.
 async fn handle_connection(stream: tokio::net::UnixStream, state: Arc<AppState>) -> Result<()> {
     let (reader, mut writer) = stream.into_split();
     let mut buf_reader = BufReader::new(reader);
@@ -707,17 +684,115 @@ async fn begin_streaming_update_operation(
     }
 }
 
+/// Bind the Unix socket, removing any stale socket file first.
+fn bind_server_socket(socket_path: &Path) -> Result<UnixListener> {
+    if socket_path.exists() {
+        std::fs::remove_file(socket_path).map_err(|e| CoastError::Io {
+            message: format!(
+                "failed to remove stale socket file '{}': {e}",
+                socket_path.display()
+            ),
+            path: socket_path.to_path_buf(),
+            source: Some(e),
+        })?;
+    }
+    UnixListener::bind(socket_path).map_err(|e| CoastError::Io {
+        message: format!(
+            "failed to bind Unix socket at '{}'. \
+             Is another coastd instance running? Error: {e}",
+            socket_path.display()
+        ),
+        path: socket_path.to_path_buf(),
+        source: Some(e),
+    })
+}
+
+/// Run a streaming progress loop: forward events from the channel to the writer
+/// while the handler future runs concurrently.
+async fn forward_streaming_progress<R>(
+    handler: impl std::future::Future<Output = std::result::Result<R, CoastError>>,
+    rx: &mut tokio::sync::mpsc::Receiver<BuildProgressEvent>,
+    writer: &mut tokio::net::unix::OwnedWriteHalf,
+    make_progress_response: fn(BuildProgressEvent) -> Response,
+) -> std::result::Result<R, CoastError> {
+    let mut handler = std::pin::pin!(handler);
+    let mut done = false;
+    let mut result = None;
+
+    loop {
+        if done {
+            while let Ok(event) = rx.try_recv() {
+                let resp = make_progress_response(event);
+                if let Err(e) = write_response(writer, &resp).await {
+                    warn!("failed to send progress: {e}");
+                    break;
+                }
+            }
+            break;
+        }
+
+        tokio::select! {
+            r = &mut handler => {
+                result = Some(r);
+                done = true;
+            }
+            event = rx.recv() => {
+                if let Some(event) = event {
+                    let resp = make_progress_response(event);
+                    if let Err(e) = write_response(writer, &resp).await {
+                        warn!("failed to send progress: {e}");
+                    }
+                }
+            }
+        }
+    }
+
+    result.unwrap()
+}
+
+/// Insert an enqueued instance and emit the status event.
+async fn insert_enqueued_instance(
+    state: &AppState,
+    req: &coast_core::protocol::RunRequest,
+    writer: &mut tokio::net::unix::OwnedWriteHalf,
+) -> Result<bool> {
+    let db = state.db.lock().await;
+    let enqueued_inst = coast_core::types::CoastInstance {
+        name: req.name.clone(),
+        project: req.project.clone(),
+        status: coast_core::types::InstanceStatus::Enqueued,
+        branch: req.branch.clone(),
+        commit_sha: req.commit_sha.clone(),
+        container_id: None,
+        runtime: coast_core::types::RuntimeType::Dind,
+        created_at: chrono::Utc::now(),
+        worktree_name: None,
+        build_id: req.build_id.clone(),
+        coastfile_type: req.coastfile_type.clone(),
+        remote_host: None,
+    };
+    if let Err(e) = db.insert_instance(&enqueued_inst) {
+        let resp = Response::Error(ErrorResponse {
+            error: e.to_string(),
+        });
+        write_response(writer, &resp).await?;
+        return Ok(false);
+    }
+    drop(db);
+    state.emit_event(coast_core::protocol::CoastEvent::InstanceStatusChanged {
+        name: req.name.clone(),
+        project: req.project.clone(),
+        status: "enqueued".to_string(),
+    });
+    Ok(true)
+}
+
 /// Handle a build request with streaming progress output.
-///
-/// Creates an mpsc channel, runs the build handler concurrently with a
-/// loop that forwards progress events to the client as JSON lines.
-#[allow(clippy::cognitive_complexity)]
 async fn handle_build_streaming(
     req: coast_core::protocol::BuildRequest,
     state: &AppState,
     writer: &mut tokio::net::unix::OwnedWriteHalf,
 ) -> Result<()> {
-    // Derive project name from the coastfile to acquire the per-project semaphore.
     let project_name = coast_core::coastfile::Coastfile::from_file(&req.coastfile_path)
         .map(|cf| cf.name)
         .unwrap_or_default();
@@ -749,13 +824,10 @@ async fn handle_build_streaming(
     let (tx, mut rx) = tokio::sync::mpsc::channel::<BuildProgressEvent>(64);
 
     let is_remote = req.remote.is_some();
-    let build_handler: std::pin::Pin<
+    let handler: std::pin::Pin<
         Box<
             dyn std::future::Future<
-                    Output = std::result::Result<
-                        coast_core::protocol::BuildResponse,
-                        coast_core::error::CoastError,
-                    >,
+                    Output = std::result::Result<coast_core::protocol::BuildResponse, CoastError>,
                 > + Send,
         >,
     > = if is_remote {
@@ -763,43 +835,11 @@ async fn handle_build_streaming(
     } else {
         Box::pin(handlers::handle_build_with_progress(req, state, tx))
     };
-    let mut build_future = std::pin::pin!(build_handler);
-    let mut build_done = false;
-    let mut build_result: Option<
-        std::result::Result<coast_core::protocol::BuildResponse, coast_core::error::CoastError>,
-    > = None;
 
-    loop {
-        if build_done {
-            // Drain remaining buffered events after handler finished
-            while let Ok(event) = rx.try_recv() {
-                let resp = Response::BuildProgress(event);
-                if let Err(e) = write_response(writer, &resp).await {
-                    warn!("failed to send build progress: {e}");
-                    break;
-                }
-            }
-            break;
-        }
+    let build_result =
+        forward_streaming_progress(handler, &mut rx, writer, Response::BuildProgress).await;
 
-        tokio::select! {
-            result = &mut build_future => {
-                build_result = Some(result);
-                build_done = true;
-                // Don't break yet — drain remaining events in next iteration
-            }
-            event = rx.recv() => {
-                if let Some(event) = event {
-                    let resp = Response::BuildProgress(event);
-                    if let Err(e) = write_response(writer, &resp).await {
-                        warn!("failed to send build progress: {e}");
-                    }
-                }
-            }
-        }
-    }
-
-    let final_response = match build_result.unwrap() {
+    let final_response = match build_result {
         Ok(resp) => Response::Build(resp),
         Err(e) => Response::Error(ErrorResponse {
             error: e.to_string(),
@@ -861,7 +901,6 @@ async fn handle_logs_streaming(
 }
 
 /// Handle a run request with streaming progress output.
-#[allow(clippy::cognitive_complexity)]
 async fn handle_run_streaming(
     req: coast_core::protocol::RunRequest,
     state: &Arc<AppState>,
@@ -879,34 +918,9 @@ async fn handle_run_streaming(
         return Ok(());
     };
 
-    {
-        let db = state.db.lock().await;
-        let enqueued_inst = coast_core::types::CoastInstance {
-            name: req.name.clone(),
-            project: req.project.clone(),
-            status: coast_core::types::InstanceStatus::Enqueued,
-            branch: req.branch.clone(),
-            commit_sha: req.commit_sha.clone(),
-            container_id: None,
-            runtime: coast_core::types::RuntimeType::Dind,
-            created_at: chrono::Utc::now(),
-            worktree_name: None,
-            build_id: req.build_id.clone(),
-            coastfile_type: req.coastfile_type.clone(),
-            remote_host: None,
-        };
-        if let Err(e) = db.insert_instance(&enqueued_inst) {
-            let resp = Response::Error(ErrorResponse {
-                error: e.to_string(),
-            });
-            return write_response(writer, &resp).await;
-        }
+    if !insert_enqueued_instance(state, &req, writer).await? {
+        return Ok(());
     }
-    state.emit_event(coast_core::protocol::CoastEvent::InstanceStatusChanged {
-        name: req.name.clone(),
-        project: req.project.clone(),
-        status: "enqueued".to_string(),
-    });
 
     let sem = state.project_semaphore(&req.project).await;
     let _permit = sem
@@ -928,41 +942,15 @@ async fn handle_run_streaming(
 
     let (tx, mut rx) = tokio::sync::mpsc::channel::<BuildProgressEvent>(64);
 
-    let mut run_future = std::pin::pin!(handlers::handle_run_with_progress(req, state, tx));
-    let mut run_done = false;
-    let mut run_result: Option<
-        std::result::Result<coast_core::protocol::RunResponse, coast_core::error::CoastError>,
-    > = None;
+    let run_result = forward_streaming_progress(
+        handlers::handle_run_with_progress(req, state, tx),
+        &mut rx,
+        writer,
+        Response::RunProgress,
+    )
+    .await;
 
-    loop {
-        if run_done {
-            while let Ok(event) = rx.try_recv() {
-                let resp = Response::RunProgress(event);
-                if let Err(e) = write_response(writer, &resp).await {
-                    warn!("failed to send run progress: {e}");
-                    break;
-                }
-            }
-            break;
-        }
-
-        tokio::select! {
-            result = &mut run_future => {
-                run_result = Some(result);
-                run_done = true;
-            }
-            event = rx.recv() => {
-                if let Some(event) = event {
-                    let resp = Response::RunProgress(event);
-                    if let Err(e) = write_response(writer, &resp).await {
-                        warn!("failed to send run progress: {e}");
-                    }
-                }
-            }
-        }
-    }
-
-    let final_response = match run_result.unwrap() {
+    let final_response = match run_result {
         Ok(resp) => {
             spawn_agent_shell_if_configured(
                 state,
