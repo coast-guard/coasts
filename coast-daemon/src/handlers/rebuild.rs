@@ -18,8 +18,171 @@ use coast_docker::runtime::Runtime;
 
 use crate::server::AppState;
 
+/// Detect whether artifact compose and override files exist in the container.
+async fn detect_compose_files(
+    rt: &coast_docker::dind::DindRuntime,
+    container_id: &str,
+) -> (bool, bool) {
+    let has_artifact = rt
+        .exec_in_coast(container_id, &["test", "-f", "/coast-artifact/compose.yml"])
+        .await
+        .map(|r| r.success())
+        .unwrap_or(false);
+
+    let has_override = rt
+        .exec_in_coast(
+            container_id,
+            &["test", "-f", "/workspace/docker-compose.override.yml"],
+        )
+        .await
+        .map(|r| r.success())
+        .unwrap_or(false);
+
+    (has_artifact, has_override)
+}
+
+/// Build a compose command with the appropriate `-f` flags based on detected files.
+fn build_compose_command<'a>(
+    subcmd: &[&'a str],
+    has_artifact: bool,
+    has_override: bool,
+) -> Vec<&'a str> {
+    let mut cmd = vec!["docker", "compose"];
+    if has_artifact {
+        cmd.extend(["-f", "/coast-artifact/compose.yml"]);
+        if has_override {
+            cmd.extend(["-f", "/workspace/docker-compose.override.yml"]);
+        }
+        cmd.extend(["--project-directory", "/workspace"]);
+    }
+    cmd.extend_from_slice(subcmd);
+    cmd
+}
+
+/// Execute a compose command inside a container, returning a consistent error on failure.
+async fn execute_compose_step(
+    rt: &coast_docker::dind::DindRuntime,
+    container_id: &str,
+    cmd: &[&str],
+    step_name: &str,
+    instance_name: &str,
+) -> Result<coast_docker::runtime::ExecResult> {
+    let result = rt.exec_in_coast(container_id, cmd).await.map_err(|e| {
+        CoastError::docker(format!(
+            "Failed to exec {step_name} in instance '{instance_name}': {e}"
+        ))
+    })?;
+    if !result.success() {
+        return Err(CoastError::docker(format!(
+            "{step_name} failed inside instance '{instance_name}': {}",
+            result.stderr.trim()
+        )));
+    }
+    Ok(result)
+}
+
+/// Validate the instance is rebuildable and return its container_id.
+async fn validate_rebuild_target(state: &AppState, project: &str, name: &str) -> Result<String> {
+    let db = state.db.lock().await;
+    let instance = db
+        .get_instance(project, name)?
+        .ok_or_else(|| CoastError::InstanceNotFound {
+            name: name.to_string(),
+            project: project.to_string(),
+        })?;
+
+    if instance.remote_host.is_some() {
+        return Err(CoastError::state(
+            "Rebuild for remote instances is not yet supported. \
+             Use `coast build --type remote` to rebuild the remote build artifact, \
+             then `coast assign` to apply changes.",
+        ));
+    }
+
+    if instance.status != InstanceStatus::Running && instance.status != InstanceStatus::CheckedOut {
+        return Err(CoastError::state(format!(
+            "Instance '{name}' is in '{}' state and cannot be rebuilt. \
+             Only Running or CheckedOut instances can be rebuilt. \
+             Run `coast start {name}` first.",
+            instance.status,
+        )));
+    }
+
+    instance.container_id.ok_or_else(|| {
+        CoastError::state(format!(
+            "Instance '{name}' has no container ID. This should not happen for a Running instance. \
+             Try `coast rm {name} && coast run {name}`.",
+        ))
+    })
+}
+
+/// Parse service names from `docker compose build` output.
+fn parse_rebuilt_services(stdout: &str) -> Vec<String> {
+    let mut services: Vec<String> = stdout
+        .lines()
+        .filter_map(|line| {
+            line.trim()
+                .strip_prefix("Building ")
+                .map(|s| s.trim().to_string())
+        })
+        .collect();
+    if services.is_empty() {
+        services.push("(all services)".to_string());
+    }
+    services
+}
+
+/// Run a single compose step (build or up) inside a container.
+async fn run_compose_step(
+    compose_rt: &coast_docker::dind::DindRuntime,
+    container_id: &str,
+    subcmd: &[&str],
+    has_artifact: bool,
+    has_override: bool,
+    step_name: &str,
+    instance_name: &str,
+) -> Result<coast_docker::runtime::ExecResult> {
+    let cmd = build_compose_command(subcmd, has_artifact, has_override);
+    execute_compose_step(compose_rt, container_id, &cmd, step_name, instance_name).await
+}
+
+/// Run compose build + up inside the container, returning rebuilt service names.
+async fn rebuild_and_restart(
+    docker: &bollard::Docker,
+    container_id: &str,
+    instance_name: &str,
+) -> Result<Vec<String>> {
+    let compose_rt = coast_docker::dind::DindRuntime::with_client(docker.clone());
+    let (has_artifact, has_override) = detect_compose_files(&compose_rt, container_id).await;
+
+    let build_result = run_compose_step(
+        &compose_rt,
+        container_id,
+        &["build"],
+        has_artifact,
+        has_override,
+        "docker compose build",
+        instance_name,
+    )
+    .await?;
+    info!("compose build completed successfully");
+
+    run_compose_step(
+        &compose_rt,
+        container_id,
+        &["up", "-d"],
+        has_artifact,
+        has_override,
+        "docker compose up",
+        instance_name,
+    )
+    .await?;
+    info!("compose services restarted after rebuild");
+
+    Ok(parse_rebuilt_services(&build_result.stdout))
+}
+
 /// Handle a rebuild request.
-#[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 pub async fn handle(req: RebuildRequest, state: &AppState) -> Result<RebuildResponse> {
     info!(
         name = %req.name,
@@ -27,188 +190,12 @@ pub async fn handle(req: RebuildRequest, state: &AppState) -> Result<RebuildResp
         "handling rebuild request"
     );
 
-    {
-        let db = state.db.lock().await;
-        if let Some(instance) = db.get_instance(&req.project, &req.name)? {
-            if instance.remote_host.is_some() {
-                drop(db);
-                return Err(CoastError::state(
-                    "Rebuild for remote instances is not yet supported. \
-                     Use `coast build --type remote` to rebuild the remote build artifact, \
-                     then `coast assign` to apply changes.",
-                ));
-            }
-        }
-    }
+    let container_id = validate_rebuild_target(state, &req.project, &req.name).await?;
 
-    // Phase 1: DB read (locked)
-    let container_id = {
-        let db = state.db.lock().await;
-        let instance = db.get_instance(&req.project, &req.name)?.ok_or_else(|| {
-            CoastError::InstanceNotFound {
-                name: req.name.clone(),
-                project: req.project.clone(),
-            }
-        })?;
-
-        if instance.status != InstanceStatus::Running
-            && instance.status != InstanceStatus::CheckedOut
-        {
-            return Err(CoastError::state(format!(
-                "Instance '{}' is in '{}' state and cannot be rebuilt. \
-                 Only Running or CheckedOut instances can be rebuilt. \
-                 Run `coast start {}` first.",
-                req.name, instance.status, req.name,
-            )));
-        }
-
-        instance.container_id.ok_or_else(|| {
-            CoastError::state(format!(
-                "Instance '{}' has no container ID. This should not happen for a Running instance. \
-                 Try `coast rm {} && coast run {}`.",
-                req.name, req.name, req.name,
-            ))
-        })?
+    let services_rebuilt = match state.docker.as_ref() {
+        Some(docker) => rebuild_and_restart(&docker, &container_id, &req.name).await?,
+        None => Vec::new(),
     };
-
-    // Phase 2: Docker operations (unlocked)
-    let mut services_rebuilt = Vec::new();
-
-    if let Some(docker) = state.docker.as_ref() {
-        let compose_rt = coast_docker::dind::DindRuntime::with_client(docker.clone());
-
-        // Step 2: docker compose build inside DinD
-        // Check for artifact compose and override files
-        let has_artifact = compose_rt
-            .exec_in_coast(
-                &container_id,
-                &["test", "-f", "/coast-artifact/compose.yml"],
-            )
-            .await
-            .map(|r| r.success())
-            .unwrap_or(false);
-
-        let has_override = compose_rt
-            .exec_in_coast(
-                &container_id,
-                &["test", "-f", "/workspace/docker-compose.override.yml"],
-            )
-            .await
-            .map(|r| r.success())
-            .unwrap_or(false);
-
-        let build_cmd: Vec<&str> = if has_artifact && has_override {
-            vec![
-                "docker",
-                "compose",
-                "-f",
-                "/coast-artifact/compose.yml",
-                "-f",
-                "/workspace/docker-compose.override.yml",
-                "--project-directory",
-                "/workspace",
-                "build",
-            ]
-        } else if has_artifact {
-            vec![
-                "docker",
-                "compose",
-                "-f",
-                "/coast-artifact/compose.yml",
-                "--project-directory",
-                "/workspace",
-                "build",
-            ]
-        } else {
-            vec!["docker", "compose", "build"]
-        };
-
-        info!(cmd = ?build_cmd, "running compose build inside DinD");
-        let build_result = compose_rt.exec_in_coast(&container_id, &build_cmd).await;
-
-        match build_result {
-            Ok(r) if r.success() => {
-                info!("compose build completed successfully");
-                // Parse output to determine which services were rebuilt
-                for line in r.stdout.lines() {
-                    let trimmed = line.trim();
-                    // docker compose build outputs lines like "Building service_name"
-                    // or " => [service_name] ..."
-                    if let Some(service) = trimmed.strip_prefix("Building ") {
-                        services_rebuilt.push(service.trim().to_string());
-                    }
-                }
-                // If we couldn't parse service names, indicate rebuild happened
-                if services_rebuilt.is_empty() {
-                    services_rebuilt.push("(all services)".to_string());
-                }
-            }
-            Ok(r) => {
-                return Err(CoastError::docker(format!(
-                    "docker compose build failed inside instance '{}': {}",
-                    req.name,
-                    r.stderr.trim()
-                )));
-            }
-            Err(e) => {
-                return Err(CoastError::docker(format!(
-                    "Failed to exec docker compose build in instance '{}': {e}",
-                    req.name
-                )));
-            }
-        }
-
-        // Step 3: docker compose up -d to restart with new images
-        let up_cmd: Vec<&str> = if has_artifact && has_override {
-            vec![
-                "docker",
-                "compose",
-                "-f",
-                "/coast-artifact/compose.yml",
-                "-f",
-                "/workspace/docker-compose.override.yml",
-                "--project-directory",
-                "/workspace",
-                "up",
-                "-d",
-            ]
-        } else if has_artifact {
-            vec![
-                "docker",
-                "compose",
-                "-f",
-                "/coast-artifact/compose.yml",
-                "--project-directory",
-                "/workspace",
-                "up",
-                "-d",
-            ]
-        } else {
-            vec!["docker", "compose", "up", "-d"]
-        };
-
-        info!(cmd = ?up_cmd, "restarting compose services after rebuild");
-        let up_result = compose_rt.exec_in_coast(&container_id, &up_cmd).await;
-
-        match up_result {
-            Ok(r) if r.success() => {
-                info!("compose services restarted after rebuild");
-            }
-            Ok(r) => {
-                return Err(CoastError::docker(format!(
-                    "docker compose up failed after rebuild in instance '{}': {}",
-                    req.name,
-                    r.stderr.trim()
-                )));
-            }
-            Err(e) => {
-                return Err(CoastError::docker(format!(
-                    "Failed to exec docker compose up in instance '{}': {e}",
-                    req.name
-                )));
-            }
-        }
-    }
 
     info!(
         name = %req.name,
@@ -347,5 +334,72 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("no container ID"));
+    }
+
+    // --- build_compose_command tests ---
+
+    #[test]
+    fn test_build_compose_command_no_artifact() {
+        let cmd = build_compose_command(&["build"], false, false);
+        assert_eq!(cmd, vec!["docker", "compose", "build"]);
+    }
+
+    #[test]
+    fn test_build_compose_command_artifact_only() {
+        let cmd = build_compose_command(&["build"], true, false);
+        assert_eq!(
+            cmd,
+            vec![
+                "docker",
+                "compose",
+                "-f",
+                "/coast-artifact/compose.yml",
+                "--project-directory",
+                "/workspace",
+                "build",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_build_compose_command_artifact_and_override() {
+        let cmd = build_compose_command(&["up", "-d"], true, true);
+        assert_eq!(
+            cmd,
+            vec![
+                "docker",
+                "compose",
+                "-f",
+                "/coast-artifact/compose.yml",
+                "-f",
+                "/workspace/docker-compose.override.yml",
+                "--project-directory",
+                "/workspace",
+                "up",
+                "-d",
+            ]
+        );
+    }
+
+    // --- parse_rebuilt_services tests ---
+
+    #[test]
+    fn test_parse_rebuilt_services_with_names() {
+        let output = "Building web\nBuilding worker\n";
+        let services = parse_rebuilt_services(output);
+        assert_eq!(services, vec!["web", "worker"]);
+    }
+
+    #[test]
+    fn test_parse_rebuilt_services_empty_output() {
+        let services = parse_rebuilt_services("");
+        assert_eq!(services, vec!["(all services)"]);
+    }
+
+    #[test]
+    fn test_parse_rebuilt_services_no_building_prefix() {
+        let output = "Step 1/5: FROM node:18\nStep 2/5: COPY . .\n";
+        let services = parse_rebuilt_services(output);
+        assert_eq!(services, vec!["(all services)"]);
     }
 }
