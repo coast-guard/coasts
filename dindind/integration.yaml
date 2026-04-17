@@ -172,6 +172,12 @@ tests:
     status: pass
     cached_seconds: 89
 
+  # --- reboot recovery end-to-end ---
+  test_reboot_recovery:
+    script: integrated-examples/test_reboot_recovery.sh
+    timeout: 600
+    note: "reproduces host-reboot failure mode: workspace bind loss, shared-service proxy loss, and daemon API hang when a remote is unreachable"
+
   # --- bug report reproduction (aw-studio-app probes 03-05) ---
   test_daemon_cwd_isolation:
     script: integrated-examples/test_daemon_cwd_isolation.sh

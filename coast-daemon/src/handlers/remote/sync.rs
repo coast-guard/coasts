@@ -28,8 +28,12 @@ pub async fn rsync_workspace_opts(
     let local_str = format!("{}/", local_path.display());
     let remote_str = format!("{}@{}:{}", config.user, config.host, remote_path);
     let ssh_key_str = config.ssh_key.display().to_string();
+    // ConnectTimeout=10 prevents indefinite hangs when the remote is
+    // unreachable (e.g. laptop rebooted on a different network). Without it,
+    // BatchMode=yes alone will wait forever at TCP connect and block any
+    // code path that awaits this future, including daemon startup restore.
     let ssh_cmd = format!(
-        "ssh -p {} -i {} -o StrictHostKeyChecking=no -o BatchMode=yes -o ControlMaster=auto -o ControlPath=/tmp/coast-ssh-%r@%h:%p -o ControlPersist=300",
+        "ssh -p {} -i {} -o StrictHostKeyChecking=no -o BatchMode=yes -o ConnectTimeout=10 -o ControlMaster=auto -o ControlPath=/tmp/coast-ssh-%r@%h:%p -o ControlPersist=300",
         config.port, ssh_key_str
     );
 
@@ -45,6 +49,8 @@ pub async fn rsync_workspace_opts(
             "BatchMode=yes",
             "-o",
             "StrictHostKeyChecking=no",
+            "-o",
+            "ConnectTimeout=10",
             "-o",
             "ControlMaster=auto",
             "-o",
@@ -125,6 +131,8 @@ pub async fn rsync_workspace_opts(
                 "-o",
                 "StrictHostKeyChecking=no",
                 "-o",
+                "ConnectTimeout=10",
+                "-o",
                 "ControlMaster=auto",
                 "-o",
                 "ControlPath=/tmp/coast-ssh-%r@%h:%p",
@@ -157,7 +165,7 @@ pub async fn rsync_from_remote(
     let local_str = format!("{}/", local_path.display());
     let ssh_key_str = config.ssh_key.display().to_string();
     let ssh_cmd = format!(
-        "ssh -p {} -i {} -o StrictHostKeyChecking=no -o BatchMode=yes -o ControlMaster=auto -o ControlPath=/tmp/coast-ssh-%r@%h:%p -o ControlPersist=300",
+        "ssh -p {} -i {} -o StrictHostKeyChecking=no -o BatchMode=yes -o ConnectTimeout=10 -o ControlMaster=auto -o ControlPath=/tmp/coast-ssh-%r@%h:%p -o ControlPersist=300",
         config.port, ssh_key_str
     );
 
