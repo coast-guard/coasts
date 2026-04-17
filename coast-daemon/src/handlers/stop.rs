@@ -69,6 +69,133 @@ fn kill_instance_socat_processes(
     Ok(())
 }
 
+/// Check for a dangling Docker container and treat stop as a no-op if found.
+async fn check_dangling_stop_noop(state: &AppState, project: &str, name: &str) -> bool {
+    let expected = format!("{project}-coasts-{name}");
+    if let Some(docker) = state.docker.as_ref() {
+        if docker.inspect_container(&expected, None).await.is_ok() {
+            warn!(
+                name = %name,
+                project = %project,
+                container = %expected,
+                "dangling container found during stop, treating as no-op"
+            );
+            return true;
+        }
+    }
+    false
+}
+
+/// Set the stopping transition: clear checkout state or update status.
+fn set_stop_transition(
+    db: &crate::state::StateDb,
+    project: &str,
+    name: &str,
+    status: &InstanceStatus,
+) -> Result<()> {
+    if *status == InstanceStatus::CheckedOut {
+        super::clear_checked_out_state(db, project, name, &InstanceStatus::Stopping)?;
+    } else {
+        db.update_instance_status(project, name, &InstanceStatus::Stopping)?;
+    }
+    Ok(())
+}
+
+/// Check if the inner daemon is healthy (best-effort, returns false on any failure).
+async fn is_inner_daemon_healthy(
+    rt: &coast_docker::dind::DindRuntime,
+    container_id: &str,
+    instance_name: &str,
+) -> bool {
+    let health_timeout = tokio::time::Duration::from_secs(10);
+    let health_check = rt.exec_in_coast(container_id, &["docker", "info"]);
+    match tokio::time::timeout(health_timeout, health_check).await {
+        Ok(Ok(r)) if r.success() => true,
+        Ok(Ok(r)) => {
+            warn!(name = %instance_name, exit_code = r.exit_code, "inner daemon unhealthy");
+            false
+        }
+        Ok(Err(e)) => {
+            warn!(name = %instance_name, error = %e, "cannot reach inner daemon");
+            false
+        }
+        Err(_) => {
+            warn!(name = %instance_name, timeout_secs = health_timeout.as_secs(), "inner daemon unresponsive");
+            false
+        }
+    }
+}
+
+/// Run compose down and stop bare services inside the container.
+async fn run_compose_down(
+    docker: &bollard::Docker,
+    container_id: &str,
+    project: &str,
+    build_id: Option<&str>,
+    instance_name: &str,
+) {
+    let rt = coast_docker::dind::DindRuntime::with_client(docker.clone());
+
+    if !is_inner_daemon_healthy(&rt, container_id, instance_name).await {
+        return;
+    }
+
+    if crate::bare_services::has_bare_services(docker, container_id).await {
+        let stop_cmd = crate::bare_services::generate_stop_command();
+        let _ = rt
+            .exec_in_coast(container_id, &["sh", "-c", &stop_cmd])
+            .await;
+    }
+
+    let ctx = super::compose_context_for_build(project, build_id);
+    let down_cmd = ctx.compose_shell("down -t 2");
+    let down_refs: Vec<&str> = down_cmd.iter().map(std::string::String::as_str).collect();
+    let _ = rt.exec_in_coast(container_id, &down_refs).await;
+}
+
+/// Kill agent shell processes, close FDs, and delete shell records.
+async fn cleanup_agent_shells(state: &AppState, project: &str, name: &str) {
+    let shells = {
+        let db = state.db.lock().await;
+        match db.list_agent_shells(project, name) {
+            Ok(s) => s,
+            Err(_) => return,
+        }
+    };
+    let mut exec_sessions = state.exec_sessions.lock().await;
+    for shell in &shells {
+        if let Some(ref sid) = shell.session_id {
+            if let Some(session) = exec_sessions.remove(sid) {
+                let _ = nix::sys::signal::kill(
+                    nix::unistd::Pid::from_raw(session.child_pid),
+                    nix::sys::signal::Signal::SIGHUP,
+                );
+                unsafe {
+                    nix::libc::close(session.master_read_fd);
+                    nix::libc::close(session.master_write_fd);
+                }
+            }
+        }
+    }
+    drop(exec_sessions);
+    let db = state.db.lock().await;
+    let _ = db.delete_agent_shells_for_instance(project, name);
+}
+
+/// Stop the coast container on the host daemon.
+async fn stop_coast_container(state: &AppState, container_id: Option<&str>) {
+    let Some(container_id) = container_id else {
+        return;
+    };
+    let Some(docker) = state.docker.as_ref() else {
+        return;
+    };
+    let runtime = coast_docker::dind::DindRuntime::with_client(docker.clone());
+    if let Err(e) = runtime.stop_coast_container(container_id).await {
+        warn!(container_id = %container_id, error = %e, "failed to stop container, it may already be stopped");
+    }
+}
+
 /// Handle a stop request with optional progress streaming.
 ///
 /// Steps:
@@ -77,7 +204,6 @@ fn kill_instance_socat_processes(
 /// 3. Stop the coast container on the host daemon.
 /// 4. Kill all socat processes for this instance.
 /// 5. Update instance status to "stopped" in state DB.
-#[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 pub async fn handle(
     req: StopRequest,
     state: &AppState,
@@ -90,19 +216,8 @@ pub async fn handle(
         let db = state.db.lock().await;
         let inst = db.get_instance(&req.project, &req.name)?;
         let Some(inst) = inst else {
-            // Instance not in DB — check if a dangling Docker container exists.
-            // If so, treat stop as a silent no-op (use `coast rm` to clean up).
-            let expected = format!("{}-coasts-{}", req.project, req.name);
-            if let Some(docker) = state.docker.as_ref() {
-                if docker.inspect_container(&expected, None).await.is_ok() {
-                    warn!(
-                        name = %req.name,
-                        project = %req.project,
-                        container = %expected,
-                        "dangling container found during stop, treating as no-op"
-                    );
-                    return Ok(StopResponse { name: req.name });
-                }
+            if check_dangling_stop_noop(state, &req.project, &req.name).await {
+                return Ok(StopResponse { name: req.name });
             }
             return Err(CoastError::InstanceNotFound {
                 name: req.name.clone(),
@@ -119,16 +234,7 @@ pub async fn handle(
             return Ok(StopResponse { name: req.name });
         }
         validate_stoppable(&inst.status, &req.name)?;
-        if inst.status == InstanceStatus::CheckedOut {
-            super::clear_checked_out_state(
-                &db,
-                &req.project,
-                &req.name,
-                &InstanceStatus::Stopping,
-            )?;
-        } else {
-            db.update_instance_status(&req.project, &req.name, &InstanceStatus::Stopping)?;
-        }
+        set_stop_transition(&db, &req.project, &req.name, &inst.status)?;
         inst
     };
 
@@ -152,57 +258,20 @@ pub async fn handle(
     );
 
     // Phase 2: Docker operations (unlocked)
-    // Step 1: Compose down
     emit(
         &progress,
         BuildProgressEvent::started("Running compose down", 1, TOTAL_STOP_STEPS),
     );
-
     if let Some(ref container_id) = instance.container_id {
         if let Some(docker) = state.docker.as_ref() {
-            let rt = coast_docker::dind::DindRuntime::with_client(docker.clone());
-
-            let health_timeout = tokio::time::Duration::from_secs(10);
-            let health_check = rt.exec_in_coast(container_id, &["docker", "info"]);
-            match tokio::time::timeout(health_timeout, health_check).await {
-                Ok(Ok(r)) if r.success() => {
-                    info!("stop: inner daemon healthy");
-                }
-                Ok(Ok(r)) => {
-                    warn!(
-                        name = %req.name,
-                        exit_code = r.exit_code,
-                        "inner daemon unhealthy, skipping compose down"
-                    );
-                }
-                Ok(Err(e)) => {
-                    warn!(
-                        name = %req.name,
-                        error = %e,
-                        "cannot reach inner daemon, skipping compose down"
-                    );
-                }
-                Err(_) => {
-                    warn!(
-                        name = %req.name,
-                        timeout_secs = health_timeout.as_secs(),
-                        "inner daemon unresponsive, skipping compose down"
-                    );
-                }
-            }
-
-            // Stop bare services if the supervisor directory exists
-            if crate::bare_services::has_bare_services(&docker, container_id).await {
-                let stop_cmd = crate::bare_services::generate_stop_command();
-                let _ = rt
-                    .exec_in_coast(container_id, &["sh", "-c", &stop_cmd])
-                    .await;
-            }
-
-            let ctx = super::compose_context_for_build(&req.project, instance.build_id.as_deref());
-            let down_cmd = ctx.compose_shell("down -t 2");
-            let down_refs: Vec<&str> = down_cmd.iter().map(std::string::String::as_str).collect();
-            let _ = rt.exec_in_coast(container_id, &down_refs).await;
+            run_compose_down(
+                &docker,
+                container_id,
+                &req.project,
+                instance.build_id.as_deref(),
+                &req.name,
+            )
+            .await;
         }
     }
     emit(
@@ -210,57 +279,33 @@ pub async fn handle(
         BuildProgressEvent::item("Running compose down", "compose down", "ok"),
     );
 
-    // Step 2: Stop the coast container
     emit(
         &progress,
         BuildProgressEvent::started("Stopping container", 2, TOTAL_STOP_STEPS),
     );
-    if let Some(ref container_id) = instance.container_id {
-        if let Some(docker) = state.docker.as_ref() {
-            let runtime = coast_docker::dind::DindRuntime::with_client(docker.clone());
-            if let Err(e) = runtime.stop_coast_container(container_id).await {
-                warn!(container_id = %container_id, error = %e, "failed to stop container, it may already be stopped");
-            }
-        }
-    }
+    stop_coast_container(state, instance.container_id.as_deref()).await;
     emit(
         &progress,
         BuildProgressEvent::item("Stopping container", "container", "ok"),
     );
 
     // Phase 3: Final DB operations (locked)
-    // Step 3: Kill socat processes
     emit(
         &progress,
         BuildProgressEvent::started("Killing socat processes", 3, TOTAL_STOP_STEPS),
     );
-    let db = state.db.lock().await;
-    kill_instance_socat_processes(&db, &req.project, &req.name)?;
+    {
+        let db = state.db.lock().await;
+        kill_instance_socat_processes(&db, &req.project, &req.name)?;
+    }
     emit(
         &progress,
         BuildProgressEvent::item("Killing socat processes", "socat", "ok"),
     );
 
-    // Clean up agent shells: kill PTY processes and remove DB records
-    if let Ok(shells) = db.list_agent_shells(&req.project, &req.name) {
-        let mut exec_sessions = state.exec_sessions.lock().await;
-        for shell in &shells {
-            if let Some(ref sid) = shell.session_id {
-                if let Some(session) = exec_sessions.remove(sid) {
-                    let _ = nix::sys::signal::kill(
-                        nix::unistd::Pid::from_raw(session.child_pid),
-                        nix::sys::signal::Signal::SIGHUP,
-                    );
-                    unsafe {
-                        nix::libc::close(session.master_read_fd);
-                        nix::libc::close(session.master_write_fd);
-                    }
-                }
-            }
-        }
-        let _ = db.delete_agent_shells_for_instance(&req.project, &req.name);
-    }
+    cleanup_agent_shells(state, &req.project, &req.name).await;
 
+    let db = state.db.lock().await;
     db.update_instance_status(&req.project, &req.name, &InstanceStatus::Stopped)?;
 
     state.emit_event(CoastEvent::InstanceStatusChanged {
@@ -670,5 +715,73 @@ mod tests {
 
         // No port allocations at all — should be a no-op
         kill_instance_socat_processes(&db, "proj", "inst").unwrap();
+    }
+
+    // --- set_stop_transition tests ---
+
+    #[tokio::test]
+    async fn test_set_stop_transition_running_sets_stopping() {
+        let state = test_state();
+        let db = state.db.lock().await;
+        db.insert_instance(&make_instance("feat-a", "my-app", InstanceStatus::Running))
+            .unwrap();
+
+        set_stop_transition(&db, "my-app", "feat-a", &InstanceStatus::Running).unwrap();
+
+        let inst = db.get_instance("my-app", "feat-a").unwrap().unwrap();
+        assert_eq!(inst.status, InstanceStatus::Stopping);
+    }
+
+    #[tokio::test]
+    async fn test_set_stop_transition_idle_sets_stopping() {
+        let state = test_state();
+        let db = state.db.lock().await;
+        db.insert_instance(&make_instance("feat-a", "my-app", InstanceStatus::Idle))
+            .unwrap();
+
+        set_stop_transition(&db, "my-app", "feat-a", &InstanceStatus::Idle).unwrap();
+
+        let inst = db.get_instance("my-app", "feat-a").unwrap().unwrap();
+        assert_eq!(inst.status, InstanceStatus::Stopping);
+    }
+
+    // --- check_dangling_stop_noop tests ---
+
+    #[tokio::test]
+    async fn test_check_dangling_no_docker_returns_false() {
+        let state = test_state();
+        assert!(state.docker.is_none());
+        let result = check_dangling_stop_noop(&state, "my-app", "ghost").await;
+        assert!(!result);
+    }
+
+    // --- cleanup_agent_shells tests ---
+
+    #[tokio::test]
+    async fn test_cleanup_agent_shells_no_shells_is_noop() {
+        let state = test_state();
+        {
+            let db = state.db.lock().await;
+            db.insert_instance(&make_instance("feat-a", "my-app", InstanceStatus::Running))
+                .unwrap();
+        }
+        // Should not panic or error with no agent shells
+        cleanup_agent_shells(&state, "my-app", "feat-a").await;
+    }
+
+    // --- stop_coast_container tests ---
+
+    #[tokio::test]
+    async fn test_stop_coast_container_no_docker_is_noop() {
+        let state = test_state();
+        assert!(state.docker.is_none());
+        // Should not panic with no Docker client
+        stop_coast_container(&state, Some("container-123")).await;
+    }
+
+    #[tokio::test]
+    async fn test_stop_coast_container_no_container_id_is_noop() {
+        let state = test_state();
+        stop_coast_container(&state, None).await;
     }
 }
