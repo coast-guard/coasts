@@ -220,35 +220,19 @@ async fn try_unassign(
     crate::handlers::unassign::handle(req, state, tx).await
 }
 
-/// Restart a DinD container and wait for its inner daemon to become ready.
-/// Returns `true` on success, `false` if any step fails.
-#[allow(clippy::cognitive_complexity)]
-async fn restart_container_for_recovery(state: &AppState, project: &str, instance: &str) -> bool {
+/// Try to get the container_id for an instance using a non-blocking DB lock.
+fn try_get_container_id(state: &AppState, project: &str, instance: &str) -> Option<String> {
+    let db = state.db.try_lock().ok()?;
+    match db.get_instance(project, instance) {
+        Ok(Some(inst)) => inst.container_id.clone(),
+        _ => None,
+    }
+}
+
+/// Stop, start, and wait for the inner daemon to recover.
+async fn restart_and_wait_for_daemon(docker: &bollard::Docker, cid: &str, instance: &str) -> bool {
     use coast_docker::runtime::Runtime;
 
-    let container_id = {
-        let Ok(db) = state.db.try_lock() else {
-            warn!(
-                instance,
-                project, "could not acquire DB lock for recovery restart"
-            );
-            return false;
-        };
-        match db.get_instance(project, instance) {
-            Ok(Some(inst)) => inst.container_id.clone(),
-            _ => None,
-        }
-    };
-
-    let (Some(docker), Some(cid)) = (state.docker.as_ref(), container_id.as_ref()) else {
-        warn!(
-            instance,
-            project, "no Docker client or container ID, cannot recover"
-        );
-        return false;
-    };
-
-    info!(instance, project, "restarting DinD container for recovery");
     let rt = coast_docker::dind::DindRuntime::with_client(docker.clone());
     if let Err(e) = rt.stop_coast_container(cid).await {
         warn!(instance, error = %e, "stop failed during recovery (may already be stopped)");
@@ -264,11 +248,34 @@ async fn restart_container_for_recovery(state: &AppState, project: &str, instanc
         warn!(instance, error = %e, "inner daemon did not recover after restart");
         return false;
     }
-    info!(
-        instance,
-        project, "DinD container restarted, inner daemon ready"
-    );
     true
+}
+
+/// Restart a DinD container and wait for its inner daemon to become ready.
+/// Returns `true` on success, `false` if any step fails.
+async fn restart_container_for_recovery(state: &AppState, project: &str, instance: &str) -> bool {
+    let Some(container_id) = try_get_container_id(state, project, instance) else {
+        warn!(
+            instance,
+            project, "no container ID or DB lock failed, cannot recover"
+        );
+        return false;
+    };
+    let Some(docker) = state.docker.as_ref() else {
+        warn!(instance, project, "no Docker client, cannot recover");
+        return false;
+    };
+
+    info!(instance, project, "restarting DinD container for recovery");
+    if restart_and_wait_for_daemon(&docker, &container_id, instance).await {
+        info!(
+            instance,
+            project, "DinD container restarted, inner daemon ready"
+        );
+        true
+    } else {
+        false
+    }
 }
 
 /// Attempt to auto-unassign an instance whose worktree was deleted.
@@ -276,32 +283,50 @@ async fn restart_container_for_recovery(state: &AppState, project: &str, instanc
 /// First tries a direct unassign. If that fails (e.g. inner daemon unhealthy
 /// because the bind-mounted directory was removed from the host), restarts the
 /// DinD container to recover, then retries the unassign.
-#[allow(clippy::cognitive_complexity)]
+/// Try to unassign, logging the result. Returns `true` on success.
+async fn try_unassign_with_logging(
+    state: &AppState,
+    project: &str,
+    instance: &str,
+    context: &str,
+) -> bool {
+    match try_unassign(state, project, instance).await {
+        Ok(resp) => {
+            info!(instance, project, branch = %resp.worktree, "{context}");
+            true
+        }
+        Err(e) => {
+            warn!(instance, project, error = %e, "{context} failed");
+            false
+        }
+    }
+}
+
 pub(crate) async fn auto_unassign_with_recovery(state: &AppState, project: &str, instance: &str) {
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
-    match try_unassign(state, project, instance).await {
-        Ok(resp) => {
-            info!(instance, project, branch = %resp.worktree, "auto-unassigned after worktree deletion");
-            return;
-        }
-        Err(e) => {
-            warn!(instance, project, error = %e, "auto-unassign attempt 1 failed, will restart container");
-        }
+    if try_unassign_with_logging(
+        state,
+        project,
+        instance,
+        "auto-unassigned after worktree deletion",
+    )
+    .await
+    {
+        return;
     }
 
     if !restart_container_for_recovery(state, project, instance).await {
         return;
     }
 
-    match try_unassign(state, project, instance).await {
-        Ok(resp) => {
-            info!(instance, project, branch = %resp.worktree, "auto-unassigned after recovery restart");
-        }
-        Err(e) => {
-            warn!(instance, project, error = %e, "auto-unassign failed even after container restart");
-        }
-    }
+    try_unassign_with_logging(
+        state,
+        project,
+        instance,
+        "auto-unassigned after recovery restart",
+    )
+    .await;
 }
 
 /// One-time startup scan for worktrees that were deleted while the daemon
@@ -683,5 +708,43 @@ mod tests {
         let results = scan_external_worktree_dir(ext_dir.path(), &project_git).await;
 
         assert_eq!(results, vec!["deep"]);
+    }
+
+    // --- try_get_container_id tests ---
+
+    #[tokio::test]
+    async fn test_try_get_container_id_found() {
+        use crate::state::StateDb;
+        use coast_core::types::{CoastInstance, InstanceStatus, RuntimeType};
+
+        let db = StateDb::open_in_memory().unwrap();
+        db.insert_instance(&CoastInstance {
+            name: "inst".to_string(),
+            project: "proj".to_string(),
+            status: InstanceStatus::Running,
+            branch: Some("main".to_string()),
+            commit_sha: None,
+            container_id: Some("cid-123".to_string()),
+            runtime: RuntimeType::Dind,
+            created_at: chrono::Utc::now(),
+            worktree_name: None,
+            build_id: None,
+            coastfile_type: None,
+            remote_host: None,
+        })
+        .unwrap();
+        let state = AppState::new_for_testing(db);
+        assert_eq!(
+            try_get_container_id(&state, "proj", "inst"),
+            Some("cid-123".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_try_get_container_id_not_found() {
+        use crate::state::StateDb;
+        let db = StateDb::open_in_memory().unwrap();
+        let state = AppState::new_for_testing(db);
+        assert_eq!(try_get_container_id(&state, "proj", "ghost"), None);
     }
 }
