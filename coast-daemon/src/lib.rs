@@ -259,8 +259,6 @@ async fn run_daemon(cli: Cli) -> Result<()> {
     // Create shared application state
     let state = Arc::new(AppState::new(db));
 
-    restore_running_state(&state).await;
-
     // Start background git watcher (polls .git/HEAD for known projects)
     git_watcher::spawn_git_watcher(Arc::clone(&state));
 
@@ -285,7 +283,11 @@ async fn run_daemon(cli: Cli) -> Result<()> {
     // Determine API port
     let api_port = cli.api_port.unwrap_or(api::DEFAULT_API_PORT);
 
-    // Start the HTTP API server
+    // Start the HTTP API server *before* kicking off restore work. This
+    // decouples control-plane availability from the restore path: even if
+    // restore_running_state is slow (e.g. stalled on an unreachable remote),
+    // the API and Unix socket still bind promptly so `coast ls`, daemon
+    // status probes, and local operations keep working.
     let api_state = Arc::clone(&state);
     let api_shutdown_rx = shutdown_tx.subscribe();
     tokio::spawn(async move {
@@ -313,6 +315,16 @@ async fn run_daemon(cli: Cli) -> Result<()> {
     let dns_port = cli.dns_port.unwrap_or(5354);
     tokio::spawn(async move {
         dns::run_dns_server(dns_port).await;
+    });
+
+    // Run restore in the background. Any subsystem that needs restored
+    // state and can't survive its absence must wait for it explicitly —
+    // but most operations either tolerate partial state (restart, rm)
+    // or re-establish it lazily on first use (exec, logs).
+    let restore_state = Arc::clone(&state);
+    tokio::spawn(async move {
+        restore_running_state(&restore_state).await;
+        info!("restore_running_state complete");
     });
 
     // Run the Unix socket server (blocks until shutdown)
@@ -725,6 +737,364 @@ async fn heal_shared_service_tunnels(state: &Arc<server::AppState>, project: &st
             );
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// In-DinD runtime state restore
+// ---------------------------------------------------------------------------
+//
+// When the outer DinD container restarts (for example, after Docker Desktop
+// restarts containers on host boot), the mount namespace and network
+// plumbing inside the container are reset. The bind mounts, alias IPs, and
+// socat proxies that `coast run` / `coast start` set up via `docker exec`
+// live only in the container's live runtime and are not persisted. Two
+// consequences matter at startup:
+//
+//   1. `/workspace` is no longer bind-mounted to `/host-project` (or the
+//      current worktree), so compose services under /workspace cannot find
+//      their files. The symptom is
+//        "env file /workspace/... not found" during compose up.
+//   2. The alias IPs on the DinD's inner `docker0` and the socat proxies
+//      that forward to shared services on the host are gone, so compose
+//      services cannot reach `postgres`/`redis`/etc. The symptom is
+//        "connect: connection timed out" trying to reach 172.18.255.254.
+//
+// The helpers below re-apply those settings during daemon startup. They
+// are best-effort (per-instance timeouts, log-and-continue on failure) so
+// one pathological instance cannot block daemon startup for everyone else.
+
+/// Max time we spend trying to re-apply in-DinD runtime state for a single
+/// instance before giving up and moving on. Generous enough to cover the
+/// inner-dockerd startup wait plus a few seconds for actual work.
+const RESTORE_PER_INSTANCE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
+
+/// How long we wait for the inner `dockerd` (and with it `docker0`) to
+/// come up after a DinD container restart. Polling is cheap (2s ticks).
+const INNER_DOCKER_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Poll `ip -o -4 addr show docker0` inside the DinD until it succeeds
+/// (meaning the inner `dockerd` has started and created the `docker0`
+/// bridge) or the timeout elapses. Returns true iff docker0 appeared.
+async fn wait_for_inner_docker0(docker: &bollard::Docker, container_id: &str) -> bool {
+    use coast_docker::runtime::Runtime;
+    let rt = coast_docker::dind::DindRuntime::with_client(docker.clone());
+    let deadline = std::time::Instant::now() + INNER_DOCKER_WAIT;
+    loop {
+        match rt
+            .exec_in_coast(container_id, &["sh", "-lc", "ip -o -4 addr show docker0"])
+            .await
+        {
+            Ok(r) if r.success() && r.stdout.contains("inet ") => return true,
+            _ => {}
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    }
+}
+
+/// Look up the canonical coastfile on disk for an instance (if any).
+///
+/// This is `~/.coast/images/<project>/<build_id_or_latest>/coastfile.toml`.
+/// Returns `None` when the artifact is missing (e.g. builds pruned).
+fn artifact_coastfile_path(project: &str, build_id: Option<&str>) -> Option<std::path::PathBuf> {
+    let project_dir = handlers::run::paths::project_images_dir(project);
+    if let Some(bid) = build_id {
+        let resolved = project_dir.join(bid);
+        if resolved.exists() {
+            let p = resolved.join("coastfile.toml");
+            if p.exists() {
+                return Some(p);
+            }
+        }
+    }
+    let p = project_dir.join("latest").join("coastfile.toml");
+    if p.exists() {
+        Some(p)
+    } else {
+        None
+    }
+}
+
+/// Re-apply the `/workspace` bind mount inside each local DinD.
+///
+/// Iterates local (non-remote) active instances. For each, re-runs the
+/// bind script that `provision::bind_workspace` uses at run/start time.
+/// The script is effectively idempotent: `findmnt` short-circuits the
+/// bind when /workspace is already mounted, and the private/cache mount
+/// commands handle existing mounts gracefully.
+///
+/// Instances in `checked_out` state with a worktree are currently
+/// restored to the project root; re-entering a worktree requires an
+/// explicit `coast assign` after recovery.
+async fn restore_workspace_mounts(
+    state: &Arc<server::AppState>,
+    instances: &[coast_core::types::CoastInstance],
+) {
+    let Some(docker) = state.docker.as_ref() else {
+        return;
+    };
+
+    for inst in instances {
+        if inst.remote_host.is_some() {
+            continue;
+        }
+        let Some(cid) = inst.container_id.as_ref() else {
+            continue;
+        };
+        let cid = cid.clone();
+        let project = inst.project.clone();
+        let name = inst.name.clone();
+        let build_id = inst.build_id.clone();
+        let docker = docker.clone();
+
+        let work = async move {
+            restore_single_workspace_mount(docker, project, name, cid, build_id).await
+        };
+        if (tokio::time::timeout(RESTORE_PER_INSTANCE_TIMEOUT, work).await).is_err() {
+            warn!(instance = %inst.name, project = %inst.project, "workspace mount restore timed out");
+        }
+    }
+}
+
+/// Read `private_paths` + `bare_services` from the build's coastfile.
+/// Returns empty vectors if the coastfile is missing or fails to parse;
+/// missing coastfile data never stops the mount restore.
+fn load_private_and_bare(
+    project: &str,
+    name: &str,
+    build_id: Option<&str>,
+) -> (Vec<String>, Vec<coast_core::types::BareServiceConfig>) {
+    let Some(path) = artifact_coastfile_path(project, build_id) else {
+        return (Vec::new(), Vec::new());
+    };
+    match coast_core::coastfile::Coastfile::from_file(&path) {
+        Ok(cf) => (cf.private_paths, cf.services),
+        Err(e) => {
+            warn!(instance = %name, project = %project, error = %e, "workspace restore: failed to parse coastfile; skipping private/cache mounts");
+            (Vec::new(), Vec::new())
+        }
+    }
+}
+
+/// Build the idempotent `sh -c` command that re-applies /workspace + the
+/// associated private-path and cache-mount overlays.
+///
+/// The script short-circuits if /workspace is already a distinct mount
+/// (findmnt check), so it is safe to call after a daemon restart that
+/// did not actually lose the mount.
+fn build_workspace_mount_script(
+    private_paths: &[String],
+    bare_services: &[coast_core::types::BareServiceConfig],
+) -> String {
+    let private_cmds =
+        coast_core::coastfile::Coastfile::build_private_paths_mount_commands(private_paths);
+    let cache_cmds = coast_core::coastfile::Coastfile::build_cache_mount_commands(bare_services);
+    format!(
+        "set -e; mkdir -p /workspace; \
+         if findmnt -T /workspace >/dev/null 2>&1 && [ \"$(findmnt -n -o TARGET -T /workspace)\" = \"/workspace\" ]; then \
+           exit 0; \
+         fi; \
+         mount --bind /host-project /workspace && mount --make-rshared /workspace{private_cmds}{cache_cmds}"
+    )
+}
+
+async fn restore_single_workspace_mount(
+    docker: bollard::Docker,
+    project: String,
+    name: String,
+    container_id: String,
+    build_id: Option<String>,
+) {
+    let (private_paths, bare_services) =
+        load_private_and_bare(&project, &name, build_id.as_deref());
+    let cmd = build_workspace_mount_script(&private_paths, &bare_services);
+
+    use coast_docker::runtime::Runtime;
+    let rt = coast_docker::dind::DindRuntime::with_client(docker);
+    let result = rt.exec_in_coast(&container_id, &["sh", "-c", &cmd]).await;
+    log_workspace_restore_result(&project, &name, result);
+}
+
+fn log_workspace_restore_result(
+    project: &str,
+    name: &str,
+    result: coast_core::error::Result<coast_docker::runtime::ExecResult>,
+) {
+    match result {
+        Ok(r) if r.success() => {
+            info!(instance = %name, project = %project, "restored /workspace bind mount");
+        }
+        Ok(r) => {
+            warn!(instance = %name, project = %project, stderr = %r.stderr, "workspace mount restore: exec reported failure");
+        }
+        Err(e) => {
+            warn!(instance = %name, project = %project, error = %e, "workspace mount restore: exec error");
+        }
+    }
+}
+
+/// Re-apply the shared-service routing (docker0 alias IPs + socat proxies)
+/// inside each local DinD that has `shared_services` configured.
+///
+/// For each local active instance:
+///   - Load the build's coastfile. Skip if absent or no shared services.
+///   - Reconnect the DinD to `coast-shared-<project>` on the host Docker
+///     daemon (best effort; already-connected is a no-op warn).
+///   - Call `plan_shared_service_routing` + `ensure_shared_service_proxies`.
+///     Both are idempotent: `ip addr add ... || true` in the script and
+///     socat pid files are replaced if stale.
+async fn restore_shared_service_proxies(
+    state: &Arc<server::AppState>,
+    instances: &[coast_core::types::CoastInstance],
+) {
+    let Some(docker) = state.docker.as_ref() else {
+        return;
+    };
+
+    for inst in instances {
+        if inst.remote_host.is_some() {
+            continue;
+        }
+        let Some(cid) = inst.container_id.as_ref() else {
+            continue;
+        };
+        let cid = cid.clone();
+        let project = inst.project.clone();
+        let name = inst.name.clone();
+        let build_id = inst.build_id.clone();
+        let docker = docker.clone();
+
+        let work = async move {
+            restore_single_shared_proxies(docker, project, name, cid, build_id).await
+        };
+        if (tokio::time::timeout(RESTORE_PER_INSTANCE_TIMEOUT, work).await).is_err() {
+            warn!(instance = %inst.name, project = %inst.project, "shared-service proxy restore timed out");
+        }
+    }
+}
+
+/// Load a coastfile that declares at least one shared service.
+/// Returns None on any "nothing to do" condition (no artifact, parse fail,
+/// empty shared_services). Emits a warn log for the parse-fail case.
+fn load_coastfile_with_shared_services(
+    project: &str,
+    name: &str,
+    build_id: Option<&str>,
+) -> Option<coast_core::coastfile::Coastfile> {
+    let path = artifact_coastfile_path(project, build_id)?;
+    let coastfile = match coast_core::coastfile::Coastfile::from_file(&path) {
+        Ok(cf) => cf,
+        Err(e) => {
+            warn!(instance = %name, project = %project, error = %e, "shared-service restore: failed to parse coastfile");
+            return None;
+        }
+    };
+    if coastfile.shared_services.is_empty() {
+        return None;
+    }
+    Some(coastfile)
+}
+
+/// Build the `service name -> shared container name` map in the same way
+/// that `setup_shared_services` does at run/start time.
+fn build_shared_target_map(
+    project: &str,
+    coastfile: &coast_core::coastfile::Coastfile,
+) -> std::collections::HashMap<String, String> {
+    coastfile
+        .shared_services
+        .iter()
+        .map(|svc| {
+            (
+                svc.name.clone(),
+                shared_services::shared_container_name(project, &svc.name),
+            )
+        })
+        .collect()
+}
+
+/// Plan routing and ensure proxies inside the DinD; log results.
+async fn apply_shared_service_plan(
+    docker: &bollard::Docker,
+    project: &str,
+    name: &str,
+    container_id: &str,
+    shared_services: &[coast_core::types::SharedServiceConfig],
+    target_containers: &std::collections::HashMap<String, String>,
+) {
+    let plan = match handlers::shared_service_routing::plan_shared_service_routing(
+        docker,
+        container_id,
+        shared_services,
+        target_containers,
+    )
+    .await
+    {
+        Ok(plan) => plan,
+        Err(e) => {
+            warn!(instance = %name, project = %project, error = %e, "shared-service restore: failed to plan routing");
+            return;
+        }
+    };
+
+    match handlers::shared_service_routing::ensure_shared_service_proxies(
+        docker,
+        container_id,
+        &plan,
+    )
+    .await
+    {
+        Ok(()) => {
+            info!(instance = %name, project = %project, routes = plan.routes.len(), "restored shared-service proxies");
+        }
+        Err(e) => {
+            warn!(instance = %name, project = %project, error = %e, "shared-service restore: failed to ensure proxies");
+        }
+    }
+}
+
+async fn restore_single_shared_proxies(
+    docker: bollard::Docker,
+    project: String,
+    name: String,
+    container_id: String,
+    build_id: Option<String>,
+) {
+    let Some(coastfile) = load_coastfile_with_shared_services(&project, &name, build_id.as_deref())
+    else {
+        return;
+    };
+
+    // After a DinD restart (e.g. Docker Desktop bringing containers back
+    // on reboot) the inner `dockerd` needs a moment to start and create
+    // the `docker0` bridge. `plan_shared_service_routing` reads
+    // `ip -o -4 addr show docker0` and fails if docker0 is not yet
+    // present; wait for it before proceeding.
+    if !wait_for_inner_docker0(&docker, &container_id).await {
+        warn!(instance = %name, project = %project, "shared-service restore: inner docker0 never appeared; skipping");
+        return;
+    }
+
+    // Reconnect DinD to the shared-services network (may already be connected).
+    let nm = coast_docker::network::NetworkManager::with_client(docker.clone());
+    let net_name = coast_docker::network::shared_network_name(&project);
+    if let Err(e) = nm.connect_container(&net_name, &container_id).await {
+        // "already exists in network" / similar is normal; demote to debug.
+        tracing::debug!(instance = %name, project = %project, error = %e, "shared-service restore: reconnect to shared network (likely already connected)");
+    }
+
+    let target_containers = build_shared_target_map(&project, &coastfile);
+    apply_shared_service_plan(
+        &docker,
+        &project,
+        &name,
+        &container_id,
+        &coastfile.shared_services,
+        &target_containers,
+    )
+    .await;
 }
 
 /// Restore socat port forwarding for all running instances after daemon restart.
@@ -1485,6 +1855,17 @@ async fn restore_running_state(state: &Arc<server::AppState>) {
         restore_socat_forwarding(state, &active_instances).await;
     }
 
+    // Restore in-DinD runtime state that is lost when the outer container
+    // restarts (e.g. Docker Desktop auto-restart after a host reboot):
+    //   - /workspace bind mount
+    //   - inner docker0 alias IPs + socat proxies for shared services
+    // These are independent of remote restore and must run even when
+    // remote restoration is slow / unreachable.
+    if state.docker.is_some() {
+        restore_workspace_mounts(state, &active_instances).await;
+        restore_shared_service_proxies(state, &active_instances).await;
+    }
+
     // Restore SSH port tunnels for remote instances.
     restore_remote_tunnels(state, &active_instances).await;
 
@@ -1871,5 +2252,212 @@ mod tests {
             let _lock = acquire_singleton_lock(&lock_path).unwrap();
         } // Flock<File> dropped here, releasing the lock
         let _lock2 = acquire_singleton_lock(&lock_path).unwrap();
+    }
+
+    // -----------------------------------------------------------------------
+    // In-DinD restore helpers
+    // -----------------------------------------------------------------------
+
+    /// Serializes tests that mutate COAST_HOME so they don't race.
+    fn coast_home_env_lock() -> std::sync::MutexGuard<'static, ()> {
+        use std::sync::{Mutex, OnceLock};
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn with_coast_home<F, R>(home: &std::path::Path, f: F) -> R
+    where
+        F: FnOnce() -> R,
+    {
+        let _guard = coast_home_env_lock();
+        let prev = std::env::var_os("COAST_HOME");
+        // Safety: guarded by mutex; restored before unlock.
+        unsafe { std::env::set_var("COAST_HOME", home) };
+        let r = f();
+        match prev {
+            Some(v) => unsafe { std::env::set_var("COAST_HOME", v) },
+            None => unsafe { std::env::remove_var("COAST_HOME") },
+        }
+        r
+    }
+
+    #[test]
+    fn test_artifact_coastfile_path_latest() {
+        let tmp = tempfile::tempdir().unwrap();
+        let proj_dir = tmp.path().join("images").join("demo").join("latest");
+        std::fs::create_dir_all(&proj_dir).unwrap();
+        std::fs::write(proj_dir.join("coastfile.toml"), "").unwrap();
+        let found = with_coast_home(tmp.path(), || artifact_coastfile_path("demo", None));
+        assert_eq!(found, Some(proj_dir.join("coastfile.toml")));
+    }
+
+    #[test]
+    fn test_artifact_coastfile_path_build_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bid = "abc_20260101";
+        let proj_dir = tmp.path().join("images").join("demo").join(bid);
+        std::fs::create_dir_all(&proj_dir).unwrap();
+        std::fs::write(proj_dir.join("coastfile.toml"), "").unwrap();
+        let found = with_coast_home(tmp.path(), || artifact_coastfile_path("demo", Some(bid)));
+        assert_eq!(found, Some(proj_dir.join("coastfile.toml")));
+    }
+
+    #[test]
+    fn test_artifact_coastfile_path_falls_back_to_latest_when_build_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let latest_dir = tmp.path().join("images").join("demo").join("latest");
+        std::fs::create_dir_all(&latest_dir).unwrap();
+        std::fs::write(latest_dir.join("coastfile.toml"), "").unwrap();
+        // build_id does not exist on disk -> falls through to latest
+        let found = with_coast_home(tmp.path(), || {
+            artifact_coastfile_path("demo", Some("missing_build"))
+        });
+        assert_eq!(found, Some(latest_dir.join("coastfile.toml")));
+    }
+
+    #[test]
+    fn test_artifact_coastfile_path_none_when_no_artifact() {
+        let tmp = tempfile::tempdir().unwrap();
+        let found = with_coast_home(tmp.path(), || artifact_coastfile_path("demo", None));
+        assert!(found.is_none());
+    }
+
+    /// The workspace restore helper is a no-op when there is no Docker
+    /// client (which matches the behaviour of other restore helpers).
+    /// It should complete immediately without errors.
+    #[tokio::test]
+    async fn test_restore_workspace_mounts_noop_without_docker() {
+        let db = state::StateDb::open_in_memory().unwrap();
+        let state = Arc::new(server::AppState::new_for_testing(db));
+        let inst = make_test_instance(
+            "inst-1",
+            "proj-x",
+            coast_core::types::InstanceStatus::Running,
+        );
+        // Should complete without touching docker (state.docker is None for test).
+        restore_workspace_mounts(&state, &[inst]).await;
+    }
+
+    /// Shared-service restore is also a no-op without a Docker client.
+    #[tokio::test]
+    async fn test_restore_shared_service_proxies_noop_without_docker() {
+        let db = state::StateDb::open_in_memory().unwrap();
+        let state = Arc::new(server::AppState::new_for_testing(db));
+        let inst = make_test_instance(
+            "inst-1",
+            "proj-y",
+            coast_core::types::InstanceStatus::Running,
+        );
+        restore_shared_service_proxies(&state, &[inst]).await;
+    }
+
+    /// Remote instances must be skipped by both restore helpers: their
+    /// runtime state lives on the remote host, not in a local DinD.
+    #[tokio::test]
+    async fn test_restore_helpers_skip_remote_instances() {
+        let db = state::StateDb::open_in_memory().unwrap();
+        // A stub Docker client lets `state.docker.as_ref()` succeed, so we
+        // exercise the `remote_host.is_some()` skip branch, not the
+        // no-docker early return.
+        let state = Arc::new(server::AppState::new_for_testing_with_docker(db));
+        let mut inst = make_test_instance(
+            "dev-remote",
+            "proj-r",
+            coast_core::types::InstanceStatus::Running,
+        );
+        inst.remote_host = Some("test-remote".to_string());
+
+        // Both helpers must return quickly (<5s) without trying to
+        // exec into the (nonexistent) stub container.
+        let res = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            restore_workspace_mounts(&state, &[inst.clone()]),
+        )
+        .await;
+        assert!(
+            res.is_ok(),
+            "workspace restore should skip remote instances"
+        );
+
+        let res = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            restore_shared_service_proxies(&state, &[inst]),
+        )
+        .await;
+        assert!(
+            res.is_ok(),
+            "shared-service restore should skip remote instances"
+        );
+    }
+
+    /// An instance without a container_id must be skipped (it means the
+    /// instance is enqueued/provisioning but not yet created).
+    #[tokio::test]
+    async fn test_restore_helpers_skip_instances_without_container_id() {
+        let db = state::StateDb::open_in_memory().unwrap();
+        let state = Arc::new(server::AppState::new_for_testing_with_docker(db));
+        let mut inst = make_test_instance(
+            "inst-unprovisioned",
+            "proj-z",
+            coast_core::types::InstanceStatus::Running,
+        );
+        inst.container_id = None;
+        // Should complete without calling exec_in_coast.
+        let res = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            restore_workspace_mounts(&state, &[inst.clone()]),
+        )
+        .await;
+        assert!(res.is_ok());
+        let res = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            restore_shared_service_proxies(&state, &[inst]),
+        )
+        .await;
+        assert!(res.is_ok());
+    }
+
+    /// Shared-service restore must be a no-op (early return after parsing
+    /// the coastfile) when the coastfile declares no shared_services.
+    #[tokio::test]
+    async fn test_restore_shared_service_proxies_skips_when_no_shared_services() {
+        let tmp = tempfile::tempdir().unwrap();
+        let artifact_dir = tmp.path().join("images").join("proj-empty").join("latest");
+        std::fs::create_dir_all(&artifact_dir).unwrap();
+        std::fs::write(
+            artifact_dir.join("coastfile.toml"),
+            "[coast]\nname = \"proj-empty\"\nruntime = \"dind\"\n",
+        )
+        .unwrap();
+
+        let db = state::StateDb::open_in_memory().unwrap();
+        let state = Arc::new(server::AppState::new_for_testing_with_docker(db));
+        let inst = make_test_instance(
+            "inst-e",
+            "proj-empty",
+            coast_core::types::InstanceStatus::Running,
+        );
+
+        let _guard = coast_home_env_lock();
+        let prev = std::env::var_os("COAST_HOME");
+        // Safety: serialized by coast_home_env_lock.
+        unsafe { std::env::set_var("COAST_HOME", tmp.path()) };
+        // Since there are no shared services, this returns before attempting
+        // any docker exec -- and is well under the per-instance timeout.
+        let res = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            restore_shared_service_proxies(&state, &[inst]),
+        )
+        .await;
+        match prev {
+            Some(v) => unsafe { std::env::set_var("COAST_HOME", v) },
+            None => unsafe { std::env::remove_var("COAST_HOME") },
+        }
+        assert!(
+            res.is_ok(),
+            "shared-service restore should return promptly when the coastfile has no shared_services"
+        );
     }
 }

@@ -550,6 +550,12 @@ projects/coast-noautostart/Dockerfile
 projects/coast-noautostart/docker-compose.yml
 projects/coast-noautostart/server.js
 projects/coast-private-paths/Coastfile
+projects/coast-reboot-recovery/Coastfile
+projects/coast-reboot-recovery/app/.env
+projects/coast-reboot-recovery/app/Dockerfile
+projects/coast-reboot-recovery/app/package.json
+projects/coast-reboot-recovery/app/server.js
+projects/coast-reboot-recovery/docker-compose.yml
 projects/coast-secrets/.git/COMMIT_EDITMSG
 projects/coast-secrets/.git/HEAD
 projects/coast-secrets/.git/config

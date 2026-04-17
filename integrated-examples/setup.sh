@@ -1293,6 +1293,32 @@ LOOKUP_MAIN_EOF
 
 setup_coast_lookup
 
+# --- coast-reboot-recovery ---
+# Project that exercises post-reboot recovery. Mirrors the shape of the
+# real-world project that hit this: compose app with env_file references
+# under /workspace talking to shared postgres and redis on the host
+# Docker daemon. Used by test_reboot_recovery.sh.
+
+setup_coast_reboot_recovery() {
+    local dir="$PROJECTS_DIR/coast-reboot-recovery"
+    echo "Setting up coast-reboot-recovery..."
+
+    rm -rf "$dir/.git" "$dir/docker-compose.override.yml"
+
+    cd "$dir"
+    git init -b main
+    git config user.name "Coast Dev"
+    git config user.email "dev@coasts.dev"
+    # Force-add app/.env (typically .env is gitignored elsewhere, but for this
+    # fixture it must be committed so `coast run` sees it on rebind).
+    git add -A -f
+    git commit -m "initial commit: reboot recovery test project"
+
+    echo "  coast-reboot-recovery ready (branch: main)"
+}
+
+setup_coast_reboot_recovery
+
 # --- coast-dangling ---
 # A minimal project for testing dangling container detection.
 # Has a shared redis service so tests can cover both instance and shared-service danglers.
