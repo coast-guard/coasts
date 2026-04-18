@@ -1,3 +1,4 @@
+use std::ops::ControlFlow;
 use std::sync::Arc;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -55,7 +56,42 @@ async fn ws_handler(
     Ok(ws.on_upgrade(move |socket| handle_logs_socket(socket, state, container_name, params)))
 }
 
-#[allow(clippy::cognitive_complexity)]
+/// Forward a Docker log chunk to the WebSocket client.
+async fn forward_log_chunk(
+    socket: &mut WebSocket,
+    chunk: Option<Result<bollard::container::LogOutput, bollard::errors::Error>>,
+) -> ControlFlow<()> {
+    match chunk {
+        Some(Ok(msg)) => {
+            let text = match msg {
+                bollard::container::LogOutput::StdOut { message }
+                | bollard::container::LogOutput::StdErr { message } => {
+                    String::from_utf8_lossy(&message).to_string()
+                }
+                _ => return ControlFlow::Continue(()),
+            };
+            if socket.send(Message::Text(text.into())).await.is_err() {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
+            }
+        }
+        Some(Err(e)) => {
+            warn!(error = %e, "host-service log stream error");
+            ControlFlow::Break(())
+        }
+        None => ControlFlow::Break(()),
+    }
+}
+
+/// Handle an inbound WebSocket message (Close → break, others → ignore).
+fn handle_inbound_close(msg: &Option<Result<Message, axum::Error>>) -> ControlFlow<()> {
+    match msg {
+        Some(Ok(Message::Close(_))) | None => ControlFlow::Break(()),
+        _ => ControlFlow::Continue(()),
+    }
+}
+
 async fn handle_logs_socket(
     mut socket: WebSocket,
     state: Arc<AppState>,
@@ -93,30 +129,13 @@ async fn handle_logs_socket(
     loop {
         tokio::select! {
             chunk = stream.next() => {
-                match chunk {
-                    Some(Ok(msg)) => {
-                        let text = match msg {
-                            bollard::container::LogOutput::StdOut { message } |
-                            bollard::container::LogOutput::StdErr { message } => {
-                                String::from_utf8_lossy(&message).to_string()
-                            }
-                            _ => continue,
-                        };
-                        if socket.send(Message::Text(text.into())).await.is_err() {
-                            break;
-                        }
-                    }
-                    Some(Err(e)) => {
-                        warn!(error = %e, "host-service log stream error");
-                        break;
-                    }
-                    None => break,
+                if forward_log_chunk(&mut socket, chunk).await.is_break() {
+                    break;
                 }
             }
             msg = socket.recv() => {
-                match msg {
-                    Some(Ok(Message::Close(_))) | None => break,
-                    _ => {}
+                if handle_inbound_close(&msg).is_break() {
+                    break;
                 }
             }
         }
@@ -126,4 +145,32 @@ async fn handle_logs_socket(
         service = %params.service,
         "host-service logs stream disconnected"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_handle_inbound_close_on_close_message() {
+        let msg = Some(Ok(Message::Close(None)));
+        assert!(handle_inbound_close(&msg).is_break());
+    }
+
+    #[test]
+    fn test_handle_inbound_close_on_none() {
+        assert!(handle_inbound_close(&None).is_break());
+    }
+
+    #[test]
+    fn test_handle_inbound_close_on_text_continues() {
+        let msg = Some(Ok(Message::Text("hello".into())));
+        assert!(handle_inbound_close(&msg).is_continue());
+    }
+
+    #[test]
+    fn test_handle_inbound_close_on_ping_continues() {
+        let msg = Some(Ok(Message::Ping(vec![1, 2, 3].into())));
+        assert!(handle_inbound_close(&msg).is_continue());
+    }
 }
