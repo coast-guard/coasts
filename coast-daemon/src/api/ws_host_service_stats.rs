@@ -80,7 +80,23 @@ pub async fn start_host_service_collector(
     collectors.insert(key, handle);
 }
 
-#[allow(clippy::cognitive_complexity)]
+/// Push a stats value into the history ring buffer and broadcast it.
+async fn push_stats_to_history(
+    history: &tokio::sync::Mutex<std::collections::HashMap<String, VecDeque<serde_json::Value>>>,
+    key: &str,
+    val: serde_json::Value,
+    tx: &broadcast::Sender<serde_json::Value>,
+) {
+    let mut history = history.lock().await;
+    let ring = history.entry(key.to_string()).or_insert_with(VecDeque::new);
+    if ring.len() >= HISTORY_CAP {
+        ring.pop_front();
+    }
+    ring.push_back(val.clone());
+    drop(history);
+    let _ = tx.send(val);
+}
+
 async fn run_collector(
     state: Arc<AppState>,
     container_name: String,
@@ -106,15 +122,7 @@ async fn run_collector(
             Ok(stats) => {
                 let cs = extract_stats(&stats, &mut prev_cpu_total, &mut prev_cpu_system);
                 if let Ok(json_val) = serde_json::to_value(&cs) {
-                    {
-                        let mut history = state.stats_history.lock().await;
-                        let ring = history.entry(key.clone()).or_insert_with(VecDeque::new);
-                        if ring.len() >= HISTORY_CAP {
-                            ring.pop_front();
-                        }
-                        ring.push_back(json_val.clone());
-                    }
-                    let _ = tx.send(json_val);
+                    push_stats_to_history(&state.stats_history, &key, json_val, &tx).await;
                 }
             }
             Err(e) => {
@@ -163,20 +171,48 @@ async fn ws_handler(
     Ok(ws.on_upgrade(move |socket| handle_stats_socket(socket, state, key)))
 }
 
-#[allow(clippy::cognitive_complexity)]
+/// Send buffered history entries to a newly connected WebSocket client.
+async fn replay_stats_history(socket: &mut WebSocket, state: &AppState, key: &str) -> bool {
+    let history = state.stats_history.lock().await;
+    if let Some(ring) = history.get(key) {
+        for val in ring.iter() {
+            let json_str = val.to_string();
+            if socket.send(Message::Text(json_str.into())).await.is_err() {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// Forward a broadcast stats value to the WebSocket client.
+async fn forward_broadcast_to_socket(
+    socket: &mut WebSocket,
+    result: Result<serde_json::Value, broadcast::error::RecvError>,
+    key: &str,
+) -> std::ops::ControlFlow<()> {
+    match result {
+        Ok(val) => {
+            let json_str = val.to_string();
+            if socket.send(Message::Text(json_str.into())).await.is_err() {
+                std::ops::ControlFlow::Break(())
+            } else {
+                std::ops::ControlFlow::Continue(())
+            }
+        }
+        Err(broadcast::error::RecvError::Lagged(n)) => {
+            warn!(key = %key, skipped = n, "host-service stats WS lagged");
+            std::ops::ControlFlow::Continue(())
+        }
+        Err(broadcast::error::RecvError::Closed) => std::ops::ControlFlow::Break(()),
+    }
+}
+
 async fn handle_stats_socket(mut socket: WebSocket, state: Arc<AppState>, key: String) {
     debug!(key = %key, "host-service stats WS connected");
 
-    {
-        let history = state.stats_history.lock().await;
-        if let Some(ring) = history.get(&key) {
-            for val in ring.iter() {
-                let json_str = val.to_string();
-                if socket.send(Message::Text(json_str.into())).await.is_err() {
-                    return;
-                }
-            }
-        }
+    if !replay_stats_history(&mut socket, &state, &key).await {
+        return;
     }
 
     let mut rx = {
@@ -195,17 +231,8 @@ async fn handle_stats_socket(mut socket: WebSocket, state: Arc<AppState>, key: S
     loop {
         tokio::select! {
             result = rx.recv() => {
-                match result {
-                    Ok(val) => {
-                        let json_str = val.to_string();
-                        if socket.send(Message::Text(json_str.into())).await.is_err() {
-                            break;
-                        }
-                    }
-                    Err(broadcast::error::RecvError::Lagged(n)) => {
-                        warn!(key = %key, skipped = n, "host-service stats WS lagged");
-                    }
-                    Err(broadcast::error::RecvError::Closed) => break,
+                if forward_broadcast_to_socket(&mut socket, result, &key).await.is_break() {
+                    break;
                 }
             }
             msg = socket.recv() => {
@@ -309,5 +336,60 @@ fn extract_stats(
         network_rx_bytes,
         network_tx_bytes,
         pids,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[tokio::test]
+    async fn test_push_stats_to_history_inserts_value() {
+        let history =
+            tokio::sync::Mutex::new(HashMap::<String, VecDeque<serde_json::Value>>::new());
+        let (tx, _rx) = broadcast::channel(16);
+        let val = serde_json::json!({"cpu": 5.0});
+
+        push_stats_to_history(&history, "key1", val.clone(), &tx).await;
+
+        let h = history.lock().await;
+        let ring = h.get("key1").unwrap();
+        assert_eq!(ring.len(), 1);
+        assert_eq!(ring[0], val);
+    }
+
+    #[tokio::test]
+    async fn test_push_stats_to_history_evicts_oldest_at_cap() {
+        let history =
+            tokio::sync::Mutex::new(HashMap::<String, VecDeque<serde_json::Value>>::new());
+        let (tx, _rx) = broadcast::channel(16);
+
+        // Fill to capacity
+        for i in 0..HISTORY_CAP {
+            push_stats_to_history(&history, "key1", serde_json::json!(i), &tx).await;
+        }
+
+        // One more should evict the oldest
+        push_stats_to_history(&history, "key1", serde_json::json!("new"), &tx).await;
+
+        let h = history.lock().await;
+        let ring = h.get("key1").unwrap();
+        assert_eq!(ring.len(), HISTORY_CAP);
+        assert_eq!(ring[0], serde_json::json!(1)); // 0 was evicted
+        assert_eq!(ring[HISTORY_CAP - 1], serde_json::json!("new"));
+    }
+
+    #[tokio::test]
+    async fn test_push_stats_to_history_broadcasts_value() {
+        let history =
+            tokio::sync::Mutex::new(HashMap::<String, VecDeque<serde_json::Value>>::new());
+        let (tx, mut rx) = broadcast::channel(16);
+        let val = serde_json::json!({"mem": 42});
+
+        push_stats_to_history(&history, "key1", val.clone(), &tx).await;
+
+        let received = rx.recv().await.unwrap();
+        assert_eq!(received, val);
     }
 }
