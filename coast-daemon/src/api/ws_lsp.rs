@@ -10,7 +10,6 @@ use bollard::exec::{CreateExecOptions, StartExecOptions, StartExecResults};
 use bytes::BytesMut;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
-use tokio::io::AsyncWriteExt;
 use tracing::{debug, info, warn};
 use ts_rs::TS;
 
@@ -133,7 +132,182 @@ async fn ws_handler(
     }))
 }
 
-#[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
+/// Send a JSON-RPC error message over the WebSocket.
+async fn send_jsonrpc_error(socket: &mut WebSocket, message: &str) {
+    let msg =
+        format!(r#"{{"jsonrpc":"2.0","error":{{"code":-32603,"message":"{message}"}},"id":null}}"#);
+    let _ = socket.send(Message::Text(msg.into())).await;
+}
+
+/// Check that the LSP binary exists in the container.
+async fn verify_lsp_binary_exists(
+    docker: &bollard::Docker,
+    container_id: &str,
+    binary_name: &str,
+    socket: &mut WebSocket,
+) -> bool {
+    let check_cmd = format!("command -v {binary_name} >/dev/null 2>&1");
+    let check_exec = docker
+        .create_exec(
+            container_id,
+            CreateExecOptions {
+                cmd: Some(vec!["sh".to_string(), "-c".to_string(), check_cmd]),
+                attach_stdout: Some(true),
+                attach_stderr: Some(true),
+                ..Default::default()
+            },
+        )
+        .await;
+
+    if let Ok(exec) = check_exec {
+        if let Ok(output) = docker
+            .start_exec(&exec.id, Some(StartExecOptions::default()))
+            .await
+        {
+            if let StartExecResults::Attached { mut output, .. } = output {
+                while output.next().await.is_some() {}
+            }
+            if let Ok(inspect) = docker.inspect_exec(&exec.id).await {
+                if inspect.exit_code != Some(0) {
+                    send_jsonrpc_error(
+                        socket,
+                        &format!(
+                            "{binary_name} not found in container. Add it to your Coastfile [coast.setup] packages."
+                        ),
+                    )
+                    .await;
+                    return false;
+                }
+            }
+        }
+    }
+    true
+}
+
+/// Create and start the LSP server exec with stdin/stdout/stderr attached.
+async fn create_lsp_exec(
+    docker: &bollard::Docker,
+    container_id: &str,
+    cmd: Vec<String>,
+    working_dir: String,
+    socket: &mut WebSocket,
+) -> Option<(String, StartExecResults)> {
+    let exec_options = CreateExecOptions {
+        cmd: Some(cmd),
+        attach_stdin: Some(true),
+        attach_stdout: Some(true),
+        attach_stderr: Some(true),
+        working_dir: Some(working_dir),
+        ..Default::default()
+    };
+
+    let exec = match docker.create_exec(container_id, exec_options).await {
+        Ok(e) => e,
+        Err(e) => {
+            send_jsonrpc_error(socket, &format!("Failed to start LSP: {e}")).await;
+            return None;
+        }
+    };
+
+    match docker
+        .start_exec(
+            &exec.id,
+            Some(StartExecOptions {
+                detach: false,
+                ..Default::default()
+            }),
+        )
+        .await
+    {
+        Ok(o) => Some((exec.id.clone(), o)),
+        Err(e) => {
+            send_jsonrpc_error(socket, &format!("Failed to start LSP exec: {e}")).await;
+            None
+        }
+    }
+}
+
+/// Process one LSP stdout chunk: extract StdOut bytes, accumulate in buffer, parse frames, send to socket.
+async fn process_lsp_stdout_chunk(
+    socket: &mut WebSocket,
+    stdout_buf: &mut BytesMut,
+    chunk: Option<Result<bollard::container::LogOutput, bollard::errors::Error>>,
+    session_key: &str,
+) -> std::ops::ControlFlow<()> {
+    match chunk {
+        Some(Ok(bollard::container::LogOutput::StdOut { message })) => {
+            stdout_buf.extend_from_slice(&message);
+            while let Some(json_msg) = extract_lsp_message(stdout_buf) {
+                if socket.send(Message::Text(json_msg.into())).await.is_err() {
+                    return std::ops::ControlFlow::Break(());
+                }
+            }
+            std::ops::ControlFlow::Continue(())
+        }
+        Some(Ok(bollard::container::LogOutput::StdErr { message })) => {
+            debug!(session = %session_key, stderr = %String::from_utf8_lossy(&message), "LSP stderr");
+            std::ops::ControlFlow::Continue(())
+        }
+        Some(Ok(_)) => std::ops::ControlFlow::Continue(()),
+        Some(Err(e)) => {
+            warn!(session = %session_key, error = %e, "LSP output stream error");
+            std::ops::ControlFlow::Break(())
+        }
+        None => {
+            debug!(session = %session_key, "LSP server exited");
+            std::ops::ControlFlow::Break(())
+        }
+    }
+}
+
+/// Write a WebSocket text message to LSP stdin with Content-Length framing.
+async fn write_to_lsp_stdin(
+    input: &mut (impl tokio::io::AsyncWriteExt + Unpin),
+    text: &str,
+) -> bool {
+    let json_bytes = text.as_bytes();
+    let header = format!("Content-Length: {}\r\n\r\n", json_bytes.len());
+    input.write_all(header.as_bytes()).await.is_ok()
+        && input.write_all(json_bytes).await.is_ok()
+        && input.flush().await.is_ok()
+}
+
+/// Run the LSP bridge loop: forward stdout→WS and WS→stdin.
+async fn run_lsp_bridge_loop(
+    socket: &mut WebSocket,
+    output: &mut (impl futures_util::Stream<
+        Item = Result<bollard::container::LogOutput, bollard::errors::Error>,
+    > + Unpin),
+    input: &mut (impl tokio::io::AsyncWriteExt + Unpin),
+    session_key: &str,
+) {
+    let mut stdout_buf = BytesMut::new();
+
+    loop {
+        tokio::select! {
+            chunk = output.next() => {
+                if process_lsp_stdout_chunk(socket, &mut stdout_buf, chunk, session_key).await.is_break() {
+                    break;
+                }
+            }
+            msg = socket.recv() => {
+                match msg {
+                    Some(Ok(Message::Text(text))) => {
+                        if !write_to_lsp_stdin(input, &text).await {
+                            break;
+                        }
+                    }
+                    Some(Ok(Message::Close(_))) | None => {
+                        debug!(session = %session_key, "WebSocket closed");
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
 async fn handle_lsp_socket(
     mut socket: WebSocket,
     state: Arc<AppState>,
@@ -154,85 +328,25 @@ async fn handle_lsp_socket(
     let Some(docker) = state.docker.as_ref() else {
         let lang = state.language();
         let docker_err = t!("error.docker_not_available", locale = &lang).to_string();
-        let msg = format!(
-            r#"{{"jsonrpc":"2.0","error":{{"code":-32603,"message":"{docker_err}"}},"id":null}}"#
-        );
-        let _ = socket.send(Message::Text(msg.into())).await;
+        send_jsonrpc_error(&mut socket, &docker_err).await;
         return;
     };
 
-    // First check that the LSP server binary exists in the container
-    let check_cmd = format!("command -v {} >/dev/null 2>&1", cmd[0]);
-    let check_exec = docker
-        .create_exec(
-            &container_id,
-            CreateExecOptions {
-                cmd: Some(vec!["sh".to_string(), "-c".to_string(), check_cmd]),
-                attach_stdout: Some(true),
-                attach_stderr: Some(true),
-                ..Default::default()
-            },
-        )
-        .await;
-
-    if let Ok(exec) = check_exec {
-        if let Ok(output) = docker
-            .start_exec(&exec.id, Some(StartExecOptions::default()))
-            .await
-        {
-            if let StartExecResults::Attached { mut output, .. } = output {
-                while output.next().await.is_some() {}
-            }
-            if let Ok(inspect) = docker.inspect_exec(&exec.id).await {
-                if inspect.exit_code != Some(0) {
-                    let msg = format!(
-                        r#"{{"jsonrpc":"2.0","error":{{"code":-32603,"message":"{} not found in container. Add it to your Coastfile [coast.setup] packages."}},"id":null}}"#,
-                        cmd[0]
-                    );
-                    let _ = socket.send(Message::Text(msg.into())).await;
-                    return;
-                }
-            }
-        }
+    if !verify_lsp_binary_exists(&docker, &container_id, &cmd[0], &mut socket).await {
+        return;
     }
 
-    // Start the LSP server via docker exec with stdin attached.
-    // Use root_path if provided so the server finds the correct tsconfig/project config.
     let working_dir = root_path.unwrap_or_else(|| "/workspace".to_string());
-    let exec_options = CreateExecOptions {
-        cmd: Some(cmd.clone()),
-        attach_stdin: Some(true),
-        attach_stdout: Some(true),
-        attach_stderr: Some(true),
-        working_dir: Some(working_dir.clone()),
-        ..Default::default()
-    };
-
-    let exec = match docker.create_exec(&container_id, exec_options).await {
-        Ok(e) => e,
-        Err(e) => {
-            let msg = format!(
-                r#"{{"jsonrpc":"2.0","error":{{"code":-32603,"message":"Failed to start LSP: {e}"}},"id":null}}"#
-            );
-            let _ = socket.send(Message::Text(msg.into())).await;
-            return;
-        }
-    };
-
-    let start_options = StartExecOptions {
-        detach: false,
-        ..Default::default()
-    };
-
-    let output = match docker.start_exec(&exec.id, Some(start_options)).await {
-        Ok(o) => o,
-        Err(e) => {
-            let msg = format!(
-                r#"{{"jsonrpc":"2.0","error":{{"code":-32603,"message":"Failed to start LSP exec: {e}"}},"id":null}}"#
-            );
-            let _ = socket.send(Message::Text(msg.into())).await;
-            return;
-        }
+    let Some((exec_id, output)) = create_lsp_exec(
+        &docker,
+        &container_id,
+        cmd.clone(),
+        working_dir.clone(),
+        &mut socket,
+    )
+    .await
+    else {
+        return;
     };
 
     let session_key = format!("{project}:{name}:{language}:{working_dir}");
@@ -243,7 +357,7 @@ async fn handle_lsp_socket(
         sessions.insert(
             session_key.clone(),
             LspSession {
-                exec_id: exec.id.clone(),
+                exec_id,
                 language: language.clone(),
             },
         );
@@ -255,74 +369,7 @@ async fn handle_lsp_socket(
     } = output
     {
         debug!(session = %session_key, "LSP server attached, entering bridge loop");
-
-        // Buffer for accumulating stdout chunks and parsing Content-Length frames
-        let mut stdout_buf = BytesMut::new();
-
-        loop {
-            tokio::select! {
-                // LSP server stdout -> WebSocket
-                chunk = output.next() => {
-                    match chunk {
-                        Some(Ok(msg)) => {
-                            let bytes = match msg {
-                                bollard::container::LogOutput::StdOut { message } => message,
-                                bollard::container::LogOutput::StdErr { message } => {
-                                    debug!(
-                                        session = %session_key,
-                                        stderr = %String::from_utf8_lossy(&message),
-                                        "LSP stderr"
-                                    );
-                                    continue;
-                                }
-                                _ => continue,
-                            };
-
-                            stdout_buf.extend_from_slice(&bytes);
-
-                            // Parse Content-Length framed messages from the buffer
-                            while let Some(json_msg) = extract_lsp_message(&mut stdout_buf) {
-                                if socket.send(Message::Text(json_msg.into())).await.is_err() {
-                                    break;
-                                }
-                            }
-                        }
-                        Some(Err(e)) => {
-                            warn!(session = %session_key, error = %e, "LSP output stream error");
-                            break;
-                        }
-                        None => {
-                            debug!(session = %session_key, "LSP server exited");
-                            break;
-                        }
-                    }
-                }
-
-                // WebSocket -> LSP server stdin
-                msg = socket.recv() => {
-                    match msg {
-                        Some(Ok(Message::Text(text))) => {
-                            let json_bytes = text.as_bytes();
-                            let header = format!("Content-Length: {}\r\n\r\n", json_bytes.len());
-                            if input.write_all(header.as_bytes()).await.is_err() {
-                                break;
-                            }
-                            if input.write_all(json_bytes).await.is_err() {
-                                break;
-                            }
-                            if input.flush().await.is_err() {
-                                break;
-                            }
-                        }
-                        Some(Ok(Message::Close(_))) | None => {
-                            debug!(session = %session_key, "WebSocket closed");
-                            break;
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
+        run_lsp_bridge_loop(&mut socket, &mut output, &mut input, &session_key).await;
     }
 
     // Clean up session
@@ -388,4 +435,62 @@ fn parse_content_length(headers: &str) -> Option<usize> {
 pub struct LspSession {
     pub exec_id: String,
     pub language: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytes::BytesMut;
+
+    #[test]
+    fn test_extract_lsp_message_complete_frame() {
+        let body = r#"{"id":1,"ok":1}"#;
+        let header = format!("Content-Length: {}\r\n\r\n", body.len());
+        let mut buf = BytesMut::from(format!("{header}{body}").as_str());
+        let msg = extract_lsp_message(&mut buf);
+        assert_eq!(msg.unwrap(), body);
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn test_extract_lsp_message_partial_body() {
+        let mut buf = BytesMut::from("Content-Length: 100\r\n\r\n{\"partial\"");
+        let msg = extract_lsp_message(&mut buf);
+        assert!(msg.is_none());
+        assert!(!buf.is_empty());
+    }
+
+    #[test]
+    fn test_extract_lsp_message_no_header() {
+        let mut buf = BytesMut::from("not a header");
+        let msg = extract_lsp_message(&mut buf);
+        assert!(msg.is_none());
+    }
+
+    #[test]
+    fn test_find_header_end_found() {
+        let data = b"Content-Length: 5\r\n\r\nhello";
+        assert_eq!(find_header_end(data), Some(17));
+    }
+
+    #[test]
+    fn test_find_header_end_not_found() {
+        let data = b"no header here";
+        assert!(find_header_end(data).is_none());
+    }
+
+    #[test]
+    fn test_parse_content_length_valid() {
+        assert_eq!(parse_content_length("Content-Length: 42"), Some(42));
+    }
+
+    #[test]
+    fn test_parse_content_length_missing() {
+        assert!(parse_content_length("X-Custom: value").is_none());
+    }
+
+    #[test]
+    fn test_parse_content_length_case_insensitive() {
+        assert_eq!(parse_content_length("content-length: 10"), Some(10));
+    }
 }
