@@ -1457,3 +1457,134 @@ fn test_port_health_changed_event_serialization() {
     let deserialized: CoastEvent = serde_json::from_value(json).unwrap();
     assert!(matches!(deserialized, CoastEvent::PortHealthChanged { .. }));
 }
+
+// =========================================================================
+// SSG protocol round-trip tests. See coast-ssg/DESIGN.md §7.
+// =========================================================================
+
+#[test]
+fn test_ssg_request_build_roundtrip() {
+    roundtrip_request(Request::Ssg(SsgRequest::Build {
+        file: Some(PathBuf::from("/home/user/Coastfile.shared_service_groups")),
+        working_dir: Some(PathBuf::from("/home/user/project")),
+        config: Some("[shared_services.pg]\nimage = \"postgres:16\"\n".to_string()),
+    }));
+
+    // Also round-trip the all-None variant since each field is Option.
+    roundtrip_request(Request::Ssg(SsgRequest::Build {
+        file: None,
+        working_dir: None,
+        config: None,
+    }));
+}
+
+#[test]
+fn test_ssg_request_simple_variants_roundtrip() {
+    for variant in [
+        SsgRequest::Run,
+        SsgRequest::Start,
+        SsgRequest::Stop,
+        SsgRequest::Restart,
+        SsgRequest::Ps,
+        SsgRequest::Ports,
+    ] {
+        roundtrip_request(Request::Ssg(variant));
+    }
+}
+
+#[test]
+fn test_ssg_request_rm_roundtrip() {
+    roundtrip_request(Request::Ssg(SsgRequest::Rm { with_data: false }));
+    roundtrip_request(Request::Ssg(SsgRequest::Rm { with_data: true }));
+}
+
+#[test]
+fn test_ssg_request_logs_and_exec_roundtrip() {
+    roundtrip_request(Request::Ssg(SsgRequest::Logs {
+        service: Some("postgres".to_string()),
+        tail: Some(100),
+        follow: true,
+    }));
+    roundtrip_request(Request::Ssg(SsgRequest::Logs {
+        service: None,
+        tail: None,
+        follow: false,
+    }));
+
+    roundtrip_request(Request::Ssg(SsgRequest::Exec {
+        service: Some("postgres".to_string()),
+        command: vec!["psql".to_string(), "-U".to_string(), "coast".to_string()],
+    }));
+    roundtrip_request(Request::Ssg(SsgRequest::Exec {
+        service: None,
+        command: vec!["sh".to_string()],
+    }));
+}
+
+#[test]
+fn test_ssg_request_checkout_uncheckout_roundtrip() {
+    roundtrip_request(Request::Ssg(SsgRequest::Checkout {
+        service: Some("postgres".to_string()),
+        all: false,
+    }));
+    roundtrip_request(Request::Ssg(SsgRequest::Checkout {
+        service: None,
+        all: true,
+    }));
+    roundtrip_request(Request::Ssg(SsgRequest::Uncheckout {
+        service: Some("redis".to_string()),
+        all: false,
+    }));
+    roundtrip_request(Request::Ssg(SsgRequest::Uncheckout {
+        service: None,
+        all: true,
+    }));
+}
+
+#[test]
+fn test_ssg_response_roundtrip() {
+    roundtrip_response(Response::Ssg(SsgResponse {
+        message: "SSG is running with 2 services".to_string(),
+        status: Some("running".to_string()),
+        services: vec![
+            SsgServiceInfo {
+                name: "postgres".to_string(),
+                image: "postgres:16".to_string(),
+                inner_port: 5432,
+                dynamic_host_port: 54201,
+                container_id: Some("abc123def456".to_string()),
+                status: "running".to_string(),
+            },
+            SsgServiceInfo {
+                name: "redis".to_string(),
+                image: "redis:7".to_string(),
+                inner_port: 6379,
+                dynamic_host_port: 54202,
+                container_id: None,
+                status: "running".to_string(),
+            },
+        ],
+        ports: vec![
+            SsgPortInfo {
+                service: "postgres".to_string(),
+                canonical_port: 5432,
+                dynamic_host_port: 54201,
+                checked_out: true,
+            },
+            SsgPortInfo {
+                service: "redis".to_string(),
+                canonical_port: 6379,
+                dynamic_host_port: 54202,
+                checked_out: false,
+            },
+        ],
+    }));
+
+    // Minimal response (only message set) — defaulted fields must round-trip.
+    roundtrip_response(Response::Ssg(SsgResponse {
+        message: "ok".to_string(),
+        status: None,
+        services: vec![],
+        ports: vec![],
+    }));
+}

@@ -1693,6 +1693,14 @@ async fn dispatch_request(request: Request, state: &Arc<AppState>) -> Response {
         Request::Remote(req) => handlers::handle_remote(req, state).await,
         Request::IsSafeToUpdate(req) => handlers::handle_is_safe_to_update(req, state).await,
         Request::PrepareForUpdate(req) => handlers::handle_prepare_for_update(req, state).await,
+        Request::Ssg(_) => {
+            // Phase 2 lands the real dispatcher. Types are in place so
+            // coast-ssg and coast-cli can be built against them in the
+            // meantime. See coast-ssg/DESIGN.md §16.
+            Response::Error(ErrorResponse {
+                error: "coast ssg commands are not yet implemented".to_string(),
+            })
+        }
     }
 }
 

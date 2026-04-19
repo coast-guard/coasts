@@ -287,7 +287,8 @@ pub fn request_context(req: &Request) -> (Option<&str>, Option<&str>) {
         | Request::SetAnalytics(_)
         | Request::Remote(_)
         | Request::IsSafeToUpdate(_)
-        | Request::PrepareForUpdate(_) => (None, None),
+        | Request::PrepareForUpdate(_)
+        | Request::Ssg(_) => (None, None),
         Request::Lookup(r) => (Some(&r.project), None),
         Request::RerunExtractors(r) => (Some(&r.project), None),
         Request::Run(r) => (Some(&r.project), Some(&r.name)),
@@ -505,6 +506,21 @@ pub fn request_command_name(req: &Request) -> String {
         Request::Lookup(_) => "lookup".into(),
         Request::IsSafeToUpdate(_) => "update/is_safe_to_update".into(),
         Request::PrepareForUpdate(_) => "update/prepare_for_update".into(),
+        Request::Ssg(s) => match s {
+            SsgRequest::Build { .. } => "ssg/build",
+            SsgRequest::Run => "ssg/run",
+            SsgRequest::Start => "ssg/start",
+            SsgRequest::Stop => "ssg/stop",
+            SsgRequest::Restart => "ssg/restart",
+            SsgRequest::Rm { .. } => "ssg/rm",
+            SsgRequest::Ps => "ssg/ps",
+            SsgRequest::Logs { .. } => "ssg/logs",
+            SsgRequest::Exec { .. } => "ssg/exec",
+            SsgRequest::Ports => "ssg/ports",
+            SsgRequest::Checkout { .. } => "ssg/checkout",
+            SsgRequest::Uncheckout { .. } => "ssg/uncheckout",
+        }
+        .into(),
     }
 }
 

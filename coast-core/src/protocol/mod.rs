@@ -22,6 +22,7 @@ pub mod mcp;
 pub mod query;
 pub mod remote;
 pub mod secret_shared;
+pub mod ssg;
 
 #[cfg(test)]
 mod tests;
@@ -36,6 +37,7 @@ pub use mcp::*;
 pub use query::*;
 pub use remote::*;
 pub use secret_shared::*;
+pub use ssg::*;
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -113,6 +115,8 @@ pub enum Request {
     IsSafeToUpdate(UpdateSafetyRequest),
     /// Drain mutating work and prepare the daemon for self-update.
     PrepareForUpdate(PrepareForUpdateRequest),
+    /// Manage the singleton Shared Service Group.
+    Ssg(SsgRequest),
 }
 
 /// A response from the daemon to the CLI.
@@ -208,6 +212,8 @@ pub enum Response {
     PrepareForUpdate(PrepareForUpdateResponse),
     /// Remote machine management result.
     Remote(RemoteResponse),
+    /// Shared Service Group operation result.
+    Ssg(SsgResponse),
     /// Error response.
     Error(ErrorResponse),
 }

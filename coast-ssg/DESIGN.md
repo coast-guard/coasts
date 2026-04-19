@@ -94,8 +94,8 @@ Legend: `[ ]` not started, `[~]` in progress, `[x]` done.
 - [x] Consumer Coastfile extension: `[shared_services.<name>] from_group = true`
 - [x] Conflict detection: same service name inlined and referenced
 - [x] Forbidden-field checks when `from_group = true` (no `image`, `ports`, `env`, `volumes`)
-- [ ] `SsgRequest` / `SsgResponse` enum skeletons in `coast-core/src/protocol/ssg.rs`
-- [ ] Wire new variants into `coast-core::protocol::{Request, Response}`
+- [x] `SsgRequest` / `SsgResponse` enum skeletons in `coast-core/src/protocol/ssg.rs`
+- [x] Wire new variants into `coast-core::protocol::{Request, Response}`
 - [x] Unit tests: parser happy paths + every error path
 - [x] Unit tests: consumer Coastfile `from_group` acceptance + every forbidden-field error
 
