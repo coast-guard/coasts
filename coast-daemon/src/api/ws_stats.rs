@@ -232,7 +232,27 @@ async fn run_remote_dind_collector(
     }
 }
 
-#[allow(clippy::cognitive_complexity)]
+/// Clean up collector entries only if this collector is still the active one.
+async fn cleanup_collector_if_current(
+    state: &AppState,
+    key: &str,
+    tx: &broadcast::Sender<serde_json::Value>,
+) {
+    let mut broadcasts = state.stats_broadcasts.lock().await;
+    if let Some(current_tx) = broadcasts.get(key) {
+        if current_tx.same_channel(tx) {
+            broadcasts.remove(key);
+        }
+    }
+    drop(broadcasts);
+    let mut collectors = state.stats_collectors.lock().await;
+    if let Some(handle) = collectors.get(key) {
+        if handle.is_finished() {
+            collectors.remove(key);
+        }
+    }
+}
+
 async fn run_collector(
     state: Arc<AppState>,
     container_id: String,
@@ -257,17 +277,7 @@ async fn run_collector(
         match result {
             Ok(stats) => {
                 let cs = extract_stats(&stats, &mut prev_cpu_total, &mut prev_cpu_system);
-                if let Ok(json_val) = serde_json::to_value(&cs) {
-                    {
-                        let mut history = state.stats_history.lock().await;
-                        let ring = history.entry(key.clone()).or_insert_with(VecDeque::new);
-                        if ring.len() >= HISTORY_CAP {
-                            ring.pop_front();
-                        }
-                        ring.push_back(json_val.clone());
-                    }
-                    let _ = tx.send(json_val);
-                }
+                push_dind_stats(&state.stats_history, &key, &tx, &cs).await;
             }
             Err(e) => {
                 warn!(key = %key, error = %e, "stats stream error");
@@ -277,27 +287,7 @@ async fn run_collector(
     }
 
     info!(key = %key, "background stats collector stopped");
-
-    // Only clean up if this collector's broadcast sender is still the active one.
-    // A replacement collector may have already overwritten these entries.
-    {
-        let mut broadcasts = state.stats_broadcasts.lock().await;
-        if let Some(current_tx) = broadcasts.get(&key) {
-            if current_tx.same_channel(&tx) {
-                broadcasts.remove(&key);
-            }
-        }
-    }
-    // The collectors map entry may already have been replaced; remove only
-    // if the handle for our key has finished (is_finished check).
-    {
-        let mut collectors = state.stats_collectors.lock().await;
-        if let Some(handle) = collectors.get(&key) {
-            if handle.is_finished() {
-                collectors.remove(&key);
-            }
-        }
-    }
+    cleanup_collector_if_current(&state, &key, &tx).await;
 }
 
 // ---------------------------------------------------------------------------
@@ -361,24 +351,56 @@ async fn ws_handler(
     Ok(ws.on_upgrade(move |socket| handle_stats_socket(socket, state, key)))
 }
 
-#[allow(clippy::cognitive_complexity)]
-async fn handle_stats_socket(mut socket: WebSocket, state: Arc<AppState>, key: String) {
-    debug!(key = %key, "stats WS connected");
-
-    // Send buffered history
-    {
-        let history = state.stats_history.lock().await;
-        if let Some(ring) = history.get(&key) {
-            for val in ring.iter() {
-                let json_str = val.to_string();
-                if socket.send(Message::Text(json_str.into())).await.is_err() {
-                    return;
-                }
+/// Send buffered history to a newly connected WebSocket client.
+async fn replay_stats_history(socket: &mut WebSocket, state: &AppState, key: &str) -> bool {
+    let history = state.stats_history.lock().await;
+    if let Some(ring) = history.get(key) {
+        for val in ring.iter() {
+            if socket
+                .send(Message::Text(val.to_string().into()))
+                .await
+                .is_err()
+            {
+                return false;
             }
         }
     }
+    true
+}
 
-    // Subscribe to live broadcast
+/// Forward a broadcast stats value to the WebSocket client.
+async fn forward_stats_broadcast(
+    socket: &mut WebSocket,
+    result: Result<serde_json::Value, broadcast::error::RecvError>,
+    key: &str,
+) -> std::ops::ControlFlow<()> {
+    match result {
+        Ok(val) => {
+            if socket
+                .send(Message::Text(val.to_string().into()))
+                .await
+                .is_err()
+            {
+                std::ops::ControlFlow::Break(())
+            } else {
+                std::ops::ControlFlow::Continue(())
+            }
+        }
+        Err(broadcast::error::RecvError::Lagged(n)) => {
+            warn!(key = %key, skipped = n, "stats WS lagged");
+            std::ops::ControlFlow::Continue(())
+        }
+        Err(broadcast::error::RecvError::Closed) => std::ops::ControlFlow::Break(()),
+    }
+}
+
+async fn handle_stats_socket(mut socket: WebSocket, state: Arc<AppState>, key: String) {
+    debug!(key = %key, "stats WS connected");
+
+    if !replay_stats_history(&mut socket, &state, &key).await {
+        return;
+    }
+
     let mut rx = {
         let broadcasts = state.stats_broadcasts.lock().await;
         match broadcasts.get(&key) {
@@ -395,17 +417,8 @@ async fn handle_stats_socket(mut socket: WebSocket, state: Arc<AppState>, key: S
     loop {
         tokio::select! {
             result = rx.recv() => {
-                match result {
-                    Ok(val) => {
-                        let json_str = val.to_string();
-                        if socket.send(Message::Text(json_str.into())).await.is_err() {
-                            break;
-                        }
-                    }
-                    Err(broadcast::error::RecvError::Lagged(n)) => {
-                        warn!(key = %key, skipped = n, "stats WS lagged");
-                    }
-                    Err(broadcast::error::RecvError::Closed) => break,
+                if forward_stats_broadcast(&mut socket, result, &key).await.is_break() {
+                    break;
                 }
             }
             msg = socket.recv() => {
@@ -589,5 +602,42 @@ mod tests {
         apply_proc_overlay(&mut cs, output);
         assert_eq!(cs.cpu_percent, 42.5);
         assert_eq!(cs.pids, 7);
+    }
+
+    // --- push_dind_stats tests ---
+
+    #[tokio::test]
+    async fn test_push_dind_stats_inserts_and_broadcasts() {
+        let history = tokio::sync::Mutex::new(std::collections::HashMap::<
+            String,
+            VecDeque<serde_json::Value>,
+        >::new());
+        let (tx, mut rx) = broadcast::channel(16);
+        let cs = blank_stats();
+
+        push_dind_stats(&history, "key1", &tx, &cs).await;
+
+        let h = history.lock().await;
+        assert_eq!(h.get("key1").unwrap().len(), 1);
+        drop(h);
+        assert!(rx.recv().await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_push_dind_stats_evicts_at_cap() {
+        let history = tokio::sync::Mutex::new(std::collections::HashMap::<
+            String,
+            VecDeque<serde_json::Value>,
+        >::new());
+        let (tx, _rx) = broadcast::channel(16);
+        let cs = blank_stats();
+
+        for _ in 0..HISTORY_CAP {
+            push_dind_stats(&history, "k", &tx, &cs).await;
+        }
+        push_dind_stats(&history, "k", &tx, &cs).await;
+
+        let h = history.lock().await;
+        assert_eq!(h.get("k").unwrap().len(), HISTORY_CAP);
     }
 }
