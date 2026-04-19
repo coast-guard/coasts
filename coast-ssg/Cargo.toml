@@ -1,0 +1,31 @@
+[package]
+name = "coast-ssg"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+coast-core = { path = "../coast-core" }
+coast-docker = { path = "../coast-docker" }
+coast-secrets = { path = "../coast-secrets" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+bollard = { workspace = true }
+async-trait = { workspace = true }
+dirs = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+futures-util = { workspace = true }
+serde_yaml = { workspace = true }
+chrono = { workspace = true }
+rusqlite = { workspace = true }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+tempfile = { workspace = true }
