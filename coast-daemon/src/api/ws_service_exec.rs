@@ -236,7 +236,94 @@ async fn resolve_inner_container(
     None
 }
 
-#[allow(clippy::cognitive_complexity)]
+/// Send an error message over the WebSocket.
+async fn send_ws_error(socket: &mut WebSocket, message: impl Into<String>) {
+    let _ = socket.send(Message::Text(message.into().into())).await;
+}
+
+/// Open a PTY for a service exec session, returning the master fd and child pid.
+async fn open_pty_for_service(
+    socket: &mut WebSocket,
+    container_id: &str,
+    inner_container: &str,
+) -> Option<(std::os::fd::OwnedFd, i32)> {
+    let cid = container_id.to_string();
+    let inner = inner_container.to_string();
+    let pty_result = tokio::task::spawn_blocking(move || open_service_exec_pty(&cid, &inner)).await;
+
+    match pty_result {
+        Ok(Ok(result)) => Some(result),
+        Ok(Err(e)) => {
+            send_ws_error(socket, format!("Failed to open service exec PTY: {e}")).await;
+            None
+        }
+        Err(e) => {
+            send_ws_error(socket, format!("PTY task panicked: {e}")).await;
+            None
+        }
+    }
+}
+
+/// Push bytes into the scrollback ring buffer, evicting oldest bytes at capacity.
+async fn push_to_scrollback(scrollback: &Mutex<VecDeque<u8>>, chunk: &[u8]) {
+    let mut sb = scrollback.lock().await;
+    for &b in chunk {
+        if sb.len() >= SCROLLBACK_CAP {
+            sb.pop_front();
+        }
+        sb.push_back(b);
+    }
+}
+
+/// Spawn the background PTY reader task that pushes output into scrollback + broadcast.
+fn spawn_pty_reader(
+    state: Arc<AppState>,
+    sid: String,
+    read_fd: i32,
+    scrollback: Arc<Mutex<VecDeque<u8>>>,
+    output_tx: broadcast::Sender<Vec<u8>>,
+) {
+    tokio::spawn(async move {
+        let mut read_file =
+            tokio::fs::File::from_std(unsafe { std::fs::File::from_raw_fd(read_fd) });
+        let mut buf = [0u8; 4096];
+        loop {
+            match read_file.read(&mut buf).await {
+                Ok(0) => break,
+                Ok(n) => {
+                    let chunk = buf[..n].to_vec();
+                    push_to_scrollback(&scrollback, &chunk).await;
+                    let _ = output_tx.send(chunk);
+                }
+                Err(_) => break,
+            }
+        }
+        let mut sessions = state.service_exec_sessions.lock().await;
+        sessions.remove(&sid);
+        debug!(session_id = %sid, "service exec session ended");
+    });
+}
+
+/// Resolve the inner container and open a PTY, sending errors over the socket on failure.
+async fn resolve_and_open_pty(
+    socket: &mut WebSocket,
+    state: &AppState,
+    container_id: &str,
+    project: &str,
+    service: &str,
+) -> Option<(String, std::os::fd::OwnedFd, i32)> {
+    let docker = state.docker.as_ref()?;
+
+    let inner_container = resolve_inner_container(&docker, container_id, project, service).await?;
+
+    debug!(inner_container = %inner_container, "resolved inner container for service exec");
+
+    let (master_fd, child_pid) =
+        open_pty_for_service(socket, container_id, &inner_container).await?;
+
+    Some((inner_container, master_fd, child_pid))
+}
+
 async fn handle_ws(
     mut socket: WebSocket,
     state: Arc<AppState>,
@@ -256,58 +343,28 @@ async fn handle_ws(
     }
 
     let composite_key = format!("{project}:{name}:{service}");
-
     let sid = uuid::Uuid::new_v4().to_string();
     debug!(session_id = %sid, container = %container_id, service = %service, "creating new service exec session");
 
-    let Some(docker) = state.docker.as_ref() else {
+    if state.docker.is_none() {
         let lang = state.language();
-        let _ = socket
-            .send(Message::Text(
-                t!("error.docker_not_available", locale = &lang)
-                    .to_string()
-                    .into(),
-            ))
-            .await;
+        send_ws_error(
+            &mut socket,
+            t!("error.docker_not_available", locale = &lang).to_string(),
+        )
+        .await;
         return;
-    };
+    }
 
-    let Some(inner_container) =
-        resolve_inner_container(&docker, &container_id, &project, &service).await
+    let Some((_inner, master_fd, child_pid)) =
+        resolve_and_open_pty(&mut socket, &state, &container_id, &project, &service).await
     else {
-        let _ = socket
-            .send(Message::Text(
-                format!("Could not find running container for service '{service}'").into(),
-            ))
-            .await;
+        send_ws_error(
+            &mut socket,
+            format!("Could not find running container for service '{service}'"),
+        )
+        .await;
         return;
-    };
-
-    debug!(inner_container = %inner_container, "resolved inner container for service exec");
-
-    let pty_result = tokio::task::spawn_blocking({
-        let cid = container_id.clone();
-        let inner = inner_container.clone();
-        move || open_service_exec_pty(&cid, &inner)
-    })
-    .await;
-
-    let (master_fd, child_pid) = match pty_result {
-        Ok(Ok(result)) => result,
-        Ok(Err(e)) => {
-            let _ = socket
-                .send(Message::Text(
-                    format!("Failed to open service exec PTY: {e}").into(),
-                ))
-                .await;
-            return;
-        }
-        Err(e) => {
-            let _ = socket
-                .send(Message::Text(format!("PTY task panicked: {e}").into()))
-                .await;
-            return;
-        }
     };
 
     let read_fd = master_fd.as_raw_fd();
@@ -331,39 +388,13 @@ async fn handle_ws(
         sessions.insert(sid.clone(), session);
     }
 
-    tokio::spawn({
-        let scrollback = scrollback.clone();
-        let output_tx = output_tx.clone();
-        let sid = sid.clone();
-        let state = state.clone();
-        async move {
-            let mut read_file =
-                tokio::fs::File::from_std(unsafe { std::fs::File::from_raw_fd(read_fd) });
-            let mut buf = [0u8; 4096];
-            loop {
-                match read_file.read(&mut buf).await {
-                    Ok(0) => break,
-                    Ok(n) => {
-                        let chunk = buf[..n].to_vec();
-                        {
-                            let mut sb = scrollback.lock().await;
-                            for &b in &chunk {
-                                if sb.len() >= SCROLLBACK_CAP {
-                                    sb.pop_front();
-                                }
-                                sb.push_back(b);
-                            }
-                        }
-                        let _ = output_tx.send(chunk);
-                    }
-                    Err(_) => break,
-                }
-            }
-            let mut sessions = state.service_exec_sessions.lock().await;
-            sessions.remove(&sid);
-            debug!(session_id = %sid, "service exec session ended");
-        }
-    });
+    spawn_pty_reader(
+        state.clone(),
+        sid.clone(),
+        read_fd,
+        scrollback.clone(),
+        output_tx.clone(),
+    );
 
     let init_msg = serde_json::to_string(&TerminalSessionInit {
         session_id: sid.clone(),
@@ -672,5 +703,45 @@ fn resize_pty(master_fd: i32, cols: u16, rows: u16) {
     };
     unsafe {
         libc::ioctl(master_fd, libc::TIOCSWINSZ, &ws);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_push_to_scrollback_basic() {
+        let scrollback = Mutex::new(VecDeque::new());
+        push_to_scrollback(&scrollback, b"hello").await;
+        let sb = scrollback.lock().await;
+        assert_eq!(sb.len(), 5);
+        assert_eq!(&sb.iter().copied().collect::<Vec<u8>>(), b"hello");
+    }
+
+    #[tokio::test]
+    async fn test_push_to_scrollback_multiple_chunks() {
+        let scrollback = Mutex::new(VecDeque::new());
+        push_to_scrollback(&scrollback, b"abc").await;
+        push_to_scrollback(&scrollback, b"def").await;
+        let sb = scrollback.lock().await;
+        assert_eq!(sb.len(), 6);
+        assert_eq!(&sb.iter().copied().collect::<Vec<u8>>(), b"abcdef");
+    }
+
+    #[tokio::test]
+    async fn test_push_to_scrollback_evicts_at_capacity() {
+        let scrollback = Mutex::new(VecDeque::new());
+        // Fill to capacity
+        let data = vec![b'x'; SCROLLBACK_CAP];
+        push_to_scrollback(&scrollback, &data).await;
+        assert_eq!(scrollback.lock().await.len(), SCROLLBACK_CAP);
+
+        // Push one more byte — oldest should be evicted
+        push_to_scrollback(&scrollback, b"y").await;
+        let sb = scrollback.lock().await;
+        assert_eq!(sb.len(), SCROLLBACK_CAP);
+        assert_eq!(*sb.back().unwrap(), b'y');
+        assert_eq!(*sb.front().unwrap(), b'x'); // second 'x' (first was evicted)
     }
 }
