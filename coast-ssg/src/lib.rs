@@ -40,8 +40,9 @@ pub mod build;
 // TODO(ssg-phase-3): Singleton DinD runtime (see DESIGN.md §9).
 pub mod runtime;
 
-// TODO(ssg-phase-2 / 3): StateDb extension trait for SSG rows (see DESIGN.md §8).
+// ssg-phase-2: StateDb extension trait for SSG rows (see DESIGN.md §8).
 pub mod state;
+pub use state::{SsgPortCheckoutRecord, SsgRecord, SsgServiceRecord, SsgStateExt};
 
 // TODO(ssg-phase-2): Filesystem path helpers (`~/.coast/ssg/...`).
 pub mod paths;

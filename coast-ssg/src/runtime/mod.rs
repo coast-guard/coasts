@@ -17,8 +17,8 @@
 // TODO(ssg-phase-3): SsgRuntime + lifecycle verbs.
 mod lifecycle;
 
-// TODO(ssg-phase-3): synthesize inner compose.yml from SsgCoastfile.
-mod compose_synth;
+// ssg-phase-2: synthesize inner compose.yml from SsgCoastfile.
+pub mod compose_synth;
 
 // TODO(ssg-phase-3): symmetric-path bind mount translation (see DESIGN.md §10.2).
 mod bind_mounts;

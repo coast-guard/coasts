@@ -18,6 +18,7 @@ pub(crate) use ports::PortAllocationRecord;
 pub mod remotes;
 mod settings;
 mod shared_services;
+mod ssg;
 mod user_config;
 
 use std::path::Path;
@@ -159,6 +160,29 @@ impl StateDb {
                     ssh_key TEXT,
                     sync_strategy TEXT NOT NULL DEFAULT 'rsync',
                     created_at TEXT NOT NULL
+                );
+
+                -- Shared Service Group (SSG) singleton. See coast-ssg/DESIGN.md §8.
+                CREATE TABLE IF NOT EXISTS ssg (
+                    id              INTEGER PRIMARY KEY CHECK (id = 1),
+                    container_id    TEXT,
+                    status          TEXT NOT NULL,
+                    build_id        TEXT,
+                    created_at      TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS ssg_services (
+                    service_name        TEXT PRIMARY KEY,
+                    container_port      INTEGER NOT NULL,
+                    dynamic_host_port   INTEGER NOT NULL,
+                    status              TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS ssg_port_checkouts (
+                    canonical_port  INTEGER PRIMARY KEY,
+                    service_name    TEXT NOT NULL,
+                    socat_pid       INTEGER,
+                    created_at      TEXT NOT NULL
                 );
                 ",
             )

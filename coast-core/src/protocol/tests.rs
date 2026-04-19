@@ -1542,6 +1542,19 @@ fn test_ssg_request_checkout_uncheckout_roundtrip() {
 }
 
 #[test]
+fn test_ssg_progress_response_roundtrip() {
+    roundtrip_response(Response::SsgProgress(BuildProgressEvent::started(
+        "Pull postgres:16",
+        4,
+        7,
+    )));
+    roundtrip_response(Response::SsgProgress(BuildProgressEvent::done(
+        "Pull postgres:16",
+        "ok",
+    )));
+}
+
+#[test]
 fn test_ssg_response_roundtrip() {
     roundtrip_response(Response::Ssg(SsgResponse {
         message: "SSG is running with 2 services".to_string(),

@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use tracing::{info, warn};
 
-use coast_core::error::{CoastError, Result};
+use coast_core::error::Result;
 
 pub(super) fn shell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
@@ -118,71 +118,18 @@ pub(super) fn parse_ttl_to_seconds(s: &str) -> Option<i64> {
 }
 
 /// Pull a Docker image and save it as a tarball in the cache directory.
+///
+/// Thin delegator to
+/// [`coast_docker::image_cache::pull_and_cache_image`]. The
+/// implementation lives in `coast-docker` so both `coast-daemon` and
+/// `coast-ssg` can share it without `coast-ssg` having to depend on
+/// `coast-daemon` (which would create a cycle).
 pub(super) async fn pull_and_cache_image(
     docker: &bollard::Docker,
     image: &str,
     cache_dir: &Path,
 ) -> Result<PathBuf> {
-    use bollard::image::CreateImageOptions;
-    use futures_util::StreamExt;
-
-    let (name, tag) = if let Some(pos) = image.rfind(':') {
-        (&image[..pos], &image[pos + 1..])
-    } else {
-        (image, "latest")
-    };
-
-    info!(image = %image, "pulling image for cache");
-
-    let options = CreateImageOptions {
-        from_image: name,
-        tag,
-        ..Default::default()
-    };
-
-    let mut stream = docker.create_image(Some(options), None, None);
-    while let Some(result) = stream.next().await {
-        match result {
-            Ok(info) => {
-                if let Some(status) = info.status {
-                    tracing::debug!(status = %status, "pull progress");
-                }
-            }
-            Err(error) => {
-                return Err(CoastError::docker(format!(
-                    "failed to pull image '{}': {}",
-                    image, error
-                )));
-            }
-        }
-    }
-
-    let safe_name = image.replace(['/', ':'], "_");
-    let tarball_path = cache_dir.join(format!("{safe_name}.tar"));
-
-    let mut export_stream = docker.export_image(image);
-    let mut tarball_data = Vec::new();
-    while let Some(chunk) = export_stream.next().await {
-        match chunk {
-            Ok(bytes) => tarball_data.extend_from_slice(&bytes),
-            Err(error) => {
-                return Err(CoastError::docker(format!(
-                    "failed to export image '{}': {}",
-                    image, error
-                )));
-            }
-        }
-    }
-
-    std::fs::write(&tarball_path, &tarball_data).map_err(|error| CoastError::Io {
-        message: format!("failed to write image tarball: {error}"),
-        path: tarball_path.clone(),
-        source: Some(error),
-    })?;
-
-    info!(image = %image, path = %tarball_path.display(), "image cached");
-
-    Ok(tarball_path)
+    coast_docker::image_cache::pull_and_cache_image(docker, image, cache_dir).await
 }
 
 #[cfg(test)]

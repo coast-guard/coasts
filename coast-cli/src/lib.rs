@@ -118,6 +118,9 @@ pub enum Commands {
     /// Manage shared services.
     #[command(name = "shared-services")]
     SharedServices(commands::shared::SharedArgs),
+    /// Manage the singleton Shared Service Group (SSG).
+    #[command(name = "ssg", alias = "shared-service-group")]
+    Ssg(commands::ssg::SsgArgs),
     /// Manage per-instance secret overrides.
     Secret(commands::secret::SecretArgs),
     /// Stream logs from a coast instance.
@@ -305,6 +308,7 @@ async fn dispatch_project_command(cmd: Commands, project_flag: &Option<String>) 
             commands::rerun_extractors::execute(&args, &project).await
         }
         Commands::SharedServices(args) => commands::shared::execute(&args, &project).await,
+        Commands::Ssg(args) => commands::ssg::execute(&args).await,
         Commands::Secret(args) => commands::secret::execute(&args, &project).await,
         Commands::Logs(args) => commands::logs::execute(&args, &project).await,
         Commands::Ps(args) => commands::ps::execute(&args, &project).await,

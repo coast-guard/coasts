@@ -36,6 +36,7 @@ pub mod search_docs;
 pub mod secret;
 pub mod shared;
 pub mod skills_prompt;
+pub mod ssg;
 pub mod start;
 pub mod stop;
 pub mod ui;
@@ -299,6 +300,9 @@ async fn send_build_request_to(
                 on_progress(event);
             }
             Response::RerunExtractorsProgress(ref event) => {
+                on_progress(event);
+            }
+            Response::SsgProgress(ref event) => {
                 on_progress(event);
             }
             _ => {

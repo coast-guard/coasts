@@ -458,6 +458,7 @@ dependencies = [
  "coast-docker",
  "coast-i18n",
  "coast-secrets",
+ "coast-ssg",
  "coast-update",
  "dirs",
  "futures-util",

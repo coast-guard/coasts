@@ -42,6 +42,20 @@ These apply to every SSG PR without exception. Violations block merge.
    errors on the base branch, they are tracked separately. SSG code
    never adds new ones, but also never suppresses them to make
    `make lint` pass.
+5. **Plan deviations MUST be reflected in this design doc.** If
+   implementation diverges from the attached plan for any reason
+   (crate boundaries, API shape, file location, dependency edges,
+   etc.), the agent performing the implementation MUST update this
+   DESIGN.md in the same PR to:
+   - Describe the deviation in the relevant section so future code
+     and agents see the current truth, not the stale plan intent.
+   - Add a short "why we deviated" entry to §17 Open Questions
+     (marked SETTLED) or §18 Risks as appropriate, including the
+     original plan intent and the replacement decision.
+
+   Plans are disposable once executed; this doc is the long-term
+   source of truth. A deviation that is only documented in the plan
+   file is not documented.
 
 ## Table of contents
 
@@ -100,14 +114,14 @@ Legend: `[ ]` not started, `[~]` in progress, `[x]` done.
 - [x] Unit tests: consumer Coastfile `from_group` acceptance + every forbidden-field error
 
 ### Phase 2 — SSG build
-- [ ] `coast ssg build` end to end (parse, pull images, cache tarballs, write artifact, flip `latest`, prune)
-- [ ] `coast ssg ps` reading artifact metadata only (no running container)
-- [ ] State DB migration: `ssg`, `ssg_services`, `ssg_port_checkouts` tables
-- [ ] `SsgStateExt` trait implemented on `coast-daemon::state::StateDb`
-- [ ] Integration test: `test_ssg_build_minimal`
-- [ ] Integration test: `test_ssg_build_multiple_services`
-- [ ] Integration test: `test_ssg_build_rebuild_prunes`
-- [ ] Unit tests: manifest round-trip, image cache path resolution
+- [x] `coast ssg build` end to end (parse, pull images, cache tarballs, write artifact, flip `latest`, prune)
+- [x] `coast ssg ps` reading artifact metadata only (no running container)
+- [x] State DB migration: `ssg`, `ssg_services`, `ssg_port_checkouts` tables
+- [x] `SsgStateExt` trait implemented on `coast-daemon::state::StateDb`
+- [x] Integration test: `test_ssg_build_minimal`
+- [x] Integration test: `test_ssg_build_multiple_services`
+- [x] Integration test: `test_ssg_build_rebuild_prunes`
+- [x] Unit tests: manifest round-trip, image cache path resolution
 
 ### Phase 3 — SSG run / stop / start / restart / rm
 - [ ] SSG singleton DinD creation via `coast-docker::DindRuntime`
@@ -326,6 +340,16 @@ coast-service/                       <-- unchanged. Does NOT depend on coast-ssg
   deliberate constraint: remote coasts reach the SSG via the
   pre-existing `SharedServicePortForward` protocol, and the SSG is
   local-only by construction (see §20).
+- **Shared Docker helpers live in `coast-docker`, not `coast-core`.**
+  `coast-core` intentionally has no `bollard` dependency (keeps types /
+  protocol / coastfile parsing free of Docker's transitive dep graph).
+  Any helper that both `coast-daemon` and `coast-ssg` need and that
+  takes a `&bollard::Docker` goes into `coast-docker`. Concrete
+  example: `coast_docker::image_cache::pull_and_cache_image` (Phase 2
+  landed this lift from `coast-daemon/src/handlers/build/utils.rs`;
+  the daemon now delegates to the `coast-docker` copy). If you find
+  yourself wanting to add `bollard` to `coast-core`, stop and put the
+  code in `coast-docker` instead.
 
 ### 4.2 LLM-discoverability rules
 
@@ -623,8 +647,12 @@ Notes:
 ### 9.1 `coast ssg build`
 
 1. Parse the SSG Coastfile via `coast-ssg/src/coastfile/`.
-2. For each service: pull the image (reuse `~/.coast/image-cache/`),
-   record metadata in the manifest.
+2. For each service: pull the image via
+   `coast_docker::image_cache::pull_and_cache_image` into the shared
+   `~/.coast/image-cache/` pool, record metadata in the manifest. The
+   helper is shared with the regular `coast build` pipeline so the
+   tarball naming convention is identical and cache hits from either
+   side speed up the other (see §4.1).
 3. Write `~/.coast/ssg/builds/{build_id}/`:
    - `manifest.json`
    - `ssg-coastfile.toml` (parsed + interpolated)
@@ -1079,6 +1107,16 @@ tracks state across sessions.
 9. **Pinning a consumer coast to an older SSG build** — `coast ssg
    checkout-build <id>` mentioned in §6.1 as a future convenience. Not
    in v1; v1 requires `coast build` to pick up SSG changes.
+10. (SETTLED — Phase 2) **Home for shared Docker helpers.** Original
+    plan wanted to lift `pull_and_cache_image` from `coast-daemon` into
+    `coast-core` so `coast-ssg` could reuse it. This was changed to
+    lift into `coast-docker` instead because `coast-core` has no
+    `bollard` dependency and taking one would propagate Docker's
+    transitive deps (~40 crates) into every consumer of
+    `coast-core` — including `coast-cli`, which talks to the daemon
+    over a socket and should not pull Docker. `coast-docker` already
+    owns Docker primitives and was the topologically correct home.
+    Future shared Docker helpers follow this same rule (§4.1).
 
 ## 18. Risks
 

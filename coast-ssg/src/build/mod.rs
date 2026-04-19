@@ -12,8 +12,13 @@
 //! - [`artifact`] — manifest + on-disk artifact structure.
 //! - [`images`] — image resolution, pulls, tarball caching.
 
-// TODO(ssg-phase-2): SsgBuildArtifact, SsgManifest, build_ssg() entrypoint.
-mod artifact;
+// ssg-phase-2: SsgManifest, write_artifact, flip_latest, auto_prune.
+pub mod artifact;
 
-// TODO(ssg-phase-2): image resolution + pull + tarball cache helpers.
-mod images;
+// ssg-phase-2: image resolution + pull + tarball cache helpers.
+pub mod images;
+
+pub use artifact::{
+    auto_prune, build_manifest, coastfile_hash_for, compute_build_id, flip_latest, write_artifact,
+    SsgManifest, SsgManifestService,
+};

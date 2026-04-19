@@ -351,3 +351,17 @@ tests:
   test_working_dir:
     script: integrated-examples/test_working_dir.sh
     timeout: 300
+
+  # --- Shared Service Groups (coast-ssg) — Phase 2 ---
+  test_ssg_build_minimal:
+    script: integrated-examples/test_ssg_build_minimal.sh
+    timeout: 300
+    note: "coast ssg build with one service + artifact layout assertions"
+  test_ssg_build_multiple_services:
+    script: integrated-examples/test_ssg_build_multiple_services.sh
+    timeout: 300
+    note: "coast ssg build with postgres + redis, sorted manifest"
+  test_ssg_build_rebuild_prunes:
+    script: integrated-examples/test_ssg_build_rebuild_prunes.sh
+    timeout: 300
+    note: "6 consecutive coast ssg builds -> auto_prune keeps 5"

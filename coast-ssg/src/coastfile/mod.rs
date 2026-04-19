@@ -219,6 +219,101 @@ impl SsgCoastfile {
             auto_create_db: raw.auto_create_db,
         })
     }
+
+    /// Serialize back to the accepted `Coastfile.shared_service_groups`
+    /// schema as a string.
+    ///
+    /// Used by the build artifact writer
+    /// (`coast-ssg/src/build/artifact.rs`) to snapshot the
+    /// post-interpolation, post-validation Coastfile into the build
+    /// directory so `coast ssg run` has a stable input to consume. The
+    /// output parses back via [`Self::parse`] (round-trip tested).
+    pub fn to_standalone_toml(&self) -> String {
+        let mut out = String::new();
+
+        out.push_str("[ssg]\n");
+        out.push_str(&format!(
+            "runtime = {}\n",
+            toml_quote(self.section.runtime.as_str())
+        ));
+
+        for svc in &self.services {
+            out.push('\n');
+            out.push_str(&format!("[shared_services.{}]\n", toml_key(&svc.name)));
+            out.push_str(&format!("image = {}\n", toml_quote(&svc.image)));
+
+            if !svc.ports.is_empty() {
+                let ports = svc
+                    .ports
+                    .iter()
+                    .map(u16::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                out.push_str(&format!("ports = [{ports}]\n"));
+            }
+
+            if !svc.volumes.is_empty() {
+                let volumes = svc
+                    .volumes
+                    .iter()
+                    .map(|v| toml_quote(&format_volume_entry(v)))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                out.push_str(&format!("volumes = [{volumes}]\n"));
+            }
+
+            if !svc.env.is_empty() {
+                let mut pairs: Vec<_> = svc.env.iter().collect();
+                pairs.sort_by_key(|(k, _)| k.as_str());
+                let rendered = pairs
+                    .iter()
+                    .map(|(k, v)| format!("{} = {}", toml_key(k), toml_quote(v)))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                out.push_str(&format!("env = {{ {rendered} }}\n"));
+            }
+
+            if svc.auto_create_db {
+                out.push_str("auto_create_db = true\n");
+            }
+        }
+
+        out
+    }
+}
+
+/// Format an `SsgVolumeEntry` back into its `"source:target"` string form.
+fn format_volume_entry(entry: &SsgVolumeEntry) -> String {
+    match entry {
+        SsgVolumeEntry::HostBindMount {
+            host_path,
+            container_path,
+        } => format!("{}:{}", host_path.display(), container_path.display()),
+        SsgVolumeEntry::InnerNamedVolume {
+            name,
+            container_path,
+        } => format!("{}:{}", name, container_path.display()),
+    }
+}
+
+/// Produce a TOML-safe quoted string value. Mirrors the escaping used
+/// by [`coast_core::coastfile::serializer`].
+fn toml_quote(s: &str) -> String {
+    format!("{:?}", s)
+}
+
+/// Emit a bare TOML key when the input is alphanumeric / `_` / `-`,
+/// otherwise quote it.
+fn toml_key(key: &str) -> String {
+    if !key.is_empty()
+        && key
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
+    {
+        key.to_string()
+    } else {
+        toml_quote(key)
+    }
 }
 
 /// Parse and classify a single volume entry string.
@@ -883,5 +978,149 @@ ports = [5432]
         assert!(!is_valid_docker_volume_name(".leading.dot"));
         assert!(!is_valid_docker_volume_name("has space"));
         assert!(!is_valid_docker_volume_name("has/slash"));
+    }
+
+    // -----------------------------------------------------------
+    // to_standalone_toml round-trip
+    // -----------------------------------------------------------
+
+    fn roundtrip(input: &str) -> SsgCoastfile {
+        let cf = parse(input).unwrap();
+        let serialized = cf.to_standalone_toml();
+        SsgCoastfile::parse(&serialized, Path::new("/tmp/ssg-test"))
+            .unwrap_or_else(|e| panic!("reparse failed: {e}\n---\n{serialized}"))
+    }
+
+    #[test]
+    fn round_trip_minimal() {
+        let reparsed = roundtrip(
+            r#"
+[shared_services.postgres]
+image = "postgres:16"
+"#,
+        );
+        assert_eq!(reparsed.services.len(), 1);
+        assert_eq!(reparsed.services[0].name, "postgres");
+        assert_eq!(reparsed.services[0].image, "postgres:16");
+        assert!(reparsed.services[0].ports.is_empty());
+    }
+
+    #[test]
+    fn round_trip_multi_service_keeps_sort_order() {
+        let reparsed = roundtrip(
+            r#"
+[ssg]
+runtime = "dind"
+
+[shared_services.zeta]
+image = "zeta:1"
+ports = [9000]
+
+[shared_services.alpha]
+image = "alpha:1"
+"#,
+        );
+        let names: Vec<&str> = reparsed.services.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, vec!["alpha", "zeta"]);
+    }
+
+    #[test]
+    fn round_trip_host_bind_volume() {
+        let reparsed = roundtrip(
+            r#"
+[shared_services.postgres]
+image = "postgres:16"
+volumes = ["/var/coast-data/pg:/var/lib/postgresql/data"]
+"#,
+        );
+        match &reparsed.services[0].volumes[0] {
+            SsgVolumeEntry::HostBindMount {
+                host_path,
+                container_path,
+            } => {
+                assert_eq!(host_path, Path::new("/var/coast-data/pg"));
+                assert_eq!(container_path, Path::new("/var/lib/postgresql/data"));
+            }
+            other => panic!("expected HostBindMount, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn round_trip_inner_named_volume() {
+        let reparsed = roundtrip(
+            r#"
+[shared_services.postgres]
+image = "postgres:16"
+volumes = ["pg_wal:/var/lib/postgresql/wal"]
+"#,
+        );
+        match &reparsed.services[0].volumes[0] {
+            SsgVolumeEntry::InnerNamedVolume {
+                name,
+                container_path,
+            } => {
+                assert_eq!(name, "pg_wal");
+                assert_eq!(container_path, Path::new("/var/lib/postgresql/wal"));
+            }
+            other => panic!("expected InnerNamedVolume, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn round_trip_env_preserves_string_values() {
+        let reparsed = roundtrip(
+            r#"
+[shared_services.postgres]
+image = "postgres:16"
+env = { POSTGRES_USER = "coast", POSTGRES_PASSWORD = "secret" }
+"#,
+        );
+        let env = &reparsed.services[0].env;
+        assert_eq!(env.get("POSTGRES_USER").map(String::as_str), Some("coast"));
+        assert_eq!(
+            env.get("POSTGRES_PASSWORD").map(String::as_str),
+            Some("secret")
+        );
+    }
+
+    #[test]
+    fn round_trip_env_coerced_scalars_survive_as_strings() {
+        // Reparsing the serializer output, the re-serialized values are
+        // strings (since we coerced ints/bools/floats on first parse).
+        // Ensure the second parse still succeeds.
+        let reparsed = roundtrip(
+            r#"
+[shared_services.redis]
+image = "redis:7"
+env = { COUNT = 42, FLAG = true, RATIO = 3.5 }
+"#,
+        );
+        let env = &reparsed.services[0].env;
+        assert_eq!(env.get("COUNT").map(String::as_str), Some("42"));
+        assert_eq!(env.get("FLAG").map(String::as_str), Some("true"));
+        assert_eq!(env.get("RATIO").map(String::as_str), Some("3.5"));
+    }
+
+    #[test]
+    fn round_trip_auto_create_db() {
+        let reparsed = roundtrip(
+            r#"
+[shared_services.postgres]
+image = "postgres:16"
+auto_create_db = true
+"#,
+        );
+        assert!(reparsed.services[0].auto_create_db);
+    }
+
+    #[test]
+    fn round_trip_runtime_defaults_to_dind_when_absent() {
+        let reparsed = roundtrip(
+            r#"
+[shared_services.pg]
+image = "postgres:16"
+"#,
+        );
+        assert_eq!(reparsed.section.runtime, RuntimeType::Dind);
     }
 }

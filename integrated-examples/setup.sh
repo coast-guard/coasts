@@ -1790,5 +1790,74 @@ setup_coast_working_dir() {
 
 setup_coast_working_dir
 
+# --- coast-ssg-minimal ---
+# Minimal Shared Service Group: one postgres service with `*-alpine`
+# image for fast pulls in CI. No host bind mounts (uses inner named
+# volume) so the test doesn't depend on external filesystem state.
+# Used by `test_ssg_build_minimal.sh`.
+
+setup_coast_ssg_minimal() {
+    local dir="$PROJECTS_DIR/coast-ssg-minimal"
+    echo "Setting up coast-ssg-minimal..."
+    mkdir -p "$dir"
+    rm -rf "$dir/.git"
+
+    cat > "$dir/Coastfile.shared_service_groups" << 'SSG_MINIMAL_EOF'
+[ssg]
+runtime = "dind"
+
+[shared_services.postgres]
+image = "postgres:16-alpine"
+ports = [5432]
+env = { POSTGRES_PASSWORD = "coast" }
+SSG_MINIMAL_EOF
+
+    cd "$dir"
+    git init -b main
+    git config user.name "Coast Dev"
+    git config user.email "dev@coasts.dev"
+    git add -A
+    git commit -m "initial commit: minimal SSG with one postgres service"
+    echo "  coast-ssg-minimal ready"
+}
+
+setup_coast_ssg_minimal
+
+# --- coast-ssg-multi-service ---
+# Multi-service SSG: postgres + redis, both `*-alpine`. Used by
+# `test_ssg_build_multiple_services.sh` and
+# `test_ssg_build_rebuild_prunes.sh`.
+
+setup_coast_ssg_multi_service() {
+    local dir="$PROJECTS_DIR/coast-ssg-multi-service"
+    echo "Setting up coast-ssg-multi-service..."
+    mkdir -p "$dir"
+    rm -rf "$dir/.git"
+
+    cat > "$dir/Coastfile.shared_service_groups" << 'SSG_MULTI_EOF'
+[ssg]
+runtime = "dind"
+
+[shared_services.postgres]
+image = "postgres:16-alpine"
+ports = [5432]
+env = { POSTGRES_PASSWORD = "coast" }
+
+[shared_services.redis]
+image = "redis:7-alpine"
+ports = [6379]
+SSG_MULTI_EOF
+
+    cd "$dir"
+    git init -b main
+    git config user.name "Coast Dev"
+    git config user.email "dev@coasts.dev"
+    git add -A
+    git commit -m "initial commit: multi-service SSG (postgres + redis)"
+    echo "  coast-ssg-multi-service ready"
+}
+
+setup_coast_ssg_multi_service
+
 echo ""
 echo "All examples initialized. Run 'coast build' inside any example to get started."

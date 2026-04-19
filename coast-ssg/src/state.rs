@@ -1,37 +1,98 @@
-//! SSG state: SQLite schema and CRUD.
+//! SSG state: record types + extension trait for `StateDb`.
 //!
-//! Phase: ssg-phase-2 (migrations) / ssg-phase-3 (row writes). See `DESIGN.md §8`.
+//! Phase: ssg-phase-2. See `DESIGN.md §8`.
 //!
-//! Three new tables, added via migration in
+//! Three tables land in the daemon's SQLite state DB via migration in
 //! `coast-daemon/src/state/mod.rs`:
 //!
-//! ```sql
-//! CREATE TABLE ssg (
-//!     id              INTEGER PRIMARY KEY CHECK (id = 1),  -- singleton
-//!     container_id    TEXT,
-//!     status          TEXT NOT NULL,
-//!     build_id        TEXT,
-//!     created_at      TEXT NOT NULL
-//! );
+//! - `ssg` — singleton row keyed by `id = 1` (enforced by `CHECK`).
+//!   Tracks the outer DinD container and its backing build.
+//! - `ssg_services` — per-service rows keyed by `service_name`, written
+//!   on `coast ssg run` once dynamic host ports are allocated.
+//! - `ssg_port_checkouts` — Phase 6. Rows written when the user maps a
+//!   canonical host port to an SSG service via `coast ssg checkout`.
 //!
-//! CREATE TABLE ssg_services (
-//!     service_name        TEXT PRIMARY KEY,
-//!     container_port      INTEGER NOT NULL,
-//!     dynamic_host_port   INTEGER NOT NULL,
-//!     status              TEXT NOT NULL
-//! );
-//!
-//! CREATE TABLE ssg_port_checkouts (
-//!     canonical_port  INTEGER PRIMARY KEY,
-//!     service_name    TEXT NOT NULL,
-//!     socat_pid       INTEGER,
-//!     created_at      TEXT NOT NULL
-//! );
-//! ```
-//!
-//! This module exposes an `SsgStateExt` trait that `coast-daemon`'s
-//! `StateDb` implements. Keeps SSG DB logic in one place without
-//! bloating `coast-daemon/src/state/`.
+//! This module exposes an [`SsgStateExt`] trait that
+//! `coast_daemon::state::StateDb` implements (in
+//! `coast-daemon/src/state/ssg.rs`). Keeps SSG DB logic colocated with
+//! the feature crate while using the existing daemon handle.
 
-// TODO(ssg-phase-2 / 3): SsgStateExt trait, SsgRecord / SsgServiceRecord /
-// SsgPortCheckoutRecord types, migration SQL constants.
+use coast_core::error::Result;
+
+/// Singleton `ssg` row. `CHECK (id = 1)` guarantees one-per-host.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SsgRecord {
+    pub container_id: Option<String>,
+    /// One of: `created`, `running`, `stopped`.
+    pub status: String,
+    pub build_id: Option<String>,
+    /// RFC 3339 timestamp (chrono `to_rfc3339()`).
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SsgServiceRecord {
+    pub service_name: String,
+    pub container_port: u16,
+    pub dynamic_host_port: u16,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SsgPortCheckoutRecord {
+    pub canonical_port: u16,
+    pub service_name: String,
+    pub socat_pid: Option<i32>,
+    /// RFC 3339 timestamp.
+    pub created_at: String,
+}
+
+/// Typed CRUD for the SSG state tables.
+///
+/// Implemented on `coast_daemon::state::StateDb` in
+/// `coast-daemon/src/state/ssg.rs`. The trait lives here in
+/// `coast-ssg` so feature code can refer to it without round-tripping
+/// through daemon internals.
+pub trait SsgStateExt {
+    // --- ssg singleton ---
+
+    /// Upsert the singleton row (replaces by `id = 1`).
+    fn upsert_ssg(
+        &self,
+        status: &str,
+        container_id: Option<&str>,
+        build_id: Option<&str>,
+    ) -> Result<()>;
+
+    /// Read the singleton row, or `None` if never populated.
+    fn get_ssg(&self) -> Result<Option<SsgRecord>>;
+
+    /// Delete the singleton row. Idempotent.
+    fn clear_ssg(&self) -> Result<()>;
+
+    // --- ssg_services ---
+
+    /// Insert (or replace by `service_name`) a service row.
+    fn upsert_ssg_service(&self, rec: &SsgServiceRecord) -> Result<()>;
+
+    /// List every service row, ordered alphabetically by name.
+    fn list_ssg_services(&self) -> Result<Vec<SsgServiceRecord>>;
+
+    /// Update the status column for one service.
+    fn update_ssg_service_status(&self, name: &str, status: &str) -> Result<()>;
+
+    /// Remove every `ssg_services` row. Used when the SSG is removed or
+    /// rebuilt from scratch.
+    fn clear_ssg_services(&self) -> Result<()>;
+
+    // --- ssg_port_checkouts ---
+
+    /// Insert (or replace by `canonical_port`) a checkout row.
+    fn upsert_ssg_port_checkout(&self, rec: &SsgPortCheckoutRecord) -> Result<()>;
+
+    /// List every checkout row, ordered by `canonical_port` ascending.
+    fn list_ssg_port_checkouts(&self) -> Result<Vec<SsgPortCheckoutRecord>>;
+
+    /// Delete the checkout row for `canonical_port`, if any. Idempotent.
+    fn delete_ssg_port_checkout(&self, canonical_port: u16) -> Result<()>;
+}

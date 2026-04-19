@@ -649,6 +649,13 @@ async fn dispatch_request_to_handler(
             let ok = r.is_ok();
             (r, ok, base_metadata.clone())
         }
+        Request::Ssg(ssg_req)
+            if matches!(ssg_req, coast_core::protocol::SsgRequest::Build { .. }) =>
+        {
+            let r = handle_ssg_build_streaming(ssg_req, state, writer).await;
+            let ok = r.is_ok();
+            (r, ok, base_metadata.clone())
+        }
         Request::RerunExtractors(req) => {
             let r = handle_rerun_extractors_streaming(req, state, writer).await;
             let ok = r.is_ok();
@@ -944,6 +951,73 @@ async fn handle_build_streaming(
 
     let final_response = match build_result {
         Ok(resp) => Response::Build(resp),
+        Err(e) => Response::Error(ErrorResponse {
+            error: e.to_string(),
+        }),
+    };
+    write_response(writer, &final_response).await
+}
+
+/// Handle a `coast ssg build` request with streaming progress output.
+///
+/// Mirrors [`handle_build_streaming`] but uses
+/// [`Response::SsgProgress`] + [`Response::Ssg`] for the stream and the
+/// final response. Delegates all real work to
+/// [`coast_ssg::daemon_integration::build_ssg`]. See
+/// `coast-ssg/DESIGN.md §9.1`.
+async fn handle_ssg_build_streaming(
+    req: coast_core::protocol::SsgRequest,
+    state: &AppState,
+    writer: &mut tokio::net::unix::OwnedWriteHalf,
+) -> Result<()> {
+    let coast_core::protocol::SsgRequest::Build {
+        file,
+        working_dir,
+        config,
+    } = req
+    else {
+        unreachable!("handle_ssg_build_streaming only handles SsgRequest::Build")
+    };
+
+    let Some(_operation_guard) =
+        begin_streaming_update_operation(state, UpdateOperationKind::Build, None, None, writer)
+            .await?
+    else {
+        return Ok(());
+    };
+
+    let Some(docker) = state.docker.as_ref() else {
+        let resp = Response::Error(ErrorResponse {
+            error: "coast ssg build requires Docker to be available on the host daemon. \
+                    Start Docker Desktop / Colima / OrbStack and restart coastd."
+                .to_string(),
+        });
+        return write_response(writer, &resp).await;
+    };
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<BuildProgressEvent>(64);
+
+    let inputs = coast_ssg::daemon_integration::SsgBuildInputs {
+        file,
+        working_dir,
+        config,
+    };
+
+    let handler: std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = std::result::Result<coast_core::protocol::SsgResponse, CoastError>,
+                > + Send,
+        >,
+    > = Box::pin(
+        async move { coast_ssg::daemon_integration::build_ssg(inputs, &docker, tx).await },
+    );
+
+    let build_result =
+        forward_streaming_progress(handler, &mut rx, writer, Response::SsgProgress).await;
+
+    let final_response = match build_result {
+        Ok(resp) => Response::Ssg(resp),
         Err(e) => Response::Error(ErrorResponse {
             error: e.to_string(),
         }),
@@ -1693,14 +1767,15 @@ async fn dispatch_request(request: Request, state: &Arc<AppState>) -> Response {
         Request::Remote(req) => handlers::handle_remote(req, state).await,
         Request::IsSafeToUpdate(req) => handlers::handle_is_safe_to_update(req, state).await,
         Request::PrepareForUpdate(req) => handlers::handle_prepare_for_update(req, state).await,
-        Request::Ssg(_) => {
-            // Phase 2 lands the real dispatcher. Types are in place so
-            // coast-ssg and coast-cli can be built against them in the
-            // meantime. See coast-ssg/DESIGN.md §16.
-            Response::Error(ErrorResponse {
-                error: "coast ssg commands are not yet implemented".to_string(),
-            })
+        Request::Ssg(coast_core::protocol::SsgRequest::Build { .. }) => {
+            unreachable!("ssg build requests handled by handle_ssg_build_streaming")
         }
+        Request::Ssg(ssg_req) => match handlers::ssg::handle(ssg_req).await {
+            Ok(resp) => Response::Ssg(resp),
+            Err(e) => Response::Error(ErrorResponse {
+                error: e.to_string(),
+            }),
+        },
     }
 }
 

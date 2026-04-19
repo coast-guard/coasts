@@ -212,6 +212,9 @@ pub enum Response {
     PrepareForUpdate(PrepareForUpdateResponse),
     /// Remote machine management result.
     Remote(RemoteResponse),
+    /// Streaming Shared Service Group build progress event (sent
+    /// before the final Ssg response for `coast ssg build`).
+    SsgProgress(BuildProgressEvent),
     /// Shared Service Group operation result.
     Ssg(SsgResponse),
     /// Error response.
