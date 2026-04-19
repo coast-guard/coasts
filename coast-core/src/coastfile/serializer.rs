@@ -221,6 +221,21 @@ fn write_shared_services_section(coastfile: &Coastfile, out: &mut String) {
             writeln!(out, "auto_create_db = true").unwrap();
         }
     }
+
+    // Emit `from_group = true` entries so the build artifact's
+    // coastfile.toml round-trips consumer SSG references. Phase 4's
+    // daemon integration (`coast run`) reads these from the artifact.
+    // See `coast-ssg/DESIGN.md §6`.
+    for ref_entry in &coastfile.shared_service_group_refs {
+        writeln!(out, "\n[shared_services.{}]", toml_key(&ref_entry.name)).unwrap();
+        writeln!(out, "from_group = true").unwrap();
+        if matches!(ref_entry.auto_create_db, Some(true)) {
+            writeln!(out, "auto_create_db = true").unwrap();
+        }
+        if let Some(ref inject) = ref_entry.inject {
+            writeln!(out, "inject = {}", toml_quote(&inject.to_inject_string())).unwrap();
+        }
+    }
 }
 
 fn write_volumes_section(coastfile: &Coastfile, out: &mut String) {
@@ -523,6 +538,7 @@ mod tests {
             },
             volumes: vec![],
             shared_services: vec![],
+            shared_service_group_refs: vec![],
             setup: SetupConfig::default(),
             project_root: std::env::temp_dir(),
             assign: AssignConfig {

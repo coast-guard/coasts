@@ -2412,3 +2412,279 @@ fn test_unmount_commands_precede_mount_commands() {
         "workspace unmount should come before private_paths remount"
     );
 }
+
+// =========================================================================
+// Shared Service Group references (consumer-side `from_group = true`).
+// See coast-ssg/DESIGN.md §6 and coast-ssg/DESIGN.md §0 phase 1.
+// =========================================================================
+
+fn parse_from_group_coastfile(body: &str) -> Result<Coastfile> {
+    let toml =
+        format!("[coast]\nname = \"consumer\"\ncompose = \"./docker-compose.yml\"\n\n{body}");
+    Coastfile::parse(&toml, Path::new("/tmp"))
+}
+
+#[test]
+fn from_group_true_alone_populates_refs_bucket_only() {
+    let cf = parse_from_group_coastfile(
+        r#"
+[shared_services.postgres]
+from_group = true
+"#,
+    )
+    .unwrap();
+
+    assert!(cf.shared_services.is_empty());
+    assert_eq!(cf.shared_service_group_refs.len(), 1);
+    let r = &cf.shared_service_group_refs[0];
+    assert_eq!(r.name, "postgres");
+    assert_eq!(r.auto_create_db, None);
+    assert!(r.inject.is_none());
+}
+
+#[test]
+fn from_group_with_inject_env() {
+    let cf = parse_from_group_coastfile(
+        r#"
+[shared_services.postgres]
+from_group = true
+inject = "env:DATABASE_URL"
+"#,
+    )
+    .unwrap();
+
+    let r = &cf.shared_service_group_refs[0];
+    assert_eq!(r.inject, Some(InjectType::Env("DATABASE_URL".to_string())));
+}
+
+#[test]
+fn from_group_with_inject_file() {
+    let cf = parse_from_group_coastfile(
+        r#"
+[shared_services.postgres]
+from_group = true
+inject = "file:/run/secrets/pg.conn"
+"#,
+    )
+    .unwrap();
+
+    let r = &cf.shared_service_group_refs[0];
+    match r.inject.as_ref().unwrap() {
+        InjectType::File(p) => {
+            assert_eq!(p.to_string_lossy(), "/run/secrets/pg.conn");
+        }
+        other => panic!("expected InjectType::File, got {other:?}"),
+    }
+}
+
+#[test]
+fn from_group_with_auto_create_db_surfaces_some_true() {
+    let cf = parse_from_group_coastfile(
+        r#"
+[shared_services.postgres]
+from_group = true
+auto_create_db = true
+"#,
+    )
+    .unwrap();
+
+    assert_eq!(cf.shared_service_group_refs[0].auto_create_db, Some(true));
+}
+
+#[test]
+fn from_group_without_auto_create_db_surfaces_none() {
+    // Per DESIGN.md §6 caveat: `auto_create_db = false` at the TOML
+    // level is indistinguishable from "not set" after serde defaulting,
+    // so the consumer cannot explicitly disable — only enable. Absence
+    // surfaces as None (inherit from SSG).
+    let cf = parse_from_group_coastfile(
+        r#"
+[shared_services.postgres]
+from_group = true
+auto_create_db = false
+"#,
+    )
+    .unwrap();
+
+    assert_eq!(cf.shared_service_group_refs[0].auto_create_db, None);
+}
+
+#[test]
+fn mixed_inline_and_from_group_split_by_bucket() {
+    let cf = parse_from_group_coastfile(
+        r#"
+[shared_services.postgres]
+from_group = true
+
+[shared_services.redis]
+image = "redis:7"
+ports = [6379]
+"#,
+    )
+    .unwrap();
+
+    assert_eq!(cf.shared_services.len(), 1);
+    assert_eq!(cf.shared_services[0].name, "redis");
+    assert_eq!(cf.shared_service_group_refs.len(), 1);
+    assert_eq!(cf.shared_service_group_refs[0].name, "postgres");
+}
+
+#[test]
+fn from_group_ref_round_trips_through_serializer() {
+    let source = r#"
+[coast]
+name = "consumer"
+compose = "./docker-compose.yml"
+
+[shared_services.postgres]
+from_group = true
+auto_create_db = true
+inject = "env:DATABASE_URL"
+"#;
+    let cf = Coastfile::parse(source, Path::new("/tmp")).unwrap();
+    let serialized = cf.to_standalone_toml();
+
+    assert!(
+        serialized.contains("from_group = true"),
+        "serializer should emit from_group = true; got:\n{serialized}"
+    );
+    assert!(
+        serialized.contains("auto_create_db = true"),
+        "serializer should emit auto_create_db; got:\n{serialized}"
+    );
+    assert!(
+        serialized.contains("env:DATABASE_URL"),
+        "serializer should emit inject; got:\n{serialized}"
+    );
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("Coastfile.toml");
+    std::fs::write(&path, &serialized).unwrap();
+    let reparsed = Coastfile::from_file(&path).unwrap();
+
+    assert_eq!(reparsed.shared_service_group_refs.len(), 1);
+    let r = &reparsed.shared_service_group_refs[0];
+    assert_eq!(r.name, "postgres");
+    assert_eq!(r.auto_create_db, Some(true));
+    assert_eq!(r.inject, Some(InjectType::Env("DATABASE_URL".to_string())));
+    assert!(reparsed.shared_services.is_empty());
+}
+
+#[test]
+fn from_group_with_image_is_rejected() {
+    let err = parse_from_group_coastfile(
+        r#"
+[shared_services.postgres]
+from_group = true
+image = "postgres:16"
+"#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("from_group = true forbids"), "got: {err}");
+    assert!(err.contains("image"), "got: {err}");
+}
+
+#[test]
+fn from_group_with_ports_is_rejected() {
+    let err = parse_from_group_coastfile(
+        r#"
+[shared_services.postgres]
+from_group = true
+ports = [5432]
+"#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("ports"), "got: {err}");
+}
+
+#[test]
+fn from_group_with_env_is_rejected() {
+    let err = parse_from_group_coastfile(
+        r#"
+[shared_services.postgres]
+from_group = true
+env = { FOO = "bar" }
+"#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("env"), "got: {err}");
+}
+
+#[test]
+fn from_group_with_volumes_is_rejected() {
+    let err = parse_from_group_coastfile(
+        r#"
+[shared_services.postgres]
+from_group = true
+volumes = ["/var/pg:/var/lib/postgresql/data"]
+"#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("volumes"), "got: {err}");
+}
+
+#[test]
+fn from_group_with_multiple_forbidden_fields_lists_all() {
+    let err = parse_from_group_coastfile(
+        r#"
+[shared_services.postgres]
+from_group = true
+image = "postgres:16"
+ports = [5432]
+env = { FOO = "bar" }
+volumes = ["/x:/y"]
+"#,
+    )
+    .unwrap_err()
+    .to_string();
+    // Order is stable per the parser's check sequence (image, ports,
+    // volumes, env). Assert every forbidden field appears in the message.
+    for field in &["image", "ports", "volumes", "env"] {
+        assert!(
+            err.contains(field),
+            "error should mention forbidden field '{field}'; got: {err}"
+        );
+    }
+}
+
+#[test]
+fn from_group_with_invalid_inject_surfaces_parse_error() {
+    let err = parse_from_group_coastfile(
+        r#"
+[shared_services.postgres]
+from_group = true
+inject = "not-a-valid-inject"
+"#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        err.contains("shared_services.postgres.inject"),
+        "got: {err}"
+    );
+    assert!(err.contains("invalid inject format"), "got: {err}");
+}
+
+#[test]
+fn inline_shared_service_without_image_is_rejected() {
+    // Pre-existing behavior preserved through the extracted
+    // `parse_inline_shared_service` path: if neither `image` nor
+    // `from_group` is set, parsing fails with a clear message.
+    let err = parse_from_group_coastfile(
+        r#"
+[shared_services.postgres]
+ports = [5432]
+"#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("image is required"), "got: {err}");
+    assert!(
+        err.contains("from_group = true"),
+        "error should hint at the from_group alternative; got: {err}"
+    );
+}

@@ -83,6 +83,34 @@ pub struct SharedServiceConfig {
     pub inject: Option<InjectType>,
 }
 
+/// Reference to a service defined in the Shared Service Group.
+///
+/// A consumer Coastfile opts into an SSG-owned service with
+/// `[shared_services.<name>] from_group = true`. The image, ports,
+/// env, and volumes come from the active SSG build; only per-project
+/// overrides live here. See `coast-ssg/DESIGN.md §6`.
+///
+/// This sits alongside `SharedServiceConfig` in the parsed Coastfile
+/// (as `Coastfile.shared_service_group_refs`) rather than replacing it,
+/// so existing call sites that iterate `cf.shared_services` continue to
+/// see only inline host-daemon-spawned services — which is the only
+/// correct interpretation for those callers.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SharedServiceGroupRef {
+    /// Service name. Must match a service in the active SSG build
+    /// (validated at consumer `coast run` time, not at parse time).
+    pub name: String,
+    /// Override for the SSG service's `auto_create_db`. `None` means
+    /// inherit whatever the SSG service declares. v1 can only surface
+    /// `Some(true)` because TOML `auto_create_db = false` is
+    /// indistinguishable from "not set" after serde defaulting.
+    pub auto_create_db: Option<bool>,
+    /// Per-project inject target. The SSG Coastfile itself does not
+    /// set `inject` (it is project-local by definition), so each
+    /// consumer decides its own env var / file path.
+    pub inject: Option<InjectType>,
+}
+
 /// Configuration for a secret in the Coastfile.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecretConfig {

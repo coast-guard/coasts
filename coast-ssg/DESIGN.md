@@ -91,13 +91,13 @@ Legend: `[ ]` not started, `[~]` in progress, `[x]` done.
 ### Phase 1 — Data model and parser (no runtime)
 - [x] `SsgCoastfile` type + validation in `coast-ssg/src/coastfile/`
 - [x] Raw TOML structs in `coast-ssg/src/coastfile/raw_types.rs`
-- [ ] Consumer Coastfile extension: `[shared_services.<name>] from_group = true`
-- [ ] Conflict detection: same service name inlined and referenced
-- [ ] Forbidden-field checks when `from_group = true` (no `image`, `ports`, `env`, `volumes`)
+- [x] Consumer Coastfile extension: `[shared_services.<name>] from_group = true`
+- [x] Conflict detection: same service name inlined and referenced
+- [x] Forbidden-field checks when `from_group = true` (no `image`, `ports`, `env`, `volumes`)
 - [ ] `SsgRequest` / `SsgResponse` enum skeletons in `coast-core/src/protocol/ssg.rs`
 - [ ] Wire new variants into `coast-core::protocol::{Request, Response}`
 - [x] Unit tests: parser happy paths + every error path
-- [ ] Unit tests: consumer Coastfile `from_group` acceptance + every forbidden-field error
+- [x] Unit tests: consumer Coastfile `from_group` acceptance + every forbidden-field error
 
 ### Phase 2 — SSG build
 - [ ] `coast ssg build` end to end (parse, pull images, cache tarballs, write artifact, flip `latest`, prune)

@@ -2113,3 +2113,136 @@ cache = ["node_modules", ".next"]
         .unwrap();
     assert_eq!(vite.cache, vec!["node_modules", ".next"]);
 }
+
+// =========================================================================
+// Shared Service Group ref inheritance: bucket flips and [unset]. See
+// coast-ssg/DESIGN.md §6. These exercise the cross-bucket override
+// semantics in merge_raw_onto.
+// =========================================================================
+
+#[test]
+fn extends_parent_inline_flips_to_child_from_group() {
+    // Parent declares an inline postgres. Child extends and re-declares
+    // the same name with from_group = true. Merge semantics: the child's
+    // version wins entirely, so postgres lands in the refs bucket and is
+    // absent from the inline bucket.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("Coastfile"),
+        r#"
+[coast]
+name = "consumer"
+compose = "./docker-compose.yml"
+
+[shared_services.postgres]
+image = "postgres:16"
+ports = [5432]
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        dir.path().join("Coastfile.ssg"),
+        r#"
+[coast]
+extends = "Coastfile"
+
+[shared_services.postgres]
+from_group = true
+"#,
+    )
+    .unwrap();
+
+    let cf = Coastfile::from_file(&dir.path().join("Coastfile.ssg")).unwrap();
+
+    assert!(
+        cf.shared_services.iter().all(|s| s.name != "postgres"),
+        "postgres must not remain in the inline bucket after child flips to from_group"
+    );
+    assert_eq!(cf.shared_service_group_refs.len(), 1);
+    assert_eq!(cf.shared_service_group_refs[0].name, "postgres");
+}
+
+#[test]
+fn extends_parent_from_group_flips_to_child_inline() {
+    // Symmetric case: parent declares a from_group ref; child re-declares
+    // the same name inline. Child wins, name moves to the inline bucket.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("Coastfile"),
+        r#"
+[coast]
+name = "consumer"
+compose = "./docker-compose.yml"
+
+[shared_services.postgres]
+from_group = true
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        dir.path().join("Coastfile.override"),
+        r#"
+[coast]
+extends = "Coastfile"
+
+[shared_services.postgres]
+image = "postgres:16"
+ports = [5432]
+"#,
+    )
+    .unwrap();
+
+    let cf = Coastfile::from_file(&dir.path().join("Coastfile.override")).unwrap();
+
+    assert!(
+        cf.shared_service_group_refs
+            .iter()
+            .all(|r| r.name != "postgres"),
+        "postgres must not remain in the refs bucket after child flips to inline"
+    );
+    assert_eq!(cf.shared_services.len(), 1);
+    assert_eq!(cf.shared_services[0].name, "postgres");
+    assert_eq!(cf.shared_services[0].image, "postgres:16");
+}
+
+#[test]
+fn unset_shared_services_drops_from_both_buckets() {
+    // `[unset].shared_services = [...]` must clear names from whichever
+    // bucket they ended up in. One name comes from the inline bucket
+    // (`redis`), another from the refs bucket (`postgres`).
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("Coastfile"),
+        r#"
+[coast]
+name = "consumer"
+compose = "./docker-compose.yml"
+
+[shared_services.postgres]
+from_group = true
+
+[shared_services.redis]
+image = "redis:7"
+ports = [6379]
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        dir.path().join("Coastfile.test"),
+        r#"
+[coast]
+extends = "Coastfile"
+
+[unset]
+shared_services = ["postgres", "redis"]
+"#,
+    )
+    .unwrap();
+
+    let cf = Coastfile::from_file(&dir.path().join("Coastfile.test")).unwrap();
+    assert!(cf.shared_services.is_empty());
+    assert!(cf.shared_service_group_refs.is_empty());
+}

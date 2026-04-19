@@ -169,7 +169,11 @@ pub(super) struct RawVolumeConfig {
 
 #[derive(Debug, Deserialize)]
 pub(super) struct RawSharedServiceConfig {
-    pub image: String,
+    /// Optional because `from_group = true` entries have no image
+    /// (the SSG build is the source of truth). Inline entries still
+    /// require it; `parse_inline_shared_service` enforces that.
+    #[serde(default)]
+    pub image: Option<String>,
     #[serde(default)]
     pub ports: Vec<RawSharedServicePort>,
     #[serde(default)]
@@ -180,6 +184,11 @@ pub(super) struct RawSharedServiceConfig {
     pub auto_create_db: bool,
     #[serde(default)]
     pub inject: Option<String>,
+    /// When true, this entry is a reference to a service defined in
+    /// the Shared Service Group, not an inline host-daemon service.
+    /// See `coast-ssg/DESIGN.md §6`.
+    #[serde(default)]
+    pub from_group: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
