@@ -1581,8 +1581,131 @@ async fn restore_remote_worktrees(
     }
 }
 
+/// Downgrade a CheckedOut instance to Running when all canonical port
+/// forwarders failed to restore. This prevents the UI from showing a
+/// stale "checked out" badge with no working canonical ports.
+async fn downgrade_checked_out_if_all_canonical_failed(
+    state: &Arc<server::AppState>,
+    inst: &coast_core::types::CoastInstance,
+    canonical_ok: u32,
+    expected_canonical: usize,
+) {
+    if canonical_ok > 0 || expected_canonical == 0 {
+        return;
+    }
+    warn!(
+        instance = %inst.name, project = %inst.project,
+        "canonical port forwarding failed for all {} port(s); \
+         reverting to Running status. Re-run `coast checkout {}` \
+         once the ports are free.",
+        expected_canonical, inst.name,
+    );
+    let db = state.db.lock().await;
+    let _ = db.update_instance_status(
+        &inst.project,
+        &inst.name,
+        &coast_core::types::InstanceStatus::Running,
+    );
+    drop(db);
+    state.emit_event(coast_core::protocol::CoastEvent::InstanceStatusChanged {
+        name: inst.name.clone(),
+        project: inst.project.clone(),
+        status: "running".to_string(),
+    });
+}
+
+/// Spawn dynamic socat forwarders from restoration commands. Returns the
+/// number of successfully spawned forwarders.
+fn restore_dynamic_socats(cmds: &[port_manager::RestoreSocatCmd], instance_name: &str) -> u32 {
+    let mut ok = 0u32;
+    for entry in cmds {
+        match port_manager::spawn_socat(&entry.cmd) {
+            Ok(_) => ok += 1,
+            Err(e) => {
+                warn!(
+                    instance = %instance_name, port = %entry.logical_name,
+                    error = %e, "failed to restore socat"
+                );
+            }
+        }
+    }
+    ok
+}
+
+/// Restore canonical port forwarders for a checked-out instance.
+/// Uses a WSL bridge container when running under WSL, or spawns
+/// individual socat processes otherwise. Returns the number of
+/// successfully restored canonical ports.
+async fn restore_canonical_forwarders(
+    state: &Arc<server::AppState>,
+    inst: &coast_core::types::CoastInstance,
+    allocs: &[state::PortAllocationRecord],
+    use_wsl_bridge: bool,
+) -> u32 {
+    let mut ok = 0u32;
+    if use_wsl_bridge {
+        let bridge_ports = allocs
+            .iter()
+            .map(|alloc| port_manager::CheckoutBridgePort {
+                _logical_name: &alloc.logical_name,
+                canonical_port: alloc.canonical_port,
+                dynamic_port: alloc.dynamic_port,
+            })
+            .collect::<Vec<_>>();
+
+        match port_manager::start_checkout_bridge(&inst.project, &inst.name, &bridge_ports) {
+            Ok(()) => ok += allocs.len() as u32,
+            Err(e) => {
+                warn!(
+                    instance = %inst.name,
+                    error = %e,
+                    "failed to restore WSL checkout bridge"
+                );
+            }
+        }
+    } else {
+        for alloc in allocs {
+            if !port_manager::is_port_available(alloc.canonical_port) {
+                warn!(
+                    instance = %inst.name,
+                    port = %alloc.logical_name,
+                    "canonical port already in use, skipping"
+                );
+                continue;
+            }
+
+            let cmd = port_manager::socat_command_canonical(
+                alloc.canonical_port,
+                "127.0.0.1",
+                alloc.dynamic_port,
+            );
+
+            match port_manager::spawn_socat(&cmd) {
+                Ok(pid) => {
+                    let db = state.db.lock().await;
+                    let _ = db.update_socat_pid(
+                        &inst.project,
+                        &inst.name,
+                        &alloc.logical_name,
+                        Some(pid as i32),
+                    );
+                    ok += 1;
+                }
+                Err(e) => {
+                    warn!(
+                        instance = %inst.name,
+                        port = %alloc.logical_name,
+                        error = %e,
+                        "failed to restore canonical socat"
+                    );
+                }
+            }
+        }
+    }
+    ok
+}
+
 /// Spawn socat forwarders for a single instance.
-#[allow(clippy::cognitive_complexity)]
 async fn restore_socat_for_instance(
     state: &Arc<server::AppState>,
     inst: &coast_core::types::CoastInstance,
@@ -1604,116 +1727,15 @@ async fn restore_socat_for_instance(
         })
         .collect();
     let cmds = port_manager::restoration_commands(&ports, coast_ip, false);
-    let use_wsl_bridge = state.docker.is_some() && port_manager::running_in_wsl();
 
-    let mut dynamic_ok = 0u32;
+    let dynamic_ok = restore_dynamic_socats(&cmds, &inst.name);
+
     let mut canonical_ok = 0u32;
-    for entry in &cmds {
-        match port_manager::spawn_socat(&entry.cmd) {
-            Ok(pid) => {
-                let _ = pid;
-                dynamic_ok += 1;
-            }
-            Err(e) => {
-                warn!(
-                    instance = %inst.name, port = %entry.logical_name,
-                    error = %e, "failed to restore socat"
-                );
-            }
-        }
-    }
-
     if is_checked_out {
-        if use_wsl_bridge {
-            let bridge_ports = allocs
-                .iter()
-                .map(|alloc| port_manager::CheckoutBridgePort {
-                    _logical_name: &alloc.logical_name,
-                    canonical_port: alloc.canonical_port,
-                    dynamic_port: alloc.dynamic_port,
-                })
-                .collect::<Vec<_>>();
-
-            match port_manager::start_checkout_bridge(&inst.project, &inst.name, &bridge_ports) {
-                Ok(()) => {
-                    canonical_ok += allocs.len() as u32;
-                }
-                Err(e) => {
-                    warn!(
-                        instance = %inst.name,
-                        error = %e,
-                        "failed to restore WSL checkout bridge"
-                    );
-                }
-            }
-        } else {
-            for alloc in &allocs {
-                if !port_manager::is_port_available(alloc.canonical_port) {
-                    warn!(
-                        instance = %inst.name,
-                        port = %alloc.logical_name,
-                        "canonical port already in use, skipping"
-                    );
-                    continue;
-                }
-
-                let cmd = port_manager::socat_command_canonical(
-                    alloc.canonical_port,
-                    "127.0.0.1",
-                    alloc.dynamic_port,
-                );
-
-                match port_manager::spawn_socat(&cmd) {
-                    Ok(pid) => {
-                        let db = state.db.lock().await;
-                        let _ = db.update_socat_pid(
-                            &inst.project,
-                            &inst.name,
-                            &alloc.logical_name,
-                            Some(pid as i32),
-                        );
-                        canonical_ok += 1;
-                    }
-                    Err(e) => {
-                        warn!(
-                            instance = %inst.name,
-                            port = %alloc.logical_name,
-                            error = %e,
-                            "failed to restore canonical socat"
-                        );
-                    }
-                }
-            }
-        }
-    }
-
-    // If the instance was checked out but none of its canonical forwarders
-    // could be restored (ports occupied by another process, socat missing, etc.),
-    // downgrade to Running so the UI doesn't show a stale "checked out" badge
-    // with no working canonical ports.
-    if is_checked_out && canonical_ok == 0 {
-        let expected_canonical = allocs.len();
-        if expected_canonical > 0 {
-            warn!(
-                instance = %inst.name, project = %inst.project,
-                "canonical port forwarding failed for all {} port(s); \
-                 reverting to Running status. Re-run `coast checkout {}` \
-                 once the ports are free.",
-                expected_canonical, inst.name,
-            );
-            let db = state.db.lock().await;
-            let _ = db.update_instance_status(
-                &inst.project,
-                &inst.name,
-                &coast_core::types::InstanceStatus::Running,
-            );
-            drop(db);
-            state.emit_event(coast_core::protocol::CoastEvent::InstanceStatusChanged {
-                name: inst.name.clone(),
-                project: inst.project.clone(),
-                status: "running".to_string(),
-            });
-        }
+        let use_wsl_bridge = state.docker.is_some() && port_manager::running_in_wsl();
+        canonical_ok = restore_canonical_forwarders(state, inst, &allocs, use_wsl_bridge).await;
+        downgrade_checked_out_if_all_canonical_failed(state, inst, canonical_ok, allocs.len())
+            .await;
     }
 
     info!(
@@ -2021,6 +2043,86 @@ mod tests {
             coastfile_type: None,
             remote_host: None,
         }
+    }
+
+    // --- downgrade_checked_out_if_all_canonical_failed unit tests ---
+
+    #[tokio::test]
+    async fn test_downgrade_when_all_canonical_failed() {
+        let db = state::StateDb::open_in_memory().unwrap();
+        let state = Arc::new(server::AppState::new_for_testing(db));
+        let inst = make_test_instance(
+            "co-fail",
+            "proj",
+            coast_core::types::InstanceStatus::CheckedOut,
+        );
+        {
+            let db = state.db.lock().await;
+            db.insert_instance(&inst).unwrap();
+        }
+        let mut rx = state.event_bus.subscribe();
+
+        downgrade_checked_out_if_all_canonical_failed(&state, &inst, 0, 2).await;
+
+        let db = state.db.lock().await;
+        let updated = db.get_instance("proj", "co-fail").unwrap().unwrap();
+        assert_eq!(updated.status, coast_core::types::InstanceStatus::Running);
+        drop(db);
+        let event = rx.try_recv().unwrap();
+        match event {
+            coast_core::protocol::CoastEvent::InstanceStatusChanged { status, .. } => {
+                assert_eq!(status, "running");
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_no_downgrade_when_some_canonical_succeeded() {
+        let db = state::StateDb::open_in_memory().unwrap();
+        let state = Arc::new(server::AppState::new_for_testing(db));
+        let inst = make_test_instance(
+            "co-ok",
+            "proj",
+            coast_core::types::InstanceStatus::CheckedOut,
+        );
+        {
+            let db = state.db.lock().await;
+            db.insert_instance(&inst).unwrap();
+        }
+
+        downgrade_checked_out_if_all_canonical_failed(&state, &inst, 1, 2).await;
+
+        let db = state.db.lock().await;
+        let updated = db.get_instance("proj", "co-ok").unwrap().unwrap();
+        assert_eq!(
+            updated.status,
+            coast_core::types::InstanceStatus::CheckedOut
+        );
+    }
+
+    #[tokio::test]
+    async fn test_no_downgrade_when_no_expected_canonical() {
+        let db = state::StateDb::open_in_memory().unwrap();
+        let state = Arc::new(server::AppState::new_for_testing(db));
+        let inst = make_test_instance(
+            "co-empty",
+            "proj",
+            coast_core::types::InstanceStatus::CheckedOut,
+        );
+        {
+            let db = state.db.lock().await;
+            db.insert_instance(&inst).unwrap();
+        }
+
+        downgrade_checked_out_if_all_canonical_failed(&state, &inst, 0, 0).await;
+
+        let db = state.db.lock().await;
+        let updated = db.get_instance("proj", "co-empty").unwrap().unwrap();
+        assert_eq!(
+            updated.status,
+            coast_core::types::InstanceStatus::CheckedOut
+        );
     }
 
     /// When canonical port forwarding fails for all ports during daemon

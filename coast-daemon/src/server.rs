@@ -476,49 +476,62 @@ fn spawn_connection_handler(stream: tokio::net::UnixStream, state: Arc<AppState>
     });
 }
 
-/// Start the Unix socket server.
-#[allow(clippy::cognitive_complexity)] // 35/30 — tracing macros in tokio::select! inflate the score; function is already a thin accept loop.
-pub async fn run_server(
-    socket_path: &Path,
+/// Dispatch a single accept result: spawn a connection handler on success, log on failure.
+fn handle_accept(
+    accept_result: std::io::Result<(tokio::net::UnixStream, tokio::net::unix::SocketAddr)>,
+    state: &Arc<AppState>,
+) {
+    match accept_result {
+        Ok((stream, _addr)) => spawn_connection_handler(stream, Arc::clone(state)),
+        Err(e) => error!("failed to accept connection: {e}"),
+    }
+}
+
+/// Run the accept loop until the shutdown signal is received.
+async fn run_accept_loop(
+    listener: UnixListener,
     state: Arc<AppState>,
     mut shutdown: tokio::sync::broadcast::Receiver<()>,
-) -> Result<()> {
-    let listener = bind_server_socket(socket_path)?;
-    info!(socket = %socket_path.display(), "coastd server listening");
-
+) {
     loop {
         tokio::select! {
-            accept_result = listener.accept() => {
-                match accept_result {
-                    Ok((stream, _addr)) => spawn_connection_handler(stream, Arc::clone(&state)),
-                    Err(e) => error!("failed to accept connection: {e}"),
-                }
-            }
+            accept_result = listener.accept() => handle_accept(accept_result, &state),
             _ = shutdown.recv() => {
                 info!("shutdown signal received, stopping server");
-                break;
+                return;
             }
         }
     }
+}
 
+/// Remove the socket file if it still exists after the server stops.
+fn cleanup_socket_file(socket_path: &Path) {
     if socket_path.exists() {
         let _ = std::fs::remove_file(socket_path);
     }
+}
+
+/// Start the Unix socket server.
+pub async fn run_server(
+    socket_path: &Path,
+    state: Arc<AppState>,
+    shutdown: tokio::sync::broadcast::Receiver<()>,
+) -> Result<()> {
+    let listener = bind_server_socket(socket_path)?;
+    info!(socket = %socket_path.display(), "coastd server listening");
+    run_accept_loop(listener, state, shutdown).await;
+    cleanup_socket_file(socket_path);
     info!("coastd server stopped");
     Ok(())
 }
 
-/// Handle a single client connection.
+/// Read a single newline-terminated request line from the client.
 ///
-/// Reads one JSON request line, dispatches to the appropriate handler,
-/// and writes the JSON response back.
-#[allow(clippy::cognitive_complexity)] // 51/30 — inherent dispatcher with 12+ request variants, each with analytics tracking. Splitting further would fragment the dispatch logic.
-async fn handle_connection(stream: tokio::net::UnixStream, state: Arc<AppState>) -> Result<()> {
-    let (reader, mut writer) = stream.into_split();
-    let mut buf_reader = BufReader::new(reader);
+/// Returns `Ok(None)` on EOF or an empty line, `Ok(Some(line))` otherwise.
+async fn read_request_line(
+    buf_reader: &mut BufReader<tokio::net::unix::OwnedReadHalf>,
+) -> Result<Option<String>> {
     let mut line = String::new();
-
-    // Read one line (newline-terminated JSON)
     let bytes_read = buf_reader
         .read_line(&mut line)
         .await
@@ -526,28 +539,191 @@ async fn handle_connection(stream: tokio::net::UnixStream, state: Arc<AppState>)
 
     if bytes_read == 0 {
         debug!("client disconnected without sending data");
-        return Ok(());
+        return Ok(None);
     }
 
-    let trimmed = line.trim();
-    if trimmed.is_empty() {
+    if line.trim().is_empty() {
         debug!("received empty request");
-        return Ok(());
+        return Ok(None);
     }
 
     debug!(request_bytes = bytes_read, "received request");
+    Ok(Some(line))
+}
 
-    // Decode the request
-    let request = match protocol::decode_request(trimmed.as_bytes()) {
-        Ok(r) => r,
+/// Write a "malformed request" error response to the client.
+async fn write_malformed_request_error(
+    writer: &mut tokio::net::unix::OwnedWriteHalf,
+    error: impl std::fmt::Display,
+) -> Result<()> {
+    warn!("malformed request: {error}");
+    let resp = Response::Error(ErrorResponse {
+        error: format!("malformed request: {error}"),
+    });
+    write_response(writer, &resp).await
+}
+
+/// Read one request line from the client and decode it.
+///
+/// Returns:
+/// - `Ok(Some(req))` when a request was successfully decoded
+/// - `Ok(None)` when the client disconnected, sent an empty line, or sent a
+///   malformed request. An error response is written back to the client in
+///   the malformed case.
+async fn read_and_decode_request(
+    buf_reader: &mut BufReader<tokio::net::unix::OwnedReadHalf>,
+    writer: &mut tokio::net::unix::OwnedWriteHalf,
+) -> Result<Option<Request>> {
+    let Some(line) = read_request_line(buf_reader).await? else {
+        return Ok(None);
+    };
+    match protocol::decode_request(line.trim().as_bytes()) {
+        Ok(r) => Ok(Some(r)),
         Err(e) => {
-            warn!("malformed request: {e}");
-            let resp = Response::Error(ErrorResponse {
-                error: format!("malformed request: {e}"),
-            });
-            write_response(&mut writer, &resp).await?;
-            return Ok(());
+            write_malformed_request_error(writer, e).await?;
+            Ok(None)
         }
+    }
+}
+
+/// Run the explain flow for an `Assign` request and write the response.
+async fn handle_assign_explain(
+    req: coast_core::protocol::AssignRequest,
+    state: &AppState,
+    writer: &mut tokio::net::unix::OwnedWriteHalf,
+) -> (Result<()>, bool) {
+    let response = match handlers::assign::handle_explain(req, state).await {
+        Ok(resp) => Response::AssignExplain(resp),
+        Err(e) => Response::Error(coast_core::protocol::ErrorResponse {
+            error: e.to_string(),
+        }),
+    };
+    let success = matches!(&response, Response::AssignExplain(_));
+    let result = write_response(writer, &response).await;
+    (result, success)
+}
+
+/// Run a non-streaming `Logs` request and write the response, returning the
+/// metadata extension for analytics.
+async fn handle_logs_sync(
+    req: coast_core::protocol::LogsRequest,
+    request_for_meta: &Request,
+    state: &AppState,
+    writer: &mut tokio::net::unix::OwnedWriteHalf,
+) -> (Result<()>, bool, analytics::AnalyticsMetadata) {
+    let response = handlers::handle_logs(req, state).await;
+    let success = !matches!(&response, Response::Error(_));
+    let extra = analytics::response_metadata(request_for_meta, &response);
+    let result = write_response(writer, &response).await;
+    (result, success, extra)
+}
+
+/// Run a fallthrough (non-streaming, non-logs) request through `dispatch_request`
+/// and write the response, returning the metadata extension for analytics.
+async fn handle_simple_dispatch(
+    request: Request,
+    request_for_meta: &Request,
+    state: &Arc<AppState>,
+    writer: &mut tokio::net::unix::OwnedWriteHalf,
+) -> (Result<()>, bool, analytics::AnalyticsMetadata) {
+    let response = dispatch_request(request, state).await;
+    let success = !matches!(&response, Response::Error(_));
+    let extra = analytics::response_metadata(request_for_meta, &response);
+    let result = write_response(writer, &response).await;
+    (result, success, extra)
+}
+
+/// Dispatch a decoded request to the appropriate handler and return a
+/// `DispatchOutcome` describing the result + analytics metadata to record.
+async fn dispatch_request_to_handler(
+    request: Request,
+    request_for_meta: &Request,
+    state: &Arc<AppState>,
+    buf_reader: &mut BufReader<tokio::net::unix::OwnedReadHalf>,
+    writer: &mut tokio::net::unix::OwnedWriteHalf,
+    base_metadata: &analytics::AnalyticsMetadata,
+) -> (Result<()>, bool, analytics::AnalyticsMetadata) {
+    match request {
+        Request::Build(req) => {
+            let r = handle_build_streaming(req, state, writer).await;
+            let ok = r.is_ok();
+            (r, ok, base_metadata.clone())
+        }
+        Request::RerunExtractors(req) => {
+            let r = handle_rerun_extractors_streaming(req, state, writer).await;
+            let ok = r.is_ok();
+            (r, ok, base_metadata.clone())
+        }
+        Request::Run(req) => {
+            let r = handle_run_streaming(req, state, writer).await;
+            let ok = r.is_ok();
+            (r, ok, base_metadata.clone())
+        }
+        Request::Assign(req) if req.explain => {
+            let (r, ok) = handle_assign_explain(req, state, writer).await;
+            (r, ok, base_metadata.clone())
+        }
+        Request::Assign(req) => {
+            let r = handle_assign_streaming(req, state, writer).await;
+            let ok = r.is_ok();
+            (r, ok, base_metadata.clone())
+        }
+        Request::Unassign(req) => {
+            let r = handle_unassign_streaming(req, state, writer).await;
+            let ok = r.is_ok();
+            (r, ok, base_metadata.clone())
+        }
+        Request::Start(req) => {
+            let r = handle_start_streaming(req, state, writer).await;
+            let ok = r.is_ok();
+            (r, ok, base_metadata.clone())
+        }
+        Request::Stop(req) => {
+            let r = handle_stop_streaming(req, state, writer).await;
+            let ok = r.is_ok();
+            (r, ok, base_metadata.clone())
+        }
+        Request::RmBuild(req) => {
+            let r = handle_rm_build_streaming(req, state, writer).await;
+            let ok = r.is_ok();
+            (r, ok, base_metadata.clone())
+        }
+        Request::AgentShell(req @ coast_core::protocol::AgentShellRequest::Tty { .. }) => {
+            let r = handlers::agent_shell::handle_tty_stream(req, state, buf_reader, writer).await;
+            let ok = r.is_ok();
+            (r, ok, base_metadata.clone())
+        }
+        Request::Logs(req) if req.follow => {
+            let r = handle_logs_streaming(req, state, writer).await;
+            let ok = r.is_ok();
+            (r, ok, base_metadata.clone())
+        }
+        Request::Logs(req) => {
+            let (r, ok, extra) = handle_logs_sync(req, request_for_meta, state, writer).await;
+            let mut metadata = base_metadata.clone();
+            metadata.extend(extra);
+            (r, ok, metadata)
+        }
+        other => {
+            let (r, ok, extra) =
+                handle_simple_dispatch(other, request_for_meta, state, writer).await;
+            let mut metadata = base_metadata.clone();
+            metadata.extend(extra);
+            (r, ok, metadata)
+        }
+    }
+}
+
+/// Handle a single client connection.
+///
+/// Reads one JSON request line, dispatches to the appropriate handler,
+/// and writes the JSON response back.
+async fn handle_connection(stream: tokio::net::UnixStream, state: Arc<AppState>) -> Result<()> {
+    let (reader, mut writer) = stream.into_split();
+    let mut buf_reader = BufReader::new(reader);
+
+    let Some(request) = read_and_decode_request(&mut buf_reader, &mut writer).await? else {
+        return Ok(());
     };
 
     // Capture command name, context, metadata, and start time for analytics
@@ -559,110 +735,31 @@ async fn handle_connection(stream: tokio::net::UnixStream, state: Arc<AppState>)
     let ctx_instance = ctx_instance.map(String::from);
     let start = tokio::time::Instant::now();
 
-    // Helper: record an analytics event for the CLI path
-    let track = |success: bool, metadata: analytics::AnalyticsMetadata| {
-        state.analytics.track_command_with_context(
-            &command_name,
-            CommandSource::Cli,
-            success,
-            start.elapsed().as_millis() as u64,
-            ctx_project.as_deref(),
-            ctx_instance.as_deref(),
-            if metadata.is_empty() {
-                None
-            } else {
-                Some(metadata)
-            },
-        );
-    };
+    let (result, success, metadata) = dispatch_request_to_handler(
+        request,
+        &request_for_meta,
+        &state,
+        &mut buf_reader,
+        &mut writer,
+        &base_metadata,
+    )
+    .await;
 
-    // Build and run requests get special streaming treatment: progress events
-    // are sent as individual JSON lines before the final response.
-    if let Request::Build(req) = request {
-        let result = handle_build_streaming(req, &state, &mut writer).await;
-        track(result.is_ok(), base_metadata.clone());
-        return result;
-    }
-    if let Request::RerunExtractors(req) = request {
-        let result = handle_rerun_extractors_streaming(req, &state, &mut writer).await;
-        track(result.is_ok(), base_metadata.clone());
-        return result;
-    }
-    if let Request::Run(req) = request {
-        let result = handle_run_streaming(req, &state, &mut writer).await;
-        track(result.is_ok(), base_metadata.clone());
-        return result;
-    }
-    if let Request::Assign(req) = request {
-        if req.explain {
-            let result = handlers::assign::handle_explain(req, &state).await;
-            let response = match result {
-                Ok(resp) => Response::AssignExplain(resp),
-                Err(e) => Response::Error(coast_core::protocol::ErrorResponse {
-                    error: e.to_string(),
-                }),
-            };
-            track(
-                matches!(&response, Response::AssignExplain(_)),
-                base_metadata.clone(),
-            );
-            return write_response(&mut writer, &response).await;
-        }
-        let result = handle_assign_streaming(req, &state, &mut writer).await;
-        track(result.is_ok(), base_metadata.clone());
-        return result;
-    }
-    if let Request::Unassign(req) = request {
-        let result = handle_unassign_streaming(req, &state, &mut writer).await;
-        track(result.is_ok(), base_metadata.clone());
-        return result;
-    }
-    if let Request::Start(req) = request {
-        let result = handle_start_streaming(req, &state, &mut writer).await;
-        track(result.is_ok(), base_metadata.clone());
-        return result;
-    }
-    if let Request::Stop(req) = request {
-        let result = handle_stop_streaming(req, &state, &mut writer).await;
-        track(result.is_ok(), base_metadata.clone());
-        return result;
-    }
-    if let Request::RmBuild(req) = request {
-        let result = handle_rm_build_streaming(req, &state, &mut writer).await;
-        track(result.is_ok(), base_metadata.clone());
-        return result;
-    }
-    if let Request::AgentShell(req @ coast_core::protocol::AgentShellRequest::Tty { .. }) = request
-    {
-        let result =
-            handlers::agent_shell::handle_tty_stream(req, &state, &mut buf_reader, &mut writer)
-                .await;
-        track(result.is_ok(), base_metadata.clone());
-        return result;
-    }
-    if let Request::Logs(req) = request {
-        if req.follow {
-            let result = handle_logs_streaming(req, &state, &mut writer).await;
-            track(result.is_ok(), base_metadata.clone());
-            return result;
-        }
-        let response = handlers::handle_logs(req, &state).await;
-        let success = !matches!(&response, Response::Error(_));
-        let mut metadata = base_metadata.clone();
-        metadata.extend(analytics::response_metadata(&request_for_meta, &response));
-        write_response(&mut writer, &response).await?;
-        track(success, metadata);
-        return Ok(());
-    }
+    state.analytics.track_command_with_context(
+        &command_name,
+        CommandSource::Cli,
+        success,
+        start.elapsed().as_millis() as u64,
+        ctx_project.as_deref(),
+        ctx_instance.as_deref(),
+        if metadata.is_empty() {
+            None
+        } else {
+            Some(metadata)
+        },
+    );
 
-    let response = dispatch_request(request, &state).await;
-    let success = !matches!(&response, Response::Error(_));
-    let mut metadata = base_metadata;
-    metadata.extend(analytics::response_metadata(&request_for_meta, &response));
-    write_response(&mut writer, &response).await?;
-    track(success, metadata);
-
-    Ok(())
+    result
 }
 
 /// Encode and write a single response line, then flush.
@@ -1844,6 +1941,142 @@ mod tests {
 
         let _ = shutdown_tx.send(());
         let _ = server_handle.await;
+    }
+
+    // --- handle_connection dispatch tests ---
+
+    /// Helper: send a request through the server socket and return the raw response line.
+    async fn roundtrip_request(
+        _state: &Arc<AppState>,
+        socket_path: &std::path::Path,
+        request: Request,
+    ) -> String {
+        let stream = tokio::net::UnixStream::connect(socket_path).await.unwrap();
+        let (reader, mut writer) = stream.into_split();
+        let encoded = protocol::encode_request(&request).unwrap();
+        writer.write_all(&encoded).await.unwrap();
+        writer.flush().await.unwrap();
+        let mut buf_reader = BufReader::new(reader);
+        let mut line = String::new();
+        tokio::time::timeout(
+            tokio::time::Duration::from_secs(5),
+            buf_reader.read_line(&mut line),
+        )
+        .await
+        .expect("timed out waiting for response")
+        .expect("read error");
+        line
+    }
+
+    /// Spin up the server, returning (shutdown sender, socket path).
+    async fn start_test_server(
+        state: Arc<AppState>,
+    ) -> (tokio::sync::broadcast::Sender<()>, std::path::PathBuf) {
+        let tmp = tempfile::tempdir().unwrap();
+        let socket_path = tmp.into_path().join("dispatch.sock");
+        let (shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel(1);
+        let path = socket_path.clone();
+        let s = Arc::clone(&state);
+        tokio::spawn(async move { run_server(&path, s, shutdown_rx).await });
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+        (shutdown_tx, socket_path)
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_ps_request() {
+        let db = StateDb::open_in_memory().unwrap();
+        let state = Arc::new(AppState::new_for_testing(db));
+        {
+            let db = state.db.lock().await;
+            let inst = coast_core::types::CoastInstance {
+                name: "dev-1".to_string(),
+                project: "proj".to_string(),
+                status: coast_core::types::InstanceStatus::Running,
+                branch: Some("main".to_string()),
+                commit_sha: None,
+                container_id: Some("cid".to_string()),
+                runtime: coast_core::types::RuntimeType::Dind,
+                created_at: chrono::Utc::now(),
+                worktree_name: None,
+                build_id: None,
+                coastfile_type: None,
+                remote_host: None,
+            };
+            db.insert_instance(&inst).unwrap();
+        }
+        let (shutdown_tx, socket_path) = start_test_server(Arc::clone(&state)).await;
+        let req = Request::Ps(coast_core::protocol::PsRequest {
+            name: "dev-1".to_string(),
+            project: "proj".to_string(),
+        });
+        let line = roundtrip_request(&state, &socket_path, req).await;
+        let resp = protocol::decode_response(line.trim().as_bytes()).unwrap();
+        match resp {
+            Response::Ps(_) => {}
+            Response::Error(_) => {} // acceptable if Docker is unavailable
+            other => panic!("expected Ps or Error, got: {other:?}"),
+        }
+        let _ = shutdown_tx.send(());
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_ports_list_request() {
+        let db = StateDb::open_in_memory().unwrap();
+        let state = Arc::new(AppState::new_for_testing(db));
+        let (shutdown_tx, socket_path) = start_test_server(Arc::clone(&state)).await;
+        let req = Request::Ports(coast_core::protocol::PortsRequest::List {
+            name: "ghost".to_string(),
+            project: "proj".to_string(),
+        });
+        let line = roundtrip_request(&state, &socket_path, req).await;
+        let resp = protocol::decode_response(line.trim().as_bytes()).unwrap();
+        match resp {
+            Response::Ports(_) | Response::Error(_) => {}
+            other => panic!("expected Ports or Error, got: {other:?}"),
+        }
+        let _ = shutdown_tx.send(());
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_secret_list_request() {
+        let db = StateDb::open_in_memory().unwrap();
+        let state = Arc::new(AppState::new_for_testing(db));
+        let (shutdown_tx, socket_path) = start_test_server(Arc::clone(&state)).await;
+        let req = Request::Secret(coast_core::protocol::SecretRequest::List {
+            instance: "dev-1".to_string(),
+            project: "proj".to_string(),
+        });
+        let line = roundtrip_request(&state, &socket_path, req).await;
+        let resp = protocol::decode_response(line.trim().as_bytes()).unwrap();
+        match resp {
+            Response::Secret(_) | Response::Error(_) => {}
+            other => panic!("expected Secret or Error, got: {other:?}"),
+        }
+        let _ = shutdown_tx.send(());
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_empty_line() {
+        let db = StateDb::open_in_memory().unwrap();
+        let state = Arc::new(AppState::new_for_testing(db));
+        let (shutdown_tx, socket_path) = start_test_server(Arc::clone(&state)).await;
+        let stream = tokio::net::UnixStream::connect(&socket_path).await.unwrap();
+        let (reader, mut writer) = stream.into_split();
+        writer.write_all(b"\n").await.unwrap();
+        writer.flush().await.unwrap();
+        let mut buf_reader = BufReader::new(reader);
+        let mut line = String::new();
+        let result = tokio::time::timeout(
+            tokio::time::Duration::from_secs(2),
+            buf_reader.read_line(&mut line),
+        )
+        .await;
+        match result {
+            Ok(Ok(0)) | Err(_) => {} // connection closed or timed out — both correct
+            Ok(Ok(_)) => panic!("server should not send a response for an empty line"),
+            Ok(Err(e)) => panic!("unexpected read error: {e}"),
+        }
+        let _ = shutdown_tx.send(());
     }
 
     #[test]
