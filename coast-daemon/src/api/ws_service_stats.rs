@@ -251,7 +251,78 @@ pub async fn stop_service_stats_collector(state: &AppState, key: &str) {
     state.service_stats_broadcasts.lock().await.remove(key);
 }
 
-#[allow(clippy::cognitive_complexity)]
+/// Execute a single `docker stats --no-stream` poll and parse the result.
+async fn poll_service_stats_once(
+    docker: &bollard::Docker,
+    coast_container_id: &str,
+    stats_cmd: &str,
+) -> Result<Option<serde_json::Value>, ()> {
+    let poll_cmd = vec!["sh".to_string(), "-c".to_string(), stats_cmd.to_string()];
+    let exec_options = CreateExecOptions {
+        cmd: Some(poll_cmd),
+        attach_stdout: Some(true),
+        attach_stderr: Some(true),
+        ..Default::default()
+    };
+
+    match docker.create_exec(coast_container_id, exec_options).await {
+        Ok(exec) => {
+            let start_options = StartExecOptions {
+                detach: false,
+                ..Default::default()
+            };
+            match docker.start_exec(&exec.id, Some(start_options)).await {
+                Ok(StartExecResults::Attached { mut output, .. }) => {
+                    let mut buf = String::new();
+                    while let Some(chunk) = output.next().await {
+                        if let Ok(bollard::container::LogOutput::StdOut { message }) = chunk {
+                            buf.push_str(&String::from_utf8_lossy(&message));
+                        }
+                    }
+                    Ok(parse_docker_stats_json(&buf))
+                }
+                _ => Ok(None),
+            }
+        }
+        Err(_) => Err(()),
+    }
+}
+
+/// Remove the collector and broadcast entries for a key.
+async fn cleanup_service_collector(state: &AppState, key: &str) {
+    state.service_stats_broadcasts.lock().await.remove(key);
+    state.service_stats_collectors.lock().await.remove(key);
+}
+
+/// Run the polling loop: poll stats every 2s, push to history + broadcast.
+async fn run_service_poll_loop(
+    docker: &bollard::Docker,
+    coast_container_id: &str,
+    inner_name: &str,
+    state: &AppState,
+    key: &str,
+    tx: &broadcast::Sender<serde_json::Value>,
+) {
+    let stats_cmd = format!(
+        "docker stats {} --no-stream --format '{{{{json .}}}}'",
+        inner_name
+    );
+
+    loop {
+        match poll_service_stats_once(docker, coast_container_id, &stats_cmd).await {
+            Ok(Some(json_val)) => {
+                push_service_stats(&state.service_stats_history, key, tx, json_val).await;
+            }
+            Ok(None) => {}
+            Err(()) => {
+                warn!(key = %key, "service stats exec failed, stopping collector");
+                break;
+            }
+        }
+        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+    }
+}
+
 async fn run_service_collector(
     state: Arc<AppState>,
     coast_container_id: String,
@@ -267,79 +338,17 @@ async fn run_service_collector(
     let Some(inner_name) =
         resolve_inner_container(&docker, &coast_container_id, &project, &service).await
     else {
-        warn!(
-            key = %key,
-            "could not resolve inner container for service stats"
-        );
-        state.service_stats_broadcasts.lock().await.remove(&key);
-        state.service_stats_collectors.lock().await.remove(&key);
+        warn!(key = %key, "could not resolve inner container for service stats");
+        cleanup_service_collector(&state, &key).await;
         return;
     };
 
-    info!(
-        key = %key,
-        inner_container = %inner_name,
-        "background service stats collector started"
-    );
+    info!(key = %key, inner_container = %inner_name, "background service stats collector started");
 
-    let stats_cmd = format!(
-        "docker stats {} --no-stream --format '{{{{json .}}}}'",
-        inner_name
-    );
-
-    loop {
-        let poll_cmd = vec!["sh".to_string(), "-c".to_string(), stats_cmd.clone()];
-
-        let exec_options = CreateExecOptions {
-            cmd: Some(poll_cmd),
-            attach_stdout: Some(true),
-            attach_stderr: Some(true),
-            ..Default::default()
-        };
-
-        let stats_json = match docker.create_exec(&coast_container_id, exec_options).await {
-            Ok(exec) => {
-                let start_options = StartExecOptions {
-                    detach: false,
-                    ..Default::default()
-                };
-                match docker.start_exec(&exec.id, Some(start_options)).await {
-                    Ok(StartExecResults::Attached { mut output, .. }) => {
-                        let mut buf = String::new();
-                        while let Some(chunk) = output.next().await {
-                            if let Ok(bollard::container::LogOutput::StdOut { message }) = chunk {
-                                buf.push_str(&String::from_utf8_lossy(&message));
-                            }
-                        }
-                        parse_docker_stats_json(&buf)
-                    }
-                    _ => None,
-                }
-            }
-            Err(e) => {
-                warn!(key = %key, error = %e, "service stats exec failed, stopping collector");
-                break;
-            }
-        };
-
-        if let Some(json_val) = stats_json {
-            {
-                let mut history = state.service_stats_history.lock().await;
-                let ring = history.entry(key.clone()).or_insert_with(VecDeque::new);
-                if ring.len() >= HISTORY_CAP {
-                    ring.pop_front();
-                }
-                ring.push_back(json_val.clone());
-            }
-            let _ = tx.send(json_val);
-        }
-
-        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-    }
+    run_service_poll_loop(&docker, &coast_container_id, &inner_name, &state, &key, &tx).await;
 
     info!(key = %key, "background service stats collector stopped");
-    state.service_stats_broadcasts.lock().await.remove(&key);
-    state.service_stats_collectors.lock().await.remove(&key);
+    cleanup_service_collector(&state, &key).await;
 }
 
 async fn ws_handler(
@@ -433,20 +442,54 @@ async fn ws_handler(
     Ok(ws.on_upgrade(move |socket| handle_stats_socket(socket, state, key)))
 }
 
-#[allow(clippy::cognitive_complexity)]
+/// Send buffered history to a newly connected WebSocket client.
+async fn replay_service_stats_history(socket: &mut WebSocket, state: &AppState, key: &str) -> bool {
+    let history = state.service_stats_history.lock().await;
+    if let Some(ring) = history.get(key) {
+        for val in ring.iter() {
+            if socket
+                .send(Message::Text(val.to_string().into()))
+                .await
+                .is_err()
+            {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// Forward a broadcast stats value to the WebSocket client.
+async fn forward_service_broadcast(
+    socket: &mut WebSocket,
+    result: Result<serde_json::Value, broadcast::error::RecvError>,
+    key: &str,
+) -> std::ops::ControlFlow<()> {
+    match result {
+        Ok(val) => {
+            if socket
+                .send(Message::Text(val.to_string().into()))
+                .await
+                .is_err()
+            {
+                std::ops::ControlFlow::Break(())
+            } else {
+                std::ops::ControlFlow::Continue(())
+            }
+        }
+        Err(broadcast::error::RecvError::Lagged(n)) => {
+            warn!(key = %key, skipped = n, "service stats WS lagged");
+            std::ops::ControlFlow::Continue(())
+        }
+        Err(broadcast::error::RecvError::Closed) => std::ops::ControlFlow::Break(()),
+    }
+}
+
 async fn handle_stats_socket(mut socket: WebSocket, state: Arc<AppState>, key: String) {
     debug!(key = %key, "service stats WS connected");
 
-    {
-        let history = state.service_stats_history.lock().await;
-        if let Some(ring) = history.get(&key) {
-            for val in ring.iter() {
-                let json_str = val.to_string();
-                if socket.send(Message::Text(json_str.into())).await.is_err() {
-                    return;
-                }
-            }
-        }
+    if !replay_service_stats_history(&mut socket, &state, &key).await {
+        return;
     }
 
     let mut rx = {
@@ -465,17 +508,8 @@ async fn handle_stats_socket(mut socket: WebSocket, state: Arc<AppState>, key: S
     loop {
         tokio::select! {
             result = rx.recv() => {
-                match result {
-                    Ok(val) => {
-                        let json_str = val.to_string();
-                        if socket.send(Message::Text(json_str.into())).await.is_err() {
-                            break;
-                        }
-                    }
-                    Err(broadcast::error::RecvError::Lagged(n)) => {
-                        warn!(key = %key, skipped = n, "service stats WS lagged");
-                    }
-                    Err(broadcast::error::RecvError::Closed) => break,
+                if forward_service_broadcast(&mut socket, result, &key).await.is_break() {
+                    break;
                 }
             }
             msg = socket.recv() => {
@@ -782,4 +816,70 @@ async fn run_remote_service_collector(
 
     info!(key = %key, "remote background service stats collector stopped");
     remove_service_stats_collector(&state, &key).await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[tokio::test]
+    async fn test_push_service_stats_inserts_value() {
+        let history =
+            tokio::sync::Mutex::new(HashMap::<String, VecDeque<serde_json::Value>>::new());
+        let (tx, _rx) = broadcast::channel(16);
+        let val = serde_json::json!({"cpu": "5%"});
+
+        push_service_stats(&history, "key1", &tx, val.clone()).await;
+
+        let h = history.lock().await;
+        assert_eq!(h.get("key1").unwrap().len(), 1);
+        assert_eq!(h.get("key1").unwrap()[0], val);
+    }
+
+    #[tokio::test]
+    async fn test_push_service_stats_evicts_at_cap() {
+        let history =
+            tokio::sync::Mutex::new(HashMap::<String, VecDeque<serde_json::Value>>::new());
+        let (tx, _rx) = broadcast::channel(16);
+
+        for i in 0..HISTORY_CAP {
+            push_service_stats(&history, "k", &tx, serde_json::json!(i)).await;
+        }
+        push_service_stats(&history, "k", &tx, serde_json::json!("new")).await;
+
+        let h = history.lock().await;
+        let ring = h.get("k").unwrap();
+        assert_eq!(ring.len(), HISTORY_CAP);
+        assert_eq!(ring[0], serde_json::json!(1));
+        assert_eq!(ring[HISTORY_CAP - 1], serde_json::json!("new"));
+    }
+
+    #[tokio::test]
+    async fn test_push_service_stats_broadcasts() {
+        let history =
+            tokio::sync::Mutex::new(HashMap::<String, VecDeque<serde_json::Value>>::new());
+        let (tx, mut rx) = broadcast::channel(16);
+        let val = serde_json::json!({"mem": "128MB"});
+
+        push_service_stats(&history, "k", &tx, val.clone()).await;
+        assert_eq!(rx.recv().await.unwrap(), val);
+    }
+
+    #[test]
+    fn test_parse_docker_stats_json_valid() {
+        let output = r#"'{"Name":"web","CPUPerc":"5.00%","MemUsage":"128MiB / 1GiB","MemPerc":"12.50%","NetIO":"1kB / 2kB","BlockIO":"0B / 0B","PIDs":"5"}'"#;
+        let result = parse_docker_stats_json(output);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_parse_docker_stats_json_empty() {
+        assert!(parse_docker_stats_json("").is_none());
+    }
+
+    #[test]
+    fn test_parse_docker_stats_json_invalid() {
+        assert!(parse_docker_stats_json("not json").is_none());
+    }
 }
