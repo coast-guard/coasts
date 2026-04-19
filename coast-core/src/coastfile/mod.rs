@@ -6,7 +6,7 @@
 /// Submodules:
 /// - [`raw_types`]: Raw TOML serde deserialization structs
 mod field_parsers;
-pub(crate) mod interpolation;
+pub mod interpolation;
 mod raw_types;
 mod serializer;
 #[cfg(test)]

@@ -30,8 +30,9 @@
 //! the `SsgCoastfile` parser and consumer-side `from_group` field (see
 //! `DESIGN.md §16`).
 
-// TODO(ssg-phase-1): SSG Coastfile parser (see DESIGN.md §5).
+// ssg-phase-1: SSG Coastfile parser (see DESIGN.md §5).
 pub mod coastfile;
+pub use coastfile::{SsgCoastfile, SsgSection, SsgSharedServiceConfig, SsgVolumeEntry};
 
 // TODO(ssg-phase-2): Build pipeline and artifact layout (see DESIGN.md §9.1).
 pub mod build;

@@ -89,14 +89,14 @@ Legend: `[ ]` not started, `[~]` in progress, `[x]` done.
 - [x] `cargo build -p coast-ssg` + `cargo clippy -p coast-ssg -- -D warnings` green (crate-scoped; `make lint` becomes the gate from Phase 1 onward per Ground Rules)
 
 ### Phase 1 — Data model and parser (no runtime)
-- [ ] `SsgCoastfile` type + validation in `coast-ssg/src/coastfile/`
-- [ ] Raw TOML structs in `coast-ssg/src/coastfile/raw_types.rs`
+- [x] `SsgCoastfile` type + validation in `coast-ssg/src/coastfile/`
+- [x] Raw TOML structs in `coast-ssg/src/coastfile/raw_types.rs`
 - [ ] Consumer Coastfile extension: `[shared_services.<name>] from_group = true`
 - [ ] Conflict detection: same service name inlined and referenced
 - [ ] Forbidden-field checks when `from_group = true` (no `image`, `ports`, `env`, `volumes`)
 - [ ] `SsgRequest` / `SsgResponse` enum skeletons in `coast-core/src/protocol/ssg.rs`
 - [ ] Wire new variants into `coast-core::protocol::{Request, Response}`
-- [ ] Unit tests: parser happy paths + every error path
+- [x] Unit tests: parser happy paths + every error path
 - [ ] Unit tests: consumer Coastfile `from_group` acceptance + every forbidden-field error
 
 ### Phase 2 — SSG build
