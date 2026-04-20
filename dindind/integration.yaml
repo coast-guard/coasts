@@ -365,3 +365,17 @@ tests:
     script: integrated-examples/test_ssg_build_rebuild_prunes.sh
     timeout: 300
     note: "6 consecutive coast ssg builds -> auto_prune keeps 5"
+
+  # --- Shared Service Groups (coast-ssg) — Phase 3 ---
+  test_ssg_run_lifecycle:
+    script: integrated-examples/test_ssg_run_lifecycle.sh
+    timeout: 600
+    note: "coast ssg run/stop/start/restart/rm against the singleton coast-ssg container"
+  test_ssg_bind_mount_symmetric:
+    script: integrated-examples/test_ssg_bind_mount_symmetric.sh
+    timeout: 600
+    note: "host bind source is visible with the same inode inside outer DinD and inner postgres (DESIGN.md §10.2)"
+  test_ssg_named_volume_persists:
+    script: integrated-examples/test_ssg_named_volume_persists.sh
+    timeout: 600
+    note: "inner named volume survives stop/start; rm --with-data removes it"

@@ -1792,9 +1792,12 @@ setup_coast_working_dir
 
 # --- coast-ssg-minimal ---
 # Minimal Shared Service Group: one postgres service with `*-alpine`
-# image for fast pulls in CI. No host bind mounts (uses inner named
-# volume) so the test doesn't depend on external filesystem state.
-# Used by `test_ssg_build_minimal.sh`.
+# image for fast pulls in CI. Declares an inner named volume (pg_data)
+# so Phase 3's `test_ssg_named_volume_persists.sh` has data to write
+# into and verify across stop/start. No host bind mounts: the test
+# doesn't depend on external filesystem state.
+# Used by `test_ssg_build_minimal.sh` and
+# `test_ssg_named_volume_persists.sh`.
 
 setup_coast_ssg_minimal() {
     local dir="$PROJECTS_DIR/coast-ssg-minimal"
@@ -1809,6 +1812,7 @@ runtime = "dind"
 [shared_services.postgres]
 image = "postgres:16-alpine"
 ports = [5432]
+volumes = ["pg_data:/var/lib/postgresql/data"]
 env = { POSTGRES_PASSWORD = "coast" }
 SSG_MINIMAL_EOF
 
@@ -1858,6 +1862,53 @@ SSG_MULTI_EOF
 }
 
 setup_coast_ssg_multi_service
+
+# --- coast-ssg-bind-mount ---
+# SSG with a host bind mount. Used by Phase 3's
+# `test_ssg_bind_mount_symmetric.sh` to verify that the same host
+# directory is visible with the same inodes inside the outer DinD and
+# inside the inner postgres container (the symmetric-path plan in
+# `coast-ssg/DESIGN.md §10.2`).
+#
+# The host source lives under `$COAST_SSG_BIND_HOST_ROOT`. When the
+# env var is unset we default to `/root/coast-ssg-bind-mount/pg-data`
+# which is reachable through the dindind test container's persistent
+# volume tree. Under docker-in-docker, `/tmp` is backed by a tmpfs
+# that the outer daemon cannot bind-mount through into a nested
+# container, so `/tmp` does NOT work here — the chosen path must live
+# on the same filesystem as the dindind daemon's workdir.
+#
+# The test creates `$COAST_SSG_BIND_HOST_ROOT` before calling
+# `coast ssg run`; this project only declares the mount shape.
+
+setup_coast_ssg_bind_mount() {
+    local dir="$PROJECTS_DIR/coast-ssg-bind-mount"
+    local host_root="${COAST_SSG_BIND_HOST_ROOT:-/root/coast-ssg-bind-mount}"
+    echo "Setting up coast-ssg-bind-mount (host_root=$host_root)..."
+    mkdir -p "$dir"
+    rm -rf "$dir/.git"
+
+    cat > "$dir/Coastfile.shared_service_groups" <<SSG_BIND_EOF
+[ssg]
+runtime = "dind"
+
+[shared_services.postgres]
+image = "postgres:16-alpine"
+ports = [5432]
+volumes = ["${host_root}/pg-data:/var/lib/postgresql/data"]
+env = { POSTGRES_PASSWORD = "coast" }
+SSG_BIND_EOF
+
+    cd "$dir"
+    git init -b main
+    git config user.name "Coast Dev"
+    git config user.email "dev@coasts.dev"
+    git add -A
+    git commit -m "initial commit: SSG with host bind mount"
+    echo "  coast-ssg-bind-mount ready"
+}
+
+setup_coast_ssg_bind_mount
 
 echo ""
 echo "All examples initialized. Run 'coast build' inside any example to get started."

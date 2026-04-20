@@ -53,6 +53,58 @@ pub enum SsgAction {
     /// Show the current SSG build's service list (read from
     /// `~/.coast/ssg/latest/manifest.json`; no container inspection).
     Ps,
+    /// Create the SSG singleton DinD and start all its services.
+    ///
+    /// Allocates dynamic host ports for each service, writes them to
+    /// the state DB, and publishes them on the outer DinD container.
+    /// Streams progress events while booting.
+    Run,
+    /// Start a previously-created-then-stopped SSG.
+    Start,
+    /// Stop the SSG DinD (inner `docker compose down` + outer stop).
+    Stop,
+    /// Stop then start the SSG. Preserves the existing container id
+    /// and dynamic port mappings.
+    Restart,
+    /// Remove the SSG DinD container.
+    ///
+    /// With `--with-data`, inner named volumes (postgres WAL, etc.)
+    /// are also removed before tearing down the DinD. Host bind mount
+    /// contents are never touched.
+    Rm {
+        /// Also remove inner named volumes. Host bind mount contents
+        /// are unaffected.
+        #[arg(long = "with-data")]
+        with_data: bool,
+    },
+    /// Tail logs from the outer DinD or a specific inner service.
+    Logs {
+        /// Inner service name. When omitted, shows the outer DinD
+        /// container's stdout.
+        #[arg(long)]
+        service: Option<String>,
+        /// Number of trailing lines to include. Defaults to 200.
+        #[arg(short = 't', long)]
+        tail: Option<u32>,
+        /// Stream new lines as they arrive.
+        #[arg(short = 'f', long)]
+        follow: bool,
+    },
+    /// Exec a command inside the outer DinD or a named inner service.
+    ///
+    /// With `--service <name>`, runs `docker compose exec -T <name>
+    /// <cmd...>` inside the outer DinD. Without, execs directly on
+    /// the outer DinD container.
+    Exec {
+        /// Inner service name (e.g. `postgres`).
+        #[arg(long)]
+        service: Option<String>,
+        /// Command to run. Everything after `--` is passed verbatim.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        command: Vec<String>,
+    },
+    /// Show the per-service dynamic host port mapping.
+    Ports,
 }
 
 pub async fn execute(args: &SsgArgs) -> Result<()> {
@@ -71,6 +123,49 @@ pub async fn execute(args: &SsgArgs) -> Result<()> {
             .await
         }
         SsgAction::Ps => execute_ps(args.silent).await,
+        SsgAction::Run => execute_lifecycle(SsgRequest::Run, "Run", args.silent).await,
+        SsgAction::Start => execute_lifecycle(SsgRequest::Start, "Start", args.silent).await,
+        SsgAction::Restart => execute_lifecycle(SsgRequest::Restart, "Restart", args.silent).await,
+        SsgAction::Stop => execute_simple(SsgRequest::Stop, args.silent).await,
+        SsgAction::Rm { with_data } => {
+            execute_simple(
+                SsgRequest::Rm {
+                    with_data: *with_data,
+                },
+                args.silent,
+            )
+            .await
+        }
+        SsgAction::Logs {
+            service,
+            tail,
+            follow,
+        } => {
+            if *follow {
+                execute_logs_follow(service.clone(), *tail).await
+            } else {
+                execute_simple(
+                    SsgRequest::Logs {
+                        service: service.clone(),
+                        tail: *tail,
+                        follow: false,
+                    },
+                    args.silent,
+                )
+                .await
+            }
+        }
+        SsgAction::Exec { service, command } => {
+            execute_simple(
+                SsgRequest::Exec {
+                    service: service.clone(),
+                    command: command.clone(),
+                },
+                args.silent,
+            )
+            .await
+        }
+        SsgAction::Ports => execute_ports(args.silent).await,
     }
 }
 
@@ -120,6 +215,70 @@ async fn execute_ps(silent: bool) -> Result<()> {
     }
 }
 
+async fn execute_lifecycle(req: SsgRequest, verb: &str, silent: bool) -> Result<()> {
+    let response = super::send_build_request(Request::Ssg(req), |event| {
+        if silent {
+            return;
+        }
+        render_progress(event);
+    })
+    .await?;
+    match response {
+        Response::Ssg(resp) => {
+            if !silent {
+                print_lifecycle_summary(verb, &resp);
+            }
+            Ok(())
+        }
+        Response::Error(e) => bail!("{}", e.error),
+        other => bail!("unexpected response from daemon: {other:?}"),
+    }
+}
+
+async fn execute_simple(req: SsgRequest, silent: bool) -> Result<()> {
+    let response = super::send_request(Request::Ssg(req)).await?;
+    match response {
+        Response::Ssg(resp) => {
+            if !silent {
+                println!("{}", resp.message);
+            }
+            Ok(())
+        }
+        Response::Error(e) => bail!("{}", e.error),
+        other => bail!("unexpected response from daemon: {other:?}"),
+    }
+}
+
+async fn execute_ports(silent: bool) -> Result<()> {
+    let response = super::send_request(Request::Ssg(SsgRequest::Ports)).await?;
+    match response {
+        Response::Ssg(resp) => {
+            if !silent {
+                println!("{}", resp.message);
+                if !resp.ports.is_empty() {
+                    println!();
+                    println!("{}", format_ports_table(&resp.ports));
+                }
+            }
+            Ok(())
+        }
+        Response::Error(e) => bail!("{}", e.error),
+        other => bail!("unexpected response from daemon: {other:?}"),
+    }
+}
+
+async fn execute_logs_follow(service: Option<String>, tail: Option<u32>) -> Result<()> {
+    let request = Request::Ssg(SsgRequest::Logs {
+        service,
+        tail,
+        follow: true,
+    });
+    super::stream_ssg_log_chunks(request, |chunk| {
+        println!("{chunk}");
+    })
+    .await
+}
+
 fn render_progress(event: &BuildProgressEvent) {
     // Compact renderer — enough for humans to see where they are but
     // no fancy spinners. `coast ssg build` is less frequent than
@@ -166,6 +325,24 @@ fn print_build_summary(resp: &SsgResponse) {
     if !resp.services.is_empty() {
         println!();
         println!("{}", format_services_table(&resp.services));
+    }
+}
+
+fn print_lifecycle_summary(verb: &str, resp: &SsgResponse) {
+    println!();
+    println!(
+        "{} {} — {}",
+        verb.green().bold(),
+        "done".green(),
+        resp.message
+    );
+    if !resp.services.is_empty() {
+        println!();
+        println!("{}", format_services_table(&resp.services));
+    }
+    if !resp.ports.is_empty() {
+        println!();
+        println!("{}", format_ports_table(&resp.ports));
     }
 }
 

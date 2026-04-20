@@ -10,7 +10,7 @@
 /// traffic from host ports to coast container ports.
 use std::collections::{HashMap, HashSet};
 use std::hash::Hasher;
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::net::{SocketAddr, TcpStream};
 use std::os::unix::process::CommandExt;
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -20,15 +20,9 @@ use nix::unistd::Pid;
 use tracing::{debug, info, warn};
 
 use coast_core::error::{CoastError, Result};
+use coast_core::port as core_port;
 
-/// The lower bound of the ephemeral/dynamic port range (inclusive).
-const PORT_RANGE_START: u16 = 49152;
-
-/// The upper bound of the ephemeral/dynamic port range (inclusive).
-const PORT_RANGE_END: u16 = 65535;
-
-/// Maximum number of attempts to find a free port before giving up.
-const MAX_ALLOCATION_ATTEMPTS: u32 = 1000;
+pub use core_port::PortBindStatus;
 
 const CHECKOUT_BRIDGE_IMAGE: &str = "alpine/socat:latest";
 const CHECKOUT_BRIDGE_LABEL: &str = "coast.role=checkout-bridge";
@@ -253,91 +247,30 @@ impl Default for PortForwarder {
 
 /// Allocate a dynamic port by finding an unused port in the ephemeral range.
 ///
-/// Tries to bind a TCP listener on successive ports starting from a random
-/// offset within the ephemeral range. Returns the first port that successfully
-/// binds.
-///
-/// # Errors
-///
-/// Returns `CoastError::Port` if no free port can be found after
-/// `MAX_ALLOCATION_ATTEMPTS` attempts.
+/// Delegates to [`coast_core::port::allocate_dynamic_port`].
 pub fn allocate_dynamic_port() -> Result<u16> {
-    allocate_dynamic_port_excluding(&HashSet::new())
+    core_port::allocate_dynamic_port()
 }
 
 /// Allocate a dynamic port while excluding a known set of unusable ports.
 ///
-/// This is used by provisioning retries so we don't immediately hand back a
-/// host port that Docker has already rejected.
+/// Delegates to [`coast_core::port::allocate_dynamic_port_excluding`].
 pub fn allocate_dynamic_port_excluding(excluded_ports: &HashSet<u16>) -> Result<u16> {
-    // Start from a pseudo-random offset to reduce collisions when multiple
-    // allocations happen in quick succession.
-    let range_size = (PORT_RANGE_END - PORT_RANGE_START + 1) as u32;
-    let start_offset = (std::process::id() ^ (timestamp_nanos() as u32)) % range_size;
-
-    let mut inspected_candidates = 0u32;
-    for i in 0..range_size {
-        let offset = (start_offset + i) % range_size;
-        let port = PORT_RANGE_START + offset as u16;
-
-        if excluded_ports.contains(&port) {
-            continue;
-        }
-
-        inspected_candidates += 1;
-        if inspected_candidates > MAX_ALLOCATION_ATTEMPTS {
-            break;
-        }
-
-        if is_port_available(port) {
-            debug!(port = port, "Allocated dynamic port");
-            return Ok(port);
-        }
-    }
-
-    Err(CoastError::port(format!(
-        "Could not find an available port after {MAX_ALLOCATION_ATTEMPTS} attempts \
-         in range {PORT_RANGE_START}-{PORT_RANGE_END}. Too many ports may be in use. \
-         Try stopping some coast instances with `coast stop <name>` to free ports."
-    )))
+    core_port::allocate_dynamic_port_excluding(excluded_ports)
 }
 
 /// Check whether a port is available by attempting to bind a TCP listener on it.
 ///
-/// Returns `true` if the port is free (bind succeeds), `false` otherwise.
+/// Delegates to [`coast_core::port::is_port_available`].
 pub fn is_port_available(port: u16) -> bool {
-    matches!(inspect_port_binding(port), PortBindStatus::Available)
+    core_port::is_port_available(port)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PortBindStatus {
-    Available,
-    InUse,
-    PermissionDenied,
-    UnexpectedError(String),
-}
-
-fn can_connect_to_port(port: u16) -> bool {
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    TcpStream::connect_timeout(&addr, Duration::from_millis(50)).is_ok()
-}
-
+/// Probe a port to determine its binding status.
+///
+/// Delegates to [`coast_core::port::inspect_port_binding`].
 pub fn inspect_port_binding(port: u16) -> PortBindStatus {
-    match TcpListener::bind(("127.0.0.1", port)) {
-        Ok(listener) => {
-            drop(listener);
-            PortBindStatus::Available
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => PortBindStatus::InUse,
-        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
-            if can_connect_to_port(port) {
-                PortBindStatus::InUse
-            } else {
-                PortBindStatus::PermissionDenied
-            }
-        }
-        Err(error) => PortBindStatus::UnexpectedError(error.to_string()),
-    }
+    core_port::inspect_port_binding(port)
 }
 
 pub fn running_in_wsl() -> bool {
@@ -898,18 +831,17 @@ pub fn restoration_commands(
     cmds
 }
 
-/// Get a nanosecond timestamp for pseudo-random seed mixing.
-/// Falls back to 0 if the system clock is unavailable.
-fn timestamp_nanos() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64)
-        .unwrap_or(0)
+/// Connect probe used by `spawn_socat_verified` to confirm a port is bound.
+fn can_connect_to_port(port: u16) -> bool {
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    TcpStream::connect_timeout(&addr, Duration::from_millis(50)).is_ok()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use coast_core::port::{PORT_RANGE_END, PORT_RANGE_START};
+    use std::net::TcpListener;
     use std::sync::{Mutex, OnceLock};
 
     fn env_lock() -> &'static Mutex<()> {

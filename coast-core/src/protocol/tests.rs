@@ -1555,6 +1555,19 @@ fn test_ssg_progress_response_roundtrip() {
 }
 
 #[test]
+fn test_ssg_log_chunk_response_roundtrip() {
+    roundtrip_response(Response::SsgLogChunk(SsgLogChunk {
+        chunk: String::new(),
+    }));
+    roundtrip_response(Response::SsgLogChunk(SsgLogChunk {
+        chunk: "postgres | ready".to_string(),
+    }));
+    roundtrip_response(Response::SsgLogChunk(SsgLogChunk {
+        chunk: "line one\nline two\nline three".to_string(),
+    }));
+}
+
+#[test]
 fn test_ssg_response_roundtrip() {
     roundtrip_response(Response::Ssg(SsgResponse {
         message: "SSG is running with 2 services".to_string(),

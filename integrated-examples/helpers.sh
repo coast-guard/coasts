@@ -114,8 +114,11 @@ clean_slate() {
 
     # Remove any leftover coast containers and volumes
     docker rm -f $(docker ps -aq --filter "label=coast.managed=true") 2>/dev/null || true
+    # Remove the SSG singleton if it was left over (Phase 3+).
+    docker rm -f coast-ssg 2>/dev/null || true
     docker volume ls -q --filter "name=coast-shared--" 2>/dev/null | xargs -r docker volume rm 2>/dev/null || true
     docker volume ls -q --filter "name=coast--" 2>/dev/null | xargs -r docker volume rm 2>/dev/null || true
+    docker volume ls -q --filter "name=coast-dind--coast--ssg" 2>/dev/null | xargs -r docker volume rm 2>/dev/null || true
 
     echo "  Slate clean."
 }

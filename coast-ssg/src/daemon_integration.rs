@@ -1,9 +1,11 @@
 //! Public hooks the `coast-daemon` crate calls into.
 //!
-//! Phase: ssg-phase-2 lands `build_ssg` (streaming build orchestrator)
-//! and `ps_ssg` (one-shot manifest reader). Phase 3+ extends this
-//! module with lifecycle hooks (`ensure_ready_for_instance`,
-//! `synthesize_shared_service_configs`, etc.).
+//! Phase 2 landed `build_ssg` (streaming build orchestrator) and
+//! `ps_ssg` (one-shot manifest reader). Phase 3 extends this module
+//! with runtime verbs: `run_ssg`, `stop_ssg`, `start_ssg`,
+//! `restart_ssg`, `rm_ssg`, `logs_ssg`, `exec_ssg`, `ports_ssg`.
+//! Phase 3.5+ adds `ensure_ready_for_instance` and
+//! `synthesize_shared_service_configs`.
 //!
 //! This is the *only* public surface `coast-daemon` consumes for SSG
 //! runtime integration. Keeping the contract narrow here lets an
@@ -253,6 +255,20 @@ pub fn ps_ssg() -> Result<SsgResponse> {
         format!("SSG build: {build_id}"),
     ))
 }
+
+// --- Phase 3 runtime wrappers ----------------------------------------------
+//
+// Re-exports the types callers need. Lifecycle functions are intentionally
+// state-free so the async Docker work doesn't have to satisfy
+// `&dyn SsgStateExt: Sync` (and it can't; `StateDb` wraps a
+// `rusqlite::Connection` which is `!Sync`). Daemon handlers read the
+// current state before the async section, call into this crate, then
+// apply writes afterwards.
+
+pub use crate::runtime::lifecycle::{
+    exec_ssg, logs_ssg, ports_ssg, restart_ssg, rm_ssg, run_ssg, start_ssg, stop_ssg,
+    SsgRunOutcome, SsgStartOutcome, SsgStopOutcome,
+};
 
 fn build_response_from_manifest(
     manifest: &build_artifact::SsgManifest,

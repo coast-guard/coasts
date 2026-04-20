@@ -14,17 +14,19 @@
 //! - [`auto_create_db`] — nested docker-exec DB creation (see `DESIGN.md §13`).
 //! - [`ports`] — dynamic port allocation wrapper.
 
-// TODO(ssg-phase-3): SsgRuntime + lifecycle verbs.
-mod lifecycle;
+// ssg-phase-3: SsgRuntime + lifecycle verbs.
+pub mod lifecycle;
 
 // ssg-phase-2: synthesize inner compose.yml from SsgCoastfile.
 pub mod compose_synth;
 
-// TODO(ssg-phase-3): symmetric-path bind mount translation (see DESIGN.md §10.2).
-mod bind_mounts;
+// ssg-phase-3: symmetric-path bind mount translation (see DESIGN.md §10.2).
+pub mod bind_mounts;
 
 // TODO(ssg-phase-5): nested docker-exec for per-instance DB creation.
 mod auto_create_db;
 
-// TODO(ssg-phase-3): dynamic port allocation wrapper over coast-daemon's port_manager.
-mod ports;
+// ssg-phase-3: dynamic port allocation.
+pub mod ports;
+
+pub use ports::{allocate_service_ports, SsgServicePortPlan};

@@ -312,6 +312,75 @@ async fn send_build_request_to(
     }
 }
 
+/// Stream `coast ssg logs --follow` output chunks to a callback.
+///
+/// Connects to the daemon, sends the request, then reads `SsgLogChunk`
+/// responses in a loop, invoking `on_chunk` for each one. The final
+/// `Ssg(SsgResponse)` (or `Error`) closes the stream.
+pub async fn stream_ssg_log_chunks(request: Request, mut on_chunk: impl FnMut(&str)) -> Result<()> {
+    let sock = socket_path();
+    let stream = UnixStream::connect(&sock).await.map_err(|e| {
+        if e.kind() == std::io::ErrorKind::ConnectionRefused
+            || e.kind() == std::io::ErrorKind::NotFound
+        {
+            anyhow::anyhow!("{}", t!("error.daemon_not_running"))
+        } else {
+            anyhow::anyhow!(
+                "{}",
+                t!(
+                    "error.daemon_connect_failed",
+                    path = sock.display(),
+                    message = e
+                )
+            )
+        }
+    })?;
+
+    let (reader, mut writer) = stream.into_split();
+
+    let encoded = protocol::encode_request(&request).context("Failed to encode request")?;
+    writer
+        .write_all(&encoded)
+        .await
+        .context("Failed to send request to coastd")?;
+    writer
+        .shutdown()
+        .await
+        .context("Failed to flush request to coastd")?;
+
+    let mut buf_reader = BufReader::new(reader);
+
+    loop {
+        let mut line = String::new();
+        let bytes = buf_reader
+            .read_line(&mut line)
+            .await
+            .context("Failed to read response from coastd")?;
+
+        if bytes == 0 {
+            return Ok(());
+        }
+
+        let response = protocol::decode_response(line.trim_end().as_bytes())
+            .context("Failed to decode response from coastd")?;
+
+        match response {
+            Response::SsgLogChunk(chunk) => {
+                on_chunk(&chunk.chunk);
+            }
+            Response::Ssg(_) => {
+                return Ok(());
+            }
+            Response::Error(e) => {
+                bail!("{}", e.error);
+            }
+            other => {
+                bail!("unexpected response from daemon while tailing SSG logs: {other:?}");
+            }
+        }
+    }
+}
+
 /// Send a run request and stream progress events to a callback.
 ///
 /// Connects to the daemon, sends the request, then reads JSON lines in a loop.

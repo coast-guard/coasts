@@ -97,3 +97,14 @@ pub struct SsgPortInfo {
     pub dynamic_host_port: u16,
     pub checked_out: bool,
 }
+
+/// Streaming chunk of log output for `coast ssg logs --follow`.
+///
+/// Plain struct wrapper around a single text payload. Exists because
+/// `serde(tag = "type")` on the `Response` enum cannot serialize tuple
+/// newtype variants holding primitives.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SsgLogChunk {
+    pub chunk: String,
+}

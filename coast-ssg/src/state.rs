@@ -53,6 +53,13 @@ pub struct SsgPortCheckoutRecord {
 /// `coast-daemon/src/state/ssg.rs`. The trait lives here in
 /// `coast-ssg` so feature code can refer to it without round-tripping
 /// through daemon internals.
+///
+/// Trait methods are synchronous. Lifecycle orchestrators never hold a
+/// `&dyn SsgStateExt` across an `await` boundary — `StateDb` wraps
+/// `rusqlite::Connection` which is `!Sync`, so doing so would reject
+/// the `Send` bound on streamed futures. Callers read the current
+/// state at the start of an operation, perform all Docker work, then
+/// apply writes at the end (see `coast-daemon/src/handlers/ssg.rs`).
 pub trait SsgStateExt {
     // --- ssg singleton ---
 

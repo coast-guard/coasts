@@ -211,6 +211,14 @@ pub struct AppState {
     /// stop, rm, rebuild) acquire a permit before proceeding, serializing heavy
     /// Docker workflows within the same project.
     pub project_ops: Mutex<std::collections::HashMap<String, Arc<tokio::sync::Semaphore>>>,
+    /// Process-wide serialization lock for Shared Service Group mutators.
+    ///
+    /// Every SSG mutation (`run`, `start`, `stop`, `restart`, `rm`, and —
+    /// in Phase 3.5 — the `coast run` auto-start path) acquires this
+    /// mutex before touching the singleton DinD or its state rows.
+    /// Read-only verbs (`ps`, `ports`, `logs`, `exec`) do not take the
+    /// mutex. See `coast-ssg/DESIGN.md §17-5`.
+    pub ssg_mutex: Mutex<()>,
     /// Current display language. Updated when the user sets a language via the
     /// CLI or API. Handlers read from the `watch::Receiver` side.
     pub language_tx: tokio::sync::watch::Sender<String>,
@@ -278,6 +286,7 @@ impl AppState {
             service_health_cache: Mutex::new(std::collections::HashMap::new()),
             port_health_cache: Mutex::new(std::collections::HashMap::new()),
             project_ops: Mutex::new(std::collections::HashMap::new()),
+            ssg_mutex: Mutex::new(()),
             language_tx,
             language_rx,
             analytics: analytics_client,
@@ -318,6 +327,7 @@ impl AppState {
             service_health_cache: Mutex::new(std::collections::HashMap::new()),
             port_health_cache: Mutex::new(std::collections::HashMap::new()),
             project_ops: Mutex::new(std::collections::HashMap::new()),
+            ssg_mutex: Mutex::new(()),
             language_tx,
             language_rx,
             analytics: AnalyticsClient::noop(),
@@ -653,6 +663,23 @@ async fn dispatch_request_to_handler(
             if matches!(ssg_req, coast_core::protocol::SsgRequest::Build { .. }) =>
         {
             let r = handle_ssg_build_streaming(ssg_req, state, writer).await;
+            let ok = r.is_ok();
+            (r, ok, base_metadata.clone())
+        }
+        Request::Ssg(ssg_req)
+            if matches!(
+                ssg_req,
+                coast_core::protocol::SsgRequest::Run
+                    | coast_core::protocol::SsgRequest::Start
+                    | coast_core::protocol::SsgRequest::Restart
+            ) =>
+        {
+            let r = handle_ssg_lifecycle_streaming(ssg_req, state, writer).await;
+            let ok = r.is_ok();
+            (r, ok, base_metadata.clone())
+        }
+        Request::Ssg(coast_core::protocol::SsgRequest::Logs { follow: true, .. }) => {
+            let r = handle_ssg_logs_streaming(request, state, writer).await;
             let ok = r.is_ok();
             (r, ok, base_metadata.clone())
         }
@@ -1023,6 +1050,327 @@ async fn handle_ssg_build_streaming(
         }),
     };
     write_response(writer, &final_response).await
+}
+
+/// Stream progress events for `coast ssg run / start / restart`.
+///
+/// Mirrors [`handle_ssg_build_streaming`]. Acquires `ssg_mutex` for
+/// the duration of the lifecycle verb (every SSG mutator serializes
+/// via this process-wide lock — see `coast-ssg/DESIGN.md §17-5`).
+///
+/// State reads happen before the async Docker section; state writes
+/// happen after. `StateDb` wraps `!Sync` rusqlite, so holding a lock
+/// guard across an `.await` would reject the `Send` bound on the
+/// streaming future.
+async fn handle_ssg_lifecycle_streaming(
+    req: coast_core::protocol::SsgRequest,
+    state: &Arc<AppState>,
+    writer: &mut tokio::net::unix::OwnedWriteHalf,
+) -> Result<()> {
+    let Some(_operation_guard) =
+        begin_streaming_update_operation(state, UpdateOperationKind::Build, None, None, writer)
+            .await?
+    else {
+        return Ok(());
+    };
+
+    let Some(docker) = state.docker.as_ref() else {
+        let resp = Response::Error(ErrorResponse {
+            error: "coast ssg lifecycle verbs require Docker to be available on the host daemon. \
+                    Start Docker Desktop / Colima / OrbStack and restart coastd."
+                .to_string(),
+        });
+        return write_response(writer, &resp).await;
+    };
+
+    let _ssg_guard = state.ssg_mutex.lock().await;
+
+    let final_response = match req {
+        coast_core::protocol::SsgRequest::Run => run_streaming_run(state, &docker, writer).await,
+        coast_core::protocol::SsgRequest::Start => {
+            run_streaming_start_or_restart(state, &docker, writer, /*restart=*/ false).await
+        }
+        coast_core::protocol::SsgRequest::Restart => {
+            run_streaming_start_or_restart(state, &docker, writer, /*restart=*/ true).await
+        }
+        _ => unreachable!("handle_ssg_lifecycle_streaming only handles Run/Start/Restart"),
+    };
+
+    write_response(writer, &final_response).await
+}
+
+async fn run_streaming_run(
+    state: &Arc<AppState>,
+    docker: &bollard::Docker,
+    writer: &mut tokio::net::unix::OwnedWriteHalf,
+) -> Response {
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<BuildProgressEvent>(64);
+
+    let docker_clone = docker.clone();
+    let handler: std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = std::result::Result<
+                        coast_ssg::daemon_integration::SsgRunOutcome,
+                        CoastError,
+                    >,
+                > + Send,
+        >,
+    > = Box::pin(async move { coast_ssg::daemon_integration::run_ssg(&docker_clone, tx).await });
+
+    let result = forward_streaming_progress(handler, &mut rx, writer, Response::SsgProgress).await;
+
+    match result {
+        Ok(outcome) => {
+            let db = state.db.lock().await;
+            match outcome.apply_to_state_and_response(
+                &*db,
+                "running",
+                format!("SSG running on build {}", outcome.build_id),
+            ) {
+                Ok(resp) => Response::Ssg(resp),
+                Err(e) => Response::Error(ErrorResponse {
+                    error: e.to_string(),
+                }),
+            }
+        }
+        Err(e) => Response::Error(ErrorResponse {
+            error: e.to_string(),
+        }),
+    }
+}
+
+async fn run_streaming_start_or_restart(
+    state: &Arc<AppState>,
+    docker: &bollard::Docker,
+    writer: &mut tokio::net::unix::OwnedWriteHalf,
+    restart: bool,
+) -> Response {
+    use coast_ssg::state::SsgStateExt;
+    let prepared = {
+        let db = state.db.lock().await;
+        match db.get_ssg() {
+            Ok(Some(record)) => match db.list_ssg_services() {
+                Ok(services) => {
+                    let plans: Vec<coast_ssg::runtime::ports::SsgServicePortPlan> = services
+                        .into_iter()
+                        .map(|s| coast_ssg::runtime::ports::SsgServicePortPlan {
+                            service: s.service_name,
+                            container_port: s.container_port,
+                            dynamic_host_port: s.dynamic_host_port,
+                        })
+                        .collect();
+                    Ok((record, plans))
+                }
+                Err(e) => Err(e),
+            },
+            Ok(None) => {
+                return Response::Error(ErrorResponse {
+                    error: "SSG has not been created. Run `coast ssg run` to create and start it."
+                        .to_string(),
+                });
+            }
+            Err(e) => Err(e),
+        }
+    };
+    let (record, existing_plans) = match prepared {
+        Ok(pair) => pair,
+        Err(e) => {
+            return Response::Error(ErrorResponse {
+                error: e.to_string(),
+            });
+        }
+    };
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<BuildProgressEvent>(64);
+
+    let docker_clone = docker.clone();
+    let record_clone = record.clone();
+    let plans_clone = existing_plans;
+    let handler: std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = std::result::Result<
+                        coast_ssg::daemon_integration::SsgStartOutcome,
+                        CoastError,
+                    >,
+                > + Send,
+        >,
+    > = if restart {
+        Box::pin(async move {
+            coast_ssg::daemon_integration::restart_ssg(
+                &docker_clone,
+                &record_clone,
+                plans_clone,
+                tx,
+            )
+            .await
+        })
+    } else {
+        Box::pin(async move {
+            coast_ssg::daemon_integration::start_ssg(&docker_clone, &record_clone, plans_clone, tx)
+                .await
+        })
+    };
+
+    let result = forward_streaming_progress(handler, &mut rx, writer, Response::SsgProgress).await;
+
+    match result {
+        Ok(outcome) => {
+            let db = state.db.lock().await;
+            match outcome.apply_to_state_and_response(
+                &*db,
+                format!("SSG started on build {}", outcome.build_id),
+            ) {
+                Ok(resp) => Response::Ssg(resp),
+                Err(e) => Response::Error(ErrorResponse {
+                    error: e.to_string(),
+                }),
+            }
+        }
+        Err(e) => Response::Error(ErrorResponse {
+            error: e.to_string(),
+        }),
+    }
+}
+
+/// Handle `coast ssg logs --follow` by streaming subprocess output
+/// chunks back to the client.
+///
+/// Spawns either `docker logs -f {container_id}` (when no service is
+/// specified) or an `exec_in_coast` running `docker compose logs -f
+/// {service}` against the outer DinD. Each line arrives as one
+/// [`Response::SsgLogChunk`]. A final [`Response::Ssg`] closes the
+/// stream after the subprocess exits or the SSG is stopped.
+async fn handle_ssg_logs_streaming(
+    request: Request,
+    state: &Arc<AppState>,
+    writer: &mut tokio::net::unix::OwnedWriteHalf,
+) -> Result<()> {
+    let Request::Ssg(coast_core::protocol::SsgRequest::Logs {
+        service,
+        tail,
+        follow,
+    }) = request
+    else {
+        unreachable!("handle_ssg_logs_streaming only handles SsgRequest::Logs")
+    };
+    debug_assert!(follow);
+
+    use coast_ssg::state::SsgStateExt;
+
+    // Fetch container_id synchronously before any `.await` that might
+    // outlive the lock guard.
+    let container_id = {
+        let db = state.db.lock().await;
+        match db.get_ssg() {
+            Ok(Some(r)) => r.container_id,
+            Ok(None) => {
+                let resp = Response::Error(ErrorResponse {
+                    error: "SSG has not been created. Run `coast ssg run` first.".to_string(),
+                });
+                return write_response(writer, &resp).await;
+            }
+            Err(e) => {
+                let resp = Response::Error(ErrorResponse {
+                    error: e.to_string(),
+                });
+                return write_response(writer, &resp).await;
+            }
+        }
+    };
+    let Some(container_id) = container_id else {
+        let resp = Response::Error(ErrorResponse {
+            error: "SSG record has no container id; nothing to tail.".to_string(),
+        });
+        return write_response(writer, &resp).await;
+    };
+
+    let tail_value = tail.unwrap_or(200).to_string();
+
+    let mut cmd = tokio::process::Command::new("docker");
+    match service {
+        Some(ref svc) => {
+            cmd.args([
+                "exec",
+                &container_id,
+                "docker",
+                "compose",
+                "-f",
+                "/coast-artifact/compose.yml",
+                "-p",
+                "coast-ssg",
+                "logs",
+                "--tail",
+                &tail_value,
+                "-f",
+                svc,
+            ]);
+        }
+        None => {
+            cmd.args(["logs", "--tail", &tail_value, "-f", &container_id]);
+        }
+    }
+
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            let resp = Response::Error(ErrorResponse {
+                error: format!("failed to spawn docker logs: {e}"),
+            });
+            return write_response(writer, &resp).await;
+        }
+    };
+
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+
+    use tokio::io::{AsyncBufReadExt, BufReader as TokioBufReader};
+
+    if let Some(stdout) = stdout {
+        let mut reader = TokioBufReader::new(stdout).lines();
+        loop {
+            match reader.next_line().await {
+                Ok(Some(line)) => {
+                    let chunk = coast_core::protocol::SsgLogChunk { chunk: line };
+                    if let Err(e) = write_response(writer, &Response::SsgLogChunk(chunk)).await {
+                        // Client disconnected; terminate the child.
+                        let _ = child.kill().await;
+                        return Err(e);
+                    }
+                }
+                Ok(None) => break,
+                Err(e) => {
+                    warn!(error = %e, "error reading docker logs stdout");
+                    break;
+                }
+            }
+        }
+    }
+
+    // Drain stderr so the subprocess can exit cleanly.
+    if let Some(stderr) = stderr {
+        let mut reader = TokioBufReader::new(stderr).lines();
+        while let Ok(Some(line)) = reader.next_line().await {
+            let chunk = coast_core::protocol::SsgLogChunk {
+                chunk: format!("[stderr] {line}"),
+            };
+            let _ = write_response(writer, &Response::SsgLogChunk(chunk)).await;
+        }
+    }
+
+    let _ = child.wait().await;
+
+    let final_resp = Response::Ssg(coast_core::protocol::SsgResponse {
+        message: "log stream closed.".to_string(),
+        status: None,
+        services: Vec::new(),
+        ports: Vec::new(),
+    });
+    write_response(writer, &final_resp).await
 }
 
 /// Handle a logs request with streaming output chunks.
@@ -1770,7 +2118,14 @@ async fn dispatch_request(request: Request, state: &Arc<AppState>) -> Response {
         Request::Ssg(coast_core::protocol::SsgRequest::Build { .. }) => {
             unreachable!("ssg build requests handled by handle_ssg_build_streaming")
         }
-        Request::Ssg(ssg_req) => match handlers::ssg::handle(ssg_req).await {
+        Request::Ssg(
+            coast_core::protocol::SsgRequest::Run
+            | coast_core::protocol::SsgRequest::Start
+            | coast_core::protocol::SsgRequest::Restart,
+        ) => {
+            unreachable!("ssg run/start/restart handled by handle_ssg_lifecycle_streaming")
+        }
+        Request::Ssg(ssg_req) => match handlers::ssg::handle(state.clone(), ssg_req).await {
             Ok(resp) => Response::Ssg(resp),
             Err(e) => Response::Error(ErrorResponse {
                 error: e.to_string(),

@@ -215,6 +215,16 @@ pub enum Response {
     /// Streaming Shared Service Group build progress event (sent
     /// before the final Ssg response for `coast ssg build`).
     SsgProgress(BuildProgressEvent),
+    /// Streaming chunk of output for `coast ssg logs --follow`. The
+    /// daemon emits one [`Response::SsgLogChunk`] per line batch from
+    /// the outer DinD or a specific inner service, then a final
+    /// [`Response::Ssg`] to close the stream.
+    ///
+    /// Wrapped in a struct (rather than a tuple newtype) so the
+    /// internally-tagged Response enum can serialize the variant
+    /// (serde rejects `tag = "type"` on a tuple variant holding a
+    /// primitive).
+    SsgLogChunk(SsgLogChunk),
     /// Shared Service Group operation result.
     Ssg(SsgResponse),
     /// Error response.

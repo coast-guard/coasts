@@ -124,17 +124,17 @@ Legend: `[ ]` not started, `[~]` in progress, `[x]` done.
 - [x] Unit tests: manifest round-trip, image cache path resolution
 
 ### Phase 3 — SSG run / stop / start / restart / rm
-- [ ] SSG singleton DinD creation via `coast-docker::DindRuntime`
-- [ ] Inner compose synthesis (`coast-ssg/src/runtime/compose_synth.rs`)
-- [ ] `docker compose up -d` inside DinD
-- [ ] Dynamic host-port allocation per inner service
-- [ ] Symmetric-path bind mounts (host → outer DinD → inner service)
-- [ ] `coast ssg logs` / `exec` / `ports` with optional `--service`
-- [ ] `ssg_mutex` on `AppState` guarding all mutating handlers
-- [ ] Integration test: `test_ssg_run_lifecycle`
-- [ ] Integration test: `test_ssg_bind_mount_symmetric`
-- [ ] Integration test: `test_ssg_named_volume_persists`
-- [ ] Unit tests: compose synth, bind-mount translation, port allocation
+- [x] SSG singleton DinD creation via `coast-docker::DindRuntime`
+- [x] Inner compose synthesis (`coast-ssg/src/runtime/compose_synth.rs`)
+- [x] `docker compose up -d` inside DinD
+- [x] Dynamic host-port allocation per inner service
+- [x] Symmetric-path bind mounts (host → outer DinD → inner service)
+- [x] `coast ssg logs` / `exec` / `ports` with optional `--service`
+- [x] `ssg_mutex` on `AppState` guarding all mutating handlers
+- [x] Integration test: `test_ssg_run_lifecycle`
+- [x] Integration test: `test_ssg_bind_mount_symmetric`
+- [x] Integration test: `test_ssg_named_volume_persists`
+- [x] Unit tests: compose synth, bind-mount translation, port allocation
 
 ### Phase 3.5 — Auto-start hook in `coast run`
 - [ ] `coast-daemon/src/handlers/run/ssg_integration.rs` created
@@ -1117,6 +1117,68 @@ tracks state across sessions.
     over a socket and should not pull Docker. `coast-docker` already
     owns Docker primitives and was the topologically correct home.
     Future shared Docker helpers follow this same rule (§4.1).
+11. (SETTLED — Phase 3) **SSG singleton container naming.** DESIGN.md
+    §4 specifies the singleton is called `coast-ssg`, but the existing
+    `coast-docker` `ContainerConfig` always produces
+    `{project}-coasts-{instance}` (e.g. `coast-coasts-ssg`). Rather
+    than accept that awkward name, Phase 3 added
+    `ContainerConfig.container_name_override: Option<String>` (and
+    the matching `DindConfigParams.container_name_override`) so the
+    SSG lifecycle can request the literal name verbatim. All other
+    callers leave the field `None` and continue to use the default
+    convention. See
+    [`coast-docker/src/runtime.rs`](../coast-docker/src/runtime.rs)
+    and
+    [`coast-docker/src/dind.rs`](../coast-docker/src/dind.rs).
+12. (SETTLED — Phase 3) **Pure port-allocation helpers lifted to
+    `coast-core`.** `coast-ssg/src/runtime/ports.rs` needs
+    `allocate_dynamic_port_excluding`, but pulling it from
+    `coast-daemon` would create a cycle
+    (`coast-ssg -> coast-daemon -> coast-ssg`). The pure TCP-bind
+    probe functions (`allocate_dynamic_port`,
+    `allocate_dynamic_port_excluding`, `is_port_available`,
+    `inspect_port_binding`, `PortBindStatus`) moved into the new
+    [`coast-core/src/port.rs`](../coast-core/src/port.rs); the
+    daemon's `port_manager` keeps its socat/checkout orchestration and
+    delegates to `coast_core::port::*` for the allocation primitives.
+    This mirrors the Phase 2 `pull_and_cache_image` lift pattern
+    (§17.10) but targets `coast-core` because the helpers have no
+    Docker dependency (they only touch `std::net::TcpListener`).
+13. (SETTLED — Phase 3) **Lifecycle functions do not hold
+    `&dyn SsgStateExt` across `.await`.** The daemon's `StateDb`
+    wraps a `rusqlite::Connection` which is `!Sync`. Passing
+    `&dyn SsgStateExt` into a lifecycle function that awaits Docker
+    work would reject the `Send` bound on the resulting streaming
+    future. Lifecycle orchestrators therefore take plain input
+    records (`SsgRecord`, `Vec<SsgServicePortPlan>`) and return
+    outcome types (`SsgRunOutcome`, `SsgStartOutcome`,
+    `SsgStopOutcome`). Daemon handlers read state before the async
+    section and apply writes afterwards
+    (`apply_to_state_and_response`). `ports_ssg` is the one
+    exception — it is synchronous and does no Docker work, so it
+    takes `&dyn SsgStateExt` directly. See
+    [`coast-ssg/src/runtime/lifecycle.rs`](./src/runtime/lifecycle.rs)
+    and
+    [`coast-daemon/src/handlers/ssg.rs`](../coast-daemon/src/handlers/ssg.rs).
+14. (SETTLED — Phase 3) **`Response::SsgLogChunk` is a struct variant,
+    not a tuple newtype.** The `Response` enum uses
+    `#[serde(tag = "type")]` (internally tagged) which cannot
+    serialize tuple variants holding a primitive string. The chunk
+    payload therefore lives in a dedicated
+    `SsgLogChunk { chunk: String }` struct, tagged into the enum as
+    `Response::SsgLogChunk(SsgLogChunk)`. This is purely a
+    serialization workaround; the wire format still carries a single
+    string payload per chunk.
+15. (SETTLED — Phase 3) **Shared `with_coast_home` helper in
+    `coast-ssg`.** Each test module originally kept its own
+    `ENV_LOCK: Mutex<()>` for serializing `COAST_HOME` overrides,
+    but those per-module mutexes don't protect across modules — a
+    test in `paths::tests` could race with a test in
+    `build::artifact::tests`. Phase 3 consolidates the lock into
+    [`coast-ssg/src/test_support.rs`](./src/test_support.rs) so every
+    test that mutates `COAST_HOME` acquires the same mutex. Exposes
+    one public helper, `with_coast_home(|root| ...)`, used by both
+    `paths::tests` and `build::artifact::tests`.
 
 ## 18. Risks
 

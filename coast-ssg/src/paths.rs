@@ -57,32 +57,7 @@ pub fn resolve_latest_build_id() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
-
-    // `COAST_HOME` is process-global. Serialize tests that mutate it
-    // so the overrides don't stomp on each other.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    fn with_coast_home<F: FnOnce(&std::path::Path)>(f: F) {
-        let guard = ENV_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let tmp = tempfile::tempdir().unwrap();
-        let prev = std::env::var_os("COAST_HOME");
-        unsafe {
-            std::env::set_var("COAST_HOME", tmp.path());
-        }
-
-        f(tmp.path());
-
-        unsafe {
-            match prev {
-                Some(v) => std::env::set_var("COAST_HOME", v),
-                None => std::env::remove_var("COAST_HOME"),
-            }
-        }
-        drop(guard);
-    }
+    use crate::test_support::with_coast_home;
 
     #[test]
     fn ssg_home_respects_coast_home() {
