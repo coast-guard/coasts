@@ -385,3 +385,21 @@ tests:
     script: integrated-examples/test_ssg_auto_start_on_run.sh
     timeout: 600
     note: "coast run on a from_group consumer auto-starts the SSG; missing SSG build produces DESIGN-verbatim error"
+
+  # --- Shared Service Groups (coast-ssg) — Phase 4 ---
+  test_ssg_consumer_basic:
+    script: integrated-examples/test_ssg_consumer_basic.sh
+    timeout: 600
+    note: "consumer app reaches SSG postgres via synthesized config; real psql SELECT proves end-to-end connectivity"
+  test_ssg_consumer_conflict:
+    script: integrated-examples/test_ssg_consumer_conflict.sh
+    timeout: 300
+    note: "parse-time conflicts (forbidden fields + duplicate sections) surface via coast build"
+  test_ssg_consumer_missing_service:
+    script: integrated-examples/test_ssg_consumer_missing_service.sh
+    timeout: 600
+    note: "coast run fails with clear error when consumer references a name not in the active SSG"
+  test_ssg_port_collision:
+    script: integrated-examples/test_ssg_port_collision.sh
+    timeout: 600
+    note: "two consumer instances share one SSG postgres without any host-port conflict on 5432"

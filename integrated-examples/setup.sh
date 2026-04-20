@@ -1952,5 +1952,156 @@ SSG_CONSUMER_EOF
 
 setup_coast_ssg_consumer
 
+# --- coast-ssg-consumer-basic ---
+# Phase 4 consumer with a real inner compose. The app service runs a
+# long-sleeping postgres:16-alpine container (same image as the SSG
+# service — reused to avoid an extra image pull) so the test can
+# `docker exec <instance-app-container> psql -h postgres ...` and
+# prove end-to-end connectivity through:
+#
+#     consumer app -> postgres:5432 (DNS via compose_rewrite extra_hosts)
+#       -> docker0 alias IP (socat listener)
+#       -> host.docker.internal:<ssg-dynamic-port> (SSG's outer publish)
+#       -> inner SSG postgres
+#
+# Reused by `test_ssg_consumer_basic.sh` and `test_ssg_port_collision.sh`.
+
+setup_coast_ssg_consumer_basic() {
+    local dir="$PROJECTS_DIR/coast-ssg-consumer-basic"
+    echo "Setting up coast-ssg-consumer-basic..."
+    mkdir -p "$dir"
+    rm -rf "$dir/.git"
+
+    cat > "$dir/Coastfile" << 'SSG_BASIC_COASTFILE_EOF'
+# coast-ssg-consumer-basic: a consumer with a real inner compose that
+# actually connects to the SSG postgres. Phase 4.
+
+[coast]
+name = "coast-ssg-consumer-basic"
+compose = "./docker-compose.yml"
+runtime = "dind"
+
+[shared_services.postgres]
+from_group = true
+SSG_BASIC_COASTFILE_EOF
+
+    cat > "$dir/docker-compose.yml" << 'SSG_BASIC_COMPOSE_EOF'
+services:
+  app:
+    image: postgres:16-alpine
+    command: ["sh", "-c", "while true; do sleep 10; done"]
+    environment:
+      PGPASSWORD: "coast"
+SSG_BASIC_COMPOSE_EOF
+
+    cd "$dir"
+    git init -b main
+    git config user.name "Coast Dev"
+    git config user.email "dev@coasts.dev"
+    git add -A
+    git commit -m "initial commit: consumer with real compose + SSG postgres reference"
+    echo "  coast-ssg-consumer-basic ready"
+}
+
+setup_coast_ssg_consumer_basic
+
+# --- coast-ssg-consumer-conflict-forbidden ---
+# Phase 1 conflict: `from_group = true` with forbidden inline fields.
+# `coast build` must reject this at parse time. No runtime needed.
+
+setup_coast_ssg_consumer_conflict_forbidden() {
+    local dir="$PROJECTS_DIR/coast-ssg-consumer-conflict-forbidden"
+    echo "Setting up coast-ssg-consumer-conflict-forbidden..."
+    mkdir -p "$dir"
+    rm -rf "$dir/.git"
+
+    cat > "$dir/Coastfile" << 'SSG_CONFLICT_FORBIDDEN_EOF'
+[coast]
+name = "coast-ssg-consumer-conflict-forbidden"
+runtime = "dind"
+
+[shared_services.postgres]
+from_group = true
+image = "postgres:16-alpine"
+SSG_CONFLICT_FORBIDDEN_EOF
+
+    cd "$dir"
+    git init -b main
+    git config user.name "Coast Dev"
+    git config user.email "dev@coasts.dev"
+    git add -A
+    git commit -m "initial commit: from_group = true with forbidden image field"
+    echo "  coast-ssg-consumer-conflict-forbidden ready"
+}
+
+setup_coast_ssg_consumer_conflict_forbidden
+
+# --- coast-ssg-consumer-conflict-duplicate ---
+# TOML-level conflict: two `[shared_services.postgres]` header blocks.
+# TOML parsers reject duplicate keys, so `coast build` surfaces a
+# parse error before it even reaches the from_group validation.
+
+setup_coast_ssg_consumer_conflict_duplicate() {
+    local dir="$PROJECTS_DIR/coast-ssg-consumer-conflict-duplicate"
+    echo "Setting up coast-ssg-consumer-conflict-duplicate..."
+    mkdir -p "$dir"
+    rm -rf "$dir/.git"
+
+    cat > "$dir/Coastfile" << 'SSG_CONFLICT_DUP_EOF'
+[coast]
+name = "coast-ssg-consumer-conflict-duplicate"
+runtime = "dind"
+
+[shared_services.postgres]
+image = "postgres:16-alpine"
+ports = [5432]
+
+[shared_services.postgres]
+from_group = true
+SSG_CONFLICT_DUP_EOF
+
+    cd "$dir"
+    git init -b main
+    git config user.name "Coast Dev"
+    git config user.email "dev@coasts.dev"
+    git add -A
+    git commit -m "initial commit: duplicate shared_services.postgres sections"
+    echo "  coast-ssg-consumer-conflict-duplicate ready"
+}
+
+setup_coast_ssg_consumer_conflict_duplicate
+
+# --- coast-ssg-consumer-missing ---
+# Consumer references an SSG service name that doesn't exist in the
+# active SSG build. `coast build` succeeds (build doesn't cross-check
+# the SSG — Phase 7 adds drift detection). `coast run` must fail fast
+# with the DESIGN.md §6.1 "missing service" wording.
+
+setup_coast_ssg_consumer_missing() {
+    local dir="$PROJECTS_DIR/coast-ssg-consumer-missing"
+    echo "Setting up coast-ssg-consumer-missing..."
+    mkdir -p "$dir"
+    rm -rf "$dir/.git"
+
+    cat > "$dir/Coastfile" << 'SSG_MISSING_EOF'
+[coast]
+name = "coast-ssg-consumer-missing"
+runtime = "dind"
+
+[shared_services.nonexistent_svc]
+from_group = true
+SSG_MISSING_EOF
+
+    cd "$dir"
+    git init -b main
+    git config user.name "Coast Dev"
+    git config user.email "dev@coasts.dev"
+    git add -A
+    git commit -m "initial commit: consumer referencing nonexistent SSG service"
+    echo "  coast-ssg-consumer-missing ready"
+}
+
+setup_coast_ssg_consumer_missing
+
 echo ""
 echo "All examples initialized. Run 'coast build' inside any example to get started."

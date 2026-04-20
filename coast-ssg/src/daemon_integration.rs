@@ -270,6 +270,279 @@ pub use crate::runtime::lifecycle::{
     SsgRunOutcome, SsgStartOutcome, SsgStopOutcome,
 };
 
+// --- Phase 4 consumer wiring -----------------------------------------------
+
+/// Synthesize a `SharedServiceConfig` per `from_group = true` entry in
+/// the consumer Coastfile so the existing `shared_service_routing` +
+/// `compose_rewrite` pipeline can consume SSG-backed services the same
+/// way it consumes inline ones.
+///
+/// Inputs are pulled from three places:
+/// - `coastfile.shared_service_group_refs` gives us the list of
+///   consumer references and their per-project overrides (inject,
+///   auto_create_db).
+/// - `manifest` (the active SSG build's `manifest.json`) provides the
+///   image reference and the default `auto_create_db` for each service.
+/// - `services` (the daemon's `ssg_services` rows) provides the dynamic
+///   host port per inner container port.
+///
+/// Returns `Err` with a DESIGN.md §6.1-shaped message listing the
+/// actually-available service names when a consumer references a name
+/// the active SSG does not publish.
+///
+/// `volumes` and `env` are left empty: the consumer does not touch the
+/// SSG container. They only appear on `SharedServiceConfig` because the
+/// same struct is reused for inline services, where they are relevant.
+pub fn synthesize_shared_service_configs(
+    coastfile: &coast_core::coastfile::Coastfile,
+    manifest: &build_artifact::SsgManifest,
+    services: &[crate::state::SsgServiceRecord],
+) -> Result<Vec<coast_core::types::SharedServiceConfig>> {
+    if coastfile.shared_service_group_refs.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut synthesized = Vec::with_capacity(coastfile.shared_service_group_refs.len());
+
+    for consumer_ref in &coastfile.shared_service_group_refs {
+        let manifest_svc = manifest
+            .services
+            .iter()
+            .find(|s| s.name == consumer_ref.name)
+            .ok_or_else(|| missing_ssg_service_error(&consumer_ref.name, manifest))?;
+
+        let ports: Vec<coast_core::types::SharedServicePort> = services
+            .iter()
+            .filter(|s| s.service_name == consumer_ref.name)
+            .map(|s| coast_core::types::SharedServicePort {
+                host_port: s.dynamic_host_port,
+                container_port: s.container_port,
+            })
+            .collect();
+
+        synthesized.push(coast_core::types::SharedServiceConfig {
+            name: consumer_ref.name.clone(),
+            image: manifest_svc.image.clone(),
+            ports,
+            volumes: Vec::new(),
+            env: std::collections::HashMap::new(),
+            auto_create_db: consumer_ref
+                .auto_create_db
+                .unwrap_or(manifest_svc.auto_create_db),
+            inject: consumer_ref.inject.clone(),
+        });
+    }
+
+    Ok(synthesized)
+}
+
+fn missing_ssg_service_error(
+    referenced_name: &str,
+    manifest: &build_artifact::SsgManifest,
+) -> CoastError {
+    let mut available: Vec<&str> = manifest.services.iter().map(|s| s.name.as_str()).collect();
+    available.sort();
+    let available_list = if available.is_empty() {
+        "(the active SSG has no services)".to_string()
+    } else {
+        format!("[{}]", available.join(", "))
+    };
+    CoastError::coastfile(format!(
+        "Consumer references SSG service '{referenced_name}' which does not exist in the active \
+         SSG build {build_id}. Available services: {available_list}.",
+        build_id = manifest.build_id,
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::build::artifact::{SsgManifest, SsgManifestService};
+    use crate::state::SsgServiceRecord;
+    use coast_core::coastfile::Coastfile;
+    use coast_core::types::{InjectType, SharedServiceGroupRef};
+    use std::path::Path;
+
+    fn sample_manifest(services: Vec<(&str, &str, Vec<u16>, bool)>) -> SsgManifest {
+        SsgManifest {
+            build_id: "b1_20260420000000".to_string(),
+            built_at: chrono::Utc::now(),
+            coastfile_hash: "hash".to_string(),
+            services: services
+                .into_iter()
+                .map(|(name, image, ports, auto_create_db)| SsgManifestService {
+                    name: name.to_string(),
+                    image: image.to_string(),
+                    ports,
+                    env_keys: Vec::new(),
+                    volumes: Vec::new(),
+                    auto_create_db,
+                })
+                .collect(),
+        }
+    }
+
+    fn sample_record(service: &str, container_port: u16, dynamic: u16) -> SsgServiceRecord {
+        SsgServiceRecord {
+            service_name: service.to_string(),
+            container_port,
+            dynamic_host_port: dynamic,
+            status: "running".to_string(),
+        }
+    }
+
+    fn coastfile_with_refs(refs: Vec<SharedServiceGroupRef>) -> Coastfile {
+        let mut cf = Coastfile::parse("[coast]\nname = \"consumer\"\n", Path::new("/tmp"))
+            .expect("minimal coastfile parses");
+        cf.shared_service_group_refs = refs;
+        cf
+    }
+
+    fn simple_ref(name: &str) -> SharedServiceGroupRef {
+        SharedServiceGroupRef {
+            name: name.to_string(),
+            auto_create_db: None,
+            inject: None,
+        }
+    }
+
+    #[test]
+    fn synthesize_empty_when_no_refs() {
+        let cf = coastfile_with_refs(vec![]);
+        let manifest = sample_manifest(vec![("postgres", "postgres:16-alpine", vec![5432], false)]);
+        let services = vec![sample_record("postgres", 5432, 60000)];
+        let result = synthesize_shared_service_configs(&cf, &manifest, &services).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn synthesize_single_service_uses_manifest_image_and_dynamic_port() {
+        let cf = coastfile_with_refs(vec![simple_ref("postgres")]);
+        let manifest = sample_manifest(vec![("postgres", "postgres:16-alpine", vec![5432], false)]);
+        let services = vec![sample_record("postgres", 5432, 60001)];
+        let result = synthesize_shared_service_configs(&cf, &manifest, &services).unwrap();
+        assert_eq!(result.len(), 1);
+        let cfg = &result[0];
+        assert_eq!(cfg.name, "postgres");
+        assert_eq!(cfg.image, "postgres:16-alpine");
+        assert_eq!(cfg.ports.len(), 1);
+        assert_eq!(cfg.ports[0].container_port, 5432);
+        assert_eq!(cfg.ports[0].host_port, 60001);
+        assert!(cfg.volumes.is_empty(), "volumes are inert for consumers");
+        assert!(cfg.env.is_empty(), "env is inert for consumers");
+        assert!(!cfg.auto_create_db);
+        assert!(cfg.inject.is_none());
+    }
+
+    #[test]
+    fn synthesize_multi_service_preserves_ref_order() {
+        let cf = coastfile_with_refs(vec![simple_ref("postgres"), simple_ref("redis")]);
+        let manifest = sample_manifest(vec![
+            ("postgres", "postgres:16-alpine", vec![5432], false),
+            ("redis", "redis:7-alpine", vec![6379], false),
+        ]);
+        let services = vec![
+            sample_record("postgres", 5432, 60001),
+            sample_record("redis", 6379, 60002),
+        ];
+        let result = synthesize_shared_service_configs(&cf, &manifest, &services).unwrap();
+        let names: Vec<&str> = result.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, vec!["postgres", "redis"]);
+    }
+
+    #[test]
+    fn synthesize_missing_service_errors_with_available_list() {
+        let cf = coastfile_with_refs(vec![simple_ref("mongo")]);
+        let manifest = sample_manifest(vec![
+            ("postgres", "postgres:16-alpine", vec![5432], false),
+            ("redis", "redis:7-alpine", vec![6379], false),
+        ]);
+        let services = vec![sample_record("postgres", 5432, 60001)];
+        let err = synthesize_shared_service_configs(&cf, &manifest, &services).unwrap_err();
+        let message = err.to_string();
+        assert!(
+            message.contains("Consumer references SSG service 'mongo'"),
+            "unexpected message: {message}"
+        );
+        assert!(message.contains("does not exist"));
+        assert!(message.contains("b1_20260420000000"));
+        assert!(
+            message.contains("[postgres, redis]"),
+            "available list missing or unsorted: {message}"
+        );
+    }
+
+    #[test]
+    fn synthesize_missing_service_handles_empty_manifest() {
+        let cf = coastfile_with_refs(vec![simple_ref("mongo")]);
+        let manifest = sample_manifest(vec![]);
+        let err = synthesize_shared_service_configs(&cf, &manifest, &[]).unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("the active SSG has no services"));
+    }
+
+    #[test]
+    fn synthesize_passes_inject_through_from_ref() {
+        let cf = coastfile_with_refs(vec![SharedServiceGroupRef {
+            name: "postgres".to_string(),
+            auto_create_db: None,
+            inject: Some(InjectType::Env("DATABASE_URL".to_string())),
+        }]);
+        let manifest = sample_manifest(vec![("postgres", "postgres:16-alpine", vec![5432], false)]);
+        let services = vec![sample_record("postgres", 5432, 60001)];
+        let result = synthesize_shared_service_configs(&cf, &manifest, &services).unwrap();
+        match &result[0].inject {
+            Some(InjectType::Env(name)) => assert_eq!(name, "DATABASE_URL"),
+            other => panic!("expected Env(DATABASE_URL), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn synthesize_auto_create_db_override_wins_over_manifest() {
+        let cf = coastfile_with_refs(vec![SharedServiceGroupRef {
+            name: "postgres".to_string(),
+            auto_create_db: Some(true),
+            inject: None,
+        }]);
+        // Manifest says false, ref overrides to true.
+        let manifest = sample_manifest(vec![("postgres", "postgres:16-alpine", vec![5432], false)]);
+        let services = vec![sample_record("postgres", 5432, 60001)];
+        let result = synthesize_shared_service_configs(&cf, &manifest, &services).unwrap();
+        assert!(result[0].auto_create_db);
+    }
+
+    #[test]
+    fn synthesize_auto_create_db_inherits_manifest_when_ref_is_none() {
+        let cf = coastfile_with_refs(vec![simple_ref("postgres")]);
+        // Manifest says true; ref doesn't override.
+        let manifest = sample_manifest(vec![("postgres", "postgres:16-alpine", vec![5432], true)]);
+        let services = vec![sample_record("postgres", 5432, 60001)];
+        let result = synthesize_shared_service_configs(&cf, &manifest, &services).unwrap();
+        assert!(result[0].auto_create_db);
+    }
+
+    #[test]
+    fn synthesize_multi_port_service_emits_one_entry_per_port() {
+        let cf = coastfile_with_refs(vec![simple_ref("kafka")]);
+        let manifest = sample_manifest(vec![("kafka", "kafka:3", vec![9092, 9093, 9094], false)]);
+        let services = vec![
+            sample_record("kafka", 9092, 60010),
+            sample_record("kafka", 9093, 60011),
+            sample_record("kafka", 9094, 60012),
+        ];
+        let result = synthesize_shared_service_configs(&cf, &manifest, &services).unwrap();
+        assert_eq!(result.len(), 1);
+        let ports: Vec<(u16, u16)> = result[0]
+            .ports
+            .iter()
+            .map(|p| (p.container_port, p.host_port))
+            .collect();
+        assert!(ports.contains(&(9092, 60010)));
+        assert!(ports.contains(&(9093, 60011)));
+        assert!(ports.contains(&(9094, 60012)));
+    }
+}
+
 fn build_response_from_manifest(
     manifest: &build_artifact::SsgManifest,
     message: String,

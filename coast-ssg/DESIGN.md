@@ -144,14 +144,14 @@ Legend: `[ ]` not started, `[~]` in progress, `[x]` done.
 - [x] Integration test: `test_ssg_auto_start_on_run`
 
 ### Phase 4 — Coast ↔ SSG wiring
-- [ ] `ssg_integration::synthesize_shared_service_configs(cf, ssg_state)`
-- [ ] Consumer coasts' `from_group = true` services skip inline host-start
-- [ ] Existing `shared_service_routing` + `compose_rewrite` paths consume synthesized configs unchanged
-- [ ] Error: `from_group = true` references a name not in the active SSG
-- [ ] Integration test: `test_ssg_consumer_basic`
-- [ ] Integration test: `test_ssg_consumer_conflict`
-- [ ] Integration test: `test_ssg_consumer_missing_service`
-- [ ] Integration test: `test_ssg_port_collision` (two consumer coasts, one SSG postgres)
+- [x] `ssg_integration::synthesize_shared_service_configs(cf, ssg_state)`
+- [x] Consumer coasts' `from_group = true` services skip inline host-start
+- [x] Existing `shared_service_routing` + `compose_rewrite` paths consume synthesized configs unchanged
+- [x] Error: `from_group = true` references a name not in the active SSG
+- [x] Integration test: `test_ssg_consumer_basic`
+- [x] Integration test: `test_ssg_consumer_conflict`
+- [x] Integration test: `test_ssg_consumer_missing_service`
+- [x] Integration test: `test_ssg_port_collision` (two consumer coasts, one SSG postgres)
 
 ### Phase 4.5 — Remote coast + SSG
 - [ ] `rewrite_reverse_tunnel_pairs` in `coast-ssg/src/remote_tunnel.rs`
@@ -1203,6 +1203,20 @@ tracks state across sessions.
     `SSG: ` prefix on their `step` field so the CLI shows the full
     boot sequence without breaking the consumer's progress plan.
     Idempotent — re-prefixing is a no-op, so nested calls stay flat.
+18. (SETTLED — Phase 4) **`shared_service_targets` placeholder for
+    SSG-backed services is the literal string `"coast-ssg"`.**
+    [`coast-daemon/src/handlers/shared_service_routing.rs`](../coast-daemon/src/handlers/shared_service_routing.rs)
+    uses the `target_containers: HashMap<String, String>` map only
+    for a `.contains_key(service.name)` existence check; the actual
+    socat upstream is always `host.docker.internal:<host_port>` via
+    the `SOCAT_UPSTREAM_HOST` constant. Rather than invent a new
+    per-service value that implies a nonexistent on-host container,
+    Phase 4 inserts the literal `"coast-ssg"` for every synthesized
+    SSG service. The value is intentionally self-documenting: a
+    future reader searching the state dump sees exactly where these
+    entries come from. Consumers of `target_containers` must treat
+    a value of `"coast-ssg"` as "routed through the SSG singleton,
+    not an on-host inline container".
 
 ## 18. Risks
 

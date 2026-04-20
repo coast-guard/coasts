@@ -428,6 +428,27 @@ async fn load_coastfile_resources(
         }
     }
 
+    // SSG consumer wiring (Phase 4): synthesize a `SharedServiceConfig`
+    // per `from_group = true` reference using the active SSG build's
+    // manifest + allocated dynamic host ports, then merge into the
+    // result so the existing shared_service_routing + compose_rewrite
+    // paths route `postgres:5432` inside the consumer DinD to
+    // `host.docker.internal:<ssg-dynamic-port>`. Inline services are
+    // not affected; they started above. See `coast-ssg/DESIGN.md §11`.
+    let synthesized =
+        super::ssg_integration::synthesize_configs_for_consumer(state, &coastfile).await?;
+    for cfg in &synthesized {
+        // Any non-empty placeholder satisfies `build_routing_plan`'s
+        // `target_containers.contains_key(...)` existence check; the
+        // actual socat upstream is the `SOCAT_UPSTREAM_HOST` constant
+        // (`host.docker.internal`), not this value. Use "coast-ssg"
+        // as a literal, self-documenting placeholder.
+        result
+            .shared_service_targets
+            .insert(cfg.name.clone(), "coast-ssg".to_string());
+    }
+    result.shared_services.extend(synthesized);
+
     Ok(result)
 }
 

@@ -247,6 +247,63 @@ fn prefix_inner_event(mut event: BuildProgressEvent) -> BuildProgressEvent {
     event
 }
 
+/// Synthesize `SharedServiceConfig` entries for every
+/// `from_group = true` reference in the consumer Coastfile.
+///
+/// Phase: ssg-phase-4. See `coast-ssg/DESIGN.md §11` for the overall
+/// wiring contract. Returns an empty vec when the consumer has no
+/// SSG references; otherwise reads the active SSG build manifest
+/// from disk + the `ssg_services` rows from the state DB and
+/// delegates the pure synthesis work to
+/// `coast_ssg::daemon_integration::synthesize_shared_service_configs`.
+///
+/// Errors with the DESIGN.md §6.1 missing-service wording (via
+/// `coast-ssg`) when the consumer names a service the active SSG
+/// does not publish.
+pub async fn synthesize_configs_for_consumer(
+    state: &AppState,
+    coastfile: &Coastfile,
+) -> Result<Vec<coast_core::types::SharedServiceConfig>> {
+    if coastfile.shared_service_group_refs.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let build_id = coast_ssg::paths::resolve_latest_build_id().ok_or_else(|| {
+        CoastError::coastfile(
+            "no active SSG build found while synthesizing consumer shared services. \
+             Run `coast ssg build` in the directory containing your \
+             Coastfile.shared_service_groups.",
+        )
+    })?;
+    let build_dir = coast_ssg::paths::ssg_build_dir(&build_id)?;
+    let manifest_path = build_dir.join("manifest.json");
+    let manifest_contents =
+        std::fs::read_to_string(&manifest_path).map_err(|e| CoastError::Io {
+            message: format!(
+                "failed to read SSG manifest '{}': {e}",
+                manifest_path.display()
+            ),
+            path: manifest_path.clone(),
+            source: Some(e),
+        })?;
+    let manifest: coast_ssg::build::artifact::SsgManifest =
+        serde_json::from_str(&manifest_contents).map_err(|e| {
+            CoastError::artifact(format!(
+                "failed to parse SSG manifest '{}': {e}",
+                manifest_path.display()
+            ))
+        })?;
+
+    let services = {
+        let db = state.db.lock().await;
+        db.list_ssg_services()?
+    };
+
+    coast_ssg::daemon_integration::synthesize_shared_service_configs(
+        coastfile, &manifest, &services,
+    )
+}
+
 /// DESIGN.md §11.1 verbatim wording, customized with the consumer
 /// project name and the list of referenced SSG service names. A
 /// single error type (`CoastError::coastfile`) is used so the
@@ -421,5 +478,19 @@ name = "consumer"
         );
         assert!(message.contains("no SSG build exists"));
         assert!(message.contains("Coastfile.shared_service_groups"));
+    }
+
+    #[tokio::test]
+    async fn synthesize_configs_for_consumer_returns_empty_when_no_refs() {
+        // Consumer has no `from_group = true` entries — short-circuits
+        // before any disk/DB read, so no SSG build need exist.
+        let db = crate::state::StateDb::open_in_memory().unwrap();
+        let state = crate::server::AppState::new_for_testing(db);
+
+        let coastfile = empty_coastfile();
+        let result = synthesize_configs_for_consumer(&state, &coastfile)
+            .await
+            .expect("empty refs must succeed");
+        assert!(result.is_empty());
     }
 }
