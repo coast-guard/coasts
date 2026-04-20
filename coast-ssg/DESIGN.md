@@ -238,6 +238,92 @@ Verification:
 - [x] `make run-dind-integration TEST=test_ssg_doctor` — regression
 - [x] `make run-dind-integration TEST=test_ssg_host_checkout` — regression
 
+### Phase 10 — Cleanup + §17 resolution
+Strip every "this is a stub" / "this is future work" / "decide in
+Phase X" marker that Phase 9 audit found. See Addendum for context.
+- [ ] Delete `coast-ssg/src/port_checkout.rs` stub (actual code lives in `runtime/port_checkout.rs` + `handlers/ssg/checkout.rs`); remove `pub mod port_checkout;` from `lib.rs`
+- [ ] Strip `TODO(ssg-phase-N)` prefixes from `pub mod` comments in `coast-ssg/src/lib.rs`
+- [ ] Update `# Phase 0 status` doc-comment in `lib.rs` to reflect Phase 10+ reality
+- [ ] Promote §17 #3 (per-project network) to SETTLED
+- [ ] Promote §17 #5 (ssg_mutex vs RwLock) to SETTLED
+- [ ] Promote §17 #8 (checkout displacement `--force`) to SETTLED
+
+### Phase 11 — Consumer socat refresh after SSG re-run
+Fixes the "coast ssg rm + run invalidates consumer proxies" gap
+found in the Phase 9 post-hoc audit.
+- [ ] New `coast-daemon/src/handlers/ssg/consumer_refresh.rs::refresh_consumer_proxies_after_lifecycle`
+- [ ] Call site wiring after `run_streaming_run` + `run_streaming_start_or_restart`
+- [ ] Integration test `test_ssg_rm_run_refreshes_consumers`
+- [ ] Unit test using in-memory AppState (Pattern C)
+- [ ] §17 SETTLED #38 documenting the refresh invariant
+
+### Phase 12 — Pattern A: full lifecycle + images migration
+Completes the Pattern A work Phase 9 left partial. Supersedes §17 #37.
+- [ ] Expand `SsgDockerOps` trait with all lifecycle + image methods
+- [ ] Complete `BollardSsgDockerOps` real impl
+- [ ] Complete `MockSsgDockerOps` test impl
+- [ ] Refactor `runtime/lifecycle.rs` to take `&dyn SsgDockerOps`
+- [ ] Refactor `build/images.rs::pull_and_cache_ssg_images` to take the trait
+- [ ] Wire `BollardSsgDockerOps` at daemon entry points
+- [ ] ~70 new unit tests per verb with mock
+- [ ] Full integration regression: every `test_ssg_*.sh` still passes
+- [ ] Update §17 SETTLED #37 to document completion
+
+### Phase 13 — `file:/path` inject runtime
+Supersedes §17 #20 / #21 (file-inject "deferred follow-up"). DESIGN §14
+becomes reality, not half-reality.
+- [ ] Remove `InjectType::File(_) => continue` early-return in `shared_services.rs`
+- [ ] Add `shared_service_inject_file_writes` helper
+- [ ] Compose rewrite mounts the host files into every non-stubbed service
+- [ ] Integration test `test_ssg_inject_file`
+- [ ] DESIGN §14 stripped of "deferred" language
+- [ ] §17 SETTLED #20/#21 updated to "DONE in Phase 13"
+
+### Phase 14 — Phase 9 integration test backfill
+Phase 9 fixed 6 user-facing behaviors but only had unit tests. Add
+integration coverage.
+- [ ] `test_ssg_build_global_working_dir`
+- [ ] `test_ssg_checkout_positional`
+- [ ] `test_ssg_consumer_disables_auto_create_db`
+- [ ] `test_ssg_ps_live_state`
+- [ ] `test_ssg_coast_build_hard_errors_no_ssg`
+- [ ] `test_ssg_auto_start_on_run` updated to assert event ordering
+- [ ] Each new test registered in `dindind/integration.yaml`
+
+### Phase 15 — `coast ssg import-host-volume <name>`
+Supersedes DESIGN §10.7 "out of scope for v1". Zero-copy migration
+of existing host Docker volumes into SSG bind mounts.
+- [ ] `SsgRequest::ImportHostVolume` protocol variant
+- [ ] `coast ssg import-host-volume <name>` CLI subcommand
+- [ ] `coast-ssg/src/runtime/host_volume_import.rs` orchestrator
+- [ ] `--apply` flag rewrites the SSG Coastfile in place (with backup)
+- [ ] Docs update in `docs/shared_service_groups/VOLUMES.md`
+- [ ] Integration test `test_ssg_import_host_volume`
+- [ ] §17 SETTLED #39 + DESIGN §10.7 updated
+
+### Phase 16 — `coast ssg checkout-build <id>` consumer pinning
+Supersedes DESIGN §17-9 "Not in v1". Lets a consumer pin to an older
+SSG build so drift doesn't break them.
+- [ ] New state table `ssg_consumer_pins`
+- [ ] `SsgRequest::CheckoutBuild` / `UncheckoutBuild` / `ShowPin`
+- [ ] `coast ssg checkout-build` / `uncheckout-build` / `show-pin` CLI verbs
+- [ ] `validate_ssg_drift` respects the pin
+- [ ] `ensure_ready_for_consumer` auto-starts the pinned build
+- [ ] Docs new page `docs/shared_service_groups/PINNING.md`
+- [ ] Integration tests: pin-protects, uncheckout-restores-latest, missing-build-errors
+- [ ] §17 SETTLED #40 + §17-9 promoted
+
+### Phase 17 — `extends` / `includes` on SSG Coastfile
+Supersedes §17-7. Mirrors the regular-Coastfile inheritance system.
+- [ ] `RawSsgCoastfile` accepts `[ssg] extends = ...` and `includes = [...]`
+- [ ] Parser merges extended/included chains
+- [ ] Validation: extended file must be a valid SSG Coastfile; no cycles
+- [ ] `[unset]` / `[omit]` sections mirror regular Coastfile
+- [ ] ~15 unit tests
+- [ ] Integration test `test_ssg_coastfile_inheritance`
+- [ ] `docs/coastfiles/SHARED_SERVICE_GROUPS.md` + DESIGN §5 updated
+- [ ] §17 SETTLED #41 + §17-7 promoted
+
 ---
 
 ## 1. Problem
@@ -1862,3 +1948,61 @@ Pinned glossary for context-compacted sessions.
 | Symmetric path | The bind-mount plan in §10.2 — the same host path string on both mount hops |
 | Displacement | `coast ssg checkout` taking over a canonical port held by a coast instance |
 | Drift | Mismatch between a coast build's recorded SSG reference and the current SSG state (§6.1) |
+
+---
+
+## Addendum — Missing Plan (Phases 10-17)
+
+Phase 9's post-hoc audit found 13 divergences from §5-§14 and closed
+6 in code + 7 via SETTLED entries. A follow-up review found that
+several Phase 9 SETTLED entries were LLM-introduced to justify
+deferring work that the original DESIGN.md never intended to defer.
+The agent shortcutted:
+
+- Scaffolded `coast-ssg/src/port_checkout.rs` in Phase 0 then filled
+  the Phase 6 work in `runtime/port_checkout.rs` + `handlers/ssg/checkout.rs`,
+  leaving the original stub as dead code with a lingering TODO.
+- Left `TODO(ssg-phase-N)` prefixes on `pub mod` comments in
+  `coast-ssg/src/lib.rs` after each phase completed.
+- Declared the Pattern A lifecycle migration (Phase 9 work) "too
+  risky" and stopped after the `SsgDockerOps` trait + 2 pure helpers.
+  The full migration was always supposed to happen.
+- Marked `file:/path` inject as a "deferred follow-up" in Phase 5
+  via §17 #20 / #21, even though DESIGN §14 enumerates `env:` and
+  `file:` as equal-class inject targets.
+- Left §17 #3, #5, #8 as open questions whose actual Phase
+  resolutions never got promoted to SETTLED.
+
+This addendum enumerates the bypassed work as Phases 10-17, each
+with the same §0-style checklist. It also picks up the genuinely-
+future-but-scoped-for-this-round items DESIGN originally flagged
+(`coast ssg import-host-volume` §10.7, `coast ssg checkout-build`
+§17-9, SSG Coastfile inheritance §17-7).
+
+### Explicitly out of scope for this addendum
+
+- **Multiple concurrent SSGs on one host.** The singleton-per-host
+  invariant is intentional (§3 non-goal, §2 terminology). Multiple
+  *projects* already share the one SSG — that is the core value
+  proposition and works today via `from_group = true`. Running two
+  separate `coast-ssg` containers side by side is not a feature the
+  design aims at; if you need e.g. `postgres:15` and `postgres:16`
+  both available, declare them as distinct services within the
+  single SSG Coastfile.
+- **Remote-resident SSG.** Genuine future work (§3 non-goal,
+  §17-6 SETTLED). Larger than a single addendum can absorb and
+  orthogonal to the gap-closing items here.
+
+### Phase ordering
+
+The §0 checklists above are the normative source. Suggested
+execution order (least-coupled first):
+
+1. Phase 10 — cleanup, 2h
+2. Phase 11 — consumer socat refresh (real bug), half day
+3. Phase 14 — Phase 9 integration test backfill, half day
+4. Phase 13 — `file:/path` inject, 1 day
+5. Phase 12 — Pattern A full migration, 2-3 days
+6. Phase 15 — import-host-volume, 1 day
+7. Phase 16 — checkout-build consumer pinning, 2-3 days
+8. Phase 17 — extends / includes, 2-3 days
