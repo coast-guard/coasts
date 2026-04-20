@@ -2163,5 +2163,129 @@ SSG_REMOTE_COMPOSE_EOF
 
 setup_coast_ssg_consumer_remote
 
+# --- coast-ssg-auto-db ---
+# Phase 5 SSG fixture with `auto_create_db = true` on postgres.
+# Separate from coast-ssg-minimal so Phase 2-4.5 tests keep their
+# original behavior (no per-instance DB creation, no password pinning).
+# POSTGRES_PASSWORD is pinned to `dev` to match the hardcoded
+# `postgres:dev@...` credential baked into
+# `coast_docker::compose::build_connection_url` used for `inject`.
+
+setup_coast_ssg_auto_db() {
+    local dir="$PROJECTS_DIR/coast-ssg-auto-db"
+    echo "Setting up coast-ssg-auto-db..."
+    mkdir -p "$dir"
+    rm -rf "$dir/.git"
+
+    cat > "$dir/Coastfile.shared_service_groups" << 'SSG_AUTODB_EOF'
+[ssg]
+runtime = "dind"
+
+[shared_services.postgres]
+image = "postgres:16-alpine"
+ports = [5432]
+volumes = ["pg_data:/var/lib/postgresql/data"]
+env = { POSTGRES_USER = "postgres", POSTGRES_PASSWORD = "dev" }
+auto_create_db = true
+SSG_AUTODB_EOF
+
+    cd "$dir"
+    git init -b main
+    git config user.name "Coast Dev"
+    git config user.email "dev@coasts.dev"
+    git add -A
+    git commit -m "initial commit: SSG with auto_create_db postgres"
+    echo "  coast-ssg-auto-db ready"
+}
+
+setup_coast_ssg_auto_db
+
+# --- coast-ssg-consumer-auto-db ---
+# Consumer that references coast-ssg-auto-db's postgres via
+# `from_group = true` and declares `inject = "env:DATABASE_URL"`.
+# The app container is `postgres:16-alpine` (for `psql`) sleeping
+# forever; the test execs psql inside it to query the DB through
+# the normal routing chain.
+
+setup_coast_ssg_consumer_auto_db() {
+    local dir="$PROJECTS_DIR/coast-ssg-consumer-auto-db"
+    echo "Setting up coast-ssg-consumer-auto-db..."
+    mkdir -p "$dir"
+    rm -rf "$dir/.git"
+
+    cat > "$dir/Coastfile" << 'SSG_CONSUMER_AUTODB_COAST_EOF'
+[coast]
+name = "coast-ssg-consumer-auto-db"
+compose = "./docker-compose.yml"
+runtime = "dind"
+
+[shared_services.postgres]
+from_group = true
+inject = "env:DATABASE_URL"
+SSG_CONSUMER_AUTODB_COAST_EOF
+
+    cat > "$dir/docker-compose.yml" << 'SSG_CONSUMER_AUTODB_COMPOSE_EOF'
+services:
+  app:
+    image: postgres:16-alpine
+    command: ["sh", "-c", "while true; do sleep 10; done"]
+SSG_CONSUMER_AUTODB_COMPOSE_EOF
+
+    cd "$dir"
+    git init -b main
+    git config user.name "Coast Dev"
+    git config user.email "dev@coasts.dev"
+    git add -A
+    git commit -m "initial commit: consumer with inject env:DATABASE_URL"
+    echo "  coast-ssg-consumer-auto-db ready"
+}
+
+setup_coast_ssg_consumer_auto_db
+
+# --- coast-shared-service-auto-db ---
+# INLINE shared-service variant (no SSG). Proves the Phase 5 wiring
+# also lights up auto_create_db + inject for `[shared_services.*]`
+# declared directly on the consumer — DESIGN.md §13 claimed this
+# already worked before Phase 5 but the runtime was never implemented;
+# see DESIGN.md §17-20.
+
+setup_coast_shared_service_auto_db() {
+    local dir="$PROJECTS_DIR/coast-shared-service-auto-db"
+    echo "Setting up coast-shared-service-auto-db..."
+    mkdir -p "$dir"
+    rm -rf "$dir/.git"
+
+    cat > "$dir/Coastfile" << 'INLINE_AUTODB_COAST_EOF'
+[coast]
+name = "coast-shared-service-auto-db"
+compose = "./docker-compose.yml"
+runtime = "dind"
+
+[shared_services.postgres]
+image = "postgres:16-alpine"
+ports = [5432]
+env = { POSTGRES_USER = "postgres", POSTGRES_PASSWORD = "dev" }
+auto_create_db = true
+inject = "env:DATABASE_URL"
+INLINE_AUTODB_COAST_EOF
+
+    cat > "$dir/docker-compose.yml" << 'INLINE_AUTODB_COMPOSE_EOF'
+services:
+  app:
+    image: postgres:16-alpine
+    command: ["sh", "-c", "while true; do sleep 10; done"]
+INLINE_AUTODB_COMPOSE_EOF
+
+    cd "$dir"
+    git init -b main
+    git config user.name "Coast Dev"
+    git config user.email "dev@coasts.dev"
+    git add -A
+    git commit -m "initial commit: inline shared postgres with auto_create_db + inject"
+    echo "  coast-shared-service-auto-db ready"
+}
+
+setup_coast_shared_service_auto_db
+
 echo ""
 echo "All examples initialized. Run 'coast build' inside any example to get started."

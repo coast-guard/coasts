@@ -404,6 +404,20 @@ tests:
     timeout: 600
     note: "two consumer instances share one SSG postgres without any host-port conflict on 5432"
 
+  # --- Shared Service Groups (coast-ssg) — Phase 5 (auto_create_db + inject) ---
+  test_ssg_auto_create_db:
+    script: integrated-examples/test_ssg_auto_create_db.sh
+    timeout: 600
+    note: "per-instance {instance}_{project} DB created inside SSG postgres on consumer run"
+  test_ssg_inject_env:
+    script: integrated-examples/test_ssg_inject_env.sh
+    timeout: 600
+    note: "consumer app container receives DATABASE_URL with canonical host/port"
+  test_shared_service_auto_create_db:
+    script: integrated-examples/test_shared_service_auto_create_db.sh
+    timeout: 600
+    note: "inline (non-SSG) shared postgres also lights up auto_create_db + inject"
+
   # --- Shared Service Groups (coast-ssg) — Phase 4.5 (remote) ---
   test_ssg_remote_reverse_tunnel:
     script: integrated-examples/test_ssg_remote_reverse_tunnel.sh

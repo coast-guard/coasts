@@ -46,7 +46,7 @@ pub const SSG_COMPOSE_PROJECT: &str = "coast-ssg";
 
 /// Inner path the artifact directory is mounted at (see
 /// [`DindConfigParams::artifact_dir`]).
-const INNER_ARTIFACT_DIR: &str = "/coast-artifact";
+pub(crate) const INNER_ARTIFACT_DIR: &str = "/coast-artifact";
 
 /// Inner path the host image cache is mounted at (see
 /// [`DindConfigParams::image_cache_path`]).
@@ -590,7 +590,7 @@ pub fn ports_ssg(state: &dyn SsgStateExt) -> Result<SsgResponse> {
 
 // --- internals -------------------------------------------------------------
 
-fn inner_compose_path() -> String {
+pub(crate) fn inner_compose_path() -> String {
     format!("{INNER_ARTIFACT_DIR}/compose.yml")
 }
 

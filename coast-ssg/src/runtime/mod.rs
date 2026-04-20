@@ -23,8 +23,8 @@ pub mod compose_synth;
 // ssg-phase-3: symmetric-path bind mount translation (see DESIGN.md §10.2).
 pub mod bind_mounts;
 
-// TODO(ssg-phase-5): nested docker-exec for per-instance DB creation.
-mod auto_create_db;
+// ssg-phase-5: nested docker-exec for per-instance DB creation (DESIGN.md §13).
+pub mod auto_create_db;
 
 // ssg-phase-3: dynamic port allocation.
 pub mod ports;

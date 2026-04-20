@@ -162,10 +162,10 @@ Legend: `[ ]` not started, `[~]` in progress, `[x]` done.
 - [x] Integration test: `test_ssg_stop_force_cleans_tunnels`
 
 ### Phase 5 — `auto_create_db` + `inject`
-- [ ] Nested exec (`coast-ssg/src/runtime/auto_create_db.rs`) reuses SQL from `coast-daemon/src/shared_services.rs::create_db_command`
-- [ ] `inject` resolution pulls the template from the SSG Coastfile, canonical inner port
-- [ ] Integration test: `test_ssg_auto_create_db`
-- [ ] Integration test: `test_ssg_inject_env`
+- [x] Nested exec (`coast-ssg/src/runtime/auto_create_db.rs`) reuses SQL from `coast-daemon/src/shared_services.rs::create_db_command`
+- [x] `inject` resolution pulls the template from the SSG Coastfile, canonical inner port
+- [x] Integration test: `test_ssg_auto_create_db`
+- [x] Integration test: `test_ssg_inject_env`
 
 ### Phase 6 — Host-side canonical-port checkout
 - [ ] `coast ssg checkout [service | --all]` and `uncheckout`
@@ -941,9 +941,11 @@ Semantics:
 
 ## 13. `auto_create_db`
 
-For inline shared services today, `auto_create_db` runs `docker exec`
-against the host container. For SSG services, it becomes a nested exec
-(`coast-ssg/src/runtime/auto_create_db.rs`):
+Phase 5 lights up `auto_create_db` for both paths (inline and SSG)
+— prior to that, the SQL builder existed but had no caller (§17-20).
+Inline services run `docker exec <host-container> psql ... \gexec`
+against the shared-services host container. SSG services run a
+nested exec (`coast-ssg/src/runtime/auto_create_db.rs`):
 
 ```text
 docker exec <ssg-outer> \
@@ -975,6 +977,13 @@ the referenced SSG service's metadata:
 Result: the inject string a coast sees at runtime is always something
 like `postgres://coast:coast@postgres:5432/app`, regardless of the
 SSG's dynamic port. That invariance is the whole point.
+
+Phase 5 scope (`inject`): `env:NAME` is fully wired end-to-end for
+both inline and SSG shared services via
+[`coast-daemon/src/shared_services.rs::shared_service_inject_env_vars`].
+`file:/path` is recognized by the parser but is a deferred follow-up;
+the runtime currently skips file-inject silently. See §17-21 and the
+issue tracker once this doc is split.
 
 ## 15. File organization
 
@@ -1203,6 +1212,38 @@ tracks state across sessions.
     `SSG: ` prefix on their `step` field so the CLI shows the full
     boot sequence without breaking the consumer's progress plan.
     Idempotent — re-prefixing is a no-op, so nested calls stay flat.
+21. (SETTLED — Phase 5) **DB naming convention for `auto_create_db`
+    is `{instance}_{project}`.** The inline
+    [`coast_docker::compose::build_connection_url`](../coast-docker/src/compose.rs)
+    already encodes `{instance}_{project}` into the connection string
+    it emits. Using the same shape for
+    [`consumer_db_name`](../coast-daemon/src/shared_services.rs) means
+    the DB that `auto_create_db` creates and the DB that `inject`
+    points at are guaranteed to agree — no wiring required.
+    Alternatives considered: `{instance}` alone (the
+    `database_name(instance, "")` shape from the v1
+    `auto_create_db_names` helper), or `{instance}_{POSTGRES_DB}`
+    (reading the base name from the service's own env). Both would
+    decouple the DB name from the inject URL and introduce new
+    failure modes.
+20. (SETTLED — Phase 5) **Inline `auto_create_db` was not actually
+    implemented before Phase 5, despite §13 claiming otherwise.**
+    [`coast-daemon/src/shared_services.rs::create_db_command`](../coast-daemon/src/shared_services.rs)
+    has existed since before Phase 0 but had no caller. Similarly,
+    [`coast-docker/src/compose.rs::generate_shared_service_override`](../coast-docker/src/compose.rs)
+    writes the inject connection URL as a YAML comment rather than as
+    an actual `environment:` entry — so inject was never realized in
+    container env either. Phase 5 adds the runtime callers for both
+    paths (inline: direct `docker exec`; SSG: nested compose-exec)
+    via
+    [`coast-daemon/src/handlers/run/auto_create_db.rs::run_auto_create_dbs`](../coast-daemon/src/handlers/run/auto_create_db.rs)
+    and
+    [`coast-daemon/src/shared_services.rs::shared_service_inject_env_vars`](../coast-daemon/src/shared_services.rs).
+    The SQL builder and connection-URL builder are reused verbatim
+    so inline and SSG paths emit byte-identical DDL + env vars.
+    `file:/path` inject is deferred — parsed but runtime skips it.
+    Integration coverage: `test_ssg_auto_create_db`,
+    `test_ssg_inject_env`, `test_shared_service_auto_create_db`.
 19. (SETTLED — Phase 4.5) **`shared_service_tunnel_pids` is an
     in-memory-only map, not a SQLite table.** Phase 4.5 needs
     `coast ssg stop/rm --force` to tear down reverse SSH tunnels for

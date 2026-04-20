@@ -220,6 +220,14 @@ fn write_shared_services_section(coastfile: &Coastfile, out: &mut String) {
         if service.auto_create_db {
             writeln!(out, "auto_create_db = true").unwrap();
         }
+        // Phase 5: `inject` round-trips through the artifact coastfile
+        // so the daemon's run path sees it at `coast run` time. The
+        // inline pre-Phase-5 code path never used inject at runtime,
+        // which is why the serializer silently dropped this field;
+        // now it must survive build -> artifact -> run.
+        if let Some(ref inject) = service.inject {
+            writeln!(out, "inject = {}", toml_quote(&inject.to_inject_string())).unwrap();
+        }
     }
 
     // Emit `from_group = true` entries so the build artifact's

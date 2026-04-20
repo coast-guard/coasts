@@ -407,6 +407,44 @@ fn missing_ssg_service_error(
     ))
 }
 
+// --- Phase 5 auto_create_db nested-exec bridge -----------------------------
+
+/// Execute `command` inside the inner `service_name` container of the
+/// SSG singleton DinD, treating any non-zero exit as an error.
+///
+/// Phase 5 uses this to run a psql/mysql CREATE-DATABASE command
+/// against an SSG-backed DB service on behalf of a consumer coast.
+/// The `command` vector is whatever
+/// [`coast_daemon::shared_services::create_db_command`] returned — the
+/// SQL builder lives in `coast-daemon` (inline path's home) and is
+/// shared verbatim with the nested path. See `DESIGN.md §13`.
+///
+/// Errors include the service name and the captured stderr so
+/// troubleshooting doesn't require crawling the daemon logs.
+pub async fn create_instance_db_for_consumer(
+    docker: &bollard::Docker,
+    ssg_record: &crate::state::SsgRecord,
+    service_name: &str,
+    command: Vec<String>,
+) -> Result<()> {
+    let result = crate::runtime::auto_create_db::exec_in_ssg_service(
+        docker,
+        ssg_record,
+        service_name,
+        command,
+    )
+    .await?;
+    if !result.success() {
+        return Err(CoastError::docker(format!(
+            "auto_create_db failed inside SSG service '{service_name}': exit {code}. \
+             stderr: {stderr}",
+            code = result.exit_code,
+            stderr = result.stderr.trim(),
+        )));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

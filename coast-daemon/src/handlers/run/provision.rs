@@ -105,6 +105,20 @@ pub(super) async fn provision_instance(
 
     normalize_inner_docker_socket_permissions(docker, &container_id).await;
     setup_shared_services(&ctx).await?;
+    // Phase 5: create `{instance}_{project}` DB inside each shared
+    // service with `auto_create_db = true` before the consumer's inner
+    // compose starts. Dispatches per `shared_service_targets`:
+    // "coast-ssg" -> nested compose exec; anything else -> direct
+    // `docker exec`. See `coast-ssg/DESIGN.md §13`.
+    super::auto_create_db::run_auto_create_dbs(
+        docker,
+        state,
+        &resources.shared_services,
+        &resources.shared_service_targets,
+        &req.project,
+        &req.name,
+    )
+    .await?;
     prepare_images(&ctx).await;
     prepare_runtime(&ctx).await?;
     start_services(&ctx).await?;
@@ -172,18 +186,27 @@ async fn setup_shared_services(ctx: &InstanceConfig<'_>) -> Result<()> {
         super::super::shared_service_routing::SharedServiceRoutingPlan::host_map,
     );
 
-    rewrite_compose(
-        ctx.artifact_dir,
-        ctx.code_path,
-        ctx.coastfile_path,
-        &shared_service_hosts,
-        ctx.per_instance_image_tags,
-        ctx.has_volume_mounts,
-        ctx.secret_container_paths,
-        Some(paths::SHARED_CADDY_PKI_CONTAINER_PATH),
+    // Phase 5: compute inject env vars here so they go into the
+    // compose override and reach the inner compose services.
+    let shared_service_inject_env = crate::shared_services::shared_service_inject_env_vars(
+        &ctx.resources.shared_services,
         &ctx.req.project,
         &ctx.req.name,
     );
+
+    rewrite_compose(&RewriteComposeArgs {
+        artifact_dir: ctx.artifact_dir,
+        code_path: ctx.code_path,
+        coastfile_path: ctx.coastfile_path,
+        shared_service_hosts: &shared_service_hosts,
+        shared_service_inject_env: &shared_service_inject_env,
+        per_instance_image_tags: ctx.per_instance_image_tags,
+        has_volume_mounts: ctx.has_volume_mounts,
+        secret_container_paths: ctx.secret_container_paths,
+        shared_caddy_pki_container_path: Some(paths::SHARED_CADDY_PKI_CONTAINER_PATH),
+        project: &ctx.req.project,
+        instance_name: &ctx.req.name,
+    });
 
     if let Some(ref routing) = shared_service_routing {
         ensure_shared_service_proxies(ctx.docker, ctx.container_id, routing).await?;
@@ -452,18 +475,34 @@ async fn load_coastfile_resources(
     Ok(result)
 }
 
-fn rewrite_compose(
-    artifact_dir: &std::path::Path,
-    code_path: &std::path::Path,
-    coastfile_path: &std::path::Path,
-    shared_service_hosts: &HashMap<String, String>,
-    per_instance_image_tags: &[(String, String)],
+struct RewriteComposeArgs<'a> {
+    artifact_dir: &'a std::path::Path,
+    code_path: &'a std::path::Path,
+    coastfile_path: &'a std::path::Path,
+    shared_service_hosts: &'a HashMap<String, String>,
+    shared_service_inject_env: &'a HashMap<String, String>,
+    per_instance_image_tags: &'a [(String, String)],
     has_volume_mounts: bool,
-    secret_container_paths: &[String],
-    shared_caddy_pki_container_path: Option<&str>,
-    project: &str,
-    instance_name: &str,
-) {
+    secret_container_paths: &'a [String],
+    shared_caddy_pki_container_path: Option<&'a str>,
+    project: &'a str,
+    instance_name: &'a str,
+}
+
+fn rewrite_compose(args: &RewriteComposeArgs<'_>) {
+    let &RewriteComposeArgs {
+        artifact_dir,
+        code_path,
+        coastfile_path,
+        shared_service_hosts,
+        shared_service_inject_env,
+        per_instance_image_tags,
+        has_volume_mounts,
+        secret_container_paths,
+        shared_caddy_pki_container_path,
+        project,
+        instance_name,
+    } = args;
     let compose_path = artifact_dir.join("compose.yml");
     let compose_content = if compose_path.exists() {
         std::fs::read_to_string(&compose_path).ok()
@@ -491,6 +530,7 @@ fn rewrite_compose(
         content,
         &compose_rewrite::ComposeRewriteConfig {
             shared_service_hosts,
+            shared_service_inject_env,
             coastfile_path,
             per_instance_image_tags,
             has_volume_mounts,
@@ -629,6 +669,10 @@ fn build_container_config(
 ) -> coast_docker::runtime::ContainerConfig {
     let mut env_vars = ctx.secret_plan.env_vars.clone();
     merge_dynamic_port_env_vars(&mut env_vars, pre_allocated_ports);
+    // Phase 5: shared-service `inject` env vars are applied via the
+    // compose rewriter (see `compose_rewrite::apply_shared_service_inject_env`),
+    // not on the outer DinD — otherwise they wouldn't reach the inner
+    // compose services where the consumer app actually runs.
 
     let mut config = coast_docker::dind::build_dind_config(coast_docker::dind::DindConfigParams {
         env_vars,
