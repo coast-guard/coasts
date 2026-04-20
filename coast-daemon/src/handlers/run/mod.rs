@@ -762,7 +762,12 @@ async fn setup_shared_service_tunnels(
     state: &AppState,
     remote_config: &coast_core::types::RemoteConnection,
 ) -> Result<Vec<coast_core::protocol::SharedServicePortForward>> {
-    if cf.shared_services.is_empty() {
+    // Phase 4.5: there are now two sources of forwards:
+    //   1. Inline `[shared_services.*]` entries (pre-existing).
+    //   2. Consumer `[shared_services.*] from_group = true` refs,
+    //      synthesized from the active SSG build + dynamic ports.
+    // If both are empty, nothing to tunnel.
+    if cf.shared_services.is_empty() && cf.shared_service_group_refs.is_empty() {
         return Ok(Vec::new());
     }
 
@@ -770,15 +775,18 @@ async fn setup_shared_service_tunnels(
         return Ok(Vec::new());
     };
 
-    let _result = shared_services_setup::start_shared_services(
-        &req.project,
-        &cf.shared_services,
-        &docker,
-        state,
-    )
-    .await?;
+    if !cf.shared_services.is_empty() {
+        let _result = shared_services_setup::start_shared_services(
+            &req.project,
+            &cf.shared_services,
+            &docker,
+            state,
+        )
+        .await?;
+    }
 
-    let forwards: Vec<coast_core::protocol::SharedServicePortForward> = cf
+    // Inline shared-service forwards (host-daemon containers).
+    let inline_forwards: Vec<coast_core::protocol::SharedServicePortForward> = cf
         .shared_services
         .iter()
         .flat_map(|svc| {
@@ -791,9 +799,22 @@ async fn setup_shared_service_tunnels(
         })
         .collect();
 
+    // SSG-backed forwards (synthesized from the active SSG build).
+    // Read the manifest + ssg_services rows and let coast-ssg do the
+    // validation + synthesis. `ensure_ready_for_consumer` ran earlier
+    // in `handle_remote_run`, so the SSG is guaranteed to be up with
+    // `ssg_services` populated before we reach here.
+    let (ssg_forwards, ssg_services) = synthesize_ssg_forwards(cf, state).await?;
+
+    let mut forwards = inline_forwards;
+    forwards.extend(ssg_forwards);
+
     if !forwards.is_empty() {
-        let reverse_pairs: Vec<(u16, u16)> =
-            forwards.iter().map(|fwd| (fwd.port, fwd.port)).collect();
+        // Rewrite the local side of each pair so SSG forwards target
+        // the dynamic host port instead of the canonical. Inline
+        // forwards fall back to identity mapping. See DESIGN.md §20.2.
+        let reverse_pairs =
+            coast_ssg::remote_tunnel::rewrite_reverse_tunnel_pairs(&forwards, &ssg_services);
         match super::remote::tunnel::reverse_forward_ports(remote_config, &reverse_pairs).await {
             Ok(pids) => {
                 info!(
@@ -801,6 +822,10 @@ async fn setup_shared_service_tunnels(
                     tunnels = pids.len(),
                     "shared service reverse tunnels created"
                 );
+                if !pids.is_empty() {
+                    let mut map = state.shared_service_tunnel_pids.lock().await;
+                    map.insert((req.project.clone(), req.name.clone()), pids);
+                }
             }
             Err(_) => {
                 info!(
@@ -812,6 +837,63 @@ async fn setup_shared_service_tunnels(
     }
 
     Ok(forwards)
+}
+
+/// Fetch the active SSG manifest + `ssg_services` rows and ask
+/// `coast-ssg` to synthesize the consumer's reverse-tunnel forwards.
+/// Returns `(forwards, ssg_services)` — the services list is also
+/// returned because `rewrite_reverse_tunnel_pairs` needs it to
+/// decide which forwards point at the SSG vs inline.
+///
+/// Empty Vecs when the consumer has no SSG refs; errors only when
+/// the consumer references a service that doesn't exist in the
+/// active SSG build (same DESIGN-shaped error as Phase 4's local path).
+async fn synthesize_ssg_forwards(
+    cf: &coast_core::coastfile::Coastfile,
+    state: &AppState,
+) -> Result<(
+    Vec<coast_core::protocol::SharedServicePortForward>,
+    Vec<coast_ssg::state::SsgServiceRecord>,
+)> {
+    use coast_ssg::state::SsgStateExt;
+
+    if cf.shared_service_group_refs.is_empty() {
+        return Ok((Vec::new(), Vec::new()));
+    }
+
+    let Some(build_id) = coast_ssg::paths::resolve_latest_build_id() else {
+        // ensure_ready_for_consumer would have errored already; this
+        // is a defensive guard for tests / race conditions.
+        return Ok((Vec::new(), Vec::new()));
+    };
+    let build_dir = coast_ssg::paths::ssg_build_dir(&build_id)?;
+    let manifest_path = build_dir.join("manifest.json");
+    let manifest_contents =
+        std::fs::read_to_string(&manifest_path).map_err(|e| coast_core::error::CoastError::Io {
+            message: format!(
+                "failed to read SSG manifest '{}': {e}",
+                manifest_path.display()
+            ),
+            path: manifest_path.clone(),
+            source: Some(e),
+        })?;
+    let manifest: coast_ssg::build::artifact::SsgManifest =
+        serde_json::from_str(&manifest_contents).map_err(|e| {
+            coast_core::error::CoastError::artifact(format!(
+                "failed to parse SSG manifest '{}': {e}",
+                manifest_path.display()
+            ))
+        })?;
+
+    let services = {
+        let db = state.db.lock().await;
+        db.list_ssg_services()?
+    };
+
+    let forwards = coast_ssg::daemon_integration::synthesize_remote_forwards_for_consumer(
+        cf, &manifest, &services,
+    )?;
+    Ok((forwards, services))
 }
 
 /// Build, download artifact, and forward the run request to coast-service.
@@ -950,6 +1032,14 @@ async fn handle_remote_run(
         progress,
         BuildProgressEvent::done("Creating shell coast", "ok"),
     );
+
+    // --- SSG auto-start for remote consumers (Phase 4.5) ---
+    // DESIGN.md §20.5: resolve SSG references BEFORE the reverse
+    // tunnels are set up so `ssg_services` rows are populated when
+    // `setup_shared_service_tunnels` rewrites the local side of each
+    // pair. Same helper as the local run path — `ensure_ready_for_consumer`
+    // is a no-op when the Coastfile has no `from_group` refs.
+    ssg_integration::ensure_ready_for_consumer(state, &req.project, &cf, progress).await?;
 
     // --- Step 4: Start shared services + Step 6: Reverse tunnels ---
     emit(

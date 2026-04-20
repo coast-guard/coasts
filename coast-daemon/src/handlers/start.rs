@@ -681,17 +681,24 @@ async fn reestablish_forward_tunnels(
 }
 
 async fn reestablish_shared_service_tunnels(
+    state: &AppState,
     config: &coast_core::types::RemoteConnection,
     project: &str,
     name: &str,
 ) {
-    let pairs = crate::shared_service_reverse_pairs(project);
+    // Phase 4.5: SSG-aware pairs (local side rewritten to dynamic
+    // ports for SSG-backed services).
+    let pairs = crate::shared_service_reverse_pairs_with_ssg(state, project).await;
     if pairs.is_empty() {
         return;
     }
     match super::remote::tunnel::reverse_forward_ports(config, &pairs).await {
         Ok(pids) => {
-            info!(instance = %name, tunnels = pairs.len(), pids = ?pids, "re-established shared service tunnels")
+            info!(instance = %name, tunnels = pairs.len(), pids = ?pids, "re-established shared service tunnels");
+            if !pids.is_empty() {
+                let mut map = state.shared_service_tunnel_pids.lock().await;
+                map.insert((project.to_string(), name.to_string()), pids);
+            }
         }
         Err(e) => {
             warn!(instance = %name, error = %e, "failed to re-establish shared service tunnels")
@@ -735,7 +742,7 @@ async fn handle_remote_start(
     };
 
     reestablish_forward_tunnels(&remote_config, &req.name, &allocs).await;
-    reestablish_shared_service_tunnels(&remote_config, &req.project, &req.name).await;
+    reestablish_shared_service_tunnels(state, &remote_config, &req.project, &req.name).await;
 
     let db = state.db.lock().await;
     db.update_instance_status(&req.project, &req.name, &InstanceStatus::Running)?;

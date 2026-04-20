@@ -32,11 +32,26 @@ pub enum SsgRequest {
     /// Start an existing but stopped SSG.
     Start,
     /// Stop the SSG (its inner services stop with it).
-    Stop,
+    ///
+    /// When `force = true`, proceed even if remote shadow coasts are
+    /// currently consuming the SSG. The daemon tears down the reverse
+    /// SSH tunnels it spawned on behalf of those shadows. Without
+    /// `force`, the daemon refuses and lists the blocking shadows.
+    /// See `coast-ssg/DESIGN.md §20.6`.
+    Stop {
+        #[serde(default)]
+        force: bool,
+    },
     /// Stop + start.
     Restart,
-    /// Remove the SSG container. `with_data = true` also removes inner named volumes.
-    Rm { with_data: bool },
+    /// Remove the SSG container. `with_data = true` also removes inner
+    /// named volumes. `force = true` proceeds even if remote shadow
+    /// coasts are consuming the SSG (same semantics as `Stop.force`).
+    Rm {
+        with_data: bool,
+        #[serde(default)]
+        force: bool,
+    },
     /// Show SSG container status and per-service status.
     Ps,
     /// Logs from the outer DinD container or a specific inner service.

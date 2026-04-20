@@ -219,6 +219,18 @@ pub struct AppState {
     /// Read-only verbs (`ps`, `ports`, `logs`, `exec`) do not take the
     /// mutex. See `coast-ssg/DESIGN.md §17-5`.
     pub ssg_mutex: Mutex<()>,
+    /// Tracks the PIDs of reverse-tunnel ssh children spawned by
+    /// `setup_shared_service_tunnels` for each remote coast instance.
+    /// Keyed by `(project, instance_name)`. In-memory only — reverse
+    /// tunnels are per-run child processes; a daemon restart respawns
+    /// them and repopulates this map via
+    /// `reestablish_shared_service_tunnels`.
+    ///
+    /// Used by `coast ssg stop/rm --force` to tear down tunnels for
+    /// shadow instances that are still consuming the SSG before
+    /// stopping or removing the singleton. See `coast-ssg/DESIGN.md
+    /// §20.6` and §17-19.
+    pub shared_service_tunnel_pids: Mutex<std::collections::HashMap<(String, String), Vec<u32>>>,
     /// Current display language. Updated when the user sets a language via the
     /// CLI or API. Handlers read from the `watch::Receiver` side.
     pub language_tx: tokio::sync::watch::Sender<String>,
@@ -287,6 +299,7 @@ impl AppState {
             port_health_cache: Mutex::new(std::collections::HashMap::new()),
             project_ops: Mutex::new(std::collections::HashMap::new()),
             ssg_mutex: Mutex::new(()),
+            shared_service_tunnel_pids: Mutex::new(std::collections::HashMap::new()),
             language_tx,
             language_rx,
             analytics: analytics_client,
@@ -328,6 +341,7 @@ impl AppState {
             port_health_cache: Mutex::new(std::collections::HashMap::new()),
             project_ops: Mutex::new(std::collections::HashMap::new()),
             ssg_mutex: Mutex::new(()),
+            shared_service_tunnel_pids: Mutex::new(std::collections::HashMap::new()),
             language_tx,
             language_rx,
             analytics: AnalyticsClient::noop(),

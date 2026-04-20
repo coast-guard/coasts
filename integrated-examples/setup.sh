@@ -2103,5 +2103,65 @@ SSG_MISSING_EOF
 
 setup_coast_ssg_consumer_missing
 
+# --- coast-ssg-consumer-remote ---
+# Phase 4.5 consumer that builds+runs on a remote coast-service and
+# consumes the LOCAL SSG via reverse SSH tunnels (DESIGN.md §20).
+#
+# The inner app container runs `postgres:16-alpine` (so psql is
+# available) and loops forever; the integration test execs psql
+# against `postgres:5432` through the tunnel chain.
+#
+# Two Coastfile variants:
+#   Coastfile              - base (local build works too)
+#   Coastfile.remote.toml  - extends base + adds [remote] section
+
+setup_coast_ssg_consumer_remote() {
+    local dir="$PROJECTS_DIR/coast-ssg-consumer-remote"
+    echo "Setting up coast-ssg-consumer-remote..."
+    mkdir -p "$dir"
+    rm -rf "$dir/.git"
+
+    cat > "$dir/Coastfile" << 'SSG_REMOTE_COASTFILE_EOF'
+# coast-ssg-consumer-remote: Phase 4.5 remote consumer.
+# Base variant; the remote build uses `Coastfile.remote.toml`.
+
+[coast]
+name = "coast-ssg-consumer-remote"
+compose = "./docker-compose.yml"
+runtime = "dind"
+
+[shared_services.postgres]
+from_group = true
+SSG_REMOTE_COASTFILE_EOF
+
+    cat > "$dir/Coastfile.remote.toml" << 'SSG_REMOTE_REMOTE_EOF'
+# Remote variant: extends the base Coastfile and declares [remote].
+
+[coast]
+extends = "Coastfile"
+
+[remote]
+SSG_REMOTE_REMOTE_EOF
+
+    cat > "$dir/docker-compose.yml" << 'SSG_REMOTE_COMPOSE_EOF'
+services:
+  app:
+    image: postgres:16-alpine
+    command: ["sh", "-c", "while true; do sleep 10; done"]
+    environment:
+      PGPASSWORD: "coast"
+SSG_REMOTE_COMPOSE_EOF
+
+    cd "$dir"
+    git init -b main
+    git config user.name "Coast Dev"
+    git config user.email "dev@coasts.dev"
+    git add -A
+    git commit -m "initial commit: remote consumer that references SSG postgres"
+    echo "  coast-ssg-consumer-remote ready"
+}
+
+setup_coast_ssg_consumer_remote
+
 echo ""
 echo "All examples initialized. Run 'coast build' inside any example to get started."

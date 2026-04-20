@@ -62,7 +62,16 @@ pub enum SsgAction {
     /// Start a previously-created-then-stopped SSG.
     Start,
     /// Stop the SSG DinD (inner `docker compose down` + outer stop).
-    Stop,
+    ///
+    /// With `--force`, proceeds even if remote consumer coasts are
+    /// currently consuming the SSG; the daemon tears down their
+    /// reverse SSH tunnels before stopping.
+    Stop {
+        /// Proceed even when remote shadow coasts reference the SSG.
+        /// Tears down the reverse-tunnel ssh children first.
+        #[arg(long)]
+        force: bool,
+    },
     /// Stop then start the SSG. Preserves the existing container id
     /// and dynamic port mappings.
     Restart,
@@ -70,12 +79,17 @@ pub enum SsgAction {
     ///
     /// With `--with-data`, inner named volumes (postgres WAL, etc.)
     /// are also removed before tearing down the DinD. Host bind mount
-    /// contents are never touched.
+    /// contents are never touched. With `--force`, proceeds even if
+    /// remote consumer coasts are consuming the SSG.
     Rm {
         /// Also remove inner named volumes. Host bind mount contents
         /// are unaffected.
         #[arg(long = "with-data")]
         with_data: bool,
+        /// Proceed even when remote shadow coasts reference the SSG.
+        /// Tears down the reverse-tunnel ssh children first.
+        #[arg(long)]
+        force: bool,
     },
     /// Tail logs from the outer DinD or a specific inner service.
     Logs {
@@ -126,11 +140,14 @@ pub async fn execute(args: &SsgArgs) -> Result<()> {
         SsgAction::Run => execute_lifecycle(SsgRequest::Run, "Run", args.silent).await,
         SsgAction::Start => execute_lifecycle(SsgRequest::Start, "Start", args.silent).await,
         SsgAction::Restart => execute_lifecycle(SsgRequest::Restart, "Restart", args.silent).await,
-        SsgAction::Stop => execute_simple(SsgRequest::Stop, args.silent).await,
-        SsgAction::Rm { with_data } => {
+        SsgAction::Stop { force } => {
+            execute_simple(SsgRequest::Stop { force: *force }, args.silent).await
+        }
+        SsgAction::Rm { with_data, force } => {
             execute_simple(
                 SsgRequest::Rm {
                     with_data: *with_data,
+                    force: *force,
                 },
                 args.silent,
             )

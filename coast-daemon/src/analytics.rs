@@ -510,7 +510,7 @@ pub fn request_command_name(req: &Request) -> String {
             SsgRequest::Build { .. } => "ssg/build",
             SsgRequest::Run => "ssg/run",
             SsgRequest::Start => "ssg/start",
-            SsgRequest::Stop => "ssg/stop",
+            SsgRequest::Stop { .. } => "ssg/stop",
             SsgRequest::Restart => "ssg/restart",
             SsgRequest::Rm { .. } => "ssg/rm",
             SsgRequest::Ps => "ssg/ps",

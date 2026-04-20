@@ -1393,16 +1393,114 @@ async fn restore_shared_service_tunnels(
     let mut restored_hosts: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for inst in &remote_instances {
-        restore_tunnels_for_instance(inst, &remotes, &mut restored_hosts).await;
+        restore_tunnels_for_instance(state, inst, &remotes, &mut restored_hosts).await;
     }
 }
 
+/// Phase 4.5: async SSG-aware variant of `shared_service_reverse_pairs`.
+///
+/// Today the legacy `shared_service_reverse_pairs` only emits
+/// `(container_port, container_port)` pairs for inline shared
+/// services. This variant additionally:
+///
+///   1. Includes forwards synthesized from the consumer's
+///      `shared_service_group_refs`.
+///   2. Rewrites the local side of each pair via
+///      `coast_ssg::remote_tunnel::rewrite_reverse_tunnel_pairs` so
+///      SSG-backed services tunnel to the SSG's dynamic host port
+///      while inline services keep their identity mapping.
+///
+/// Returns an empty vec when the project's artifact Coastfile is
+/// missing, can't be parsed, or declares nothing that needs a
+/// reverse tunnel. Errors are swallowed (logged) to match the
+/// best-effort posture of the legacy helper.
+pub(crate) async fn shared_service_reverse_pairs_with_ssg(
+    state: &server::AppState,
+    project: &str,
+) -> Vec<(u16, u16)> {
+    use coast_ssg::state::SsgStateExt;
+
+    let Ok(images_dir) = coast_core::artifact::artifact_dir(project) else {
+        return Vec::new();
+    };
+    let coastfile_path = ["latest-remote", "latest"].iter().find_map(|name| {
+        let p = images_dir.join(name).join("coastfile.toml");
+        if p.exists() {
+            Some(p)
+        } else {
+            None
+        }
+    });
+    let Some(cf_path) = coastfile_path else {
+        return Vec::new();
+    };
+    let Ok(content) = std::fs::read_to_string(&cf_path) else {
+        return Vec::new();
+    };
+    let Ok(cf) = coast_core::coastfile::Coastfile::parse(&content, &images_dir) else {
+        return Vec::new();
+    };
+
+    // Inline forwards (canonical:canonical on both sides).
+    let mut forwards: Vec<coast_core::protocol::SharedServicePortForward> = cf
+        .shared_services
+        .iter()
+        .flat_map(|svc| {
+            svc.ports
+                .iter()
+                .map(|p| coast_core::protocol::SharedServicePortForward {
+                    name: svc.name.clone(),
+                    port: p.container_port,
+                })
+        })
+        .collect();
+
+    // SSG-backed forwards, if any.
+    let ssg_services = if cf.shared_service_group_refs.is_empty() {
+        Vec::new()
+    } else {
+        // Best-effort: if the SSG manifest is gone or ssg_services is
+        // empty, we still emit what we can — rewrite_reverse_tunnel_pairs
+        // will fall back to identity for unmatched forwards.
+        let services = {
+            let db = state.db.lock().await;
+            db.list_ssg_services().unwrap_or_default()
+        };
+        if let Some(build_id) = coast_ssg::paths::resolve_latest_build_id() {
+            if let Ok(build_dir) = coast_ssg::paths::ssg_build_dir(&build_id) {
+                let manifest_path = build_dir.join("manifest.json");
+                if let Ok(manifest_contents) = std::fs::read_to_string(&manifest_path) {
+                    if let Ok(manifest) = serde_json::from_str::<
+                        coast_ssg::build::artifact::SsgManifest,
+                    >(&manifest_contents)
+                    {
+                        if let Ok(extras) =
+                            coast_ssg::daemon_integration::synthesize_remote_forwards_for_consumer(
+                                &cf, &manifest, &services,
+                            )
+                        {
+                            forwards.extend(extras);
+                        }
+                    }
+                }
+            }
+        }
+        services
+    };
+
+    coast_ssg::remote_tunnel::rewrite_reverse_tunnel_pairs(&forwards, &ssg_services)
+}
+
 async fn restore_tunnels_for_instance(
+    state: &Arc<server::AppState>,
     inst: &coast_core::types::CoastInstance,
     remotes: &[coast_core::types::RemoteEntry],
     restored_hosts: &mut std::collections::HashSet<String>,
 ) {
-    let reverse_pairs = shared_service_reverse_pairs(&inst.project);
+    // Phase 4.5: the pairs may include SSG-backed services with their
+    // local side rewritten to the dynamic host port; fetch them via
+    // the async helper that consults `ssg_services`.
+    let reverse_pairs = shared_service_reverse_pairs_with_ssg(state.as_ref(), &inst.project).await;
     if reverse_pairs.is_empty() {
         return;
     }
@@ -1439,14 +1537,24 @@ async fn restore_tunnels_for_instance(
         },
     );
 
-    if create_reverse_tunnels(&connection, &reverse_pairs, &inst.name).await {
+    if create_reverse_tunnels(
+        state,
+        &connection,
+        &reverse_pairs,
+        &inst.project,
+        &inst.name,
+    )
+    .await
+    {
         restored_hosts.insert(host_key);
     }
 }
 
 async fn create_reverse_tunnels(
+    state: &Arc<server::AppState>,
     connection: &coast_core::types::RemoteConnection,
     reverse_pairs: &[(u16, u16)],
+    project: &str,
     instance_name: &str,
 ) -> bool {
     match handlers::remote::tunnel::reverse_forward_ports(connection, reverse_pairs).await {
@@ -1457,6 +1565,14 @@ async fn create_reverse_tunnels(
                 pids = ?pids,
                 "restored shared service reverse tunnels"
             );
+            if !pids.is_empty() {
+                // Phase 4.5: repopulate the in-memory PID map so
+                // `coast ssg stop/rm --force` can tear these ssh
+                // children down later if the consumer references the
+                // SSG. See `coast-ssg/DESIGN.md §17-19`.
+                let mut map = state.shared_service_tunnel_pids.lock().await;
+                map.insert((project.to_string(), instance_name.to_string()), pids);
+            }
             true
         }
         Err(e) => {

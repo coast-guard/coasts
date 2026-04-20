@@ -154,12 +154,12 @@ Legend: `[ ]` not started, `[~]` in progress, `[x]` done.
 - [x] Integration test: `test_ssg_port_collision` (two consumer coasts, one SSG postgres)
 
 ### Phase 4.5 — Remote coast + SSG
-- [ ] `rewrite_reverse_tunnel_pairs` in `coast-ssg/src/remote_tunnel.rs`
-- [ ] `setup_shared_service_tunnels` in `coast-daemon/src/handlers/run/mod.rs` consults SSG state
-- [ ] `coast ssg stop` / `rm` refuses while remote shadow instances reference it (unless `--force`)
-- [ ] Integration test: `test_ssg_remote_reverse_tunnel`
-- [ ] Integration test: `test_ssg_stop_blocked_by_remote`
-- [ ] Integration test: `test_ssg_stop_force_cleans_tunnels`
+- [x] `rewrite_reverse_tunnel_pairs` in `coast-ssg/src/remote_tunnel.rs`
+- [x] `setup_shared_service_tunnels` in `coast-daemon/src/handlers/run/mod.rs` consults SSG state
+- [x] `coast ssg stop` / `rm` refuses while remote shadow instances reference it (unless `--force`)
+- [x] Integration test: `test_ssg_remote_reverse_tunnel`
+- [x] Integration test: `test_ssg_stop_blocked_by_remote`
+- [x] Integration test: `test_ssg_stop_force_cleans_tunnels`
 
 ### Phase 5 — `auto_create_db` + `inject`
 - [ ] Nested exec (`coast-ssg/src/runtime/auto_create_db.rs`) reuses SQL from `coast-daemon/src/shared_services.rs::create_db_command`
@@ -1203,6 +1203,25 @@ tracks state across sessions.
     `SSG: ` prefix on their `step` field so the CLI shows the full
     boot sequence without breaking the consumer's progress plan.
     Idempotent — re-prefixing is a no-op, so nested calls stay flat.
+19. (SETTLED — Phase 4.5) **`shared_service_tunnel_pids` is an
+    in-memory-only map, not a SQLite table.** Phase 4.5 needs
+    `coast ssg stop/rm --force` to tear down reverse SSH tunnels for
+    remote shadow coasts that currently consume the SSG. We track
+    those child PIDs in
+    `AppState.shared_service_tunnel_pids: Mutex<HashMap<(String, String),
+    Vec<u32>>>` keyed by `(project, instance_name)`. Reverse tunnels
+    are per-run child processes: if the daemon restarts, the PIDs
+    are gone anyway, and
+    [`restore_tunnels_for_instance`](../coast-daemon/src/lib.rs)
+    re-spawns fresh ones that repopulate this map. Persisting to
+    SQLite would buy nothing (stale PIDs become meaningless after
+    any process exit) and would add churn on every tunnel spawn.
+    Populated in three places:
+    `handlers/run/mod.rs::setup_shared_service_tunnels` (normal run),
+    `lib.rs::create_reverse_tunnels` (daemon-restart restore), and
+    `handlers/start.rs::reestablish_shared_service_tunnels` (coast start).
+    Consumed only by `handlers/ssg.rs::handle_stop/handle_rm` when
+    `--force` is set.
 18. (SETTLED — Phase 4) **`shared_service_targets` placeholder for
     SSG-backed services is the literal string `"coast-ssg"`.**
     [`coast-daemon/src/handlers/shared_service_routing.rs`](../coast-daemon/src/handlers/shared_service_routing.rs)

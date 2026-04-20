@@ -403,3 +403,17 @@ tests:
     script: integrated-examples/test_ssg_port_collision.sh
     timeout: 600
     note: "two consumer instances share one SSG postgres without any host-port conflict on 5432"
+
+  # --- Shared Service Groups (coast-ssg) — Phase 4.5 (remote) ---
+  test_ssg_remote_reverse_tunnel:
+    script: integrated-examples/test_ssg_remote_reverse_tunnel.sh
+    timeout: 900
+    note: "remote consumer reaches local SSG postgres through rewritten reverse SSH tunnel"
+  test_ssg_stop_blocked_by_remote:
+    script: integrated-examples/test_ssg_stop_blocked_by_remote.sh
+    timeout: 900
+    note: "coast ssg stop refuses while a remote shadow consumer references the SSG"
+  test_ssg_stop_force_cleans_tunnels:
+    script: integrated-examples/test_ssg_stop_force_cleans_tunnels.sh
+    timeout: 900
+    note: "coast ssg stop --force kills reverse-tunnel ssh children before stopping the SSG"

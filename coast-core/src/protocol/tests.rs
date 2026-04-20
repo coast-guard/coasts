@@ -1511,7 +1511,6 @@ fn test_ssg_request_simple_variants_roundtrip() {
     for variant in [
         SsgRequest::Run,
         SsgRequest::Start,
-        SsgRequest::Stop,
         SsgRequest::Restart,
         SsgRequest::Ps,
         SsgRequest::Ports,
@@ -1521,9 +1520,54 @@ fn test_ssg_request_simple_variants_roundtrip() {
 }
 
 #[test]
+fn test_ssg_request_stop_roundtrip() {
+    roundtrip_request(Request::Ssg(SsgRequest::Stop { force: false }));
+    roundtrip_request(Request::Ssg(SsgRequest::Stop { force: true }));
+}
+
+#[test]
 fn test_ssg_request_rm_roundtrip() {
-    roundtrip_request(Request::Ssg(SsgRequest::Rm { with_data: false }));
-    roundtrip_request(Request::Ssg(SsgRequest::Rm { with_data: true }));
+    roundtrip_request(Request::Ssg(SsgRequest::Rm {
+        with_data: false,
+        force: false,
+    }));
+    roundtrip_request(Request::Ssg(SsgRequest::Rm {
+        with_data: true,
+        force: false,
+    }));
+    roundtrip_request(Request::Ssg(SsgRequest::Rm {
+        with_data: false,
+        force: true,
+    }));
+    roundtrip_request(Request::Ssg(SsgRequest::Rm {
+        with_data: true,
+        force: true,
+    }));
+}
+
+#[test]
+fn test_ssg_request_stop_force_default_when_absent_in_json() {
+    // Older CLIs may send `{"type":"Ssg","ssg":{"action":"Stop"}}` without
+    // a `force` field. serde(default) must deserialize it as force=false.
+    let json = r#"{"type":"Ssg","action":"Stop"}"#;
+    let req: Request = serde_json::from_str(json).expect("stop without force should parse");
+    match req {
+        Request::Ssg(SsgRequest::Stop { force }) => assert!(!force),
+        other => panic!("expected Ssg::Stop, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_ssg_request_rm_force_default_when_absent_in_json() {
+    let json = r#"{"type":"Ssg","action":"Rm","with_data":true}"#;
+    let req: Request = serde_json::from_str(json).expect("rm without force should parse");
+    match req {
+        Request::Ssg(SsgRequest::Rm { with_data, force }) => {
+            assert!(with_data);
+            assert!(!force);
+        }
+        other => panic!("expected Ssg::Rm, got {other:?}"),
+    }
 }
 
 #[test]

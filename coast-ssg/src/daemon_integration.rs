@@ -336,6 +336,59 @@ pub fn synthesize_shared_service_configs(
     Ok(synthesized)
 }
 
+/// Synthesize one `SharedServicePortForward` per declared container
+/// port of every `from_group = true` service the consumer references.
+///
+/// Phase: ssg-phase-4.5. See `DESIGN.md §20.2`.
+///
+/// The remote `coast-service` consumes the resulting list to (a) strip
+/// those service names from the inner compose and (b) add
+/// `extra_hosts: <name> -> host-gateway` so app containers resolve
+/// e.g. `postgres:5432` back through the reverse SSH tunnel.
+///
+/// Unlike the local-path `synthesize_shared_service_configs`, this
+/// returns the thinner `SharedServicePortForward` protocol type —
+/// `coast-service` only needs `{name, port}` and is SSG-agnostic.
+///
+/// Errors with the DESIGN.md §6.1 missing-service wording (shared
+/// with the Phase 4 consumer-wiring path via
+/// [`missing_ssg_service_error`]) when the consumer names a service
+/// the active SSG does not publish.
+pub fn synthesize_remote_forwards_for_consumer(
+    coastfile: &coast_core::coastfile::Coastfile,
+    manifest: &build_artifact::SsgManifest,
+    services: &[crate::state::SsgServiceRecord],
+) -> Result<Vec<coast_core::protocol::SharedServicePortForward>> {
+    if coastfile.shared_service_group_refs.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut forwards = Vec::new();
+
+    for consumer_ref in &coastfile.shared_service_group_refs {
+        // Validate the ref against the active SSG build. Reuses the
+        // same error shape as the local-path synthesizer so users see
+        // consistent messaging regardless of which code path runs.
+        let _manifest_svc = manifest
+            .services
+            .iter()
+            .find(|s| s.name == consumer_ref.name)
+            .ok_or_else(|| missing_ssg_service_error(&consumer_ref.name, manifest))?;
+
+        for svc in services
+            .iter()
+            .filter(|s| s.service_name == consumer_ref.name)
+        {
+            forwards.push(coast_core::protocol::SharedServicePortForward {
+                name: consumer_ref.name.clone(),
+                port: svc.container_port,
+            });
+        }
+    }
+
+    Ok(forwards)
+}
+
 fn missing_ssg_service_error(
     referenced_name: &str,
     manifest: &build_artifact::SsgManifest,
@@ -540,6 +593,76 @@ mod tests {
         assert!(ports.contains(&(9092, 60010)));
         assert!(ports.contains(&(9093, 60011)));
         assert!(ports.contains(&(9094, 60012)));
+    }
+
+    // --- synthesize_remote_forwards_for_consumer (Phase 4.5) ---
+
+    #[test]
+    fn synthesize_remote_forwards_empty_when_no_refs() {
+        let cf = coastfile_with_refs(vec![]);
+        let manifest = sample_manifest(vec![("postgres", "postgres:16-alpine", vec![5432], false)]);
+        let services = vec![sample_record("postgres", 5432, 60001)];
+        let result = synthesize_remote_forwards_for_consumer(&cf, &manifest, &services).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn synthesize_remote_forwards_single_service_uses_container_port() {
+        let cf = coastfile_with_refs(vec![simple_ref("postgres")]);
+        let manifest = sample_manifest(vec![("postgres", "postgres:16-alpine", vec![5432], false)]);
+        let services = vec![sample_record("postgres", 5432, 60001)];
+        let result = synthesize_remote_forwards_for_consumer(&cf, &manifest, &services).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].name, "postgres");
+        // The forward carries the CANONICAL (container) port, not the
+        // dynamic one — the local-side rewrite happens later via
+        // `rewrite_reverse_tunnel_pairs`.
+        assert_eq!(result[0].port, 5432);
+    }
+
+    #[test]
+    fn synthesize_remote_forwards_multi_port_emits_one_entry_per_port() {
+        let cf = coastfile_with_refs(vec![simple_ref("kafka")]);
+        let manifest = sample_manifest(vec![("kafka", "kafka:3", vec![9092, 9093, 9094], false)]);
+        let services = vec![
+            sample_record("kafka", 9092, 60010),
+            sample_record("kafka", 9093, 60011),
+            sample_record("kafka", 9094, 60012),
+        ];
+        let result = synthesize_remote_forwards_for_consumer(&cf, &manifest, &services).unwrap();
+        let ports: Vec<u16> = result.iter().map(|f| f.port).collect();
+        assert_eq!(ports, vec![9092, 9093, 9094]);
+        assert!(result.iter().all(|f| f.name == "kafka"));
+    }
+
+    #[test]
+    fn synthesize_remote_forwards_multi_ref_preserves_order() {
+        let cf = coastfile_with_refs(vec![simple_ref("postgres"), simple_ref("redis")]);
+        let manifest = sample_manifest(vec![
+            ("postgres", "postgres:16-alpine", vec![5432], false),
+            ("redis", "redis:7-alpine", vec![6379], false),
+        ]);
+        let services = vec![
+            sample_record("postgres", 5432, 60001),
+            sample_record("redis", 6379, 60002),
+        ];
+        let result = synthesize_remote_forwards_for_consumer(&cf, &manifest, &services).unwrap();
+        let names: Vec<&str> = result.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(names, vec!["postgres", "redis"]);
+    }
+
+    #[test]
+    fn synthesize_remote_forwards_missing_service_errors_with_available_list() {
+        let cf = coastfile_with_refs(vec![simple_ref("mongo")]);
+        let manifest = sample_manifest(vec![
+            ("postgres", "postgres:16-alpine", vec![5432], false),
+            ("redis", "redis:7-alpine", vec![6379], false),
+        ]);
+        let services = vec![sample_record("postgres", 5432, 60001)];
+        let err = synthesize_remote_forwards_for_consumer(&cf, &manifest, &services).unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("Consumer references SSG service 'mongo'"));
+        assert!(message.contains("[postgres, redis]"));
     }
 }
 
