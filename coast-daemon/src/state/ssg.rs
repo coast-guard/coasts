@@ -243,6 +243,36 @@ impl SsgStateExt for StateDb {
             })?;
         Ok(())
     }
+
+    #[instrument(skip(self))]
+    fn update_ssg_port_checkout_socat_pid(
+        &self,
+        canonical_port: u16,
+        socat_pid: Option<i32>,
+    ) -> Result<()> {
+        self.conn
+            .execute(
+                "UPDATE ssg_port_checkouts SET socat_pid = ?1 WHERE canonical_port = ?2",
+                params![socat_pid, canonical_port as i64],
+            )
+            .map_err(|e| {
+                state_err(
+                    format!(
+                        "failed to update socat_pid for ssg port checkout {canonical_port}: {e}"
+                    ),
+                    e,
+                )
+            })?;
+        Ok(())
+    }
+
+    #[instrument(skip(self))]
+    fn clear_ssg_port_checkouts(&self) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM ssg_port_checkouts", [])
+            .map_err(|e| state_err(format!("failed to clear ssg_port_checkouts: {e}"), e))?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -417,5 +447,50 @@ mod tests {
 
         // Delete is idempotent.
         db.delete_ssg_port_checkout(5432).unwrap();
+    }
+
+    #[test]
+    fn ssg_port_checkouts_update_socat_pid_preserves_other_columns() {
+        let db = db();
+        db.upsert_ssg_port_checkout(&checkout(5432, "postgres", Some(111)))
+            .unwrap();
+
+        // Null the PID (as stop would do).
+        db.update_ssg_port_checkout_socat_pid(5432, None).unwrap();
+        let rec = db
+            .list_ssg_port_checkouts()
+            .unwrap()
+            .into_iter()
+            .find(|c| c.canonical_port == 5432)
+            .unwrap();
+        assert!(rec.socat_pid.is_none());
+        // Row still exists with its service_name intact.
+        assert_eq!(rec.service_name, "postgres");
+
+        // Set a fresh PID (as re-spawn would do).
+        db.update_ssg_port_checkout_socat_pid(5432, Some(222))
+            .unwrap();
+        let rec = db
+            .list_ssg_port_checkouts()
+            .unwrap()
+            .into_iter()
+            .find(|c| c.canonical_port == 5432)
+            .unwrap();
+        assert_eq!(rec.socat_pid, Some(222));
+    }
+
+    #[test]
+    fn ssg_port_checkouts_clear_removes_all_rows() {
+        let db = db();
+        db.upsert_ssg_port_checkout(&checkout(5432, "postgres", Some(1)))
+            .unwrap();
+        db.upsert_ssg_port_checkout(&checkout(6379, "redis", Some(2)))
+            .unwrap();
+
+        db.clear_ssg_port_checkouts().unwrap();
+        assert!(db.list_ssg_port_checkouts().unwrap().is_empty());
+
+        // Idempotent.
+        db.clear_ssg_port_checkouts().unwrap();
     }
 }

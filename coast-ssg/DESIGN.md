@@ -168,12 +168,12 @@ Legend: `[ ]` not started, `[~]` in progress, `[x]` done.
 - [x] Integration test: `test_ssg_inject_env`
 
 ### Phase 6 — Host-side canonical-port checkout
-- [ ] `coast ssg checkout [service | --all]` and `uncheckout`
-- [ ] `ssg_port_checkouts` writes + daemon-restart recovery
-- [ ] Displacement of a coast-instance's canonical port with a clear warning
-- [ ] `coast ssg ports` shows `(checked out)` annotation
-- [ ] Integration test: `test_ssg_host_checkout`
-- [ ] Integration test: `test_ssg_checkout_displaces_instance`
+- [x] `coast ssg checkout [service | --all]` and `uncheckout`
+- [x] `ssg_port_checkouts` writes + daemon-restart recovery
+- [x] Displacement of a coast-instance's canonical port with a clear warning
+- [x] `coast ssg ports` shows `(checked out)` annotation
+- [x] Integration test: `test_ssg_host_checkout`
+- [x] Integration test: `test_ssg_checkout_displaces_instance`
 
 ### Phase 7 — SSG reference in coast build manifest
 - [ ] `coast build` embeds an `ssg` block in `manifest.json` when any `from_group = true` service exists
@@ -922,13 +922,24 @@ Semantics:
   canonical port (5432 for postgres) and forwarding to the SSG's
   dynamic host port. Implemented via `coast-daemon::port_manager::PortForwarder`.
 - Only one owner per canonical port. If a coast instance is currently
-  checked out on canonical 5432 (because it had an inline postgres or
-  a same-canonical-port app server), the SSG checkout displaces it:
-  1. Look up the current holder in `port_allocations`.
+  checked out on canonical 5432 (because its own Coastfile declared a
+  service on that port and the user ran `coast checkout <instance>`),
+  the SSG checkout displaces it:
+  1. Look up the current holder via
+     [`StateDb::find_port_allocation_holding_canonical`](../coast-daemon/src/state/ports.rs)
+     — any `port_allocations` row with `socat_pid NOT NULL` on that
+     canonical port.
   2. Kill the existing socat PID.
-  3. Clear `port_allocations.is_primary = 1` for that holder.
+  3. Clear `port_allocations.socat_pid` for that holder. (The
+     `is_primary` column is orthogonal — it's the "primary service
+     for display" tag, not the "owns the canonical port" claim.)
   4. Spawn the SSG-owned socat.
   5. Record the SSG as the new owner in `ssg_port_checkouts`.
+- **Only coast-known holders are displaced.** If the canonical port
+  is held by a process outside Coast's tracking (a stray `postgres`
+  the user started by hand, another daemon, etc.),
+  `coast ssg checkout` errors out and the user must free the port
+  themselves. See §17-23.
 - Displacement is visible: CLI prints a warning listing what was
   displaced; Coastguard emits a structured event. No `--force` flag
   is required, but the message is unambiguous.
@@ -938,6 +949,11 @@ Semantics:
 - Coasts **always** reach SSG services via the docker0 alias-IP
   path, regardless of host-side checkout state. Checkout is purely a
   host-side convenience.
+- **Stop/start semantics**: `coast ssg stop` kills the checkout
+  socats and nulls their `socat_pid`, but preserves the
+  `ssg_port_checkouts` rows. `coast ssg run` / `start` re-spawn
+  against the newly-allocated dynamic host ports. `coast ssg rm`
+  wipes the rows (destructive). See §17-22.
 
 ## 13. `auto_create_db`
 
@@ -1212,6 +1228,36 @@ tracks state across sessions.
     `SSG: ` prefix on their `step` field so the CLI shows the full
     boot sequence without breaking the consumer's progress plan.
     Idempotent — re-prefixing is a no-op, so nested calls stay flat.
+23. (SETTLED — Phase 6) **`coast ssg checkout` displaces only
+    coast-tracked holders; unknown-process strangers yield an
+    error.** If the canonical port is held by a `port_allocations`
+    row with `socat_pid NOT NULL` (i.e. a coast currently checked
+    out) or an existing `ssg_port_checkouts` row, the SSG checkout
+    kills that socat, clears its DB state, and binds. Any other
+    holder — a host postgres the user started manually, an unrelated
+    development daemon, `nginx` on 8080, etc. — causes
+    `coast ssg checkout` to return
+    [`unknown_holder_error`](../coast-daemon/src/handlers/ssg/checkout.rs)
+    with a message instructing the user to free the port first. No
+    `--force` flag: silently killing an unknown process was judged
+    too dangerous, and the remediation is one command away. DESIGN
+    §12 and §17-8.
+22. (SETTLED — Phase 6) **`coast ssg stop` preserves
+    `ssg_port_checkouts` rows; `run / start` re-spawns them.** Stop
+    kills the checkout socats (they'd be forwarding to a
+    now-dead dynamic port anyway) and sets `socat_pid = NULL` on
+    each row. The next `coast ssg run` or `coast ssg start` iterates
+    the rows and spawns a fresh socat per row against the newly-
+    allocated dynamic port via
+    [`respawn_checkouts_after_lifecycle`](../coast-daemon/src/handlers/ssg/checkout.rs).
+    Rows whose service has disappeared from the new build are
+    dropped with a warning message in the response. `coast ssg rm`
+    clears the rows entirely (destructive — the user explicitly
+    asked for a clean slate). Daemon restart (outside of stop) goes
+    through the same re-spawn helper from `restore_running_state`.
+    Rationale: users pay-once-for-checkout across routine
+    stop/start cycles without losing stale state that pointed at a
+    port that no longer matches the new dynamic allocation.
 21. (SETTLED — Phase 5) **DB naming convention for `auto_create_db`
     is `{instance}_{project}`.** The inline
     [`coast_docker::compose::build_connection_url`](../coast-docker/src/compose.rs)

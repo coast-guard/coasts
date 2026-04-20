@@ -119,6 +119,33 @@ pub enum SsgAction {
     },
     /// Show the per-service dynamic host port mapping.
     Ports,
+    /// Bind the canonical host port of an SSG service (or all of them)
+    /// via a socat forwarder so host-side callers (psql from the host,
+    /// Coastguard previews, MCPs) can reach the service at its
+    /// canonical name/port.
+    ///
+    /// If a coast instance currently holds the canonical port, it is
+    /// displaced with a clear warning. If the port is held by a process
+    /// outside Coast's tracking, the command errors out — use the
+    /// usual host-side tools to free it. See `coast-ssg/DESIGN.md §12`.
+    Checkout {
+        /// Service name (e.g. `postgres`). Mutually exclusive with `--all`.
+        #[arg(long)]
+        service: Option<String>,
+        /// Check out every SSG service. Mutually exclusive with `--service`.
+        #[arg(long)]
+        all: bool,
+    },
+    /// Tear down the canonical-port socat for an SSG service (or all
+    /// of them). Does NOT auto-restore any coast instance previously
+    /// displaced by a checkout; rebind it with `coast checkout <instance>`
+    /// if you want it back on the canonical port.
+    Uncheckout {
+        #[arg(long)]
+        service: Option<String>,
+        #[arg(long)]
+        all: bool,
+    },
 }
 
 pub async fn execute(args: &SsgArgs) -> Result<()> {
@@ -183,6 +210,26 @@ pub async fn execute(args: &SsgArgs) -> Result<()> {
             .await
         }
         SsgAction::Ports => execute_ports(args.silent).await,
+        SsgAction::Checkout { service, all } => {
+            execute_simple(
+                SsgRequest::Checkout {
+                    service: service.clone(),
+                    all: *all,
+                },
+                args.silent,
+            )
+            .await
+        }
+        SsgAction::Uncheckout { service, all } => {
+            execute_simple(
+                SsgRequest::Uncheckout {
+                    service: service.clone(),
+                    all: *all,
+                },
+                args.silent,
+            )
+            .await
+        }
     }
 }
 
@@ -405,12 +452,20 @@ fn format_ports_table(ports: &[SsgPortInfo]) -> String {
         "SERVICE".bold(),
         "CANONICAL".bold(),
         "DYNAMIC".bold(),
-        "CHECKED OUT".bold(),
+        "STATUS".bold(),
     ));
     for port in ports {
+        // Phase 6: show "(checked out)" when a host-side socat is
+        // bound on the canonical port; otherwise blank so the eye
+        // skips straight to the port numbers.
+        let status = if port.checked_out {
+            "(checked out)"
+        } else {
+            ""
+        };
         lines.push(format!(
             "  {:<20} {:<15} {:<15} {}",
-            port.service, port.canonical_port, port.dynamic_host_port, port.checked_out
+            port.service, port.canonical_port, port.dynamic_host_port, status,
         ));
     }
     lines.join("\n")

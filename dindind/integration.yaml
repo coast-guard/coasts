@@ -418,6 +418,16 @@ tests:
     timeout: 600
     note: "inline (non-SSG) shared postgres also lights up auto_create_db + inject"
 
+  # --- Shared Service Groups (coast-ssg) — Phase 6 (host-side checkout) ---
+  test_ssg_host_checkout:
+    script: integrated-examples/test_ssg_host_checkout.sh
+    timeout: 600
+    note: "coast ssg checkout binds canonical host port; stop kills socat, start re-spawns"
+  test_ssg_checkout_displaces_instance:
+    script: integrated-examples/test_ssg_checkout_displaces_instance.sh
+    timeout: 600
+    note: "ssg checkout displaces a coast holding the canonical port with a clear warning; no auto-restore on uncheckout"
+
   # --- Shared Service Groups (coast-ssg) — Phase 4.5 (remote) ---
   test_ssg_remote_reverse_tunnel:
     script: integrated-examples/test_ssg_remote_reverse_tunnel.sh

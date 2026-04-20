@@ -16,6 +16,11 @@
 //! `StateDb` wraps a `!Sync` `rusqlite::Connection`, which would
 //! otherwise reject the `Send` bound on streaming futures.
 
+// ssg-phase-6: checkout / uncheckout orchestrator (host-side canonical
+// port binding via socat). Lives in a sibling file to keep `mod.rs`
+// focused on the dispatcher + non-checkout lifecycle verbs.
+pub mod checkout;
+
 use std::sync::Arc;
 
 use coast_core::error::{CoastError, Result};
@@ -67,9 +72,12 @@ pub async fn handle(state: Arc<AppState>, req: SsgRequest) -> Result<SsgResponse
             unreachable!("SsgRequest::Build handled by handle_ssg_build_streaming")
         }
 
-        SsgRequest::Checkout { .. } | SsgRequest::Uncheckout { .. } => Err(CoastError::state(
-            "coast ssg checkout / uncheckout are not yet implemented (phase 6)",
-        )),
+        SsgRequest::Checkout { service, all } => {
+            checkout::handle_checkout(&state, service, all).await
+        }
+        SsgRequest::Uncheckout { service, all } => {
+            checkout::handle_uncheckout(&state, service, all).await
+        }
     }
 }
 
@@ -101,15 +109,22 @@ async fn handle_stop(state: &Arc<AppState>, force: bool) -> Result<SsgResponse> 
 
     coast_ssg::daemon_integration::stop_ssg(&docker, &record).await?;
 
-    let db = state.db.lock().await;
-    db.upsert_ssg(
-        "stopped",
-        record.container_id.as_deref(),
-        record.build_id.as_deref(),
-    )?;
-    for svc in db.list_ssg_services()? {
-        db.update_ssg_service_status(&svc.service_name, "stopped")?;
+    {
+        let db = state.db.lock().await;
+        db.upsert_ssg(
+            "stopped",
+            record.container_id.as_deref(),
+            record.build_id.as_deref(),
+        )?;
+        for svc in db.list_ssg_services()? {
+            db.update_ssg_service_status(&svc.service_name, "stopped")?;
+        }
     }
+
+    // Phase 6: preserve `ssg_port_checkouts` rows but null their
+    // socat_pid columns and kill the live socats. Next `run / start`
+    // re-spawns against the new dynamic ports.
+    checkout::kill_active_checkout_socats_preserve_rows(state).await;
 
     Ok(SsgResponse {
         message: "SSG stopped.".to_string(),
@@ -140,6 +155,12 @@ async fn handle_rm(state: &Arc<AppState>, with_data: bool, force: bool) -> Resul
     };
 
     enforce_shadow_gate_and_maybe_tear_down(state, force, "remove").await?;
+
+    // Phase 6: tear down checkouts before the SSG itself. Doing it
+    // first means if the subsequent Docker rm fails and the user
+    // retries, we don't end up with dangling checkout rows pointing
+    // at a partially-removed SSG.
+    checkout::kill_and_clear_all_checkouts(state).await;
 
     coast_ssg::daemon_integration::rm_ssg(&docker, &record, with_data).await?;
 

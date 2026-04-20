@@ -1136,13 +1136,26 @@ async fn run_streaming_run(
 
     match result {
         Ok(outcome) => {
-            let db = state.db.lock().await;
-            match outcome.apply_to_state_and_response(
-                &*db,
-                "running",
-                format!("SSG running on build {}", outcome.build_id),
-            ) {
-                Ok(resp) => Response::Ssg(resp),
+            let build_id = outcome.build_id.clone();
+            let resp_or_err = {
+                let db = state.db.lock().await;
+                outcome.apply_to_state_and_response(
+                    &*db,
+                    "running",
+                    format!("SSG running on build {build_id}"),
+                )
+            };
+            match resp_or_err {
+                Ok(mut resp) => {
+                    // Phase 6: after the state DB has the new
+                    // ssg_services rows, re-spawn any preserved
+                    // checkout socats against the fresh dynamic
+                    // ports. Messages (e.g. "dropped stale
+                    // checkout") are appended to the response so the
+                    // CLI surfaces them.
+                    append_checkout_respawn_messages(state, &mut resp).await;
+                    Response::Ssg(resp)
+                }
                 Err(e) => Response::Error(ErrorResponse {
                     error: e.to_string(),
                 }),
@@ -1231,12 +1244,21 @@ async fn run_streaming_start_or_restart(
 
     match result {
         Ok(outcome) => {
-            let db = state.db.lock().await;
-            match outcome.apply_to_state_and_response(
-                &*db,
-                format!("SSG started on build {}", outcome.build_id),
-            ) {
-                Ok(resp) => Response::Ssg(resp),
+            let build_id = outcome.build_id.clone();
+            let resp_or_err = {
+                let db = state.db.lock().await;
+                outcome
+                    .apply_to_state_and_response(&*db, format!("SSG started on build {build_id}"))
+            };
+            match resp_or_err {
+                Ok(mut resp) => {
+                    // Phase 6: re-spawn preserved checkouts against
+                    // the refreshed dynamic ports. `start` keeps
+                    // existing ports; `restart` may allocate new
+                    // ones. Either way this is the correct moment.
+                    append_checkout_respawn_messages(state, &mut resp).await;
+                    Response::Ssg(resp)
+                }
                 Err(e) => Response::Error(ErrorResponse {
                     error: e.to_string(),
                 }),
@@ -1245,6 +1267,24 @@ async fn run_streaming_start_or_restart(
         Err(e) => Response::Error(ErrorResponse {
             error: e.to_string(),
         }),
+    }
+}
+
+/// Append any re-spawn messages emitted by the Phase 6 checkout
+/// re-hydration step onto an existing `SsgResponse.message`. If there
+/// are no messages the response is returned unchanged.
+async fn append_checkout_respawn_messages(
+    state: &Arc<AppState>,
+    resp: &mut coast_core::protocol::SsgResponse,
+) {
+    let messages = crate::handlers::ssg::checkout::respawn_checkouts_after_lifecycle(state).await;
+    if messages.is_empty() {
+        return;
+    }
+    if resp.message.is_empty() {
+        resp.message = messages.join("\n");
+    } else {
+        resp.message = format!("{}\n{}", resp.message, messages.join("\n"));
     }
 }
 

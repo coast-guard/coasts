@@ -558,19 +558,31 @@ pub async fn exec_ssg(
 
 /// Read the current per-service dynamic host ports from state.
 ///
-/// `checked_out` is always `false` in Phase 3 — Phase 6 adds real
-/// checkout accounting via `ssg_port_checkouts`.
+/// Phase 6 populates `checked_out` from `ssg_port_checkouts` by
+/// joining on `canonical_port`. A service whose canonical port has a
+/// live checkout row (socat_pid not null) reads as `checked_out =
+/// true`; rows whose socat was torn down (e.g. after `coast ssg stop`)
+/// keep the row but set `socat_pid = null` and thus read `false`
+/// until the next `run` / `start` re-spawns them.
 pub fn ports_ssg(state: &dyn SsgStateExt) -> Result<SsgResponse> {
     let services = state.list_ssg_services()?;
     let record = state.get_ssg()?;
+    let checkouts = state.list_ssg_port_checkouts()?;
 
     let ports: Vec<SsgPortInfo> = services
         .iter()
-        .map(|s| SsgPortInfo {
-            service: s.service_name.clone(),
-            canonical_port: s.container_port,
-            dynamic_host_port: s.dynamic_host_port,
-            checked_out: false,
+        .map(|s| {
+            let checked_out = checkouts.iter().any(|c| {
+                c.canonical_port == s.container_port
+                    && c.service_name == s.service_name
+                    && c.socat_pid.is_some()
+            });
+            SsgPortInfo {
+                service: s.service_name.clone(),
+                canonical_port: s.container_port,
+                dynamic_host_port: s.dynamic_host_port,
+                checked_out,
+            }
         })
         .collect();
 

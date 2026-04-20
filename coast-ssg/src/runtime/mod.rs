@@ -29,4 +29,8 @@ pub mod auto_create_db;
 // ssg-phase-3: dynamic port allocation.
 pub mod ports;
 
+// ssg-phase-6: pure planner for `coast ssg checkout` / `uncheckout`.
+pub mod port_checkout;
+
+pub use port_checkout::{plan_checkouts, SsgCheckoutPlan, SsgCheckoutTarget};
 pub use ports::{allocate_service_ports, SsgServicePortPlan};

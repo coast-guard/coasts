@@ -6,6 +6,13 @@ use coast_core::types::PortMapping;
 
 use super::{is_unique_violation, StateDb};
 
+fn port_row_err(e: rusqlite::Error) -> CoastError {
+    CoastError::State {
+        message: format!("failed to decode port_allocations row: {e}"),
+        source: Some(Box::new(e)),
+    }
+}
+
 /// Represents a port allocation record from the database, including
 /// the socat PID for process management.
 #[derive(Debug, Clone)]
@@ -259,6 +266,72 @@ impl StateDb {
         Ok(())
     }
 
+    /// Phase 6: find the coast instance currently checked out on a
+    /// specific canonical port, if any.
+    ///
+    /// A row in `port_allocations` with `canonical_port = ?` and
+    /// `socat_pid NOT NULL` means the daemon has a live forwarder
+    /// claiming that port on behalf of a coast instance. Used by
+    /// `coast ssg checkout` to decide whether displacement is in
+    /// play. See `coast-ssg/DESIGN.md §12`.
+    ///
+    /// Returns `None` if the port isn't checked out by any known
+    /// coast instance. The caller must still probe the port itself
+    /// (e.g. via `port_manager::inspect_port_binding`) to detect
+    /// non-coast strangers.
+    #[instrument(skip(self))]
+    pub fn find_port_allocation_holding_canonical(
+        &self,
+        canonical_port: u16,
+    ) -> Result<Option<PortAllocationRecord>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT project, instance_name, logical_name, canonical_port, dynamic_port,
+                        socat_pid, is_primary, remote_dynamic_port
+                 FROM port_allocations
+                 WHERE canonical_port = ?1 AND socat_pid IS NOT NULL
+                 LIMIT 1",
+            )
+            .map_err(|e| CoastError::State {
+                message: format!(
+                    "failed to prepare find_port_allocation_holding_canonical query: {e}"
+                ),
+                source: Some(Box::new(e)),
+            })?;
+
+        let mut rows =
+            stmt.query(params![canonical_port as i64])
+                .map_err(|e| CoastError::State {
+                    message: format!(
+                        "failed to query port_allocations for canonical {canonical_port}: {e}"
+                    ),
+                    source: Some(Box::new(e)),
+                })?;
+
+        if let Some(row) = rows.next().map_err(|e| CoastError::State {
+            message: format!("failed to read port_allocations row: {e}"),
+            source: Some(Box::new(e)),
+        })? {
+            let record = PortAllocationRecord {
+                project: row.get(0).map_err(port_row_err)?,
+                instance_name: row.get(1).map_err(port_row_err)?,
+                logical_name: row.get(2).map_err(port_row_err)?,
+                canonical_port: row.get::<_, i64>(3).map_err(port_row_err)? as u16,
+                dynamic_port: row.get::<_, i64>(4).map_err(port_row_err)? as u16,
+                socat_pid: row.get(5).map_err(port_row_err)?,
+                is_primary: row.get::<_, i64>(6).map_err(port_row_err)? != 0,
+                remote_dynamic_port: row
+                    .get::<_, Option<i64>>(7)
+                    .map_err(port_row_err)?
+                    .map(|p| p as u16),
+            };
+            Ok(Some(record))
+        } else {
+            Ok(None)
+        }
+    }
+
     /// Delete all port allocations for an instance.
     ///
     /// This is typically called when removing an instance. Note that
@@ -476,5 +549,50 @@ mod tests {
 
         assert_eq!(b_allocs.len(), 1);
         assert_eq!(b_allocs[0].dynamic_port, 52341);
+    }
+
+    // --- Phase 6: find_port_allocation_holding_canonical ---
+
+    #[test]
+    fn test_find_holder_returns_instance_with_active_socat() {
+        let db = test_db();
+        db.insert_instance(&sample_instance("inst-a", "proj"))
+            .unwrap();
+        db.insert_port_allocation("proj", "inst-a", &sample_port_mapping("db", 5432, 50001))
+            .unwrap();
+        db.update_socat_pid("proj", "inst-a", "db", Some(12345))
+            .unwrap();
+
+        let holder = db.find_port_allocation_holding_canonical(5432).unwrap();
+        let holder = holder.expect("expected a holder");
+        assert_eq!(holder.project, "proj");
+        assert_eq!(holder.instance_name, "inst-a");
+        assert_eq!(holder.logical_name, "db");
+        assert_eq!(holder.canonical_port, 5432);
+        assert_eq!(holder.dynamic_port, 50001);
+        assert_eq!(holder.socat_pid, Some(12345));
+    }
+
+    #[test]
+    fn test_find_holder_ignores_rows_without_socat_pid() {
+        let db = test_db();
+        db.insert_instance(&sample_instance("inst-a", "proj"))
+            .unwrap();
+        // Port allocation exists but is NOT checked out (socat_pid is null).
+        db.insert_port_allocation("proj", "inst-a", &sample_port_mapping("db", 5432, 50001))
+            .unwrap();
+
+        let holder = db.find_port_allocation_holding_canonical(5432).unwrap();
+        assert!(
+            holder.is_none(),
+            "port allocation without socat_pid must not be treated as a holder"
+        );
+    }
+
+    #[test]
+    fn test_find_holder_returns_none_for_unmapped_canonical() {
+        let db = test_db();
+        let holder = db.find_port_allocation_holding_canonical(9999).unwrap();
+        assert!(holder.is_none());
     }
 }

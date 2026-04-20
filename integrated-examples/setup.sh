@@ -2287,5 +2287,53 @@ INLINE_AUTODB_COMPOSE_EOF
 
 setup_coast_shared_service_auto_db
 
+# --- coast-canonical-5432-app ---
+# Phase 6 fixture: a minimal coast that declares canonical port 5432
+# for its own inner app. Used by the displacement test: after
+# `coast run inst-a` + `coast checkout inst-a`, the daemon owns a
+# socat on localhost:5432 forwarding to this coast's dynamic port.
+# `coast ssg checkout postgres` then has to displace that socat.
+# The app is postgres:16-alpine with a marker row we can probe to
+# verify which data we're actually talking to.
+
+setup_coast_canonical_5432_app() {
+    local dir="$PROJECTS_DIR/coast-canonical-5432-app"
+    echo "Setting up coast-canonical-5432-app..."
+    mkdir -p "$dir"
+    rm -rf "$dir/.git"
+
+    cat > "$dir/Coastfile" << 'CANON_5432_COASTFILE_EOF'
+[coast]
+name = "coast-canonical-5432-app"
+compose = "./docker-compose.yml"
+runtime = "dind"
+
+[ports]
+db = 5432
+CANON_5432_COASTFILE_EOF
+
+    cat > "$dir/docker-compose.yml" << 'CANON_5432_COMPOSE_EOF'
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: dev
+      POSTGRES_DB: postgres
+    ports:
+      - "5432:5432"
+CANON_5432_COMPOSE_EOF
+
+    cd "$dir"
+    git init -b main
+    git config user.name "Coast Dev"
+    git config user.email "dev@coasts.dev"
+    git add -A
+    git commit -m "initial commit: coast that owns canonical port 5432"
+    echo "  coast-canonical-5432-app ready"
+}
+
+setup_coast_canonical_5432_app
+
 echo ""
 echo "All examples initialized. Run 'coast build' inside any example to get started."

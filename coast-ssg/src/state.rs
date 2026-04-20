@@ -102,4 +102,19 @@ pub trait SsgStateExt {
 
     /// Delete the checkout row for `canonical_port`, if any. Idempotent.
     fn delete_ssg_port_checkout(&self, canonical_port: u16) -> Result<()>;
+
+    /// Update just the `socat_pid` column for a checkout row (Phase
+    /// 6). Used by `coast ssg stop` to null the PID after killing the
+    /// socat while preserving the row, and by `run / start` to record
+    /// the fresh PID after re-spawning against a new dynamic port.
+    fn update_ssg_port_checkout_socat_pid(
+        &self,
+        canonical_port: u16,
+        socat_pid: Option<i32>,
+    ) -> Result<()>;
+
+    /// Delete every checkout row. Phase 6 uses this from
+    /// `coast ssg rm` (destructive — user explicitly removed the
+    /// SSG, so stale checkouts must go).
+    fn clear_ssg_port_checkouts(&self) -> Result<()>;
 }

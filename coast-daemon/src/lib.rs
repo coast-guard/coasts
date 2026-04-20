@@ -2010,6 +2010,13 @@ async fn restore_running_state(state: &Arc<server::AppState>) {
     // Restore SSH reverse tunnels for shared services.
     restore_shared_service_tunnels(state, &active_instances).await;
 
+    // Phase 6: re-spawn SSG canonical-port checkouts (socats die
+    // when the daemon exits; rows in `ssg_port_checkouts` survive).
+    // If the SSG itself is stopped, respawn is a no-op — rows' PIDs
+    // will be null and the next `ssg run/start` kicks the respawn
+    // off via the lifecycle hook.
+    let _messages = handlers::ssg::checkout::respawn_checkouts_after_lifecycle(state).await;
+
     // Restore worktree mounts and mutagen sessions for remote instances.
     restore_remote_worktrees(state, &active_instances).await;
 
