@@ -39,7 +39,10 @@ use crate::server::AppState;
 /// never reach this handler — they are intercepted upstream.
 pub async fn handle(state: Arc<AppState>, req: SsgRequest) -> Result<SsgResponse> {
     match req {
-        SsgRequest::Ps => coast_ssg::daemon_integration::ps_ssg(),
+        SsgRequest::Ps => {
+            let db = state.db.lock().await;
+            coast_ssg::daemon_integration::ps_ssg(Some(&*db as &dyn SsgStateExt))
+        }
         SsgRequest::Ports => {
             let db = state.db.lock().await;
             coast_ssg::daemon_integration::ports_ssg(&*db)
@@ -99,13 +102,7 @@ async fn handle_stop(state: &Arc<AppState>, force: bool) -> Result<SsgResponse> 
         db.get_ssg()?
     };
     let Some(record) = record else {
-        return Ok(SsgResponse {
-            message: "SSG has not been created. Nothing to stop.".to_string(),
-            status: None,
-            services: Vec::new(),
-            ports: Vec::new(),
-            findings: Vec::new(),
-        });
+        return Ok(build_stop_response_missing_record());
     };
 
     // Phase 4.5 gate: refuse to stop while remote shadow coasts are
@@ -133,13 +130,7 @@ async fn handle_stop(state: &Arc<AppState>, force: bool) -> Result<SsgResponse> 
     // re-spawns against the new dynamic ports.
     checkout::kill_active_checkout_socats_preserve_rows(state).await;
 
-    Ok(SsgResponse {
-        message: "SSG stopped.".to_string(),
-        status: Some("stopped".to_string()),
-        services: Vec::new(),
-        ports: Vec::new(),
-        findings: Vec::new(),
-    })
+    Ok(build_stop_response_success())
 }
 
 async fn handle_rm(state: &Arc<AppState>, with_data: bool, force: bool) -> Result<SsgResponse> {
@@ -154,13 +145,7 @@ async fn handle_rm(state: &Arc<AppState>, with_data: bool, force: bool) -> Resul
         db.get_ssg()?
     };
     let Some(record) = record else {
-        return Ok(SsgResponse {
-            message: "SSG has not been created. Nothing to remove.".to_string(),
-            status: None,
-            services: Vec::new(),
-            ports: Vec::new(),
-            findings: Vec::new(),
-        });
+        return Ok(build_rm_response_missing_record());
     };
 
     enforce_shadow_gate_and_maybe_tear_down(state, force, "remove").await?;
@@ -177,14 +162,7 @@ async fn handle_rm(state: &Arc<AppState>, with_data: bool, force: bool) -> Resul
     db.clear_ssg()?;
     db.clear_ssg_services()?;
 
-    let suffix = if with_data { " (with data)" } else { "" };
-    Ok(SsgResponse {
-        message: format!("SSG removed{suffix}."),
-        status: None,
-        services: Vec::new(),
-        ports: Vec::new(),
-        findings: Vec::new(),
-    })
+    Ok(build_rm_response_success(with_data))
 }
 
 async fn handle_logs(
@@ -267,18 +245,7 @@ async fn enforce_shadow_gate_and_maybe_tear_down(
     }
 
     if !force {
-        let list = shadows
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join(", ");
-        return Err(CoastError::state(format!(
-            "SSG is currently serving remote coast(s) [{list}]. \
-             {verbcap}ping the SSG will break their shared-service \
-             connectivity. Stop those remotes first, or re-run with \
-             --force to tear down their reverse tunnels and proceed.",
-            verbcap = capitalize(verb),
-        )));
+        return Err(CoastError::state(format_shadow_gate_error(&shadows, verb)));
     }
 
     // --force: tear down recorded reverse-tunnel PIDs for each shadow.
@@ -402,12 +369,73 @@ fn kill_ssh_tunnel_pid(pid: u32) {
     }
 }
 
-fn capitalize(s: &str) -> String {
-    let mut chars = s.chars();
-    match chars.next() {
-        Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
-        None => String::new(),
+// --- Phase 9 pure response helpers -------------------------------------
+//
+// Each `handle_*` above is split into (a) state-read + Docker side-
+// effects (remain async and Docker-dependent) and (b) pure response
+// shaping (these functions). The pure halves are fully unit-tested.
+
+/// Response for `coast ssg stop` when no SSG record exists.
+fn build_stop_response_missing_record() -> SsgResponse {
+    SsgResponse {
+        message: "SSG has not been created. Nothing to stop.".to_string(),
+        status: None,
+        services: Vec::new(),
+        ports: Vec::new(),
+        findings: Vec::new(),
     }
+}
+
+/// Response for `coast ssg stop` after a successful stop.
+fn build_stop_response_success() -> SsgResponse {
+    SsgResponse {
+        message: "SSG stopped.".to_string(),
+        status: Some("stopped".to_string()),
+        services: Vec::new(),
+        ports: Vec::new(),
+        findings: Vec::new(),
+    }
+}
+
+/// Response for `coast ssg rm` when no SSG record exists.
+fn build_rm_response_missing_record() -> SsgResponse {
+    SsgResponse {
+        message: "SSG has not been created. Nothing to remove.".to_string(),
+        status: None,
+        services: Vec::new(),
+        ports: Vec::new(),
+        findings: Vec::new(),
+    }
+}
+
+/// Response for `coast ssg rm [--with-data]` after a successful remove.
+fn build_rm_response_success(with_data: bool) -> SsgResponse {
+    let suffix = if with_data { " (with data)" } else { "" };
+    SsgResponse {
+        message: format!("SSG removed{suffix}."),
+        status: None,
+        services: Vec::new(),
+        ports: Vec::new(),
+        findings: Vec::new(),
+    }
+}
+
+/// Build the error message for the shadow-gate refusal. Pure function
+/// of the blocking shadows + the verb being gated. Extracted so
+/// tests can assert wording without synthesizing the full
+/// `CoastError` + `AppState`.
+fn format_shadow_gate_error(shadows: &[ShadowUsingSsg], verb: &str) -> String {
+    let list = shadows
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "SSG is currently serving remote coast(s) [{list}]. \
+         Running `coast ssg {verb}` now will break their shared-service \
+         connectivity. Stop those remotes first, or re-run with \
+         --force to tear down their reverse tunnels and proceed.",
+    )
 }
 
 #[cfg(test)]
@@ -422,17 +450,6 @@ mod tests {
             remote_host: "host-a".to_string(),
         };
         assert_eq!(s.to_string(), "my-app/dev-1@host-a");
-    }
-
-    #[test]
-    fn capitalize_handles_lowercase_verb() {
-        assert_eq!(capitalize("stop"), "Stop");
-        assert_eq!(capitalize("remove"), "Remove");
-    }
-
-    #[test]
-    fn capitalize_handles_empty() {
-        assert_eq!(capitalize(""), "");
     }
 
     fn write_temp_coastfile(content: &str) -> tempfile::NamedTempFile {
@@ -504,5 +521,97 @@ name = "consumer"
     fn coastfile_has_ssg_refs_false_on_missing_file() {
         let nonexistent = std::path::PathBuf::from("/tmp/coast-nonexistent-xyz-404.toml");
         assert!(!coastfile_has_ssg_refs(&nonexistent));
+    }
+
+    // --- Phase 9 pure response helpers ---
+
+    #[test]
+    fn stop_response_missing_record_has_nothing_to_stop_message() {
+        let r = build_stop_response_missing_record();
+        assert_eq!(r.message, "SSG has not been created. Nothing to stop.");
+        assert!(r.status.is_none());
+        assert!(r.services.is_empty());
+        assert!(r.ports.is_empty());
+        assert!(r.findings.is_empty());
+    }
+
+    #[test]
+    fn stop_response_success_reports_stopped_status() {
+        let r = build_stop_response_success();
+        assert_eq!(r.message, "SSG stopped.");
+        assert_eq!(r.status.as_deref(), Some("stopped"));
+    }
+
+    #[test]
+    fn rm_response_missing_record_has_nothing_to_remove_message() {
+        let r = build_rm_response_missing_record();
+        assert_eq!(r.message, "SSG has not been created. Nothing to remove.");
+        assert!(r.status.is_none());
+    }
+
+    #[test]
+    fn rm_response_success_without_data_has_no_suffix() {
+        let r = build_rm_response_success(false);
+        assert_eq!(r.message, "SSG removed.");
+        assert!(r.status.is_none());
+    }
+
+    #[test]
+    fn rm_response_success_with_data_appends_with_data_suffix() {
+        let r = build_rm_response_success(true);
+        assert_eq!(r.message, "SSG removed (with data).");
+    }
+
+    #[test]
+    fn shadow_gate_error_lists_all_blocking_shadows() {
+        let shadows = vec![
+            ShadowUsingSsg {
+                project: "app-a".to_string(),
+                instance: "dev-1".to_string(),
+                remote_host: "host-x".to_string(),
+            },
+            ShadowUsingSsg {
+                project: "app-b".to_string(),
+                instance: "dev-2".to_string(),
+                remote_host: "host-y".to_string(),
+            },
+        ];
+        let msg = format_shadow_gate_error(&shadows, "stop");
+        assert!(
+            msg.contains("app-a/dev-1@host-x"),
+            "first shadow missing; got: {msg}"
+        );
+        assert!(
+            msg.contains("app-b/dev-2@host-y"),
+            "second shadow missing; got: {msg}"
+        );
+        assert!(msg.contains("--force"), "must mention --force; got: {msg}");
+    }
+
+    #[test]
+    fn shadow_gate_error_names_the_verb_via_coast_ssg_cmd() {
+        let shadows = vec![ShadowUsingSsg {
+            project: "p".to_string(),
+            instance: "i".to_string(),
+            remote_host: "h".to_string(),
+        }];
+        let stop_msg = format_shadow_gate_error(&shadows, "stop");
+        assert!(stop_msg.contains("`coast ssg stop`"), "got: {stop_msg}");
+        let rm_msg = format_shadow_gate_error(&shadows, "remove");
+        assert!(rm_msg.contains("`coast ssg remove`"), "got: {rm_msg}");
+    }
+
+    #[test]
+    fn shadow_gate_error_with_single_shadow_has_no_comma() {
+        let shadows = vec![ShadowUsingSsg {
+            project: "only".to_string(),
+            instance: "one".to_string(),
+            remote_host: "h".to_string(),
+        }];
+        let msg = format_shadow_gate_error(&shadows, "stop");
+        // The joined list should not contain ", " since only one shadow.
+        let after_bracket = msg.split('[').nth(1).unwrap();
+        let before_bracket = after_bracket.split(']').next().unwrap();
+        assert_eq!(before_bracket, "only/one@h");
     }
 }

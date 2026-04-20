@@ -190,6 +190,54 @@ Legend: `[ ]` not started, `[~]` in progress, `[x]` done.
 - [x] `docs/coastfiles/README.md` reference table updated
 - [x] `docs/doc_ordering.txt` + `coast-guard/src/components/DocsSidebar.tsx` + `coast-guard/src/locales/en.json` updated for the new section
 
+### Phase 9 — Audit fixes and coverage
+Driven by the DESIGN.md §5-§14 audit after Phase 8 landed. Every
+Phase 1-8 feature was already implemented; the audit surfaced 13
+divergences from the normative text. Phase 9 fixed 6 of them in
+code, documented 7 via §17 SETTLED entries, and backfilled unit
+tests to raise coverage on the critical SSG files above 70%.
+
+Code fixes:
+- [x] `coast ssg build` honors global `--working-dir` (SETTLED #31)
+- [x] `coast ssg checkout <SERVICE>` positional form (SETTLED #32)
+- [x] `coast build` hard-errors at build time when `from_group` refs exist but no SSG build (SETTLED #33)
+- [x] Consumer `auto_create_db = false` as explicit disable override (SETTLED #34)
+- [x] `SsgStarting` fires before dispatch; `SsgStarted` after (SETTLED #35)
+- [x] `coast ssg ps` merges live `ssg_services` + container status (SETTLED #36)
+
+Coverage infrastructure:
+- [x] [`coast-ssg/src/docker_ops.rs`](./src/docker_ops.rs) defines `SsgDockerOps` trait + `BollardSsgDockerOps` + `MockSsgDockerOps` (SETTLED #37)
+- [x] Pure helpers extracted from `handlers/ssg/mod.rs` (`build_stop_response_*`, `build_rm_response_*`, `format_shadow_gate_error`)
+- [x] Pure helpers extracted from `handlers/ssg/checkout.rs` (`select_uncheckout_rows`, `build_uncheckout_none_matching_response`)
+- [x] `AutoCreateDbDispatch` + `classify_service_for_auto_create_db` in `handlers/run/auto_create_db.rs`
+- [x] `build_doctor_response` pure helper in `handlers/ssg/doctor.rs`
+- [x] `tarball_path_for` + `pull_step_label` pure helpers in `build/images.rs`
+
+New unit tests (+77 tests relative to Phase 8 baseline of 3205; total 3282):
+- [x] `state/ssg.rs` 83% -> 87% (8 new CRUD edge-case tests)
+- [x] `handlers/ssg/doctor.rs` 59% -> 89% (5 new `build_doctor_response` tests)
+- [x] `handlers/ssg/checkout.rs` 31% -> 58% (10 new pure + AppState-backed tests)
+- [x] `handlers/run/auto_create_db.rs` 34% -> 83% (8 new classifier + dispatch tests)
+- [x] `handlers/run/ssg_integration.rs` 64% -> 68% (2 new async tests, COAST_HOME-serialized)
+- [x] `coast-ssg/src/build/artifact.rs` 82% -> 86% (4 new `auto_prune` error-path tests)
+- [x] `coast-ssg/src/build/images.rs` 0% -> 32% (5 new `tarball_path_for` / label tests)
+- [x] `coast-ssg/src/docker_ops.rs` new file at 93% (15 tests incl mock-vs-real parity)
+- [x] `coast-core/src/protocol/tests.rs` (3 new `SsgLogChunk` round-trip tests)
+- [x] `coast-core/src/coastfile/tests_parsing.rs` (1 new `auto_create_db = false` override test)
+
+DESIGN doc reconciliation:
+- [x] §6 error wording matches implementation (via §17 SETTLED #30 prefix note + §6 updates)
+- [x] §10.3 wording reflects `create_dir_all` default (vs promised UID/GID ownership)
+- [x] §13 psql block clarifies `sh -c` vs `\gexec` and cross-refs SETTLED #20
+- [x] §17 SETTLED #28-36 added for each divergence or deviation
+
+Verification:
+- [x] `make lint` clean (zero warnings, zero `#[allow]` added)
+- [x] `make test` — 3282 tests pass, zero failures
+- [x] `make run-dind-integration TEST=test_ssg_auto_start_on_run` — passes with updated Negative A + B cases
+- [x] `make run-dind-integration TEST=test_ssg_doctor` — regression
+- [x] `make run-dind-integration TEST=test_ssg_host_checkout` — regression
+
 ---
 
 ## 1. Problem
@@ -499,10 +547,19 @@ At `coast build` and again at `coast run`:
 - Two `[shared_services.<name>]` blocks with the same name in a single
   Coastfile are already rejected today. That stays.
 - A block with `from_group = true` referencing a name that does not
-  exist in the active SSG produces a clear error:
-  `error: shared service 'postgres' references the shared service group, but no service 'postgres' exists in ~/.coast/ssg/latest.`
-- A block with `from_group = true` plus any forbidden field produces:
-  `error: shared service 'postgres' has from_group = true; the following fields are forbidden: image, ports.`
+  exist in the active SSG produces a clear error (the daemon
+  emits this at `coast run` time via
+  [`missing_ssg_service_error`](./src/daemon_integration.rs)):
+  `Consumer references SSG service 'postgres' which does not exist in the active SSG build; available: [...]`
+- A block with `from_group = true` plus any forbidden field produces
+  (at `coast build` parse time, via
+  [`parse_shared_service_group_ref`](../coast-core/src/coastfile/field_parsers.rs)):
+  `shared_services.postgres: from_group = true forbids the following fields: image, ports`
+
+Both strings go through `CoastError::coastfile(...)` which adds the
+workspace-wide `Coastfile error:` prefix when the CLI renders them
+(see §17-30). Integration tests assert on the semantic substring
+so the exact wording can evolve without breaking CI.
 
 Every SSG-referenced service must be declared explicitly. There is no
 "auto-import all SSG services" shortcut.
@@ -825,8 +882,15 @@ for one thing.
 Implemented in `coast-ssg/src/runtime/bind_mounts.rs`:
 
 1. **Parse-time** — rules in §10.1.
-2. **Pre-run** — for every host bind source, `mkdir -p` with the
-   calling user's UID/GID before creating the DinD container.
+2. **Pre-run** — for every host bind source,
+   [`ensure_host_bind_dirs_exist`](./src/runtime/bind_mounts.rs)
+   calls `std::fs::create_dir_all`. Ownership is whatever `coastd`
+   inherits (typically the user running the daemon). For images
+   like postgres that need specific UID/GID on the data directory
+   (UID 999 debian, UID 70 alpine), the user runs `coast ssg
+   doctor` to detect mismatches and the `chown` command it prints
+   to fix them. We don't auto-`chown` because silently mutating
+   ownership on user-owned host bytes is dangerous.
 3. **Outer DinD** — each host bind becomes a `bollard::models::Mount`
    with `BIND` type and propagation `rprivate` (default).
 4. **Inner compose** — source path is passed verbatim.
@@ -970,14 +1034,20 @@ Semantics:
 
 Phase 5 lights up `auto_create_db` for both paths (inline and SSG)
 — prior to that, the SQL builder existed but had no caller (§17-20).
-Inline services run `docker exec <host-container> psql ... \gexec`
-against the shared-services host container. SSG services run a
-nested exec (`coast-ssg/src/runtime/auto_create_db.rs`):
+The pseudocode below shows the conceptual shape; the actual
+implementation wraps the `psql` call in `sh -c` with a
+`SELECT 'CREATE DATABASE ...' WHERE NOT EXISTS` guard instead of
+`\gexec`, because `\gexec` is a psql meta-command that cannot be
+composed with `-c` (see §17-20 for the settled rationale).
 
 ```text
+# Inline (host Docker daemon):
+docker exec <host-container> psql -U postgres -c "..."
+
+# SSG (nested):
 docker exec <ssg-outer> \
-  docker exec <inner-postgres-container> \
-  psql -U postgres -c "... \\gexec"
+  docker compose exec -T <inner-postgres-service> \
+  psql -U postgres -c "..."
 ```
 
 The SQL command construction is shared with the inline path
@@ -1396,6 +1466,129 @@ tracks state across sessions.
     [`test_ssg_doctor.sh`](../integrated-examples/test_ssg_doctor.sh)
     exercises the ok/warn/info paths plus a read-only regression
     (bind-mount mtime unchanged across invocations).
+28. (SETTLED — Phase 9) **Protocol extensions beyond the §7 sketch.**
+    §7 shows the Phase-1 shape of `SsgRequest` / `SsgResponse`.
+    Subsequent phases extended them without rewriting §7. The
+    normative shape at HEAD is
+    [`coast-core/src/protocol/ssg.rs`](../coast-core/src/protocol/ssg.rs);
+    additions are:
+    - `SsgRequest::Doctor` (Phase 8, §10.5 / SETTLED #27)
+    - `SsgRequest::Stop { force }` (Phase 4.5, §20.6)
+    - `SsgRequest::Rm { with_data, force }` (Phase 4.5, §20.6)
+    - `SsgResponse::findings: Vec<SsgDoctorFinding>` (Phase 8)
+    - `SsgDoctorFinding` struct (Phase 8)
+    All new variants / fields use `#[serde(default)]` so older
+    clients round-trip through without breakage.
+29. (SETTLED — Phase 9) **`env` TOML map coerces non-string scalars.**
+    §5 says "flat string map". The parser
+    ([`coerce_env_value`](./src/coastfile/mod.rs)) accepts TOML
+    integers, floats, and booleans and turns them into strings
+    (`42` -> `"42"`, `true` -> `"true"`). This keeps round-trips
+    with `Coastfile.shared_service_groups` files written by humans
+    (who often forget the quotes around numeric env values like
+    `MAX_CONNECTIONS = 200`) symmetric with what `docker compose`
+    would have done. Strict string-only would have broken everyday
+    ergonomics. The runtime still sees proper strings because we
+    coerce at parse time, not at serialization.
+30. (SETTLED — Phase 9) **`Coastfile error:` prefix on coastfile-
+    class errors is a workspace-wide convention.**
+    [`coast-core/src/error.rs`](../coast-core/src/error.rs) wraps
+    every `CoastError::coastfile(...)` message with the literal
+    `Coastfile error:` prefix before emitting. §6 shows
+    `error: shared service ...` for brevity but the actual wire
+    form is `Coastfile error: shared service ...`. Integration
+    tests assert on the semantic substring (e.g. `"references the
+    shared service group"`) rather than the verbatim DESIGN
+    sentence. Same pattern applies to every
+    `CoastError::docker(...)`, `::port(...)`, etc. — each carries
+    a class prefix so the user can see at a glance whether the
+    failure is a config parse, a Docker call, a port bind, etc.
+31. (SETTLED — Phase 9) **Global `--working-dir` flows into
+    `coast ssg build`.** DESIGN.md §5 promised
+    `coast --working-dir <dir> ssg build` would work, but the
+    original dispatch in
+    [`coast-cli/src/lib.rs`](../coast-cli/src/lib.rs) routed
+    `Ssg` through `dispatch_project_command` (which resolves a
+    project from cwd) and dropped `cli.working_dir` on the floor.
+    Phase 9 moves `Ssg` into the top-level `dispatch()` as a
+    singleton/project-less command and forwards `&cli.working_dir`
+    to `ssg::execute`. The `--working-dir` flag on `Cli` is
+    `global = true`, so clap also threads the value into the
+    subcommand's own `working_dir` field when it's set before
+    `ssg build`; `execute_build` additionally ORs the two as a
+    belt-and-braces defense against future clap changes.
+32. (SETTLED — Phase 9) **`coast ssg checkout` / `uncheckout` accept
+    both positional and `--service` forms.** DESIGN.md §12 uses the
+    positional form (`coast ssg checkout postgres`). The first
+    implementation only shipped `--service` because of a clap derive
+    quirk (can't put `#[arg(long)]` and positional on the same field).
+    Phase 9 keeps the existing `--service` flag working for backward
+    compat and adds a positional `SERVICE` on a parallel field;
+    `resolve_checkout_service` merges them at dispatch time, rejects
+    conflicting values, and rejects `--all + SERVICE` combinations.
+    Both forms produce the same `SsgRequest::Checkout { service, all }`
+    on the wire.
+33. (SETTLED — Phase 9) **`coast build` hard-errors at build time
+    when `from_group = true` refs exist but no SSG build exists.**
+    The original implementation returned `None` from
+    [`build_ssg_manifest_block`](../coast-daemon/src/handlers/build/manifest.rs)
+    silently when no SSG build existed, which weakened drift
+    detection — consumers could build without the `ssg` block and
+    sneak past the §6.1 drift check at run time. Phase 9 hard-errors
+    at `coast build` so the consumer's manifest always carries the
+    block when refs exist. The run-time §11.1 error now acts as a
+    belt for the narrow case where the SSG was removed between
+    `coast build` and `coast run`.
+34. (SETTLED — Phase 9) **Consumer `auto_create_db = false` is an
+    explicit disable override.** Originally
+    [`parse_shared_service_group_ref`](../coast-core/src/coastfile/field_parsers.rs)
+    mapped the serde-defaulted `bool` through `if raw { Some(true) }
+    else { None }`, which meant the consumer could only force-enable,
+    never force-disable. DESIGN.md §6 explicitly allows both. Phase 9
+    changes `RawSharedServiceConfig::auto_create_db` to
+    `Option<bool>` so `Some(false)` round-trips correctly.
+    [`synthesize_shared_service_configs`](./src/daemon_integration.rs)
+    already did `consumer_ref.auto_create_db.unwrap_or(manifest_svc.auto_create_db)`
+    — the three-valued override now works end-to-end.
+35. (SETTLED — Phase 9) **`SsgStarting` fires before the dispatch;
+    `SsgStarted` fires after.** Originally both events were emitted
+    together after `run_and_apply` / `start_and_apply` completed,
+    which made `Starting` meaningless. Phase 9 emits `Starting`
+    before the auto-start work begins (with the existing SSG's
+    `build_id` as a best-effort identifier, or `"pending"` when we
+    are about to create a fresh one), and `Started` after. Both
+    still fire unconditionally on every successful auto-start
+    (including the already-running short-circuit) so subscribers
+    can rely on the pair as a standard handshake (§17-16).
+36. (SETTLED — Phase 9) **`coast ssg ps` merges live state from
+    `ssg_services` + the SSG container record.** §7's table says
+    `ps` should show "SSG status + inner service statuses + dynamic
+    host ports". The original implementation only read the artifact
+    manifest and reported `dynamic_host_port: 0` / `status:
+    "built"`. Phase 9 extends
+    [`ps_ssg`](./src/daemon_integration.rs) to optionally take a
+    `&dyn SsgStateExt` so the daemon can merge runtime rows. When
+    no state is available (e.g., a future non-daemon caller) the
+    function still falls back to the manifest-only view, preserving
+    the pre-Phase-9 contract for compat.
+37. (SETTLED — Phase 9) **Narrow `SsgDockerOps` trait coexists with
+    the existing concrete `&Docker` + `DindRuntime` usage; full
+    lifecycle migration is incremental.** Phase 9 introduces
+    [`coast-ssg/src/docker_ops.rs`](./src/docker_ops.rs) with an
+    `SsgDockerOps` async trait, a `BollardSsgDockerOps` real impl,
+    and an in-tree handwritten `MockSsgDockerOps` (no `mockall`
+    dep) that records call order + scripts per-method responses.
+    The trait is **additive** — existing `runtime::lifecycle.rs`
+    and `build::images.rs` continue to use `&bollard::Docker`
+    directly. Rewriting every lifecycle verb to take
+    `&dyn SsgDockerOps` is a >1000-line refactor of battle-tested
+    async Docker code; the risk/reward didn't justify it in
+    Phase 9. Instead, Phase 9 extracts the *decision logic* from
+    lifecycle into pure helpers (`compute_missing_inner_images`,
+    `should_stop_before_remove`, `clamp_stop_timeout_seconds`,
+    `tarball_path_for`, `pull_step_label`) and tests those. The
+    trait is the stable seam future migrations can bind to when
+    individual functions move off the concrete `&Docker` handle.
 
 ## 18. Risks
 

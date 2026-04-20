@@ -192,7 +192,9 @@ impl Coastfile {
             ports,
             volumes: raw.volumes,
             env: raw.env,
-            auto_create_db: raw.auto_create_db,
+            // Inline services have no upstream to inherit from, so
+            // `None` is equivalent to `Some(false)` (disabled).
+            auto_create_db: raw.auto_create_db.unwrap_or(false),
             inject,
         })
     }
@@ -229,12 +231,13 @@ impl Coastfile {
             )));
         }
 
-        // `auto_create_db = false` is indistinguishable from "not set"
-        // once serde applies the default. Only surface as an override
-        // when the consumer explicitly set it to `true`; the SSG
-        // service's own `auto_create_db` is the fallback. See
-        // `coast-ssg/DESIGN.md §6` (v1 caveat).
-        let auto_create_db = if raw.auto_create_db { Some(true) } else { None };
+        // DESIGN.md §6 requires three-valued override semantics:
+        //   - None         -> inherit the SSG service's default
+        //   - Some(true)   -> force enable even if SSG disables it
+        //   - Some(false)  -> force disable even if SSG enables it
+        // `raw.auto_create_db` is `Option<bool>` so all three states
+        // round-trip through TOML cleanly.
+        let auto_create_db = raw.auto_create_db;
 
         let inject = match raw.inject {
             Some(inject_str) => {

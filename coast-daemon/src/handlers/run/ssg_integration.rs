@@ -90,6 +90,24 @@ pub async fn ensure_ready_for_consumer(
         db.get_ssg()?
     };
 
+    // DESIGN.md §11.1 says "Emit `CoastEvent::SsgStarting` /
+    // `SsgStarted` on the run progress channel so Coastguard can
+    // show boot progress inline." — that only makes sense if the
+    // `Starting` event precedes the actual start work. Emit it now,
+    // before `run_and_apply`/`start_and_apply`, using a best-effort
+    // build_id from the existing record (or "pending" when we're
+    // about to create one fresh). Emit the `Started` event after
+    // the dispatch completes, always, so subscribers can rely on
+    // the pair as a handshake (SETTLED #16).
+    let starting_build_id = record
+        .as_ref()
+        .and_then(|r| r.build_id.clone())
+        .unwrap_or_else(|| "pending".to_string());
+    state.emit_event(CoastEvent::SsgStarting {
+        project: project.to_string(),
+        build_id: starting_build_id,
+    });
+
     let outcome = match record {
         None => DispatchOutcome::Created(run_and_apply(state, &docker, progress).await?),
         Some(r) if r.status == "running" => DispatchOutcome::AlreadyRunning(
@@ -101,10 +119,6 @@ pub async fn ensure_ready_for_consumer(
     let build_id = outcome.build_id().to_string();
 
     emit_done(progress, &outcome);
-    state.emit_event(CoastEvent::SsgStarting {
-        project: project.to_string(),
-        build_id: build_id.clone(),
-    });
     state.emit_event(CoastEvent::SsgStarted {
         project: project.to_string(),
         build_id,
@@ -492,8 +506,15 @@ mod tests {
     use super::*;
 
     use std::path::Path;
+    use std::sync::Mutex;
 
     use coast_core::coastfile::Coastfile;
+
+    /// Serialize tests that mutate the process-wide `COAST_HOME`
+    /// env var. Without this, concurrent tests race: one test seeds
+    /// an SSG build and another test that expects "no SSG build"
+    /// accidentally observes it.
+    static COAST_HOME_LOCK: Mutex<()> = Mutex::new(());
 
     fn empty_coastfile() -> Coastfile {
         // Minimal TOML that parses to a Coastfile with no SSG refs.
@@ -611,6 +632,9 @@ name = "consumer"
         // Point COAST_HOME at an empty tempdir so
         // `coast_ssg::paths::resolve_latest_build_id()` returns None
         // regardless of the developer's real ~/.coast.
+        let _guard = COAST_HOME_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let tmp = tempfile::tempdir().unwrap();
         let db = crate::state::StateDb::open_in_memory().unwrap();
         let state = crate::server::AppState::new_for_testing(db);
@@ -654,6 +678,113 @@ name = "consumer"
             .await
             .expect("empty refs must succeed");
         assert!(result.is_empty());
+    }
+
+    /// Write a minimal SSG artifact tree at `$root/ssg/` so
+    /// `coast_ssg::paths::resolve_latest_build_id()` finds it.
+    fn seed_ssg_build(root: &Path, build_id: &str, services: &[(&str, &str)]) {
+        let ssg_home = root.join("ssg");
+        let build_dir = ssg_home.join("builds").join(build_id);
+        std::fs::create_dir_all(&build_dir).unwrap();
+        let manifest = serde_json::json!({
+            "build_id": build_id,
+            "built_at": "2026-04-20T00:00:00Z",
+            "coastfile_hash": "fake-hash",
+            "services": services
+                .iter()
+                .map(|(name, image)| serde_json::json!({
+                    "name": name,
+                    "image": image,
+                    "ports": [5432],
+                    "env_keys": [],
+                    "volumes": [],
+                    "auto_create_db": false,
+                }))
+                .collect::<Vec<_>>(),
+        });
+        std::fs::write(
+            build_dir.join("manifest.json"),
+            serde_json::to_string_pretty(&manifest).unwrap(),
+        )
+        .unwrap();
+        let latest = ssg_home.join("latest");
+        let _ = std::fs::remove_file(&latest);
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(Path::new("builds").join(build_id), &latest).unwrap();
+    }
+
+    #[tokio::test]
+    async fn ensure_ready_for_consumer_errors_when_docker_unavailable() {
+        // Consumer has `from_group = true`, an SSG build exists, but
+        // `state.docker` is None (test harness default). We should
+        // surface a clear "Docker is unavailable" error rather than
+        // panicking or progressing into the lock section.
+        let _guard = COAST_HOME_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let tmp = tempfile::tempdir().unwrap();
+        seed_ssg_build(
+            tmp.path(),
+            "b9_20260420000000",
+            &[("postgres", "postgres:16")],
+        );
+
+        let db = crate::state::StateDb::open_in_memory().unwrap();
+        let state = crate::server::AppState::new_for_testing(db);
+
+        let coastfile = coastfile_with_group_refs(&["postgres"]);
+        let (tx, _rx) = tokio::sync::mpsc::channel::<BuildProgressEvent>(8);
+
+        let prev = std::env::var_os("COAST_HOME");
+        unsafe {
+            std::env::set_var("COAST_HOME", tmp.path());
+        }
+
+        let result = ensure_ready_for_consumer(&state, "my-app", &coastfile, &tx).await;
+
+        unsafe {
+            match prev {
+                Some(v) => std::env::set_var("COAST_HOME", v),
+                None => std::env::remove_var("COAST_HOME"),
+            }
+        }
+
+        let err = result.expect_err("missing Docker must error");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("Docker to be available"),
+            "error must cite missing Docker; got: {msg}"
+        );
+        assert!(
+            msg.contains("Docker Desktop"),
+            "error must hint at Docker Desktop / Colima / OrbStack; got: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn missing_ssg_build_error_contains_all_referenced_services() {
+        // Regression: the error message for `ensure_ready_for_consumer`
+        // must enumerate every referenced service, not just the first.
+        let err = missing_ssg_build_error(
+            "many-refs",
+            &[
+                "postgres".to_string(),
+                "redis".to_string(),
+                "mongo".to_string(),
+            ],
+        );
+        let msg = err.to_string();
+        for svc in ["postgres", "redis", "mongo"] {
+            assert!(
+                msg.contains(&format!("'{svc}'")),
+                "error must mention '{svc}'; got: {msg}"
+            );
+        }
+        // Plural form used when multiple services are referenced.
+        assert!(
+            msg.contains("shared services"),
+            "multi-service message should use plural; got: {msg}"
+        );
     }
 
     // --- Phase 7: validate_ssg_drift ---

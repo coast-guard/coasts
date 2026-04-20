@@ -1,4 +1,5 @@
 /target
+/target-cov
 lcov.info
 .env
 

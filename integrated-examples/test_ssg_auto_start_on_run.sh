@@ -93,30 +93,60 @@ CLEANUP_INSTANCES=()
 "$COAST" ssg rm --with-data >/dev/null 2>&1 || true
 
 # ============================================================
-# Negative case: no SSG build exists; consumer run fails with
-# DESIGN-verbatim error.
+# Negative case A: no SSG build exists; `coast build` on the
+# consumer hard-errors at build time (DESIGN.md §6). This is the
+# new Phase 9 behavior: consumers cannot silently build without an
+# active SSG since that would weaken drift detection.
 # ============================================================
 
 echo ""
-echo "=== Negative: no SSG build -> clear error ==="
+echo "=== Negative A: no SSG build -> coast build hard-errors ==="
 
-# Wipe the SSG state completely so `resolve_latest_build_id` returns None.
+# Wipe the SSG state AND the consumer's prior build artifact so we
+# start from a truly clean slate.
 rm -rf "$HOME/.coast/ssg"
+rm -rf "$HOME/.coast/images/coast-ssg-consumer"
 docker rm -f coast-ssg 2>/dev/null || true
 
 cd "$PROJECTS_DIR/coast-ssg-consumer"
+BUILD_NEG_OUT=$("$COAST" build 2>&1 || true)
+echo "$BUILD_NEG_OUT" | tail -10
+
+assert_contains "$BUILD_NEG_OUT" "no SSG build exists" \
+    "coast build error mentions the missing SSG build"
+assert_contains "$BUILD_NEG_OUT" "coast ssg build" \
+    "coast build error directs the user to run coast ssg build first"
+assert_contains "$BUILD_NEG_OUT" "postgres" \
+    "coast build error names the referenced SSG service"
+
+# ============================================================
+# Negative case B: consumer has a stale build artifact but the
+# SSG was removed between build and run. The drift validator
+# catches this and fails `coast run` with the DESIGN §6.1 error.
+# ============================================================
+
+echo ""
+echo "=== Negative B: stale consumer build + missing SSG -> drift error ==="
+
+# Rebuild the SSG + consumer so the consumer has a valid artifact
+# with an `ssg` block pointing at the active SSG.
+cd "$PROJECTS_DIR/coast-ssg-minimal"
+"$COAST" ssg build --working-dir "$PROJECTS_DIR/coast-ssg-minimal" >/dev/null 2>&1
+cd "$PROJECTS_DIR/coast-ssg-consumer"
 "$COAST" build >/dev/null 2>&1
+
+# Now wipe the SSG so the consumer has a stale reference.
+rm -rf "$HOME/.coast/ssg"
+docker rm -f coast-ssg 2>/dev/null || true
 
 CLEANUP_INSTANCES+=("inst-b")
 NEG_OUT=$("$COAST" run inst-b 2>&1 || true)
 echo "$NEG_OUT" | tail -15
 
-assert_contains "$NEG_OUT" "Project 'coast-ssg-consumer' references shared service 'postgres'" \
-    "error mentions the consumer project and referenced service"
-assert_contains "$NEG_OUT" "no SSG build exists" \
-    "error mentions the missing SSG build"
-assert_contains "$NEG_OUT" "Coastfile.shared_service_groups" \
-    "error tells the user which file to run coast ssg build against"
+assert_contains "$NEG_OUT" "SSG has changed since this coast was built" \
+    "drift error fires (DESIGN.md \u00a76.1 verbatim prefix)"
+assert_contains "$NEG_OUT" "no SSG build exists now" \
+    "drift error explains the SSG is gone"
 
 # The instance should NOT have been created on the host.
 DOCKER_PS_NEG=$(docker ps -a --filter "name=^coast-ssg-consumer-coasts-inst-b$" --format "{{.Names}}")

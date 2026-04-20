@@ -501,4 +501,136 @@ env = { POSTGRES_USER = "coast", POSTGRES_PASSWORD = "secret" }
             assert_eq!(removed, 0);
         });
     }
+
+    // --- Phase 9 coverage fill-in: error paths around auto_prune +
+    // write_artifact that weren't exercised before. These hit the
+    // `read_manifest_timestamp` fallbacks, the non-existent builds_dir
+    // early return, and the FromRawEntries-without-manifest case.
+
+    #[test]
+    fn auto_prune_returns_zero_when_builds_dir_missing() {
+        // Regression for the early-return branch when the SSG hasn't
+        // been built yet at all. Before: `auto_prune` would have
+        // propagated a "No such file or directory" Io error. Expected
+        // behavior: quietly return 0.
+        with_coast_home(|_root| {
+            // Do NOT create ~/.coast/ssg/builds.
+            let removed = auto_prune(5).unwrap();
+            assert_eq!(removed, 0);
+        });
+    }
+
+    #[test]
+    fn auto_prune_skips_non_directory_entries() {
+        // A stray file (not a build dir) in builds/ must not crash
+        // auto_prune or be counted toward the total.
+        with_coast_home(|root| {
+            let builds = root.join("ssg").join("builds");
+            std::fs::create_dir_all(&builds).unwrap();
+            std::fs::write(builds.join("stray.txt"), "not a build").unwrap();
+
+            // Add 6 real builds so pruning happens.
+            for i in 0..6u32 {
+                let id = format!("b{i}_2026010100000{i}");
+                let dir = builds.join(&id);
+                std::fs::create_dir_all(&dir).unwrap();
+                let manifest = SsgManifest {
+                    build_id: id.clone(),
+                    built_at: DateTime::<Utc>::from_timestamp(1_700_000_000 + i64::from(i), 0)
+                        .unwrap(),
+                    coastfile_hash: format!("h{i}"),
+                    services: vec![],
+                };
+                std::fs::write(
+                    dir.join("manifest.json"),
+                    serde_json::to_string(&manifest).unwrap(),
+                )
+                .unwrap();
+            }
+
+            let removed = auto_prune(5).unwrap();
+            assert_eq!(removed, 1, "6 builds, keep 5 -> 1 removed");
+            // Stray file is untouched.
+            assert!(builds.join("stray.txt").exists());
+        });
+    }
+
+    #[test]
+    fn auto_prune_treats_manifestless_dirs_as_oldest() {
+        // A build dir without manifest.json has an unparseable
+        // timestamp, which `read_manifest_timestamp` returns as
+        // None. That sorts before all timestamped builds, so it
+        // gets pruned first.
+        with_coast_home(|root| {
+            let builds = root.join("ssg").join("builds");
+            std::fs::create_dir_all(&builds).unwrap();
+
+            // One manifestless dir (should prune first).
+            std::fs::create_dir_all(builds.join("ghost_20000101000000")).unwrap();
+
+            // 5 timestamped builds (all newer by virtue of having a
+            // manifest with built_at).
+            for i in 0..5u32 {
+                let id = format!("b{i}_2026010100000{i}");
+                let dir = builds.join(&id);
+                std::fs::create_dir_all(&dir).unwrap();
+                let manifest = SsgManifest {
+                    build_id: id.clone(),
+                    built_at: DateTime::<Utc>::from_timestamp(1_700_000_000 + i64::from(i), 0)
+                        .unwrap(),
+                    coastfile_hash: format!("h{i}"),
+                    services: vec![],
+                };
+                std::fs::write(
+                    dir.join("manifest.json"),
+                    serde_json::to_string(&manifest).unwrap(),
+                )
+                .unwrap();
+            }
+
+            // 6 total, keep 5 -> remove 1 (the ghost).
+            let removed = auto_prune(5).unwrap();
+            assert_eq!(removed, 1);
+            assert!(
+                !builds.join("ghost_20000101000000").exists(),
+                "manifestless dir must be pruned first"
+            );
+        });
+    }
+
+    #[test]
+    fn write_artifact_creates_build_dir_if_missing() {
+        // The function is documented to `create_dir_all` the build
+        // dir. Explicit regression for that: start with the builds/
+        // dir absent entirely.
+        with_coast_home(|root| {
+            // Do NOT pre-create ~/.coast/ssg/builds.
+            let cf = sample_cf();
+            let manifest = build_manifest("newbuild_20260420000000", "newhash", &cf);
+            let compose = "services:\n  postgres:\n    image: postgres:16\n";
+            let dir = write_artifact(&manifest, &cf, compose).unwrap();
+
+            assert!(
+                dir.starts_with(root.join("ssg").join("builds")),
+                "must land under ~/.coast/ssg/builds/"
+            );
+            assert!(dir.join("manifest.json").exists());
+            assert!(dir.join("ssg-coastfile.toml").exists());
+            assert!(dir.join("compose.yml").exists());
+        });
+    }
+
+    #[test]
+    fn write_artifact_is_idempotent_on_same_build_id() {
+        // Writing twice with the same build_id must overwrite the
+        // prior contents without error (used for retries in CI).
+        with_coast_home(|_root| {
+            let cf = sample_cf();
+            let manifest = build_manifest("replay_20260420000000", "h", &cf);
+            write_artifact(&manifest, &cf, "v1").unwrap();
+            let dir = write_artifact(&manifest, &cf, "v2").unwrap();
+            let compose = std::fs::read_to_string(dir.join("compose.yml")).unwrap();
+            assert_eq!(compose, "v2", "second write must overwrite");
+        });
+    }
 }

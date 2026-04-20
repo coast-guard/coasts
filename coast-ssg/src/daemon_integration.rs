@@ -19,7 +19,7 @@ use tokio::sync::mpsc::Sender;
 
 use coast_core::artifact;
 use coast_core::error::{CoastError, Result};
-use coast_core::protocol::{BuildProgressEvent, SsgResponse, SsgServiceInfo};
+use coast_core::protocol::{BuildProgressEvent, SsgPortInfo, SsgResponse, SsgServiceInfo};
 
 use crate::build::artifact as build_artifact;
 use crate::build::images::pull_and_cache_ssg_images;
@@ -221,9 +221,13 @@ pub async fn build_ssg(
 
 /// Read the active SSG build manifest and return service metadata.
 ///
-/// Returns an empty-services response with an explanatory message if
-/// no build exists (Phase 3 extends this with runtime status).
-pub fn ps_ssg() -> Result<SsgResponse> {
+/// When `state` is `Some`, merges live runtime data from
+/// `ssg_services` so callers see actual dynamic host ports and
+/// per-service status (`running` / `stopped` / etc.) alongside the
+/// built configuration. When `state` is `None`, falls back to the
+/// manifest-only view (`dynamic_host_port = 0`, `status = "built"`)
+/// used by pre-Phase-9 callers.
+pub fn ps_ssg(state: Option<&dyn crate::state::SsgStateExt>) -> Result<SsgResponse> {
     let Some((build_id, manifest)) = load_latest_ssg_manifest_with_id()? else {
         return Ok(SsgResponse {
             message: "No SSG build found. Run `coast ssg build` first.".to_string(),
@@ -234,10 +238,59 @@ pub fn ps_ssg() -> Result<SsgResponse> {
         });
     };
 
-    Ok(build_response_from_manifest(
-        &manifest,
-        format!("SSG build: {build_id}"),
-    ))
+    let (container_status, service_rows, ports): (
+        Option<String>,
+        Vec<crate::state::SsgServiceRecord>,
+        Vec<SsgPortInfo>,
+    ) = match state {
+        Some(db) => {
+            let ssg_status = db.get_ssg()?.map(|r| r.status);
+            let services = db.list_ssg_services()?;
+            let ports: Vec<SsgPortInfo> = services
+                .iter()
+                .map(|s| SsgPortInfo {
+                    service: s.service_name.clone(),
+                    canonical_port: s.container_port,
+                    dynamic_host_port: s.dynamic_host_port,
+                    checked_out: false,
+                })
+                .collect();
+            (ssg_status, services, ports)
+        }
+        None => (None, Vec::new(), Vec::new()),
+    };
+
+    let services: Vec<SsgServiceInfo> = manifest
+        .services
+        .iter()
+        .map(|svc| {
+            let inner_port = svc.ports.first().copied().unwrap_or(0);
+            let live = service_rows.iter().find(|row| row.service_name == svc.name);
+            SsgServiceInfo {
+                name: svc.name.clone(),
+                image: svc.image.clone(),
+                inner_port,
+                dynamic_host_port: live.map(|r| r.dynamic_host_port).unwrap_or(0),
+                container_id: None,
+                status: live
+                    .map(|r| r.status.clone())
+                    .unwrap_or_else(|| "built".to_string()),
+            }
+        })
+        .collect();
+
+    let message = match &container_status {
+        Some(s) => format!("SSG build: {build_id}  ({s})"),
+        None => format!("SSG build: {build_id}"),
+    };
+
+    Ok(SsgResponse {
+        message,
+        status: container_status,
+        services,
+        ports,
+        findings: Vec::new(),
+    })
 }
 
 /// Load the active SSG build's `(build_id, manifest)` or `None` when
@@ -620,6 +673,25 @@ mod tests {
         let services = vec![sample_record("postgres", 5432, 60001)];
         let result = synthesize_shared_service_configs(&cf, &manifest, &services).unwrap();
         assert!(result[0].auto_create_db);
+    }
+
+    #[test]
+    fn synthesize_auto_create_db_false_override_disables_ssg_default() {
+        // DESIGN.md §6 three-valued override: Some(false) on the
+        // consumer disables auto_create_db even when the SSG service
+        // has it enabled.
+        let cf = coastfile_with_refs(vec![SharedServiceGroupRef {
+            name: "postgres".to_string(),
+            auto_create_db: Some(false),
+            inject: None,
+        }]);
+        let manifest = sample_manifest(vec![("postgres", "postgres:16-alpine", vec![5432], true)]);
+        let services = vec![sample_record("postgres", 5432, 60001)];
+        let result = synthesize_shared_service_configs(&cf, &manifest, &services).unwrap();
+        assert!(
+            !result[0].auto_create_db,
+            "Some(false) must override SSG auto_create_db = true"
+        );
     }
 
     #[test]

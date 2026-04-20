@@ -180,8 +180,13 @@ pub(super) struct RawSharedServiceConfig {
     pub volumes: Vec<String>,
     #[serde(default)]
     pub env: HashMap<String, String>,
+    /// Three-valued: `Some(true)` / `Some(false)` / `None` (not set).
+    /// For inline services, `None` and `Some(false)` both mean
+    /// "disabled". For `from_group = true` refs, `None` means
+    /// "inherit the SSG service's setting" and `Some(false)` is an
+    /// explicit consumer-side disable override (DESIGN.md §6).
     #[serde(default)]
-    pub auto_create_db: bool,
+    pub auto_create_db: Option<bool>,
     #[serde(default)]
     pub inject: Option<String>,
     /// When true, this entry is a reference to a service defined in

@@ -1640,6 +1640,37 @@ fn test_ssg_log_chunk_response_roundtrip() {
 }
 
 #[test]
+fn test_ssg_log_chunk_multiline_with_unicode() {
+    // Phase 9 coverage: multiline chunks with non-ASCII characters
+    // must round-trip cleanly. JSON encoding of control chars
+    // (\r, \n, \t) and multi-byte UTF-8 is the most likely place
+    // for a subtle encoder regression.
+    let payloads = [
+        "",
+        "\n",
+        "\r\n",
+        "a\nb\nc\n",
+        "トマト | 準備完了",
+        "λ = 3.14\n \u{1F680} launched",
+        "ANSI \x1b[31mred\x1b[0m middle\n",
+    ];
+    for p in payloads {
+        roundtrip_response(Response::SsgLogChunk(SsgLogChunk {
+            chunk: p.to_string(),
+        }));
+    }
+}
+
+#[test]
+fn test_ssg_log_chunk_large_payload_roundtrip() {
+    // Regression for buffer-sizing bugs in the envelope. A single
+    // 64 KB chunk (above most default read buffer sizes) must
+    // serialize and deserialize without truncation.
+    let big = "x".repeat(65_536);
+    roundtrip_response(Response::SsgLogChunk(SsgLogChunk { chunk: big }));
+}
+
+#[test]
 fn test_ssg_response_roundtrip() {
     roundtrip_response(Response::Ssg(SsgResponse {
         message: "SSG is running with 2 services".to_string(),

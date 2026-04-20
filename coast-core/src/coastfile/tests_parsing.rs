@@ -2492,16 +2492,35 @@ auto_create_db = true
 }
 
 #[test]
-fn from_group_without_auto_create_db_surfaces_none() {
-    // Per DESIGN.md §6 caveat: `auto_create_db = false` at the TOML
-    // level is indistinguishable from "not set" after serde defaulting,
-    // so the consumer cannot explicitly disable — only enable. Absence
-    // surfaces as None (inherit from SSG).
+fn from_group_with_auto_create_db_false_is_explicit_disable() {
+    // DESIGN.md §6 three-valued override: `auto_create_db = false`
+    // in the consumer surfaces as `Some(false)` so the synthesis
+    // layer can explicitly disable per-instance DB creation even
+    // when the SSG service enables it.
     let cf = parse_from_group_coastfile(
         r#"
 [shared_services.postgres]
 from_group = true
 auto_create_db = false
+"#,
+    )
+    .unwrap();
+
+    assert_eq!(
+        cf.shared_service_group_refs[0].auto_create_db,
+        Some(false),
+        "explicit `auto_create_db = false` must round-trip as Some(false)",
+    );
+}
+
+#[test]
+fn from_group_without_auto_create_db_surfaces_none() {
+    // Absence still means "inherit from SSG" — only present-and-set
+    // produces Some(_).
+    let cf = parse_from_group_coastfile(
+        r#"
+[shared_services.postgres]
+from_group = true
 "#,
     )
     .unwrap();

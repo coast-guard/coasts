@@ -66,5 +66,13 @@ pub use doctor::{
     classify_image, evaluate_doctor, host_bind_source, KnownImage, StatResult, KNOWN_IMAGES,
 };
 
+// ssg-phase-9: narrow Docker abstraction for unit-testable lifecycle
+// and build code paths. See DESIGN.md §17 SETTLED #37.
+pub mod docker_ops;
+pub use docker_ops::{
+    clamp_stop_timeout_seconds, compute_missing_inner_images, should_stop_before_remove,
+    BollardSsgDockerOps, SsgDockerOps, SsgExecOutput,
+};
+
 #[cfg(test)]
 pub(crate) mod test_support;

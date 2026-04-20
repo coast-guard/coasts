@@ -19,6 +19,22 @@ use coast_core::protocol::BuildProgressEvent;
 
 use crate::coastfile::SsgSharedServiceConfig;
 
+/// Pure helper: compute the tarball path inside `cache_dir` for a
+/// given image reference. Matches the naming convention
+/// [`coast_docker::image_cache::pull_and_cache_image`] uses, so
+/// cache hits from the regular `coast build` pipeline are also hits
+/// for the SSG pipeline.
+pub fn tarball_path_for(cache_dir: &Path, image: &str) -> PathBuf {
+    let safe_name = image.replace(['/', ':'], "_");
+    cache_dir.join(format!("{safe_name}.tar"))
+}
+
+/// Pure helper: format the per-image progress step label. Extracted
+/// so tests can pin the format without simulating channel I/O.
+pub fn pull_step_label(image: &str) -> String {
+    format!("Pull {image}")
+}
+
 /// Pull every service's image, caching tarballs in `cache_dir`.
 ///
 /// Emits one `started` + one `done` progress event per image. Skips
@@ -39,7 +55,7 @@ pub async fn pull_and_cache_ssg_images(
     let mut tarballs = Vec::with_capacity(services.len());
     for (idx, svc) in services.iter().enumerate() {
         let step_number = step_start + idx as u32;
-        let step_label = format!("Pull {}", svc.image);
+        let step_label = pull_step_label(&svc.image);
 
         let _ = progress
             .send(BuildProgressEvent::started(
@@ -50,10 +66,8 @@ pub async fn pull_and_cache_ssg_images(
             .await;
 
         // If the tarball already exists from a prior build, skip the
-        // pull. The tarball naming convention matches
-        // `coast_docker::image_cache::pull_and_cache_image`.
-        let safe_name = svc.image.replace(['/', ':'], "_");
-        let tarball_path = cache_dir.join(format!("{safe_name}.tar"));
+        // pull.
+        let tarball_path = tarball_path_for(cache_dir, &svc.image);
 
         if tarball_path.exists() {
             tarballs.push(tarball_path);
@@ -71,4 +85,57 @@ pub async fn pull_and_cache_ssg_images(
             .await;
     }
     Ok(tarballs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- tarball_path_for ---
+
+    #[test]
+    fn tarball_path_replaces_slash_and_colon() {
+        let p = tarball_path_for(Path::new("/cache"), "ghcr.io/library/postgres:16-alpine");
+        assert_eq!(
+            p,
+            PathBuf::from("/cache/ghcr.io_library_postgres_16-alpine.tar"),
+        );
+    }
+
+    #[test]
+    fn tarball_path_for_simple_image_has_no_slashes_in_filename() {
+        let p = tarball_path_for(Path::new("/c"), "postgres:16");
+        assert_eq!(p, PathBuf::from("/c/postgres_16.tar"));
+    }
+
+    #[test]
+    fn tarball_path_for_tagless_image() {
+        // No colon -> no `:` character to replace. The file still
+        // lives at `{image}.tar` since the underlying cache helper
+        // treats missing tags as "latest" internally.
+        let p = tarball_path_for(Path::new("/c"), "postgres");
+        assert_eq!(p, PathBuf::from("/c/postgres.tar"));
+    }
+
+    #[test]
+    fn tarball_path_is_deterministic() {
+        // Regression against any future non-deterministic mangling.
+        let a = tarball_path_for(Path::new("/c"), "mongo:7");
+        let b = tarball_path_for(Path::new("/c"), "mongo:7");
+        assert_eq!(a, b);
+    }
+
+    // --- pull_step_label ---
+
+    #[test]
+    fn pull_step_label_format_is_stable() {
+        // Coastguard and CLI renderers key off this exact prefix
+        // ("Pull ") to group per-image progress rows. If we ever
+        // rename this string, audit the UI layer too.
+        assert_eq!(pull_step_label("postgres:16"), "Pull postgres:16");
+        assert_eq!(
+            pull_step_label("ghcr.io/coast/tester:v1"),
+            "Pull ghcr.io/coast/tester:v1"
+        );
+    }
 }

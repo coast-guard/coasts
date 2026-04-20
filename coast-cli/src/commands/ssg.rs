@@ -130,10 +130,15 @@ pub enum SsgAction {
     /// outside Coast's tracking, the command errors out — use the
     /// usual host-side tools to free it. See `coast-ssg/DESIGN.md §12`.
     Checkout {
-        /// Service name (e.g. `postgres`). Mutually exclusive with `--all`.
-        #[arg(long)]
+        /// Service name (e.g. `postgres`). Positional form per
+        /// DESIGN.md §12. Mutually exclusive with `--all`.
+        #[arg(value_name = "SERVICE")]
         service: Option<String>,
-        /// Check out every SSG service. Mutually exclusive with `--service`.
+        /// Alternative long-form for the positional `<SERVICE>`.
+        /// Preserved for backward compat; prefer the positional form.
+        #[arg(long = "service", value_name = "SERVICE")]
+        service_flag: Option<String>,
+        /// Check out every SSG service.
         #[arg(long)]
         all: bool,
     },
@@ -142,8 +147,13 @@ pub enum SsgAction {
     /// displaced by a checkout; rebind it with `coast checkout <instance>`
     /// if you want it back on the canonical port.
     Uncheckout {
-        #[arg(long)]
+        /// Service name (e.g. `postgres`). Positional form per
+        /// DESIGN.md §12. Mutually exclusive with `--all`.
+        #[arg(value_name = "SERVICE")]
         service: Option<String>,
+        /// Alternative long-form for the positional `<SERVICE>`.
+        #[arg(long = "service", value_name = "SERVICE")]
+        service_flag: Option<String>,
         #[arg(long)]
         all: bool,
     },
@@ -158,16 +168,20 @@ pub enum SsgAction {
     Doctor,
 }
 
-pub async fn execute(args: &SsgArgs) -> Result<()> {
+pub async fn execute(args: &SsgArgs, cli_working_dir: &Option<PathBuf>) -> Result<()> {
     match &args.action {
         SsgAction::Build {
             file,
             working_dir,
             config,
         } => {
+            // Subcommand-level `--working-dir` wins; fall back to the
+            // global `coast --working-dir` flag so `coast --working-dir
+            // <dir> ssg build` works (DESIGN.md §5).
+            let resolved_working_dir = working_dir.clone().or_else(|| cli_working_dir.clone());
             execute_build(
                 file.clone(),
-                working_dir.clone(),
+                resolved_working_dir,
                 config.clone(),
                 args.silent,
             )
@@ -220,20 +234,30 @@ pub async fn execute(args: &SsgArgs) -> Result<()> {
             .await
         }
         SsgAction::Ports => execute_ports(args.silent).await,
-        SsgAction::Checkout { service, all } => {
+        SsgAction::Checkout {
+            service,
+            service_flag,
+            all,
+        } => {
+            let resolved = resolve_checkout_service(service, service_flag, *all)?;
             execute_simple(
                 SsgRequest::Checkout {
-                    service: service.clone(),
+                    service: resolved,
                     all: *all,
                 },
                 args.silent,
             )
             .await
         }
-        SsgAction::Uncheckout { service, all } => {
+        SsgAction::Uncheckout {
+            service,
+            service_flag,
+            all,
+        } => {
+            let resolved = resolve_checkout_service(service, service_flag, *all)?;
             execute_simple(
                 SsgRequest::Uncheckout {
-                    service: service.clone(),
+                    service: resolved,
                     all: *all,
                 },
                 args.silent,
@@ -241,6 +265,80 @@ pub async fn execute(args: &SsgArgs) -> Result<()> {
             .await
         }
         SsgAction::Doctor => execute_doctor(args.silent).await,
+    }
+}
+
+/// Resolve `coast ssg checkout [service|--service <s>|--all]` inputs into
+/// the `Option<String>` the daemon protocol expects. DESIGN.md §12 uses
+/// a positional argument; the `--service` flag is a backward-compat
+/// alias for the same value. Rejects the case where both are set with
+/// conflicting values.
+fn resolve_checkout_service(
+    positional: &Option<String>,
+    flag: &Option<String>,
+    all: bool,
+) -> Result<Option<String>> {
+    match (positional, flag, all) {
+        (Some(p), Some(f), _) if p != f => {
+            bail!("conflicting service name: positional '{p}' vs --service '{f}'. Use one form.")
+        }
+        (Some(s), _, true) | (_, Some(s), true) => {
+            let _ = s;
+            bail!("--all and a specific service are mutually exclusive.")
+        }
+        (Some(s), _, false) | (_, Some(s), false) => Ok(Some(s.clone())),
+        (None, None, _) => Ok(None),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn checkout_resolver_positional_only() {
+        assert_eq!(
+            resolve_checkout_service(&Some("postgres".into()), &None, false).unwrap(),
+            Some("postgres".into())
+        );
+    }
+
+    #[test]
+    fn checkout_resolver_flag_only() {
+        assert_eq!(
+            resolve_checkout_service(&None, &Some("postgres".into()), false).unwrap(),
+            Some("postgres".into())
+        );
+    }
+
+    #[test]
+    fn checkout_resolver_same_value_on_both_is_fine() {
+        assert_eq!(
+            resolve_checkout_service(&Some("postgres".into()), &Some("postgres".into()), false,)
+                .unwrap(),
+            Some("postgres".into())
+        );
+    }
+
+    #[test]
+    fn checkout_resolver_conflicting_values_errors() {
+        let err = resolve_checkout_service(&Some("postgres".into()), &Some("redis".into()), false)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("conflicting service name"), "got: {err}");
+    }
+
+    #[test]
+    fn checkout_resolver_all_with_service_errors() {
+        let err = resolve_checkout_service(&Some("postgres".into()), &None, true)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("mutually exclusive"), "got: {err}");
+    }
+
+    #[test]
+    fn checkout_resolver_all_alone_returns_none() {
+        assert_eq!(resolve_checkout_service(&None, &None, true).unwrap(), None);
     }
 }
 

@@ -177,29 +177,10 @@ pub(super) async fn handle_uncheckout(
         });
     }
 
-    let to_remove: Vec<_> = match &target {
-        SsgCheckoutTarget::All => existing.clone(),
-        SsgCheckoutTarget::Service(name) => existing
-            .iter()
-            .filter(|c| c.service_name == *name)
-            .cloned()
-            .collect(),
-    };
+    let to_remove = select_uncheckout_rows(&existing, &target);
 
     if to_remove.is_empty() {
-        return Ok(SsgResponse {
-            message: format!(
-                "No active SSG checkout for service '{}'; nothing to uncheck out.",
-                match &target {
-                    SsgCheckoutTarget::Service(name) => name.as_str(),
-                    SsgCheckoutTarget::All => unreachable!(),
-                }
-            ),
-            status: None,
-            services: Vec::new(),
-            ports: Vec::new(),
-            findings: Vec::new(),
-        });
+        return Ok(build_uncheckout_none_matching_response(&target));
     }
 
     for row in &to_remove {
@@ -228,6 +209,45 @@ pub(super) async fn handle_uncheckout(
         ports: Vec::new(),
         findings: Vec::new(),
     })
+}
+
+/// Pure helper: given the `ssg_port_checkouts` table contents and
+/// an uncheckout target, return the subset that should be removed.
+/// Extracted so tests can drive the matcher without needing a real
+/// `StateDb`.
+fn select_uncheckout_rows(
+    existing: &[SsgPortCheckoutRecord],
+    target: &SsgCheckoutTarget,
+) -> Vec<SsgPortCheckoutRecord> {
+    match target {
+        SsgCheckoutTarget::All => existing.to_vec(),
+        SsgCheckoutTarget::Service(name) => existing
+            .iter()
+            .filter(|c| c.service_name == *name)
+            .cloned()
+            .collect(),
+    }
+}
+
+/// Pure helper: build the "no matching checkout" response for
+/// `coast ssg uncheckout` when the target matches zero rows.
+fn build_uncheckout_none_matching_response(target: &SsgCheckoutTarget) -> SsgResponse {
+    SsgResponse {
+        message: format!(
+            "No active SSG checkout for service '{}'; nothing to uncheck out.",
+            match target {
+                SsgCheckoutTarget::Service(name) => name.as_str(),
+                SsgCheckoutTarget::All => unreachable!(
+                    "SsgCheckoutTarget::All cannot reach here — handle_uncheckout \
+                     short-circuits on empty `existing` list before calling this helper."
+                ),
+            }
+        ),
+        status: None,
+        services: Vec::new(),
+        ports: Vec::new(),
+        findings: Vec::new(),
+    }
 }
 
 /// Translate the `(service, all)` CLI pair into the planner's target
@@ -711,5 +731,151 @@ mod tests {
         assert_eq!(lines.len(), 2);
         assert!(lines[0].contains("checkout complete"));
         assert!(lines[1].starts_with("Displaced coast"));
+    }
+
+    // --- Phase 9 pure helpers for uncheckout ---
+
+    fn checkout_row(canonical: u16, service: &str) -> SsgPortCheckoutRecord {
+        SsgPortCheckoutRecord {
+            canonical_port: canonical,
+            service_name: service.to_string(),
+            socat_pid: None,
+            created_at: "2026-04-20T00:00:00Z".to_string(),
+        }
+    }
+
+    #[test]
+    fn select_uncheckout_rows_all_returns_everything() {
+        let existing = vec![checkout_row(5432, "postgres"), checkout_row(6379, "redis")];
+        let picked = select_uncheckout_rows(&existing, &SsgCheckoutTarget::All);
+        assert_eq!(picked.len(), 2);
+    }
+
+    #[test]
+    fn select_uncheckout_rows_service_filters_to_matching_name() {
+        let existing = vec![
+            checkout_row(5432, "postgres"),
+            checkout_row(6379, "redis"),
+            checkout_row(27017, "mongo"),
+        ];
+        let picked = select_uncheckout_rows(&existing, &SsgCheckoutTarget::Service("redis".into()));
+        assert_eq!(picked.len(), 1);
+        assert_eq!(picked[0].service_name, "redis");
+        assert_eq!(picked[0].canonical_port, 6379);
+    }
+
+    #[test]
+    fn select_uncheckout_rows_service_no_match_returns_empty() {
+        let existing = vec![checkout_row(5432, "postgres")];
+        let picked = select_uncheckout_rows(&existing, &SsgCheckoutTarget::Service("nope".into()));
+        assert!(picked.is_empty());
+    }
+
+    #[test]
+    fn select_uncheckout_rows_on_empty_input_returns_empty() {
+        let picked = select_uncheckout_rows(&[], &SsgCheckoutTarget::All);
+        assert!(picked.is_empty());
+        let picked = select_uncheckout_rows(&[], &SsgCheckoutTarget::Service("anything".into()));
+        assert!(picked.is_empty());
+    }
+
+    #[test]
+    fn uncheckout_none_matching_response_names_the_service() {
+        let resp =
+            build_uncheckout_none_matching_response(&SsgCheckoutTarget::Service("redis".into()));
+        assert!(resp.message.contains("'redis'"));
+        assert!(resp.message.contains("nothing to uncheck out"));
+        assert!(resp.status.is_none());
+        assert!(resp.ports.is_empty());
+    }
+
+    // --- Phase 9 Pattern C: in-memory AppState end-to-end uncheckout ---
+    //
+    // Exercises `handle_uncheckout` against a real in-memory StateDb
+    // (via `AppState::new_for_testing`). socat_pid is None on every
+    // row so we don't actually try to kill any processes.
+
+    fn in_memory_app_state() -> Arc<AppState> {
+        use crate::state::StateDb;
+        let db = StateDb::open_in_memory().expect("in-memory statedb");
+        Arc::new(AppState::new_for_testing(db))
+    }
+
+    #[tokio::test]
+    async fn uncheckout_empty_table_says_nothing_to_uncheck_out() {
+        let state = in_memory_app_state();
+        let resp = handle_uncheckout(&state, None, true).await.unwrap();
+        assert!(resp.message.contains("nothing to uncheck out"));
+    }
+
+    #[tokio::test]
+    async fn uncheckout_all_removes_every_row() {
+        let state = in_memory_app_state();
+        {
+            let db = state.db.lock().await;
+            db.upsert_ssg_port_checkout(&checkout_row(5432, "postgres"))
+                .unwrap();
+            db.upsert_ssg_port_checkout(&checkout_row(6379, "redis"))
+                .unwrap();
+        }
+
+        let resp = handle_uncheckout(&state, None, true).await.unwrap();
+        assert!(resp.message.contains("SSG uncheckout complete"));
+        assert!(resp.message.contains("postgres (5432)"));
+        assert!(resp.message.contains("redis (6379)"));
+
+        let db = state.db.lock().await;
+        assert!(db.list_ssg_port_checkouts().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn uncheckout_one_service_keeps_others() {
+        let state = in_memory_app_state();
+        {
+            let db = state.db.lock().await;
+            db.upsert_ssg_port_checkout(&checkout_row(5432, "postgres"))
+                .unwrap();
+            db.upsert_ssg_port_checkout(&checkout_row(6379, "redis"))
+                .unwrap();
+        }
+
+        let resp = handle_uncheckout(&state, Some("postgres".into()), false)
+            .await
+            .unwrap();
+        assert!(resp.message.contains("postgres (5432)"));
+        assert!(!resp.message.contains("redis"));
+
+        let db = state.db.lock().await;
+        let remaining = db.list_ssg_port_checkouts().unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].service_name, "redis");
+    }
+
+    #[tokio::test]
+    async fn uncheckout_missing_service_leaves_rows_alone() {
+        let state = in_memory_app_state();
+        {
+            let db = state.db.lock().await;
+            db.upsert_ssg_port_checkout(&checkout_row(5432, "postgres"))
+                .unwrap();
+        }
+
+        let resp = handle_uncheckout(&state, Some("nope".into()), false)
+            .await
+            .unwrap();
+        assert!(resp.message.contains("No active SSG checkout"));
+        assert!(resp.message.contains("'nope'"));
+
+        let db = state.db.lock().await;
+        assert_eq!(db.list_ssg_port_checkouts().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn uncheckout_invalid_target_errors() {
+        let state = in_memory_app_state();
+        // Neither --service nor --all.
+        let err = handle_uncheckout(&state, None, false).await.unwrap_err();
+        assert!(err.to_string().contains("--service"));
+        assert!(err.to_string().contains("--all"));
     }
 }

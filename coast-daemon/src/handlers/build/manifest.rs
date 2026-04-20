@@ -28,8 +28,11 @@ pub(super) async fn write_manifest_and_finalize(input: ManifestInput<'_>) -> Res
 
     // Phase 7: when the consumer Coastfile references SSG services,
     // snapshot the active SSG's build_id + image refs so `coast run`
-    // can detect drift. See `coast-ssg/DESIGN.md §6.1`.
-    let ssg_block = build_ssg_manifest_block(input.coastfile);
+    // can detect drift. See `coast-ssg/DESIGN.md §6.1`. DESIGN.md §6
+    // requires a hard error here when refs exist but no SSG build
+    // does — otherwise the consumer's manifest would lack the `ssg`
+    // block and drift detection would silently pass.
+    let ssg_block = build_ssg_manifest_block(input.coastfile)?;
 
     let mut manifest = serde_json::json!({
         "build_id": &input.artifact.build_id,
@@ -157,34 +160,60 @@ fn update_latest_symlink(input: &ManifestInput<'_>) -> Result<()> {
     Ok(())
 }
 
-/// Compute the Phase 7 `ssg` manifest block for this coast build, or
-/// `None` when drift detection doesn't apply.
+/// Compute the Phase 7 `ssg` manifest block for this coast build.
 ///
-/// Returns `None` when the Coastfile has no `from_group = true`
-/// references (non-consumer build) or when no active SSG build
-/// exists (coast build shouldn't block on a missing SSG; the
-/// run-side check will auto-start / error using the §11.1 path).
-///
-/// When present, the block records only the services the consumer
-/// actually references — keeps the snapshot minimal and makes
-/// "service missing" a clean check.
-fn build_ssg_manifest_block(coastfile: &Coastfile) -> Option<serde_json::Value> {
+/// Returns:
+/// - `Ok(None)` when the Coastfile has no `from_group = true`
+///   references (non-consumer build; nothing to record).
+/// - `Err(CoastError::coastfile(...))` when the Coastfile DOES
+///   reference SSG services but no active SSG build exists. DESIGN.md
+///   §6 requires this to fail early so the consumer's manifest
+///   never lacks the `ssg` block silently.
+/// - `Ok(Some(block))` recording only the services the consumer
+///   actually references — keeps the snapshot minimal and makes
+///   "service missing" a clean check at `coast run` time.
+fn build_ssg_manifest_block(coastfile: &Coastfile) -> Result<Option<serde_json::Value>> {
     if coastfile.shared_service_group_refs.is_empty() {
-        return None;
+        return Ok(None);
     }
-
-    let build_id = coast_ssg::paths::resolve_latest_build_id()?;
-    let build_dir = coast_ssg::paths::ssg_build_dir(&build_id).ok()?;
-    let manifest_path = build_dir.join("manifest.json");
-    let manifest_contents = std::fs::read_to_string(&manifest_path).ok()?;
-    let active: coast_ssg::build::artifact::SsgManifest =
-        serde_json::from_str(&manifest_contents).ok()?;
 
     let referenced: Vec<String> = coastfile
         .shared_service_group_refs
         .iter()
         .map(|r| r.name.clone())
         .collect();
+
+    let build_id = coast_ssg::paths::resolve_latest_build_id().ok_or_else(|| {
+        CoastError::coastfile(format!(
+            "Coastfile references the Shared Service Group via from_group = true for \
+             service(s) [{services}], but no SSG build exists. Run `coast ssg build` \
+             in the directory containing your Coastfile.shared_service_groups first.",
+            services = referenced.join(", ")
+        ))
+    })?;
+    let build_dir = coast_ssg::paths::ssg_build_dir(&build_id).map_err(|e| {
+        CoastError::coastfile(format!(
+            "Failed to resolve SSG build '{build_id}' directory while building \
+             consumer manifest: {e}"
+        ))
+    })?;
+    let manifest_path = build_dir.join("manifest.json");
+    let manifest_contents =
+        std::fs::read_to_string(&manifest_path).map_err(|e| CoastError::Io {
+            message: format!(
+                "Failed to read SSG manifest '{}' while building consumer manifest: {e}",
+                manifest_path.display()
+            ),
+            path: manifest_path.clone(),
+            source: Some(e),
+        })?;
+    let active: coast_ssg::build::artifact::SsgManifest = serde_json::from_str(&manifest_contents)
+        .map_err(|e| {
+            CoastError::coastfile(format!(
+                "Failed to parse SSG manifest '{}' while building consumer manifest: {e}",
+                manifest_path.display()
+            ))
+        })?;
 
     let mut images = std::collections::BTreeMap::new();
     for name in &referenced {
@@ -193,11 +222,11 @@ fn build_ssg_manifest_block(coastfile: &Coastfile) -> Option<serde_json::Value> 
         }
     }
 
-    Some(serde_json::json!({
+    Ok(Some(serde_json::json!({
         "build_id": active.build_id,
         "services": referenced,
         "images": images,
-    }))
+    })))
 }
 
 #[cfg(test)]
@@ -252,18 +281,30 @@ compose = "./docker-compose.yml"
     fn block_is_none_without_ssg_refs() {
         with_coast_home(|_home| {
             let cf = consumer_coastfile(false);
-            assert!(build_ssg_manifest_block(&cf).is_none());
+            assert!(build_ssg_manifest_block(&cf).unwrap().is_none());
         });
     }
 
     #[test]
-    fn block_is_none_when_no_active_ssg_build() {
+    fn block_hard_errors_when_no_active_ssg_build() {
         with_coast_home(|_home| {
-            // COAST_HOME is a fresh tempdir with no SSG artifacts; the
-            // helper must silently return None so `coast build` doesn't
-            // block users who haven't built their SSG yet.
+            // COAST_HOME is a fresh tempdir with no SSG artifacts.
+            // DESIGN.md §6 requires this to hard-error so the
+            // consumer's manifest never lacks the `ssg` block silently.
             let cf = consumer_coastfile(true);
-            assert!(build_ssg_manifest_block(&cf).is_none());
+            let err = build_ssg_manifest_block(&cf).unwrap_err().to_string();
+            assert!(
+                err.contains("no SSG build exists"),
+                "error must mention missing SSG build; got: {err}"
+            );
+            assert!(
+                err.contains("coast ssg build"),
+                "error must direct user to `coast ssg build`; got: {err}"
+            );
+            assert!(
+                err.contains("postgres"),
+                "error must name the referenced service; got: {err}"
+            );
         });
     }
 
@@ -303,7 +344,9 @@ compose = "./docker-compose.yml"
             std::os::unix::fs::symlink(Path::new("builds").join(build_id), &latest).unwrap();
 
             let cf = consumer_coastfile(true);
-            let block = build_ssg_manifest_block(&cf).expect("expected block");
+            let block = build_ssg_manifest_block(&cf)
+                .unwrap()
+                .expect("expected block");
             assert_eq!(block["build_id"], build_id);
             assert_eq!(block["services"][0], "postgres");
             assert_eq!(block["images"]["postgres"], "postgres:16-alpine");

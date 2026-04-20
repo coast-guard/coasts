@@ -101,9 +101,10 @@ pub struct SharedServiceGroupRef {
     /// (validated at consumer `coast run` time, not at parse time).
     pub name: String,
     /// Override for the SSG service's `auto_create_db`. `None` means
-    /// inherit whatever the SSG service declares. v1 can only surface
-    /// `Some(true)` because TOML `auto_create_db = false` is
-    /// indistinguishable from "not set" after serde defaulting.
+    /// inherit whatever the SSG service declares; `Some(true)`
+    /// enables and `Some(false)` explicitly disables (even when the
+    /// SSG service enables it). Three-valued semantics per
+    /// DESIGN.md §6.
     pub auto_create_db: Option<bool>,
     /// Per-project inject target. The SSG Coastfile itself does not
     /// set `inject` (it is project-local by definition), so each
