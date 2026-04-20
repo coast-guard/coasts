@@ -316,6 +316,28 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_image_ref_with_tag_and_digest() {
+        let (name, tag) = parse_image_ref(
+            "postgres:16.11-alpine3.23@sha256:23e88eb049fd5d54894d70100df61d38a49ed97909263f79d4ff4c30a5d5fca2",
+        );
+        assert_eq!(name, "postgres:16.11-alpine3.23");
+        assert_eq!(
+            tag,
+            "sha256:23e88eb049fd5d54894d70100df61d38a49ed97909263f79d4ff4c30a5d5fca2"
+        );
+    }
+
+    #[test]
+    fn test_tarball_filename_with_tag_and_digest() {
+        let filename = tarball_filename(
+            "postgres:16.11-alpine3.23@sha256:23e88eb049fd5d54894d70100df61d38a49ed97909263f79d4ff4c30a5d5fca2",
+        );
+        assert!(filename.starts_with("postgres_16.11-alpine3.23_"));
+        assert!(filename.ends_with(".tar"));
+        assert!(!filename.contains('/'));
+    }
+
+    #[test]
     fn test_tarball_filename_simple() {
         let filename = tarball_filename("postgres:16");
         assert!(filename.starts_with("postgres_16_"));
