@@ -538,6 +538,53 @@ async fn trigger_remote_build(
     super::remote::forward::forward_build(client, &build_req).await
 }
 
+/// Phase 7: compute the `ssg` drift block for a just-downloaded
+/// remote artifact. Reads the artifact's `coastfile.toml`, and if it
+/// has `shared_service_group_refs`, snapshots the LOCAL SSG's latest
+/// build + image refs.
+///
+/// Returns `None` when the artifact has no coastfile, the coastfile
+/// has no SSG refs, or no local SSG build exists. All three are
+/// non-errors — the run-side drift check handles each gracefully.
+///
+/// `coast-service` never writes this block (it's SSG-agnostic); this
+/// helper is the local seam that injects it after download. See
+/// `coast-ssg/DESIGN.md §17-24`.
+fn phase7_ssg_block_for_artifact(artifact_dir: &std::path::Path) -> Option<serde_json::Value> {
+    let coastfile_path = artifact_dir.join("coastfile.toml");
+    if !coastfile_path.exists() {
+        return None;
+    }
+    let coastfile = coast_core::coastfile::Coastfile::from_file(&coastfile_path).ok()?;
+    if coastfile.shared_service_group_refs.is_empty() {
+        return None;
+    }
+
+    let build_id = coast_ssg::paths::resolve_latest_build_id()?;
+    let build_dir = coast_ssg::paths::ssg_build_dir(&build_id).ok()?;
+    let manifest_contents = std::fs::read_to_string(build_dir.join("manifest.json")).ok()?;
+    let active: coast_ssg::build::artifact::SsgManifest =
+        serde_json::from_str(&manifest_contents).ok()?;
+
+    let referenced: Vec<String> = coastfile
+        .shared_service_group_refs
+        .iter()
+        .map(|r| r.name.clone())
+        .collect();
+    let mut images = std::collections::BTreeMap::new();
+    for name in &referenced {
+        if let Some(svc) = active.services.iter().find(|s| s.name == *name) {
+            images.insert(name.clone(), svc.image.clone());
+        }
+    }
+
+    Some(serde_json::json!({
+        "build_id": active.build_id,
+        "services": referenced,
+        "images": images,
+    }))
+}
+
 pub(crate) async fn download_remote_artifact(
     build_response: &coast_core::protocol::BuildResponse,
     project: &str,
@@ -569,6 +616,13 @@ pub(crate) async fn download_remote_artifact(
             if let Ok(mut manifest) = serde_json::from_str::<serde_json::Value>(&content) {
                 manifest["project_root"] =
                     serde_json::Value::String(local_project_root.display().to_string());
+                // Phase 7: `coast-service` is SSG-agnostic and cannot
+                // write the `ssg` drift block. Inject it locally so
+                // `coast run --type remote` sees the same drift shape
+                // as local builds. See `coast-ssg/DESIGN.md §17-24`.
+                if let Some(block) = phase7_ssg_block_for_artifact(&local_artifact_dir) {
+                    manifest["ssg"] = block;
+                }
                 let _ = std::fs::write(
                     &manifest_path,
                     serde_json::to_string_pretty(&manifest).unwrap_or_default(),
@@ -1110,6 +1164,16 @@ async fn handle_remote_run(
         total_steps,
     )
     .await?;
+
+    // Phase 7: validate drift against the downloaded artifact's
+    // manifest.json (patched locally by `download_remote_artifact` to
+    // carry the SSG block, since `coast-service` stays SSG-free).
+    // Runs AFTER the build so we have the manifest, BEFORE port
+    // forwarding so a hard error fails fast without further commit.
+    // See `coast-ssg/DESIGN.md §6.1` and `§17-24`.
+    let remote_artifact_dir = paths::project_images_dir(&req.project).join(&remote_build_id);
+    let remote_manifest_path = remote_artifact_dir.join("manifest.json");
+    ssg_integration::validate_ssg_drift(&cf, &remote_manifest_path, progress).await?;
 
     // --- Step 11: Port forwarding ---
     emit(
@@ -1654,5 +1718,55 @@ mod tests {
     fn test_dangling_cache_volume_name() {
         let vol = coast_docker::dind::dind_cache_volume_name("my-app", "dev-1");
         assert_eq!(vol, "coast-dind--my-app--dev-1");
+    }
+
+    // --- Phase 7: phase7_ssg_block_for_artifact ---
+    //
+    // Reuses the COAST_HOME env-lock pattern defined below to serialize
+    // with other tests that mutate the same env var.
+
+    static PHASE7_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn with_phase7_coast_home<F: FnOnce(&std::path::Path)>(f: F) {
+        let guard = PHASE7_ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let tmp = tempfile::tempdir().unwrap();
+        let prev = std::env::var_os("COAST_HOME");
+        unsafe {
+            std::env::set_var("COAST_HOME", tmp.path());
+        }
+        f(tmp.path());
+        unsafe {
+            match prev {
+                Some(v) => std::env::set_var("COAST_HOME", v),
+                None => std::env::remove_var("COAST_HOME"),
+            }
+        }
+        drop(guard);
+    }
+
+    #[test]
+    fn phase7_block_is_none_when_artifact_has_no_coastfile() {
+        let tmp = tempfile::tempdir().unwrap();
+        // artifact_dir exists but contains no coastfile.toml.
+        assert!(phase7_ssg_block_for_artifact(tmp.path()).is_none());
+    }
+
+    #[test]
+    fn phase7_block_is_none_when_artifact_coastfile_has_no_ssg_refs() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("coastfile.toml"),
+            r#"
+[coast]
+name = "plain"
+compose = "./docker-compose.yml"
+"#,
+        )
+        .unwrap();
+        with_phase7_coast_home(|_home| {
+            assert!(phase7_ssg_block_for_artifact(tmp.path()).is_none());
+        });
     }
 }

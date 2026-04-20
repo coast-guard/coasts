@@ -56,5 +56,9 @@ pub mod daemon_integration;
 // TODO(ssg-phase-4.5): Reverse SSH tunnel pair helpers for remote coasts (see DESIGN.md §20.2).
 pub mod remote_tunnel;
 
+// ssg-phase-7: SSG drift detection for consumer coast build/run (see DESIGN.md §6.1).
+pub mod drift;
+pub use drift::{evaluate_drift, DriftHardErrorReason, DriftOutcome, RecordedSsgRef};
+
 #[cfg(test)]
 pub(crate) mod test_support;

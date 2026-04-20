@@ -324,6 +324,58 @@ fn resolve_artifact_dir(project: &str, build_id: Option<&str>) -> std::path::Pat
     }
 }
 
+/// Read and parse the artifact's `coastfile.toml`, logging any
+/// missing-file or parse-error case. Returns `None` when the caller
+/// should fall through to the "no resources" result (missing or
+/// unparseable artifact coastfile is recoverable — the coast runs
+/// with whatever else it has). Extracted to keep
+/// `load_coastfile_resources` under the clippy
+/// cognitive-complexity threshold.
+fn load_artifact_coastfile_or_log(
+    coastfile_path: &std::path::Path,
+    req: &RunRequest,
+) -> Option<coast_core::coastfile::Coastfile> {
+    if !coastfile_path.exists() {
+        debug!(
+            project = %req.project,
+            instance = %req.name,
+            path = %coastfile_path.display(),
+            "artifact Coastfile missing while loading run resources"
+        );
+        return None;
+    }
+    match coast_core::coastfile::Coastfile::from_file(coastfile_path) {
+        Ok(cf) => Some(cf),
+        Err(error) => {
+            warn!(
+                project = %req.project,
+                instance = %req.name,
+                path = %coastfile_path.display(),
+                error = %error,
+                "failed to parse artifact Coastfile while loading run resources"
+            );
+            None
+        }
+    }
+}
+
+/// Phase 7: thin wrapper that derives the artifact's `manifest.json`
+/// path from its `coastfile.toml` path and hands it to the drift
+/// validator. Extracted so `load_coastfile_resources` stays under the
+/// clippy cognitive-complexity threshold. See
+/// [`coast-ssg/DESIGN.md §6.1`].
+async fn validate_drift_for_local_artifact(
+    coastfile: &coast_core::coastfile::Coastfile,
+    coastfile_path: &std::path::Path,
+    progress: &tokio::sync::mpsc::Sender<BuildProgressEvent>,
+) -> Result<()> {
+    let manifest_path = coastfile_path
+        .parent()
+        .map(|p| p.join("manifest.json"))
+        .unwrap_or_else(|| std::path::PathBuf::from("manifest.json"));
+    super::ssg_integration::validate_ssg_drift(coastfile, &manifest_path, progress).await
+}
+
 async fn build_host_images(
     validated: &ValidatedRun,
     code_path: &std::path::Path,
@@ -364,27 +416,8 @@ async fn load_coastfile_resources(
         shared_network: None,
     };
 
-    if !coastfile_path.exists() {
-        debug!(
-            project = %req.project,
-            instance = %req.name,
-            path = %coastfile_path.display(),
-            "artifact Coastfile missing while loading run resources"
-        );
+    let Some(coastfile) = load_artifact_coastfile_or_log(coastfile_path, req) else {
         return Ok(result);
-    }
-    let coastfile = match coast_core::coastfile::Coastfile::from_file(coastfile_path) {
-        Ok(coastfile) => coastfile,
-        Err(error) => {
-            warn!(
-                project = %req.project,
-                instance = %req.name,
-                path = %coastfile_path.display(),
-                error = %error,
-                "failed to parse artifact Coastfile while loading run resources"
-            );
-            return Ok(result);
-        }
     };
 
     debug!(
@@ -397,6 +430,8 @@ async fn load_coastfile_resources(
         ssg_ref_count = coastfile.shared_service_group_refs.len(),
         "loaded artifact Coastfile for run resources"
     );
+
+    validate_drift_for_local_artifact(&coastfile, coastfile_path, progress).await?;
 
     // SSG auto-start (Phase 3.5): when the consumer references SSG
     // services via `from_group = true`, bring the singleton up before

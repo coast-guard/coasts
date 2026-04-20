@@ -325,6 +325,168 @@ fn missing_ssg_build_error(project: &str, referenced_services: &[String]) -> Coa
     ))
 }
 
+// --- Phase 7: SSG drift detection -------------------------------------------
+//
+// `coast build` embeds an `ssg` block in `manifest.json` recording the
+// active SSG build_id + image refs for every `from_group = true`
+// service. At `coast run` time we validate that snapshot against the
+// current SSG. See `coast-ssg/DESIGN.md §6.1`.
+//
+// Three outcomes:
+//   Match             -> proceed silently.
+//   SameImageWarn     -> emit a warn progress event + proceed.
+//   HardError         -> fail `coast run` with the DESIGN §6.1
+//                        verbatim message plus a specific suffix.
+//
+// When the consumer has no refs, or the artifact manifest has no
+// `ssg` block (pre-Phase-7 build), or the active SSG has been
+// removed entirely, we fall through to the existing
+// `ensure_ready_for_consumer` flow which handles those cases.
+
+/// Verbatim DESIGN.md §6.1 hard-error sentence. Do not edit without
+/// updating DESIGN.md in the same commit.
+const DRIFT_DESIGN_SENTENCE: &str = "SSG has changed since this coast was built. \
+    Re-run `coast build` to pick up the new SSG, or pin the SSG to the old build.";
+
+/// Validate that the coast build's recorded SSG snapshot still
+/// matches the active SSG. No-op when the coastfile has no SSG
+/// refs, or when the artifact manifest lacks an `ssg` block
+/// (pre-Phase-7 build).
+///
+/// Emits a single `Checking SSG drift` progress step so the CLI
+/// surfaces the check. Warns via a `warn` status when build ids
+/// differ but all image refs match; errors with the DESIGN §6.1
+/// verbatim sentence when any referenced service's image changed
+/// or is missing.
+pub async fn validate_ssg_drift(
+    coastfile: &Coastfile,
+    manifest_path: &std::path::Path,
+    progress: &Sender<BuildProgressEvent>,
+) -> Result<()> {
+    validate_ssg_drift_with_loader(coastfile, manifest_path, progress, read_active_ssg_manifest)
+}
+
+/// Inner drift validator with the active-SSG-manifest loader injected.
+/// Keeps the public [`validate_ssg_drift`] a one-liner while letting
+/// unit tests pass a deterministic closure instead of mutating
+/// `COAST_HOME`, which races with other test modules that touch the
+/// same env var.
+fn validate_ssg_drift_with_loader<F>(
+    coastfile: &Coastfile,
+    manifest_path: &std::path::Path,
+    progress: &Sender<BuildProgressEvent>,
+    active_loader: F,
+) -> Result<()>
+where
+    F: FnOnce() -> Option<coast_ssg::build::artifact::SsgManifest>,
+{
+    if coastfile.shared_service_group_refs.is_empty() {
+        return Ok(());
+    }
+
+    let Some(recorded) = read_recorded_ssg_ref(manifest_path) else {
+        // Pre-Phase-7 artifact or coast-service-built without the
+        // local patch. Fall through to the existing auto-start path;
+        // it will still error if the SSG is missing entirely.
+        return Ok(());
+    };
+
+    // Recorded manifest says there was an SSG at build time; if none
+    // exists now, that's a hard error — the user must rebuild.
+    let Some(active) = active_loader() else {
+        return Err(drift_missing_ssg_error(&recorded));
+    };
+
+    let referenced: Vec<String> = coastfile
+        .shared_service_group_refs
+        .iter()
+        .map(|r| r.name.clone())
+        .collect();
+
+    let _ = progress.try_send(BuildProgressEvent::started("Checking SSG drift", 1, 1));
+
+    match coast_ssg::evaluate_drift(&recorded, &active, &referenced) {
+        coast_ssg::DriftOutcome::Match => {
+            let _ = progress.try_send(BuildProgressEvent::done("Checking SSG drift", "ok"));
+            Ok(())
+        }
+        coast_ssg::DriftOutcome::SameImageWarn {
+            old_build_id,
+            new_build_id,
+        } => {
+            let detail = format!(
+                "SSG build differs (was {old_build_id}, now {new_build_id}) but image refs \
+                 still match for every referenced service. Proceeding."
+            );
+            warn!(
+                old = %old_build_id,
+                new = %new_build_id,
+                "SSG drift: same-image warn"
+            );
+            // Use a `warn`-status event carrying the long message in
+            // `detail` so the CLI's progress renderer surfaces it as
+            // a warning line under the step, rather than swallowing
+            // the text as an unrecognized status.
+            let _ = progress.try_send(BuildProgressEvent::item(
+                "Checking SSG drift",
+                detail,
+                "warn",
+            ));
+            let _ = progress.try_send(BuildProgressEvent::done("Checking SSG drift", "warn"));
+            Ok(())
+        }
+        coast_ssg::DriftOutcome::HardError { reason } => Err(drift_hard_error(&reason)),
+    }
+}
+
+/// Read the recorded SSG ref from a coast build's `manifest.json`.
+/// Returns `None` for pre-Phase-7 manifests, unreadable files, or
+/// malformed JSON.
+fn read_recorded_ssg_ref(manifest_path: &std::path::Path) -> Option<coast_ssg::RecordedSsgRef> {
+    let content = std::fs::read_to_string(manifest_path).ok()?;
+    let manifest: serde_json::Value = serde_json::from_str(&content).ok()?;
+    let ssg = manifest.get("ssg")?;
+    serde_json::from_value(ssg.clone()).ok()
+}
+
+/// Read the currently-active SSG manifest from `~/.coast/ssg/builds/latest/`.
+/// Returns `None` when no SSG build exists.
+fn read_active_ssg_manifest() -> Option<coast_ssg::build::artifact::SsgManifest> {
+    let build_id = coast_ssg::paths::resolve_latest_build_id()?;
+    let build_dir = coast_ssg::paths::ssg_build_dir(&build_id).ok()?;
+    let contents = std::fs::read_to_string(build_dir.join("manifest.json")).ok()?;
+    serde_json::from_str(&contents).ok()
+}
+
+fn drift_missing_ssg_error(recorded: &coast_ssg::RecordedSsgRef) -> CoastError {
+    CoastError::coastfile(format!(
+        "{DRIFT_DESIGN_SENTENCE} (this coast was built against SSG build {build}, but no \
+         SSG build exists now; run `coast ssg build` and then rebuild this coast.)",
+        build = recorded.build_id,
+    ))
+}
+
+fn drift_hard_error(reason: &coast_ssg::DriftHardErrorReason) -> CoastError {
+    let suffix = match reason {
+        coast_ssg::DriftHardErrorReason::ImageChanged {
+            service,
+            old_image,
+            new_image,
+        } => format!("(service '{service}' image changed: {old_image} -> {new_image})"),
+        coast_ssg::DriftHardErrorReason::ServiceMissing { service, available } => {
+            let available_list = if available.is_empty() {
+                "(none)".to_string()
+            } else {
+                format!("[{}]", available.join(", "))
+            };
+            format!(
+                "(service '{service}' is no longer in the active SSG; available: {available_list})"
+            )
+        }
+    };
+    CoastError::coastfile(format!("{DRIFT_DESIGN_SENTENCE} {suffix}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -492,5 +654,163 @@ name = "consumer"
             .await
             .expect("empty refs must succeed");
         assert!(result.is_empty());
+    }
+
+    // --- Phase 7: validate_ssg_drift ---
+
+    fn write_manifest_with_ssg_block(dir: &Path, build_id: &str, images: &[(&str, &str)]) {
+        std::fs::create_dir_all(dir).unwrap();
+        let images_map: serde_json::Value = images
+            .iter()
+            .map(|(n, i)| {
+                (
+                    (*n).to_string(),
+                    serde_json::Value::String((*i).to_string()),
+                )
+            })
+            .collect::<serde_json::Map<_, _>>()
+            .into();
+        let services: Vec<&&str> = images.iter().map(|(n, _)| n).collect();
+        let manifest = serde_json::json!({
+            "build_id": "coast-build-id",
+            "project": "consumer",
+            "ssg": {
+                "build_id": build_id,
+                "services": services,
+                "images": images_map,
+            },
+        });
+        std::fs::write(
+            dir.join("manifest.json"),
+            serde_json::to_string_pretty(&manifest).unwrap(),
+        )
+        .unwrap();
+    }
+
+    fn fake_active_manifest(
+        build_id: &str,
+        services: &[(&str, &str)],
+    ) -> coast_ssg::build::artifact::SsgManifest {
+        use chrono::TimeZone;
+        coast_ssg::build::artifact::SsgManifest {
+            build_id: build_id.to_string(),
+            built_at: chrono::Utc.with_ymd_and_hms(2026, 4, 20, 0, 0, 0).unwrap(),
+            coastfile_hash: "fake-hash".to_string(),
+            services: services
+                .iter()
+                .map(|(n, i)| coast_ssg::build::artifact::SsgManifestService {
+                    name: (*n).to_string(),
+                    image: (*i).to_string(),
+                    ports: vec![5432],
+                    env_keys: Vec::new(),
+                    volumes: Vec::new(),
+                    auto_create_db: false,
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn validate_drift_is_noop_when_consumer_has_no_refs() {
+        let coastfile = empty_coastfile();
+        let tmp = tempfile::tempdir().unwrap();
+        let (tx, _rx) = tokio::sync::mpsc::channel::<BuildProgressEvent>(8);
+        // No refs: must short-circuit even if the active loader would error.
+        validate_ssg_drift_with_loader(&coastfile, &tmp.path().join("missing.json"), &tx, || {
+            panic!("active loader must not be called when there are no refs")
+        })
+        .expect("no-ref consumer should succeed silently");
+    }
+
+    #[test]
+    fn validate_drift_is_noop_when_manifest_has_no_ssg_block() {
+        let coastfile = coastfile_with_group_refs(&["postgres"]);
+        let tmp = tempfile::tempdir().unwrap();
+        // Write a pre-Phase-7-style manifest: no `ssg` key.
+        std::fs::write(
+            tmp.path().join("manifest.json"),
+            r#"{"build_id":"coast-build-id","project":"consumer"}"#,
+        )
+        .unwrap();
+        let (tx, _rx) = tokio::sync::mpsc::channel::<BuildProgressEvent>(8);
+        validate_ssg_drift_with_loader(&coastfile, &tmp.path().join("manifest.json"), &tx, || {
+            panic!("active loader must not be called when manifest lacks the ssg block")
+        })
+        .expect("pre-Phase-7 manifest should fall through to auto-start");
+    }
+
+    #[test]
+    fn validate_drift_match_succeeds_silently() {
+        let coastfile = coastfile_with_group_refs(&["postgres"]);
+        let artifact_tmp = tempfile::tempdir().unwrap();
+        write_manifest_with_ssg_block(
+            artifact_tmp.path(),
+            "build-A",
+            &[("postgres", "postgres:16-alpine")],
+        );
+        let manifest_path = artifact_tmp.path().join("manifest.json");
+        let (tx, _rx) = tokio::sync::mpsc::channel::<BuildProgressEvent>(8);
+
+        validate_ssg_drift_with_loader(&coastfile, &manifest_path, &tx, || {
+            Some(fake_active_manifest(
+                "build-A",
+                &[("postgres", "postgres:16-alpine")],
+            ))
+        })
+        .expect("matching build ids should succeed");
+    }
+
+    #[test]
+    fn validate_drift_hard_error_contains_design_sentence() {
+        let coastfile = coastfile_with_group_refs(&["postgres"]);
+        let artifact_tmp = tempfile::tempdir().unwrap();
+        // Recorded snapshot has postgres:16; active has postgres:17.
+        write_manifest_with_ssg_block(
+            artifact_tmp.path(),
+            "build-A",
+            &[("postgres", "postgres:16-alpine")],
+        );
+        let manifest_path = artifact_tmp.path().join("manifest.json");
+        let (tx, _rx) = tokio::sync::mpsc::channel::<BuildProgressEvent>(8);
+
+        let err = validate_ssg_drift_with_loader(&coastfile, &manifest_path, &tx, || {
+            Some(fake_active_manifest(
+                "build-B",
+                &[("postgres", "postgres:17-alpine")],
+            ))
+        })
+        .expect_err("image change must hard-error");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("SSG has changed since this coast was built"),
+            "missing DESIGN sentence: {msg}"
+        );
+        assert!(
+            msg.contains("postgres:16-alpine -> postgres:17-alpine"),
+            "missing drift suffix: {msg}"
+        );
+    }
+
+    #[test]
+    fn validate_drift_missing_ssg_build_is_hard_error() {
+        let coastfile = coastfile_with_group_refs(&["postgres"]);
+        let artifact_tmp = tempfile::tempdir().unwrap();
+        write_manifest_with_ssg_block(
+            artifact_tmp.path(),
+            "build-A",
+            &[("postgres", "postgres:16-alpine")],
+        );
+        let manifest_path = artifact_tmp.path().join("manifest.json");
+        let (tx, _rx) = tokio::sync::mpsc::channel::<BuildProgressEvent>(8);
+
+        // Active loader returns None -> SSG removed between build and run.
+        let err = validate_ssg_drift_with_loader(&coastfile, &manifest_path, &tx, || None)
+            .expect_err("missing active SSG must hard-error");
+        let msg = err.to_string();
+        assert!(msg.contains("SSG has changed since this coast was built"));
+        assert!(
+            msg.contains("build-A"),
+            "error should mention recorded build id: {msg}"
+        );
     }
 }

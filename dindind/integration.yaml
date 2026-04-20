@@ -428,6 +428,16 @@ tests:
     timeout: 600
     note: "ssg checkout displaces a coast holding the canonical port with a clear warning; no auto-restore on uncheckout"
 
+  # --- Shared Service Groups (coast-ssg) — Phase 7 (drift detection) ---
+  test_ssg_drift_warning:
+    script: integrated-examples/test_ssg_drift_warning.sh
+    timeout: 600
+    note: "consumer warns + proceeds when SSG rebuilt with new id but identical image refs"
+  test_ssg_drift_missing_service:
+    script: integrated-examples/test_ssg_drift_missing_service.sh
+    timeout: 600
+    note: "coast run hard-errors with DESIGN \u00a76.1 wording when a referenced SSG service is gone"
+
   # --- Shared Service Groups (coast-ssg) — Phase 4.5 (remote) ---
   test_ssg_remote_reverse_tunnel:
     script: integrated-examples/test_ssg_remote_reverse_tunnel.sh

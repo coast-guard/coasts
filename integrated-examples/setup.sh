@@ -2335,5 +2335,50 @@ CANON_5432_COMPOSE_EOF
 
 setup_coast_canonical_5432_app
 
+# --- coast-ssg-consumer-multi ---
+# Phase 7 fixture: a consumer coast referencing BOTH postgres and
+# redis from the SSG. Used by the drift-missing-service test to
+# simulate "SSG was rebuilt without redis, but the consumer still
+# points at it". The app image isn't important — the drift check
+# fires before any compose-up, so we just use alpine:3 as a
+# placeholder that won't try to start anything that needs SSG.
+
+setup_coast_ssg_consumer_multi() {
+    local dir="$PROJECTS_DIR/coast-ssg-consumer-multi"
+    echo "Setting up coast-ssg-consumer-multi..."
+    mkdir -p "$dir"
+    rm -rf "$dir/.git"
+
+    cat > "$dir/Coastfile" << 'CONS_MULTI_COASTFILE_EOF'
+[coast]
+name = "coast-ssg-consumer-multi"
+compose = "./docker-compose.yml"
+runtime = "dind"
+
+[shared_services.postgres]
+from_group = true
+
+[shared_services.redis]
+from_group = true
+CONS_MULTI_COASTFILE_EOF
+
+    cat > "$dir/docker-compose.yml" << 'CONS_MULTI_COMPOSE_EOF'
+services:
+  app:
+    image: alpine:3
+    command: ["sh", "-c", "while true; do sleep 10; done"]
+CONS_MULTI_COMPOSE_EOF
+
+    cd "$dir"
+    git init -b main
+    git config user.name "Coast Dev"
+    git config user.email "dev@coasts.dev"
+    git add -A
+    git commit -m "initial commit: consumer referencing postgres + redis from SSG"
+    echo "  coast-ssg-consumer-multi ready"
+}
+
+setup_coast_ssg_consumer_multi
+
 echo ""
 echo "All examples initialized. Run 'coast build' inside any example to get started."

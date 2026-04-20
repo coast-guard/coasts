@@ -176,10 +176,10 @@ Legend: `[ ]` not started, `[~]` in progress, `[x]` done.
 - [x] Integration test: `test_ssg_checkout_displaces_instance`
 
 ### Phase 7 — SSG reference in coast build manifest
-- [ ] `coast build` embeds an `ssg` block in `manifest.json` when any `from_group = true` service exists
-- [ ] `coast run` validates drift: match / same-image warn / missing-service error
-- [ ] Integration test: `test_ssg_drift_warning`
-- [ ] Integration test: `test_ssg_drift_missing_service`
+- [x] `coast build` embeds an `ssg` block in `manifest.json` when any `from_group = true` service exists
+- [x] `coast run` validates drift: match / same-image warn / missing-service error
+- [x] Integration test: `test_ssg_drift_warning`
+- [x] Integration test: `test_ssg_drift_missing_service`
 
 ### Phase 8 — Docs and polish
 - [ ] `docs/concepts_and_terminology/SHARED_SERVICE_GROUPS.md`
@@ -521,13 +521,23 @@ A regular `coast build` whose Coastfile contains at least one
 }
 ```
 
-At `coast run`, drift handling:
+At `coast run`, drift handling is pure-evaluated via
+[`coast_ssg::evaluate_drift`](../coast-ssg/src/drift.rs), invoked
+from
+[`validate_ssg_drift`](../coast-daemon/src/handlers/run/ssg_integration.rs)
+on both the local and `--type remote` paths. Always evaluates
+against the active SSG's `latest` (not any currently-running SSG —
+users who haven't restarted the SSG after building it still see the
+drift they introduced):
 
 1. `manifest.ssg.build_id` matches active SSG `latest` -> proceed.
 2. Differs but image refs are identical for every referenced service
    -> warn and proceed.
 3. Image refs differ or a referenced service is missing -> hard error:
    `"SSG has changed since this coast was built. Re-run `coast build` to pick up the new SSG, or pin the SSG to the old build."`
+   Plus a concrete suffix: either `(service '<name>' image changed:
+   <old> -> <new>)` or `(service '<name>' is no longer in the active
+   SSG; available: [...])`.
 
 Pinning to an old SSG build (`coast ssg checkout-build <id>`) is
 tracked as a future enhancement in §17; v1 requires rebuild.
@@ -1228,6 +1238,29 @@ tracks state across sessions.
     `SSG: ` prefix on their `step` field so the CLI shows the full
     boot sequence without breaking the consumer's progress plan.
     Idempotent — re-prefixing is a no-op, so nested calls stay flat.
+25. (SETTLED — Phase 7) **Warn wording for same-image drift is
+    daemon-shaped, not in DESIGN.** DESIGN.md §6.1 pins the
+    hard-error sentence verbatim but leaves the warn case
+    unspecified. The daemon emits:
+    `"SSG build differs (was <old>, now <new>) but image refs still
+    match for every referenced service. Proceeding."` — via a
+    `BuildProgressEvent::done("Checking SSG drift", <detail>)`
+    with status set to the detail string so the CLI renders it
+    inline. See
+    [`validate_ssg_drift`](../coast-daemon/src/handlers/run/ssg_integration.rs).
+24. (SETTLED — Phase 7) **`coast-service` stays SSG-free; the
+    `ssg` drift block is injected locally post-download.**
+    DESIGN.md §6.1 says `coast build` records an `ssg` block in
+    the consumer's `manifest.json`. For local builds this is
+    straightforward — [`build::manifest::write_manifest_and_finalize`](../coast-daemon/src/handlers/build/manifest.rs)
+    computes the block via `build_ssg_manifest_block`. For
+    `coast build --type remote`, the actual build runs under
+    `coast-service`, which is SSG-agnostic by design (see §4.1,
+    §17-10). Rather than breaking that invariant, the local
+    daemon patches the block onto the downloaded manifest in
+    [`download_remote_artifact`](../coast-daemon/src/handlers/run/mod.rs)
+    via `phase7_ssg_block_for_artifact`. Users see identical
+    drift behavior on both paths.
 23. (SETTLED — Phase 6) **`coast ssg checkout` displaces only
     coast-tracked holders; unknown-process strangers yield an
     error.** If the canonical port is held by a `port_allocations`

@@ -26,7 +26,12 @@ pub(super) struct ManifestInput<'a> {
 pub(super) async fn write_manifest_and_finalize(input: ManifestInput<'_>) -> Result<()> {
     emit(input.progress, input.plan.started("Writing manifest"));
 
-    let manifest = serde_json::json!({
+    // Phase 7: when the consumer Coastfile references SSG services,
+    // snapshot the active SSG's build_id + image refs so `coast run`
+    // can detect drift. See `coast-ssg/DESIGN.md §6.1`.
+    let ssg_block = build_ssg_manifest_block(input.coastfile);
+
+    let mut manifest = serde_json::json!({
         "build_id": &input.artifact.build_id,
         "project": &input.coastfile.name,
         "coastfile_type": &input.coastfile.coastfile_type,
@@ -89,6 +94,9 @@ pub(super) async fn write_manifest_and_finalize(input: ManifestInput<'_>) -> Res
         }),
         "primary_port": &input.coastfile.primary_port,
     });
+    if let Some(block) = ssg_block {
+        manifest["ssg"] = block;
+    }
     let manifest_path = input.artifact.artifact_path.join("manifest.json");
     let manifest_json = serde_json::to_string_pretty(&manifest)
         .map_err(|error| CoastError::protocol(format!("failed to serialize manifest: {error}")))?;
@@ -147,6 +155,160 @@ fn update_latest_symlink(input: &ManifestInput<'_>) -> Result<()> {
         })?;
     }
     Ok(())
+}
+
+/// Compute the Phase 7 `ssg` manifest block for this coast build, or
+/// `None` when drift detection doesn't apply.
+///
+/// Returns `None` when the Coastfile has no `from_group = true`
+/// references (non-consumer build) or when no active SSG build
+/// exists (coast build shouldn't block on a missing SSG; the
+/// run-side check will auto-start / error using the §11.1 path).
+///
+/// When present, the block records only the services the consumer
+/// actually references — keeps the snapshot minimal and makes
+/// "service missing" a clean check.
+fn build_ssg_manifest_block(coastfile: &Coastfile) -> Option<serde_json::Value> {
+    if coastfile.shared_service_group_refs.is_empty() {
+        return None;
+    }
+
+    let build_id = coast_ssg::paths::resolve_latest_build_id()?;
+    let build_dir = coast_ssg::paths::ssg_build_dir(&build_id).ok()?;
+    let manifest_path = build_dir.join("manifest.json");
+    let manifest_contents = std::fs::read_to_string(&manifest_path).ok()?;
+    let active: coast_ssg::build::artifact::SsgManifest =
+        serde_json::from_str(&manifest_contents).ok()?;
+
+    let referenced: Vec<String> = coastfile
+        .shared_service_group_refs
+        .iter()
+        .map(|r| r.name.clone())
+        .collect();
+
+    let mut images = std::collections::BTreeMap::new();
+    for name in &referenced {
+        if let Some(svc) = active.services.iter().find(|s| s.name == *name) {
+            images.insert(name.clone(), svc.image.clone());
+        }
+    }
+
+    Some(serde_json::json!({
+        "build_id": active.build_id,
+        "services": referenced,
+        "images": images,
+    }))
+}
+
+#[cfg(test)]
+mod ssg_block_tests {
+    use super::*;
+    use std::path::Path;
+    use std::sync::Mutex;
+
+    /// Serialize tests that mutate COAST_HOME across files.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn with_coast_home<F: FnOnce(&Path)>(f: F) {
+        let guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let tmp = tempfile::tempdir().unwrap();
+        let prev = std::env::var_os("COAST_HOME");
+        unsafe {
+            std::env::set_var("COAST_HOME", tmp.path());
+        }
+        f(tmp.path());
+        unsafe {
+            match prev {
+                Some(v) => std::env::set_var("COAST_HOME", v),
+                None => std::env::remove_var("COAST_HOME"),
+            }
+        }
+        drop(guard);
+    }
+
+    fn consumer_coastfile(with_ssg_ref: bool) -> Coastfile {
+        let body = if with_ssg_ref {
+            r#"
+[coast]
+name = "consumer"
+compose = "./docker-compose.yml"
+
+[shared_services.postgres]
+from_group = true
+"#
+        } else {
+            r#"
+[coast]
+name = "non-consumer"
+compose = "./docker-compose.yml"
+"#
+        };
+        Coastfile::parse(body, Path::new("/tmp/phase7-manifest-test")).unwrap()
+    }
+
+    #[test]
+    fn block_is_none_without_ssg_refs() {
+        with_coast_home(|_home| {
+            let cf = consumer_coastfile(false);
+            assert!(build_ssg_manifest_block(&cf).is_none());
+        });
+    }
+
+    #[test]
+    fn block_is_none_when_no_active_ssg_build() {
+        with_coast_home(|_home| {
+            // COAST_HOME is a fresh tempdir with no SSG artifacts; the
+            // helper must silently return None so `coast build` doesn't
+            // block users who haven't built their SSG yet.
+            let cf = consumer_coastfile(true);
+            assert!(build_ssg_manifest_block(&cf).is_none());
+        });
+    }
+
+    #[test]
+    fn block_populated_when_active_ssg_has_referenced_service() {
+        with_coast_home(|home| {
+            // Hand-roll a minimal SSG artifact tree matching
+            // `coast_ssg::paths`:
+            //   ~/.coast/ssg/builds/{bid}/manifest.json
+            //   ~/.coast/ssg/latest        -> builds/{bid}
+            let build_id = "fake-hash_20260101010101";
+            let ssg_home = home.join("ssg");
+            let build_dir = ssg_home.join("builds").join(build_id);
+            std::fs::create_dir_all(&build_dir).unwrap();
+            let manifest = serde_json::json!({
+                "build_id": build_id,
+                "built_at": "2026-04-20T00:00:00Z",
+                "coastfile_hash": "fake-hash",
+                "services": [{
+                    "name": "postgres",
+                    "image": "postgres:16-alpine",
+                    "ports": [5432],
+                    "env_keys": ["POSTGRES_PASSWORD"],
+                    "volumes": [],
+                    "auto_create_db": false,
+                }],
+            });
+            std::fs::write(
+                build_dir.join("manifest.json"),
+                serde_json::to_string_pretty(&manifest).unwrap(),
+            )
+            .unwrap();
+            // latest symlink lives at ~/.coast/ssg/latest.
+            let latest = ssg_home.join("latest");
+            let _ = std::fs::remove_file(&latest);
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(Path::new("builds").join(build_id), &latest).unwrap();
+
+            let cf = consumer_coastfile(true);
+            let block = build_ssg_manifest_block(&cf).expect("expected block");
+            assert_eq!(block["build_id"], build_id);
+            assert_eq!(block["services"][0], "postgres");
+            assert_eq!(block["images"]["postgres"], "postgres:16-alpine");
+        });
+    }
 }
 
 async fn prune_old_builds(input: &ManifestInput<'_>) {
