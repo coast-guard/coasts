@@ -371,8 +371,16 @@ async fn load_coastfile_resources(
         port_count = coastfile.ports.len(),
         volume_count = coastfile.volumes.len(),
         shared_service_count = coastfile.shared_services.len(),
+        ssg_ref_count = coastfile.shared_service_group_refs.len(),
         "loaded artifact Coastfile for run resources"
     );
+
+    // SSG auto-start (Phase 3.5): when the consumer references SSG
+    // services via `from_group = true`, bring the singleton up before
+    // any of this project's own shared-service setup runs. No-op when
+    // the consumer has no SSG references. See `coast-ssg/DESIGN.md §11.1`.
+    super::ssg_integration::ensure_ready_for_consumer(state, &req.project, &coastfile, progress)
+        .await?;
 
     let shared_service_ports: HashSet<u16> = coastfile
         .shared_services

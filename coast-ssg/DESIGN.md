@@ -137,11 +137,11 @@ Legend: `[ ]` not started, `[~]` in progress, `[x]` done.
 - [x] Unit tests: compose synth, bind-mount translation, port allocation
 
 ### Phase 3.5 — Auto-start hook in `coast run`
-- [ ] `coast-daemon/src/handlers/run/ssg_integration.rs` created
-- [ ] Auto-start SSG before provisioning a consumer coast that references it
-- [ ] Error "no SSG build exists" when no build is found
-- [ ] Progress events `SsgStarting` / `SsgStarted` emitted on the run stream
-- [ ] Integration test: `test_ssg_auto_start_on_run`
+- [x] `coast-daemon/src/handlers/run/ssg_integration.rs` created
+- [x] Auto-start SSG before provisioning a consumer coast that references it
+- [x] Error "no SSG build exists" when no build is found
+- [x] Progress events `SsgStarting` / `SsgStarted` emitted on the run stream
+- [x] Integration test: `test_ssg_auto_start_on_run`
 
 ### Phase 4 — Coast ↔ SSG wiring
 - [ ] `ssg_integration::synthesize_shared_service_configs(cf, ssg_state)`
@@ -1179,6 +1179,30 @@ tracks state across sessions.
     test that mutates `COAST_HOME` acquires the same mutex. Exposes
     one public helper, `with_coast_home(|root| ...)`, used by both
     `paths::tests` and `build::artifact::tests`.
+16. (SETTLED — Phase 3.5) **`CoastEvent::SsgStarting` /
+    `SsgStarted` payload shape.** §11.1 mentioned the variant names
+    but didn't specify fields. Phase 3.5 landed
+    `{ project: String, build_id: String }` for both, where
+    `project` is the *consumer* coast that triggered the auto-start
+    (for UX attribution — Coastguard can surface "`my-app` is
+    starting the SSG") and `build_id` is the SSG build about to be
+    brought up. Events emitted unconditionally by every successful
+    auto-start, including the `already running` short-circuit, so
+    subscribers can rely on the pair as a standard handshake. See
+    [`coast-core/src/protocol/events.rs`](../coast-core/src/protocol/events.rs)
+    and
+    [`coast-daemon/src/handlers/run/ssg_integration.rs`](../coast-daemon/src/handlers/run/ssg_integration.rs).
+17. (SETTLED — Phase 3.5) **`Ensure SSG ready` progress step uses a
+    fixed 1-of-1 plan and prefixes nested events.** `BuildProgressEvent`
+    has one `(step_number, total_steps)` per event, and the consumer
+    `coast run` progress plan is fixed before provisioning starts;
+    we can't retroactively extend it with 3-6 additional sub-steps
+    from inside `run_ssg` / `start_ssg`. Phase 3.5 therefore emits a
+    single outer `Ensure SSG ready` step (`started` + `done`) and
+    forwards the inner `run_ssg` / `start_ssg` events with a
+    `SSG: ` prefix on their `step` field so the CLI shows the full
+    boot sequence without breaking the consumer's progress plan.
+    Idempotent — re-prefixing is a no-op, so nested calls stay flat.
 
 ## 18. Risks
 

@@ -176,4 +176,16 @@ pub enum CoastEvent {
     RemoteAdded { name: String },
     #[serde(rename = "remote.removed")]
     RemoteRemoved { name: String },
+    /// Emitted when `coast run` begins auto-starting the Shared Service
+    /// Group because the consumer coast references SSG services via
+    /// `[shared_services.<name>] from_group = true`. `project` is the
+    /// consumer that triggered the auto-start; `build_id` is the SSG
+    /// build about to be brought up. See `coast-ssg/DESIGN.md §11.1`.
+    #[serde(rename = "ssg.starting")]
+    SsgStarting { project: String, build_id: String },
+    /// Emitted after the Shared Service Group has been auto-started
+    /// (or recognized as already running) and the consumer `coast run`
+    /// is free to proceed with the rest of its provisioning pipeline.
+    #[serde(rename = "ssg.started")]
+    SsgStarted { project: String, build_id: String },
 }

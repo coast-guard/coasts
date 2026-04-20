@@ -13,6 +13,7 @@ mod provision;
 mod secrets;
 mod service_start;
 mod shared_services_setup;
+mod ssg_integration;
 mod validate;
 
 pub(crate) use service_start::compose_ps_output_is_ready;

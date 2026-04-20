@@ -1910,5 +1910,47 @@ SSG_BIND_EOF
 
 setup_coast_ssg_bind_mount
 
+# --- coast-ssg-consumer ---
+# Consumer coast that declares a `from_group = true` reference to the
+# SSG postgres service but is otherwise a no-op DinD box. Used by
+# Phase 3.5's `test_ssg_auto_start_on_run.sh` to verify that
+# `coast run` auto-starts the SSG on behalf of a consumer that
+# references it.
+#
+# Intentionally does NOT include any inner compose service, so
+# `coast run` can complete successfully even though the SSG->consumer
+# routing hasn't shipped yet (Phase 4). The test only cares that the
+# singleton `coast-ssg` container is up after `coast run` returns.
+
+setup_coast_ssg_consumer() {
+    local dir="$PROJECTS_DIR/coast-ssg-consumer"
+    echo "Setting up coast-ssg-consumer..."
+    mkdir -p "$dir"
+    rm -rf "$dir/.git"
+
+    cat > "$dir/Coastfile" << 'SSG_CONSUMER_EOF'
+# coast-ssg-consumer: a regular coast that opts into the Shared Service
+# Group via `from_group = true`. Phase 3.5 auto-starts the SSG as part
+# of `coast run`. Phase 4 will wire the actual routing.
+
+[coast]
+name = "coast-ssg-consumer"
+runtime = "dind"
+
+[shared_services.postgres]
+from_group = true
+SSG_CONSUMER_EOF
+
+    cd "$dir"
+    git init -b main
+    git config user.name "Coast Dev"
+    git config user.email "dev@coasts.dev"
+    git add -A
+    git commit -m "initial commit: consumer that references SSG postgres"
+    echo "  coast-ssg-consumer ready"
+}
+
+setup_coast_ssg_consumer
+
 echo ""
 echo "All examples initialized. Run 'coast build' inside any example to get started."

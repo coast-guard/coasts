@@ -379,3 +379,9 @@ tests:
     script: integrated-examples/test_ssg_named_volume_persists.sh
     timeout: 600
     note: "inner named volume survives stop/start; rm --with-data removes it"
+
+  # --- Shared Service Groups (coast-ssg) — Phase 3.5 ---
+  test_ssg_auto_start_on_run:
+    script: integrated-examples/test_ssg_auto_start_on_run.sh
+    timeout: 600
+    note: "coast run on a from_group consumer auto-starts the SSG; missing SSG build produces DESIGN-verbatim error"

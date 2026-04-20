@@ -1302,6 +1302,34 @@ fn test_shared_service_error_event_serialization() {
     ));
 }
 
+#[test]
+fn test_ssg_starting_event_serialization() {
+    let event = CoastEvent::SsgStarting {
+        project: "my-app".to_string(),
+        build_id: "abcdef_20260420010203".to_string(),
+    };
+    let json = serde_json::to_value(&event).unwrap();
+    assert_eq!(json["event"], "ssg.starting");
+    assert_eq!(json["project"], "my-app");
+    assert_eq!(json["build_id"], "abcdef_20260420010203");
+    let deserialized: CoastEvent = serde_json::from_value(json).unwrap();
+    assert!(matches!(deserialized, CoastEvent::SsgStarting { .. }));
+}
+
+#[test]
+fn test_ssg_started_event_serialization() {
+    let event = CoastEvent::SsgStarted {
+        project: "my-app".to_string(),
+        build_id: "abcdef_20260420010203".to_string(),
+    };
+    let json = serde_json::to_value(&event).unwrap();
+    assert_eq!(json["event"], "ssg.started");
+    assert_eq!(json["project"], "my-app");
+    assert_eq!(json["build_id"], "abcdef_20260420010203");
+    let deserialized: CoastEvent = serde_json::from_value(json).unwrap();
+    assert!(matches!(deserialized, CoastEvent::SsgStarted { .. }));
+}
+
 // --- Lookup ---
 
 #[test]
