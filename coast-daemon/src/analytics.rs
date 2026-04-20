@@ -519,6 +519,7 @@ pub fn request_command_name(req: &Request) -> String {
             SsgRequest::Ports => "ssg/ports",
             SsgRequest::Checkout { .. } => "ssg/checkout",
             SsgRequest::Uncheckout { .. } => "ssg/uncheckout",
+            SsgRequest::Doctor => "ssg/doctor",
         }
         .into(),
     }

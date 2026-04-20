@@ -224,15 +224,29 @@ pub async fn build_ssg(
 /// Returns an empty-services response with an explanatory message if
 /// no build exists (Phase 3 extends this with runtime status).
 pub fn ps_ssg() -> Result<SsgResponse> {
-    let Some(build_id) = paths::resolve_latest_build_id() else {
+    let Some((build_id, manifest)) = load_latest_ssg_manifest_with_id()? else {
         return Ok(SsgResponse {
             message: "No SSG build found. Run `coast ssg build` first.".to_string(),
             status: None,
             services: Vec::new(),
             ports: Vec::new(),
+            findings: Vec::new(),
         });
     };
 
+    Ok(build_response_from_manifest(
+        &manifest,
+        format!("SSG build: {build_id}"),
+    ))
+}
+
+/// Load the active SSG build's `(build_id, manifest)` or `None` when
+/// no build exists. Shared helper for any daemon handler that wants
+/// to read the artifact without reimplementing the disk-read dance.
+pub fn load_latest_ssg_manifest_with_id() -> Result<Option<(String, build_artifact::SsgManifest)>> {
+    let Some(build_id) = paths::resolve_latest_build_id() else {
+        return Ok(None);
+    };
     let build_dir = paths::ssg_build_dir(&build_id)?;
     let manifest_path = build_dir.join("manifest.json");
     let content = std::fs::read_to_string(&manifest_path).map_err(|e| CoastError::Io {
@@ -249,11 +263,7 @@ pub fn ps_ssg() -> Result<SsgResponse> {
             manifest_path.display()
         ))
     })?;
-
-    Ok(build_response_from_manifest(
-        &manifest,
-        format!("SSG build: {build_id}"),
-    ))
+    Ok(Some((build_id, manifest)))
 }
 
 // --- Phase 3 runtime wrappers ----------------------------------------------
@@ -731,5 +741,6 @@ fn build_response_from_manifest(
         status: None,
         services,
         ports: Vec::new(),
+        findings: Vec::new(),
     }
 }

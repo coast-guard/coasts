@@ -451,3 +451,9 @@ tests:
     script: integrated-examples/test_ssg_stop_force_cleans_tunnels.sh
     timeout: 900
     note: "coast ssg stop --force kills reverse-tunnel ssh children before stopping the SSG"
+
+  # --- Shared Service Groups (coast-ssg) — Phase 8 (doctor) ---
+  test_ssg_doctor:
+    script: integrated-examples/test_ssg_doctor.sh
+    timeout: 600
+    note: "coast ssg doctor reports ok/warn/info findings based on host bind-mount ownership; read-only"

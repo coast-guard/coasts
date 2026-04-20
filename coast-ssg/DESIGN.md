@@ -182,12 +182,13 @@ Legend: `[ ]` not started, `[~]` in progress, `[x]` done.
 - [x] Integration test: `test_ssg_drift_missing_service`
 
 ### Phase 8 — Docs and polish
-- [ ] `docs/concepts_and_terminology/SHARED_SERVICE_GROUPS.md`
-- [ ] `docs/coastfiles/SHARED_SERVICE_GROUPS.md`
-- [ ] `docs/concepts_and_terminology/SHARED_SERVICES.md` updated with "See also SSG"
-- [ ] Host-volume migration recipe documented
-- [ ] `coast ssg doctor` (warns on likely permission mismatches)
-- [ ] `docs/coastfiles/README.md` reference table updated
+- [x] `docs/shared_service_groups/` top-level folder (README + 6 topic pages: BUILDING/LIFECYCLE/VOLUMES/CONSUMING/CHECKOUT/CLI); see §17 SETTLED #26 for the deviation from the original single-page concepts_and_terminology intent
+- [x] `docs/coastfiles/SHARED_SERVICE_GROUPS.md`
+- [x] `docs/concepts_and_terminology/SHARED_SERVICES.md` updated with "See also SSG"
+- [x] Host-volume migration recipe documented (`docs/shared_service_groups/VOLUMES.md`)
+- [x] `coast ssg doctor` (warns on likely permission mismatches); see §17 SETTLED #27
+- [x] `docs/coastfiles/README.md` reference table updated
+- [x] `docs/doc_ordering.txt` + `coast-guard/src/components/DocsSidebar.tsx` + `coast-guard/src/locales/en.json` updated for the new section
 
 ---
 
@@ -1356,6 +1357,45 @@ tracks state across sessions.
     entries come from. Consumers of `target_containers` must treat
     a value of `"coast-ssg"` as "routed through the SSG singleton,
     not an on-host inline container".
+26. (SETTLED — Phase 8) **SSG concept docs live in a top-level
+    `docs/shared_service_groups/` folder, not under
+    `concepts_and_terminology/`.** The original Phase 8 checklist
+    called for a single `docs/concepts_and_terminology/SHARED_SERVICE_GROUPS.md`.
+    User feedback requested a dedicated top-level section mirroring
+    [`docs/remote_coasts/`](../docs/remote_coasts/README.md) because
+    the feature is multi-facet enough (build + lifecycle + volumes +
+    consumer + checkout + CLI) that one page gets unwieldy. Phase 8
+    therefore landed seven pages (README + BUILDING + LIFECYCLE +
+    VOLUMES + CONSUMING + CHECKOUT + CLI) under the new folder,
+    with cross-links back from `concepts_and_terminology/SHARED_SERVICES.md`
+    so existing readers find their way in. The new section is
+    inserted between "Coastfiles" and "Remote Coasts" in
+    [`docs/doc_ordering.txt`](../docs/doc_ordering.txt) and wired
+    through
+    [`coast-guard/src/components/DocsSidebar.tsx`](../coast-guard/src/components/DocsSidebar.tsx)
+    plus [`coast-guard/src/locales/en.json`](../coast-guard/src/locales/en.json).
+    Non-English locales are intentionally untouched — the canonical
+    `make translate-all` flow owns those.
+27. (SETTLED — Phase 8) **`coast ssg doctor` is read-only and only
+    warns on the upstream-official image set.** The doctor consults
+    a built-in `KnownImage` table covering `postgres`, `mysql`,
+    `mariadb`, and `mongo` (with per-tag UID/GID disambiguation: the
+    alpine-tagged `postgres:*-alpine` expects 70:70, the debian
+    default expects 999:999). Services whose image does not match
+    any prefix are silently skipped — forks like
+    `ghcr.io/baosystems/postgis` would otherwise produce false
+    positives and erode trust in the tool. The command never calls
+    `chown` itself; the `warn` finding instead emits the exact
+    `sudo chown -R {uid}:{gid} {path}` command the user should run.
+    Evaluation is a pure function
+    ([`coast_ssg::doctor::evaluate_doctor`](./src/doctor.rs))
+    with a stat closure injected by the daemon adapter
+    ([`coast-daemon/src/handlers/ssg/doctor.rs`](../coast-daemon/src/handlers/ssg/doctor.rs)),
+    so unit tests cover every match/mismatch/missing path without
+    touching the real filesystem. Integration coverage:
+    [`test_ssg_doctor.sh`](../integrated-examples/test_ssg_doctor.sh)
+    exercises the ok/warn/info paths plus a read-only regression
+    (bind-mount mtime unchanged across invocations).
 
 ## 18. Risks
 

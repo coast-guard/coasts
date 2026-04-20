@@ -21,6 +21,10 @@
 // focused on the dispatcher + non-checkout lifecycle verbs.
 pub mod checkout;
 
+// ssg-phase-8: host bind-mount permission doctor. See `doctor.rs` +
+// `coast-ssg/src/doctor.rs` for the pure evaluator.
+pub mod doctor;
+
 use std::sync::Arc;
 
 use coast_core::error::{CoastError, Result};
@@ -78,6 +82,8 @@ pub async fn handle(state: Arc<AppState>, req: SsgRequest) -> Result<SsgResponse
         SsgRequest::Uncheckout { service, all } => {
             checkout::handle_uncheckout(&state, service, all).await
         }
+
+        SsgRequest::Doctor => doctor::handle_doctor(&state).await,
     }
 }
 
@@ -98,6 +104,7 @@ async fn handle_stop(state: &Arc<AppState>, force: bool) -> Result<SsgResponse> 
             status: None,
             services: Vec::new(),
             ports: Vec::new(),
+            findings: Vec::new(),
         });
     };
 
@@ -131,6 +138,7 @@ async fn handle_stop(state: &Arc<AppState>, force: bool) -> Result<SsgResponse> 
         status: Some("stopped".to_string()),
         services: Vec::new(),
         ports: Vec::new(),
+        findings: Vec::new(),
     })
 }
 
@@ -151,6 +159,7 @@ async fn handle_rm(state: &Arc<AppState>, with_data: bool, force: bool) -> Resul
             status: None,
             services: Vec::new(),
             ports: Vec::new(),
+            findings: Vec::new(),
         });
     };
 
@@ -174,6 +183,7 @@ async fn handle_rm(state: &Arc<AppState>, with_data: bool, force: bool) -> Resul
         status: None,
         services: Vec::new(),
         ports: Vec::new(),
+        findings: Vec::new(),
     })
 }
 
@@ -195,6 +205,7 @@ async fn handle_logs(
         status: Some(record.status),
         services: Vec::new(),
         ports: Vec::new(),
+        findings: Vec::new(),
     })
 }
 
@@ -216,6 +227,7 @@ async fn handle_exec(
         status: Some(record.status),
         services: Vec::new(),
         ports: Vec::new(),
+        findings: Vec::new(),
     })
 }
 

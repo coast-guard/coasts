@@ -597,6 +597,7 @@ pub fn ports_ssg(state: &dyn SsgStateExt) -> Result<SsgResponse> {
         status: record.map(|r| r.status),
         services: Vec::new(),
         ports,
+        findings: Vec::new(),
     })
 }
 
@@ -822,6 +823,7 @@ fn build_response(
         status: status.map(str::to_string),
         services: service_infos,
         ports,
+        findings: Vec::new(),
     }
 }
 

@@ -1423,6 +1423,7 @@ async fn handle_ssg_logs_streaming(
         status: None,
         services: Vec::new(),
         ports: Vec::new(),
+        findings: Vec::new(),
     });
     write_response(writer, &final_resp).await
 }

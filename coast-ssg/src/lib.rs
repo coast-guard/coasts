@@ -60,5 +60,11 @@ pub mod remote_tunnel;
 pub mod drift;
 pub use drift::{evaluate_drift, DriftHardErrorReason, DriftOutcome, RecordedSsgRef};
 
+// ssg-phase-8: host bind-mount permission doctor (see DESIGN.md §10.5).
+pub mod doctor;
+pub use doctor::{
+    classify_image, evaluate_doctor, host_bind_source, KnownImage, StatResult, KNOWN_IMAGES,
+};
+
 #[cfg(test)]
 pub(crate) mod test_support;

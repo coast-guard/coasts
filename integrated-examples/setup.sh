@@ -1910,6 +1910,41 @@ SSG_BIND_EOF
 
 setup_coast_ssg_bind_mount
 
+# --- coast-ssg-doctor (Phase 8) ---
+#
+# Same shape as coast-ssg-bind-mount but uses the debian-tagged
+# `postgres:16` so the doctor's default 999:999 expectation applies.
+# The test script flips ownership on the bind directory to exercise
+# the ok / warn / info code paths.
+setup_coast_ssg_doctor() {
+    local dir="$PROJECTS_DIR/coast-ssg-doctor"
+    local host_root="${COAST_SSG_DOCTOR_HOST_ROOT:-/root/coast-ssg-doctor}"
+    echo "Setting up coast-ssg-doctor (host_root=$host_root)..."
+    mkdir -p "$dir"
+    rm -rf "$dir/.git"
+
+    cat > "$dir/Coastfile.shared_service_groups" <<SSG_DOCTOR_EOF
+[ssg]
+runtime = "dind"
+
+[shared_services.postgres]
+image = "postgres:16"
+ports = [5432]
+volumes = ["${host_root}/pg-data:/var/lib/postgresql/data"]
+env = { POSTGRES_PASSWORD = "coast" }
+SSG_DOCTOR_EOF
+
+    cd "$dir"
+    git init -b main
+    git config user.name "Coast Dev"
+    git config user.email "dev@coasts.dev"
+    git add -A
+    git commit -m "initial commit: SSG doctor fixture"
+    echo "  coast-ssg-doctor ready"
+}
+
+setup_coast_ssg_doctor
+
 # --- coast-ssg-consumer ---
 # Consumer coast that declares a `from_group = true` reference to the
 # SSG postgres service but is otherwise a no-op DinD box. Used by

@@ -173,6 +173,7 @@ pub(super) async fn handle_uncheckout(
             status: None,
             services: Vec::new(),
             ports: Vec::new(),
+            findings: Vec::new(),
         });
     }
 
@@ -197,6 +198,7 @@ pub(super) async fn handle_uncheckout(
             status: None,
             services: Vec::new(),
             ports: Vec::new(),
+            findings: Vec::new(),
         });
     }
 
@@ -224,6 +226,7 @@ pub(super) async fn handle_uncheckout(
         status: None,
         services: Vec::new(),
         ports: Vec::new(),
+        findings: Vec::new(),
     })
 }
 
@@ -397,6 +400,7 @@ fn build_checkout_response(
         status: None,
         services: Vec::new(),
         ports,
+        findings: Vec::new(),
     }
 }
 

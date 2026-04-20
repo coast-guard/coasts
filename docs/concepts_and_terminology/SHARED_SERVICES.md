@@ -63,3 +63,15 @@ This tears down and recreates the shared service containers, reattaching them to
 ## Shared Services and Remote Coasts
 
 When running [remote coasts](REMOTES.md), shared services still run on your local machine. The daemon establishes SSH reverse tunnels (`ssh -R`) so the remote DinD containers can reach them via `host.docker.internal`. This keeps your local database shared with remote instances. The remote host's sshd must have `GatewayPorts clientspecified` enabled for the reverse tunnels to bind correctly.
+
+## See Also: Shared Service Groups
+
+Inline shared services scale to one project cleanly but collide across projects: two Coastfiles that both declare `postgres:5432` cannot run at the same time on the same host. [Shared Service Groups](../shared_service_groups/README.md) generalize the pattern across projects by running one singleton SSG DinD that hosts Postgres, Redis, MongoDB, etc. for every project that references it via `[shared_services.<name>] from_group = true`.
+
+When to migrate from inline shared services to an SSG:
+
+- You run more than one project that needs the same infrastructure service and want them to share data.
+- You hit host-port conflicts between projects that each declare the same canonical port.
+- You want a single place to manage infrastructure images, volumes, and lifecycle across projects.
+
+Migration is opt-in per service. Existing inline `[shared_services.*]` blocks keep working unchanged.

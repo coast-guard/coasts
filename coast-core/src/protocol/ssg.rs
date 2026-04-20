@@ -75,10 +75,18 @@ pub enum SsgRequest {
     Checkout { service: Option<String>, all: bool },
     /// Tear down a canonical-port checkout.
     Uncheckout { service: Option<String>, all: bool },
+    /// Read-only permission check on host bind mounts for known images.
+    ///
+    /// Reads the active SSG's `manifest.json`, matches each service's
+    /// image against a built-in known-image table, and reports host
+    /// bind-mount directories whose owner UID/GID diverges from the
+    /// image's expected value (e.g. postgres expects 999:999).
+    /// Does not modify anything. See `coast-ssg/DESIGN.md §10.5`.
+    Doctor,
 }
 
 /// Response for SSG operations.
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct SsgResponse {
     pub message: String,
@@ -88,6 +96,24 @@ pub struct SsgResponse {
     pub services: Vec<SsgServiceInfo>,
     #[serde(default)]
     pub ports: Vec<SsgPortInfo>,
+    /// Findings produced by `coast ssg doctor`. Empty for every other
+    /// verb. `#[serde(default)]` keeps older clients forward-compatible.
+    #[serde(default)]
+    pub findings: Vec<SsgDoctorFinding>,
+}
+
+/// One finding emitted by `coast ssg doctor`.
+///
+/// Severity is a lowercase string so the wire format stays stable even
+/// if more severities are added. Known values: `ok`, `warn`, `info`.
+/// See `coast-ssg/src/doctor.rs` for the evaluator.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SsgDoctorFinding {
+    pub service: String,
+    pub path: String,
+    pub severity: String,
+    pub message: String,
 }
 
 /// Info about one SSG-managed inner service.

@@ -14,7 +14,8 @@ use clap::{Args, Subcommand};
 use colored::Colorize;
 
 use coast_core::protocol::{
-    BuildProgressEvent, Request, Response, SsgPortInfo, SsgRequest, SsgResponse, SsgServiceInfo,
+    BuildProgressEvent, Request, Response, SsgDoctorFinding, SsgPortInfo, SsgRequest, SsgResponse,
+    SsgServiceInfo,
 };
 
 /// Arguments for `coast ssg`.
@@ -146,6 +147,15 @@ pub enum SsgAction {
         #[arg(long)]
         all: bool,
     },
+    /// Read-only permission check on host bind mounts of the active
+    /// SSG's known-image services (postgres, mysql, mariadb, mongo).
+    ///
+    /// Reports one finding per `(service, host-bind-mount)` pair:
+    /// `ok` when the directory owner matches the image's expected
+    /// UID/GID, `warn` when it diverges (with the `chown` command to
+    /// fix it), or `info` when the directory does not exist yet.
+    /// Does not modify anything. See `coast-ssg/DESIGN.md §10.5`.
+    Doctor,
 }
 
 pub async fn execute(args: &SsgArgs) -> Result<()> {
@@ -230,6 +240,7 @@ pub async fn execute(args: &SsgArgs) -> Result<()> {
             )
             .await
         }
+        SsgAction::Doctor => execute_doctor(args.silent).await,
     }
 }
 
@@ -341,6 +352,62 @@ async fn execute_logs_follow(service: Option<String>, tail: Option<u32>) -> Resu
         println!("{chunk}");
     })
     .await
+}
+
+async fn execute_doctor(silent: bool) -> Result<()> {
+    let response = super::send_request(Request::Ssg(SsgRequest::Doctor)).await?;
+    match response {
+        Response::Ssg(resp) => {
+            if !silent {
+                print_doctor(&resp);
+            }
+            Ok(())
+        }
+        Response::Error(e) => bail!("{}", e.error),
+        other => bail!("unexpected response from daemon: {other:?}"),
+    }
+}
+
+fn print_doctor(resp: &SsgResponse) {
+    println!("{}", resp.message);
+    if resp.findings.is_empty() {
+        return;
+    }
+    println!();
+    println!("{}", format_findings_table(&resp.findings));
+}
+
+fn format_findings_table(findings: &[SsgDoctorFinding]) -> String {
+    let mut lines = Vec::with_capacity(findings.len() + 1);
+    lines.push(format!(
+        "  {:<7} {:<20} {:<40} {}",
+        "LEVEL".bold(),
+        "SERVICE".bold(),
+        "PATH".bold(),
+        "MESSAGE".bold(),
+    ));
+    for f in findings {
+        // Pad the uncolored severity to a fixed width first, then
+        // colorize. ANSI escape codes count toward `{:<N}` width and
+        // would throw the column alignment off otherwise.
+        let padded = format!("{:<5}", f.severity);
+        let level = match f.severity.as_str() {
+            "ok" => padded.green().to_string(),
+            "warn" => padded.yellow().to_string(),
+            "info" => padded.cyan().to_string(),
+            _ => padded,
+        };
+        let path = if f.path.is_empty() {
+            "-".to_string()
+        } else {
+            f.path.clone()
+        };
+        lines.push(format!(
+            "  {} {:<20} {:<40} {}",
+            level, f.service, path, f.message
+        ));
+    }
+    lines.join("\n")
 }
 
 fn render_progress(event: &BuildProgressEvent) {

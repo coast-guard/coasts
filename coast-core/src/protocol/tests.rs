@@ -1676,6 +1676,7 @@ fn test_ssg_response_roundtrip() {
                 checked_out: false,
             },
         ],
+        findings: vec![],
     }));
 
     // Minimal response (only message set) — defaulted fields must round-trip.
@@ -1684,5 +1685,51 @@ fn test_ssg_response_roundtrip() {
         status: None,
         services: vec![],
         ports: vec![],
+        findings: vec![],
     }));
+}
+
+#[test]
+fn test_ssg_request_doctor_roundtrip() {
+    roundtrip_request(Request::Ssg(SsgRequest::Doctor));
+}
+
+#[test]
+fn test_ssg_doctor_findings_response_roundtrip() {
+    roundtrip_response(Response::Ssg(SsgResponse {
+        message: "2 warning(s)".to_string(),
+        status: None,
+        services: vec![],
+        ports: vec![],
+        findings: vec![
+            SsgDoctorFinding {
+                service: "postgres".to_string(),
+                path: "/var/coast-data/postgres".to_string(),
+                severity: "warn".to_string(),
+                message: "Owner 0:0 but postgres expects 999:999".to_string(),
+            },
+            SsgDoctorFinding {
+                service: "redis".to_string(),
+                path: "/var/coast-data/redis".to_string(),
+                severity: "ok".to_string(),
+                message: "Owner matches 999:999.".to_string(),
+            },
+        ],
+    }));
+}
+
+#[test]
+fn test_ssg_response_findings_default_when_absent_in_json() {
+    // Older daemons serialize `SsgResponse` without a `findings` field.
+    // `#[serde(default)]` must deserialize an empty vec so new clients
+    // stay forward-compatible.
+    let json = r#"{"type":"Ssg","message":"ok"}"#;
+    let resp: Response = serde_json::from_str(json).expect("legacy SsgResponse should parse");
+    match resp {
+        Response::Ssg(r) => {
+            assert_eq!(r.message, "ok");
+            assert!(r.findings.is_empty());
+        }
+        other => panic!("expected Response::Ssg, got {other:?}"),
+    }
 }

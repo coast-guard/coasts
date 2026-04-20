@@ -98,6 +98,51 @@ Per-instance databases created by `auto_create_db` also survive instance deletio
 
 Use shared services when multiple Coast instances need to talk to the same database server (e.g. a shared Postgres where each instance gets its own database). Use [volume strategies](VOLUMES.md) when you want to control how a compose-internal service's data is shared or isolated.
 
+## Opting into a Shared Service Group
+
+If you want a single Postgres / Redis / MongoDB to back **multiple projects** rather than a single project, declare it once in a [`Coastfile.shared_service_groups`](SHARED_SERVICE_GROUPS.md) and reference it from each consumer with `from_group = true`:
+
+```toml
+[shared_services.postgres]
+from_group = true
+
+# Optional per-project overrides:
+inject = "env:DATABASE_URL"
+# auto_create_db = false    # overrides the SSG service's default
+```
+
+The TOML key (`postgres` in this example) must match a service declared in the active Shared Service Group.
+
+### Forbidden fields with `from_group = true`
+
+With `from_group = true`, the following fields are rejected at parse time because the SSG is the single source of truth:
+
+- `image`
+- `ports`
+- `env`
+- `volumes`
+
+Any of these fields present alongside `from_group = true` produces:
+
+```text
+error: shared service 'postgres' has from_group = true; the following fields are forbidden: image, ports.
+```
+
+### Allowed per-consumer overrides
+
+- `inject` -- the env-var or file name through which the connection string is exposed. Different projects may expose the same SSG Postgres under different env-var names.
+- `auto_create_db` -- whether Coast should create a per-instance database inside this service at `coast run` time. Overrides the SSG service's own `auto_create_db` value.
+
+### Missing-service error
+
+If you reference a name that does not exist in the active SSG, `coast run` fails with:
+
+```text
+error: shared service 'postgres' references the shared service group, but no service 'postgres' exists in ~/.coast/ssg/latest.
+```
+
+For the full concept, architecture, and operational guide, see [Shared Service Groups](../shared_service_groups/README.md) in the docs.
+
 ## Examples
 
 ### Postgres, Redis, and MongoDB
