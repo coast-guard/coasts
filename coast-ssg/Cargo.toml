@@ -24,6 +24,13 @@ serde_yaml = { workspace = true }
 chrono = { workspace = true }
 rusqlite = { workspace = true }
 
+[features]
+# Exposes `MockSsgDockerOps` + its `MockCall` variants for external
+# test crates (notably `coast-daemon`'s tests). Production builds do
+# NOT pull the mock in — `#[cfg(any(test, feature = "test-support"))]`
+# gates all of it.
+test-support = []
+
 [lints]
 workspace = true
 

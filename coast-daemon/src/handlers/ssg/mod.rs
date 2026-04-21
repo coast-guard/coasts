@@ -116,7 +116,8 @@ async fn handle_stop(state: &Arc<AppState>, force: bool) -> Result<SsgResponse> 
     // shadow coast doesn't leak stale ssh processes.
     enforce_shadow_gate_and_maybe_tear_down(state, force, "stop").await?;
 
-    coast_ssg::daemon_integration::stop_ssg(&docker, &record).await?;
+    let ops = coast_ssg::docker_ops::BollardSsgDockerOps::new(docker.clone());
+    coast_ssg::daemon_integration::stop_ssg(&ops, &record).await?;
 
     {
         let db = state.db.lock().await;
@@ -161,7 +162,8 @@ async fn handle_rm(state: &Arc<AppState>, with_data: bool, force: bool) -> Resul
     // at a partially-removed SSG.
     checkout::kill_and_clear_all_checkouts(state).await;
 
-    coast_ssg::daemon_integration::rm_ssg(&docker, &record, with_data).await?;
+    let ops = coast_ssg::docker_ops::BollardSsgDockerOps::new(docker.clone());
+    coast_ssg::daemon_integration::rm_ssg(&ops, &record, with_data).await?;
 
     let db = state.db.lock().await;
     db.clear_ssg()?;
@@ -181,7 +183,8 @@ async fn handle_logs(
         .ok_or_else(|| CoastError::docker("Docker is unavailable; cannot tail SSG logs."))?;
 
     let record = fetch_required_record(state).await?;
-    let text = coast_ssg::daemon_integration::logs_ssg(&docker, &record, service, tail).await?;
+    let ops = coast_ssg::docker_ops::BollardSsgDockerOps::new(docker.clone());
+    let text = coast_ssg::daemon_integration::logs_ssg(&ops, &record, service, tail).await?;
 
     Ok(SsgResponse {
         message: text,
@@ -203,7 +206,8 @@ async fn handle_exec(
         .ok_or_else(|| CoastError::docker("Docker is unavailable; cannot exec against the SSG."))?;
 
     let record = fetch_required_record(state).await?;
-    let text = coast_ssg::daemon_integration::exec_ssg(&docker, &record, service, command).await?;
+    let ops = coast_ssg::docker_ops::BollardSsgDockerOps::new(docker.clone());
+    let text = coast_ssg::daemon_integration::exec_ssg(&ops, &record, service, command).await?;
 
     Ok(SsgResponse {
         message: text,

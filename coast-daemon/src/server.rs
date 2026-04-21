@@ -1050,9 +1050,10 @@ async fn handle_ssg_build_streaming(
                     Output = std::result::Result<coast_core::protocol::SsgResponse, CoastError>,
                 > + Send,
         >,
-    > = Box::pin(
-        async move { coast_ssg::daemon_integration::build_ssg(inputs, &docker, tx).await },
-    );
+    > = Box::pin(async move {
+        let ops = coast_ssg::docker_ops::BollardSsgDockerOps::new(docker);
+        coast_ssg::daemon_integration::build_ssg(inputs, &ops, tx).await
+    });
 
     let build_result =
         forward_streaming_progress(handler, &mut rx, writer, Response::SsgProgress).await;
@@ -1130,7 +1131,10 @@ async fn run_streaming_run(
                     >,
                 > + Send,
         >,
-    > = Box::pin(async move { coast_ssg::daemon_integration::run_ssg(&docker_clone, tx).await });
+    > = Box::pin(async move {
+        let ops = coast_ssg::docker_ops::BollardSsgDockerOps::new(docker_clone);
+        coast_ssg::daemon_integration::run_ssg(&ops, tx).await
+    });
 
     let result = forward_streaming_progress(handler, &mut rx, writer, Response::SsgProgress).await;
 
@@ -1231,18 +1235,13 @@ async fn run_streaming_start_or_restart(
         >,
     > = if restart {
         Box::pin(async move {
-            coast_ssg::daemon_integration::restart_ssg(
-                &docker_clone,
-                &record_clone,
-                plans_clone,
-                tx,
-            )
-            .await
+            let ops = coast_ssg::docker_ops::BollardSsgDockerOps::new(docker_clone);
+            coast_ssg::daemon_integration::restart_ssg(&ops, &record_clone, plans_clone, tx).await
         })
     } else {
         Box::pin(async move {
-            coast_ssg::daemon_integration::start_ssg(&docker_clone, &record_clone, plans_clone, tx)
-                .await
+            let ops = coast_ssg::docker_ops::BollardSsgDockerOps::new(docker_clone);
+            coast_ssg::daemon_integration::start_ssg(&ops, &record_clone, plans_clone, tx).await
         })
     };
 

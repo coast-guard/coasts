@@ -62,3 +62,4 @@ workspace = true
 async-trait = { workspace = true }
 tower = { version = "0.5", features = ["util"] }
 tokio-tungstenite = "0.28"
+coast-ssg = { path = "../coast-ssg", features = ["test-support"] }

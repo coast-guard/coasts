@@ -178,7 +178,8 @@ async fn run_and_apply(
         }
     });
 
-    let outcome = coast_ssg::daemon_integration::run_ssg(docker, inner_tx).await?;
+    let ops = coast_ssg::docker_ops::BollardSsgDockerOps::new(docker.clone());
+    let outcome = coast_ssg::daemon_integration::run_ssg(&ops, inner_tx).await?;
 
     // Ensure the forwarder drains after the inner sender drops.
     let _ = forwarder.await;
@@ -224,7 +225,8 @@ async fn start_and_apply(
         }
     });
 
-    let outcome = coast_ssg::daemon_integration::start_ssg(docker, &record, plans, inner_tx)
+    let ops = coast_ssg::docker_ops::BollardSsgDockerOps::new(docker.clone());
+    let outcome = coast_ssg::daemon_integration::start_ssg(&ops, &record, plans, inner_tx)
         .await
         .inspect_err(|error| {
             warn!(error = %error, "SSG auto-start via start_ssg failed");

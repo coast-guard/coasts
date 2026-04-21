@@ -18,6 +18,7 @@ use coast_core::error::Result;
 use coast_core::protocol::BuildProgressEvent;
 
 use crate::coastfile::SsgSharedServiceConfig;
+use crate::docker_ops::SsgDockerOps;
 
 /// Pure helper: compute the tarball path inside `cache_dir` for a
 /// given image reference. Matches the naming convention
@@ -45,7 +46,7 @@ pub fn pull_step_label(image: &str) -> String {
 /// `total_steps` and `step_start` are used to place these per-image
 /// events correctly in the caller's overall progress plan.
 pub async fn pull_and_cache_ssg_images(
-    docker: &bollard::Docker,
+    ops: &dyn SsgDockerOps,
     services: &[SsgSharedServiceConfig],
     cache_dir: &Path,
     progress: &Sender<BuildProgressEvent>,
@@ -77,8 +78,7 @@ pub async fn pull_and_cache_ssg_images(
             continue;
         }
 
-        let path =
-            coast_docker::image_cache::pull_and_cache_image(docker, &svc.image, cache_dir).await?;
+        let path = ops.pull_and_cache_image(&svc.image, cache_dir).await?;
         tarballs.push(path);
         let _ = progress
             .send(BuildProgressEvent::done(step_label, "ok"))
@@ -137,5 +137,122 @@ mod tests {
             pull_step_label("ghcr.io/coast/tester:v1"),
             "Pull ghcr.io/coast/tester:v1"
         );
+    }
+
+    // --- pull_and_cache_ssg_images (Phase 12: SsgDockerOps) ---
+
+    use crate::docker_ops::{MockCall, MockSsgDockerOps};
+    use coast_core::error::CoastError;
+    use std::collections::HashMap;
+
+    fn svc(name: &str, image: &str) -> SsgSharedServiceConfig {
+        SsgSharedServiceConfig {
+            name: name.to_string(),
+            image: image.to_string(),
+            ports: vec![],
+            env: HashMap::new(),
+            volumes: vec![],
+            auto_create_db: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn pull_and_cache_invokes_trait_for_each_missing_image() {
+        let mock = MockSsgDockerOps::new();
+        mock.push_pull_result(Ok(PathBuf::from("/cache/postgres_16.tar")));
+        mock.push_pull_result(Ok(PathBuf::from("/cache/redis_7.tar")));
+
+        let cache = tempfile::tempdir().unwrap();
+        let services = vec![svc("db", "postgres:16"), svc("cache", "redis:7")];
+        let (tx, _rx) = tokio::sync::mpsc::channel(32);
+        let paths = pull_and_cache_ssg_images(&mock, &services, cache.path(), &tx, 1, 2)
+            .await
+            .unwrap();
+        assert_eq!(paths.len(), 2);
+
+        let calls = mock.calls();
+        assert_eq!(calls.len(), 2);
+        assert!(matches!(
+            calls[0],
+            MockCall::PullAndCacheImage { ref image, .. } if image == "postgres:16"
+        ));
+        assert!(matches!(
+            calls[1],
+            MockCall::PullAndCacheImage { ref image, .. } if image == "redis:7"
+        ));
+    }
+
+    #[tokio::test]
+    async fn pull_and_cache_skips_cached_tarballs() {
+        let cache = tempfile::tempdir().unwrap();
+        // Pre-seed the cache with a tarball for `postgres:16`.
+        std::fs::write(cache.path().join("postgres_16.tar"), b"dummy").unwrap();
+
+        let mock = MockSsgDockerOps::new();
+        // Only redis:7 is expected to be pulled.
+        mock.push_pull_result(Ok(cache.path().join("redis_7.tar")));
+
+        let services = vec![svc("db", "postgres:16"), svc("cache", "redis:7")];
+        let (tx, _rx) = tokio::sync::mpsc::channel(32);
+        let paths = pull_and_cache_ssg_images(&mock, &services, cache.path(), &tx, 1, 2)
+            .await
+            .unwrap();
+        assert_eq!(paths.len(), 2);
+        assert!(paths[0].ends_with("postgres_16.tar"));
+        assert!(paths[1].ends_with("redis_7.tar"));
+
+        // Only redis:7 hit the trait.
+        let calls = mock.calls();
+        assert_eq!(calls.len(), 1);
+        assert!(matches!(
+            calls[0],
+            MockCall::PullAndCacheImage { ref image, .. } if image == "redis:7"
+        ));
+    }
+
+    #[tokio::test]
+    async fn pull_and_cache_propagates_pull_failure() {
+        let mock = MockSsgDockerOps::new();
+        mock.push_pull_result(Err(CoastError::docker("simulated pull failure")));
+
+        let cache = tempfile::tempdir().unwrap();
+        let services = vec![svc("db", "postgres:16")];
+        let (tx, _rx) = tokio::sync::mpsc::channel(32);
+        let err = pull_and_cache_ssg_images(&mock, &services, cache.path(), &tx, 1, 1)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("simulated pull failure"));
+    }
+
+    #[tokio::test]
+    async fn pull_and_cache_mixed_cached_and_pulled_returns_all_paths() {
+        let cache = tempfile::tempdir().unwrap();
+        std::fs::write(cache.path().join("postgres_16.tar"), b"x").unwrap();
+
+        let mock = MockSsgDockerOps::new();
+        mock.push_pull_result(Ok(cache.path().join("mongo_7.tar")));
+        mock.push_pull_result(Ok(cache.path().join("redis_7.tar")));
+
+        let services = vec![
+            svc("db", "postgres:16"),
+            svc("docs", "mongo:7"),
+            svc("cache", "redis:7"),
+        ];
+        let (tx, _rx) = tokio::sync::mpsc::channel(32);
+        let paths = pull_and_cache_ssg_images(&mock, &services, cache.path(), &tx, 1, 3)
+            .await
+            .unwrap();
+        assert_eq!(paths.len(), 3);
+        // The two non-cached services should have triggered pulls in declaration order.
+        let calls = mock.calls();
+        assert_eq!(calls.len(), 2);
+        assert!(matches!(
+            calls[0],
+            MockCall::PullAndCacheImage { ref image, .. } if image == "mongo:7"
+        ));
+        assert!(matches!(
+            calls[1],
+            MockCall::PullAndCacheImage { ref image, .. } if image == "redis:7"
+        ));
     }
 }

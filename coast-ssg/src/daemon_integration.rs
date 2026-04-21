@@ -24,6 +24,7 @@ use coast_core::protocol::{BuildProgressEvent, SsgPortInfo, SsgResponse, SsgServ
 use crate::build::artifact as build_artifact;
 use crate::build::images::pull_and_cache_ssg_images;
 use crate::coastfile::SsgCoastfile;
+use crate::docker_ops::SsgDockerOps;
 use crate::paths;
 use crate::runtime::compose_synth::synth_inner_compose;
 
@@ -109,7 +110,7 @@ fn find_coastfile_in(dir: &Path) -> Option<PathBuf> {
 /// a final [`SsgResponse`] with the per-service summary.
 pub async fn build_ssg(
     inputs: SsgBuildInputs,
-    docker: &bollard::Docker,
+    ops: &dyn SsgDockerOps,
     progress: Sender<BuildProgressEvent>,
 ) -> Result<SsgResponse> {
     // --- Step 1: parse ---
@@ -163,7 +164,7 @@ pub async fn build_ssg(
         path: cache_dir.clone(),
         source: Some(e),
     })?;
-    pull_and_cache_ssg_images(docker, &cf.services, &cache_dir, &progress, 4, total).await?;
+    pull_and_cache_ssg_images(ops, &cf.services, &cache_dir, &progress, 4, total).await?;
 
     let post_pull_step = 4 + cf.services.len() as u32;
 
@@ -485,18 +486,14 @@ fn missing_ssg_service_error(
 /// Errors include the service name and the captured stderr so
 /// troubleshooting doesn't require crawling the daemon logs.
 pub async fn create_instance_db_for_consumer(
-    docker: &bollard::Docker,
+    ops: &dyn SsgDockerOps,
     ssg_record: &crate::state::SsgRecord,
     service_name: &str,
     command: Vec<String>,
 ) -> Result<()> {
-    let result = crate::runtime::auto_create_db::exec_in_ssg_service(
-        docker,
-        ssg_record,
-        service_name,
-        command,
-    )
-    .await?;
+    let result =
+        crate::runtime::auto_create_db::exec_in_ssg_service(ops, ssg_record, service_name, command)
+            .await?;
     if !result.success() {
         return Err(CoastError::docker(format!(
             "auto_create_db failed inside SSG service '{service_name}': exit {code}. \

@@ -193,8 +193,9 @@ async fn exec_in_ssg_service(
         ));
     };
 
+    let ops = coast_ssg::docker_ops::BollardSsgDockerOps::new(docker.clone());
     coast_ssg::daemon_integration::create_instance_db_for_consumer(
-        docker,
+        &ops,
         &record,
         service_name,
         command,

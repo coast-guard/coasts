@@ -1,12 +1,16 @@
 //! SSG lifecycle orchestrators.
 //!
-//! Phase: ssg-phase-3. See `DESIGN.md §9.3`, `§9.4`.
+//! Phase 3 introduced these verbs backed by raw `&bollard::Docker` +
+//! `DindRuntime`. Phase 12 rewrote every orchestrator to take
+//! `&dyn SsgDockerOps` (see [`crate::docker_ops`]) so the async
+//! sequencing is unit-testable without Docker. Real impl delegation
+//! lives entirely in `BollardSsgDockerOps`.
 //!
 //! Each verb (`run`, `stop`, `start`, `restart`, `rm`, `logs`, `exec`,
 //! `ports`) has a single entry function in this module. The daemon's
 //! `handlers/ssg.rs` adapter is a thin switch that acquires the
 //! process-global `ssg_mutex` (for mutating verbs), locks `StateDb`,
-//! and dispatches here.
+//! constructs a `BollardSsgDockerOps`, and dispatches here.
 //!
 //! The singleton container is literally named `coast-ssg` (`DESIGN.md §4`)
 //! — we rely on `ContainerConfig.container_name_override` to bypass the
@@ -17,21 +21,18 @@
 //! itself; the daemon handler is responsible for acquiring
 //! `AppState.ssg_mutex` before calling any mutating function.
 
-use std::collections::HashSet;
-
-use bollard::Docker;
 use tokio::sync::mpsc::Sender;
-use tracing::{info, warn};
+use tracing::warn;
 
 use coast_core::artifact;
 use coast_core::error::{CoastError, Result};
 use coast_core::protocol::{BuildProgressEvent, SsgPortInfo, SsgResponse, SsgServiceInfo};
-use coast_docker::container::ContainerManager;
-use coast_docker::dind::{build_dind_config, DindConfigParams, DindRuntime};
-use coast_docker::runtime::{PortPublish, Runtime};
+use coast_docker::dind::{build_dind_config, DindConfigParams};
+use coast_docker::runtime::PortPublish;
 
 use crate::build::artifact::SsgManifest;
 use crate::coastfile::SsgCoastfile;
+use crate::docker_ops::SsgDockerOps;
 use crate::paths;
 use crate::runtime::bind_mounts::{ensure_host_bind_dirs_exist, outer_bind_mounts};
 use crate::runtime::ports::{allocate_service_ports, SsgServicePortPlan};
@@ -55,6 +56,13 @@ const INNER_IMAGE_CACHE_DIR: &str = "/image-cache";
 /// Inner daemon readiness timeout. Matches the default used for
 /// regular coasts.
 const INNER_DAEMON_TIMEOUT_SECS: u64 = 120;
+
+/// `com.docker.compose.project=<SSG_COMPOSE_PROJECT>` — the filter
+/// `remove_inner_volumes` uses to scope `docker volume rm` to this
+/// SSG's inner named volumes only. Kept as a literal (not a
+/// `concat!` of `SSG_COMPOSE_PROJECT`) to avoid pulling in a
+/// compile-time string concat crate for a one-line constant.
+const INNER_VOLUME_LABEL_FILTER: &str = "com.docker.compose.project=coast-ssg";
 
 /// Total steps in the `run_ssg` progress plan.
 ///
@@ -122,7 +130,7 @@ impl SsgRunOutcome {
 /// - No SSG container is currently running — the caller is expected to
 ///   check and either short-circuit or error out.
 pub async fn run_ssg(
-    docker: &Docker,
+    ops: &dyn SsgDockerOps,
     progress: Sender<BuildProgressEvent>,
 ) -> Result<SsgRunOutcome> {
     emit(&progress, "Preparing SSG", 1, RUN_STEPS).await;
@@ -153,27 +161,23 @@ pub async fn run_ssg(
     })?;
 
     let container_id =
-        create_ssg_container(docker, &build_dir, &cache_dir, &coastfile, &port_plans).await?;
+        create_ssg_container(ops, &build_dir, &cache_dir, &coastfile, &port_plans).await?;
     done(&progress, "Creating SSG container", &container_id).await;
 
     // --- start container ---
     emit(&progress, "Starting SSG container", 3, RUN_STEPS).await;
-    let runtime = DindRuntime::with_client(docker.clone());
-    runtime.start_coast_container(&container_id).await?;
+    ops.start_container(&container_id).await?;
     done(&progress, "Starting SSG container", "ok").await;
 
     // --- wait for inner daemon ---
     emit(&progress, "Waiting for inner daemon", 4, RUN_STEPS).await;
-    let manager = ContainerManager::with_timeout(
-        DindRuntime::with_client(docker.clone()),
-        INNER_DAEMON_TIMEOUT_SECS,
-    );
-    manager.wait_for_inner_daemon(&container_id).await?;
+    ops.wait_for_inner_daemon(&container_id, INNER_DAEMON_TIMEOUT_SECS)
+        .await?;
     done(&progress, "Waiting for inner daemon", "ready").await;
 
     // --- load cached images ---
     emit(&progress, "Loading cached images", 5, RUN_STEPS).await;
-    let loaded = load_ssg_images_into_inner(docker, &container_id, &manifest).await?;
+    let loaded = load_ssg_images_into_inner(ops, &container_id, &manifest).await?;
     done(
         &progress,
         "Loading cached images",
@@ -183,7 +187,8 @@ pub async fn run_ssg(
 
     // --- compose up ---
     emit(&progress, "Starting inner services", 6, RUN_STEPS).await;
-    run_inner_compose_up(docker, &container_id).await?;
+    ops.inner_compose_up(&container_id, &inner_compose_path(), SSG_COMPOSE_PROJECT)
+        .await?;
     done(&progress, "Starting inner services", "ok").await;
 
     Ok(SsgRunOutcome {
@@ -211,26 +216,16 @@ pub struct SsgStopOutcome {
 ///
 /// Does NOT write state — the caller writes status = "stopped" on the
 /// `ssg` and `ssg_services` rows after this returns.
-pub async fn stop_ssg(docker: &Docker, record: &SsgRecord) -> Result<SsgStopOutcome> {
-    let runtime = DindRuntime::with_client(docker.clone());
-
+pub async fn stop_ssg(ops: &dyn SsgDockerOps, record: &SsgRecord) -> Result<SsgStopOutcome> {
     if let Some(ref cid) = record.container_id {
-        let _ = runtime
-            .exec_in_coast(
-                cid,
-                &[
-                    "docker",
-                    "compose",
-                    "-f",
-                    &inner_compose_path(),
-                    "-p",
-                    SSG_COMPOSE_PROJECT,
-                    "down",
-                ],
-            )
-            .await;
-        if let Err(e) = runtime.stop_coast_container(cid).await {
-            warn!(error = %e, container_id = %cid, "stop_coast_container failed; continuing");
+        if let Err(e) = ops
+            .inner_compose_down(cid, &inner_compose_path(), SSG_COMPOSE_PROJECT)
+            .await
+        {
+            warn!(error = %e, container_id = %cid, "inner compose down failed; continuing");
+        }
+        if let Err(e) = ops.stop_container(cid).await {
+            warn!(error = %e, container_id = %cid, "stop_container failed; continuing");
         }
     }
 
@@ -277,7 +272,7 @@ impl SsgStartOutcome {
 /// Reuses the already-allocated dynamic ports provided in
 /// `existing_plans` from `ssg_services`. Does not write state.
 pub async fn start_ssg(
-    docker: &Docker,
+    ops: &dyn SsgDockerOps,
     record: &SsgRecord,
     existing_plans: Vec<SsgServicePortPlan>,
     progress: Sender<BuildProgressEvent>,
@@ -292,20 +287,17 @@ pub async fn start_ssg(
     })?;
 
     emit(&progress, "Starting SSG container", 1, 3).await;
-    let runtime = DindRuntime::with_client(docker.clone());
-    runtime.start_coast_container(&container_id).await?;
+    ops.start_container(&container_id).await?;
     done(&progress, "Starting SSG container", "ok").await;
 
     emit(&progress, "Waiting for inner daemon", 2, 3).await;
-    let manager = ContainerManager::with_timeout(
-        DindRuntime::with_client(docker.clone()),
-        INNER_DAEMON_TIMEOUT_SECS,
-    );
-    manager.wait_for_inner_daemon(&container_id).await?;
+    ops.wait_for_inner_daemon(&container_id, INNER_DAEMON_TIMEOUT_SECS)
+        .await?;
     done(&progress, "Waiting for inner daemon", "ready").await;
 
     emit(&progress, "Starting inner services", 3, 3).await;
-    run_inner_compose_up(docker, &container_id).await?;
+    ops.inner_compose_up(&container_id, &inner_compose_path(), SSG_COMPOSE_PROJECT)
+        .await?;
     done(&progress, "Starting inner services", "ok").await;
 
     let build_dir = paths::ssg_build_dir(&build_id)?;
@@ -326,13 +318,13 @@ pub async fn start_ssg(
 /// Convenience helper; `coast ssg restart` could equivalently call
 /// [`stop_ssg`] then [`start_ssg`] from the daemon handler.
 pub async fn restart_ssg(
-    docker: &Docker,
+    ops: &dyn SsgDockerOps,
     record: &SsgRecord,
     existing_plans: Vec<SsgServicePortPlan>,
     progress: Sender<BuildProgressEvent>,
 ) -> Result<SsgStartOutcome> {
-    stop_ssg(docker, record).await?;
-    start_ssg(docker, record, existing_plans, progress).await
+    stop_ssg(ops, record).await?;
+    start_ssg(ops, record, existing_plans, progress).await
 }
 
 // --- rm --------------------------------------------------------------------
@@ -346,11 +338,10 @@ pub async fn restart_ssg(
 ///
 /// Does not write state — the caller clears `ssg` and `ssg_services`
 /// rows after this returns.
-pub async fn rm_ssg(docker: &Docker, record: &SsgRecord, with_data: bool) -> Result<()> {
+pub async fn rm_ssg(ops: &dyn SsgDockerOps, record: &SsgRecord, with_data: bool) -> Result<()> {
     if let Some(ref cid) = record.container_id {
-        let runtime = DindRuntime::with_client(docker.clone());
         let was_running = record.status == "running";
-        teardown_ssg_container(docker, &runtime, cid, was_running, with_data).await;
+        teardown_ssg_container(ops, cid, was_running, with_data).await;
     }
     Ok(())
 }
@@ -363,82 +354,53 @@ pub async fn rm_ssg(docker: &Docker, record: &SsgRecord, with_data: bool) -> Res
 /// All inner errors are logged as warnings rather than propagated —
 /// a partial cleanup is preferable to leaving the state row behind.
 async fn teardown_ssg_container(
-    docker: &Docker,
-    runtime: &DindRuntime,
+    ops: &dyn SsgDockerOps,
     cid: &str,
     was_running: bool,
     with_data: bool,
 ) {
     if !was_running {
-        transient_start_for_cleanup(docker, runtime, cid).await;
+        transient_start_for_cleanup(ops, cid).await;
     }
-
-    let _ = runtime
-        .exec_in_coast(
-            cid,
-            &[
-                "docker",
-                "compose",
-                "-f",
-                &inner_compose_path(),
-                "-p",
-                SSG_COMPOSE_PROJECT,
-                "down",
-            ],
-        )
-        .await;
-
+    inner_compose_down_best_effort(ops, cid).await;
     if with_data {
-        remove_inner_named_volumes(runtime, cid).await;
+        remove_inner_volumes_best_effort(ops, cid).await;
     }
+    remove_container_best_effort(ops, cid).await;
+}
 
-    if let Err(e) = runtime.remove_coast_container(cid).await {
-        warn!(error = %e, container_id = %cid, "remove_coast_container failed; state will be cleared regardless");
+async fn inner_compose_down_best_effort(ops: &dyn SsgDockerOps, cid: &str) {
+    if let Err(e) = ops
+        .inner_compose_down(cid, &inner_compose_path(), SSG_COMPOSE_PROJECT)
+        .await
+    {
+        warn!(error = %e, container_id = %cid, "inner compose down during rm failed; continuing");
     }
 }
 
-async fn transient_start_for_cleanup(docker: &Docker, runtime: &DindRuntime, cid: &str) {
-    if let Err(e) = runtime.start_coast_container(cid).await {
+async fn remove_inner_volumes_best_effort(ops: &dyn SsgDockerOps, cid: &str) {
+    if let Err(e) = ops
+        .remove_inner_volumes(cid, INNER_VOLUME_LABEL_FILTER)
+        .await
+    {
+        warn!(error = %e, container_id = %cid, "remove_inner_volumes failed; continuing");
+    }
+}
+
+async fn remove_container_best_effort(ops: &dyn SsgDockerOps, cid: &str) {
+    if let Err(e) = ops.remove_container(cid).await {
+        warn!(error = %e, container_id = %cid, "remove_container failed; state will be cleared regardless");
+    }
+}
+
+async fn transient_start_for_cleanup(ops: &dyn SsgDockerOps, cid: &str) {
+    if let Err(e) = ops.start_container(cid).await {
         warn!(error = %e, container_id = %cid, "transient start before rm failed");
         return;
     }
-    let manager = ContainerManager::with_timeout(
-        DindRuntime::with_client(docker.clone()),
-        INNER_DAEMON_TIMEOUT_SECS,
-    );
-    let _ = manager.wait_for_inner_daemon(cid).await;
-}
-
-async fn remove_inner_named_volumes(runtime: &DindRuntime, cid: &str) {
-    let list = match runtime
-        .exec_in_coast(
-            cid,
-            &[
-                "docker",
-                "volume",
-                "ls",
-                "-q",
-                "--filter",
-                &format!("label=com.docker.compose.project={SSG_COMPOSE_PROJECT}"),
-            ],
-        )
-        .await
-    {
-        Ok(out) => out,
-        Err(e) => {
-            warn!(error = %e, "failed to list inner named volumes; skipping volume removal");
-            return;
-        }
-    };
-    for vol in list.stdout.lines().filter(|l| !l.trim().is_empty()) {
-        let vol = vol.trim();
-        if let Err(e) = runtime
-            .exec_in_coast(cid, &["docker", "volume", "rm", vol])
-            .await
-        {
-            warn!(error = %e, volume = %vol, "failed to remove inner named volume");
-        }
-    }
+    let _ = ops
+        .wait_for_inner_daemon(cid, INNER_DAEMON_TIMEOUT_SECS)
+        .await;
 }
 
 // --- logs ------------------------------------------------------------------
@@ -451,7 +413,7 @@ async fn remove_inner_named_volumes(runtime: &DindRuntime, cid: &str) {
 ///
 /// Returns the raw text to return in `SsgResponse.message`.
 pub async fn logs_ssg(
-    docker: &Docker,
+    ops: &dyn SsgDockerOps,
     record: &SsgRecord,
     service: Option<String>,
     tail: Option<u32>,
@@ -460,44 +422,19 @@ pub async fn logs_ssg(
         .container_id
         .clone()
         .ok_or_else(|| CoastError::coastfile("SSG record has no container id; nothing to tail."))?;
-    let runtime = DindRuntime::with_client(docker.clone());
 
-    let tail_value = tail.unwrap_or(200).to_string();
-
-    let output = if let Some(ref svc) = service {
-        let compose_file = inner_compose_path();
-        runtime
-            .exec_in_coast(
-                &container_id,
-                &[
-                    "docker",
-                    "compose",
-                    "-f",
-                    &compose_file,
-                    "-p",
-                    SSG_COMPOSE_PROJECT,
-                    "logs",
-                    "--tail",
-                    &tail_value,
-                    svc,
-                ],
-            )
-            .await?
+    if let Some(ref svc) = service {
+        ops.inner_compose_logs(
+            &container_id,
+            &inner_compose_path(),
+            SSG_COMPOSE_PROJECT,
+            svc,
+            tail,
+        )
+        .await
     } else {
-        let args: Vec<String> = vec![
-            "logs".to_string(),
-            "--tail".to_string(),
-            tail_value.clone(),
-            container_id.clone(),
-        ];
-        run_host_docker(&args)?
-    };
-
-    Ok(if output.stdout.is_empty() {
-        output.stderr
-    } else {
-        output.stdout
-    })
+        ops.host_container_logs(&container_id, tail).await
+    }
 }
 
 // --- exec ------------------------------------------------------------------
@@ -508,7 +445,7 @@ pub async fn logs_ssg(
 /// inside the outer DinD. Without, execs directly on the outer DinD.
 /// Returns the combined stdout / stderr.
 pub async fn exec_ssg(
-    docker: &Docker,
+    ops: &dyn SsgDockerOps,
     record: &SsgRecord,
     service: Option<String>,
     command: Vec<String>,
@@ -522,27 +459,18 @@ pub async fn exec_ssg(
     let container_id = record.container_id.clone().ok_or_else(|| {
         CoastError::coastfile("SSG record has no container id; nothing to exec against.")
     })?;
-    let runtime = DindRuntime::with_client(docker.clone());
 
     let result = if let Some(svc) = service {
-        let compose_file = inner_compose_path();
-        let mut full: Vec<String> = vec![
-            "docker".to_string(),
-            "compose".to_string(),
-            "-f".to_string(),
-            compose_file,
-            "-p".to_string(),
-            SSG_COMPOSE_PROJECT.to_string(),
-            "exec".to_string(),
-            "-T".to_string(),
-            svc,
-        ];
-        full.extend(command);
-        let refs: Vec<&str> = full.iter().map(String::as_str).collect();
-        runtime.exec_in_coast(&container_id, &refs).await?
+        ops.inner_compose_exec(
+            &container_id,
+            &inner_compose_path(),
+            SSG_COMPOSE_PROJECT,
+            &svc,
+            &command,
+        )
+        .await?
     } else {
-        let refs: Vec<&str> = command.iter().map(String::as_str).collect();
-        runtime.exec_in_coast(&container_id, &refs).await?
+        ops.exec_in_container(&container_id, &command).await?
     };
 
     Ok(if result.stdout.is_empty() {
@@ -608,7 +536,7 @@ pub(crate) fn inner_compose_path() -> String {
 }
 
 async fn create_ssg_container(
-    docker: &Docker,
+    ops: &dyn SsgDockerOps,
     build_dir: &std::path::Path,
     cache_dir: &std::path::Path,
     coastfile: &SsgCoastfile,
@@ -631,36 +559,7 @@ async fn create_ssg_container(
         });
     }
 
-    let runtime = DindRuntime::with_client(docker.clone());
-    runtime.create_coast_container(&config).await
-}
-
-async fn run_inner_compose_up(docker: &Docker, container_id: &str) -> Result<()> {
-    let runtime = DindRuntime::with_client(docker.clone());
-    let compose_file = inner_compose_path();
-    let result = runtime
-        .exec_in_coast(
-            container_id,
-            &[
-                "docker",
-                "compose",
-                "-f",
-                &compose_file,
-                "-p",
-                SSG_COMPOSE_PROJECT,
-                "up",
-                "-d",
-                "--remove-orphans",
-            ],
-        )
-        .await?;
-    if !result.success() {
-        return Err(CoastError::docker(format!(
-            "docker compose up -d failed (exit {}). stderr: {}",
-            result.exit_code, result.stderr
-        )));
-    }
-    Ok(())
+    ops.create_container(&config).await
 }
 
 /// Load one cached tarball per unique image referenced in the manifest
@@ -672,81 +571,49 @@ async fn run_inner_compose_up(docker: &Docker, container_id: &str) -> Result<()>
 /// up `{safe_name}.tar` files at `/image-cache/{safe_name}.tar` inside
 /// the outer DinD.
 async fn load_ssg_images_into_inner(
-    docker: &Docker,
+    ops: &dyn SsgDockerOps,
     container_id: &str,
     manifest: &SsgManifest,
-) -> Result<usize> {
-    let runtime = DindRuntime::with_client(docker.clone());
-
+) -> Result<u32> {
     // Query already-loaded images in the inner daemon to skip re-loads
     // (relevant when restarting an existing SSG on a cached DinD volume).
-    let existing = query_existing_inner_images(&runtime, container_id).await;
+    let existing = ops.list_inner_images(container_id).await?;
 
-    let mut loaded = 0usize;
-    let mut seen_images: HashSet<String> = HashSet::new();
+    let missing = plan_images_to_load(manifest, &existing);
+    if missing.is_empty() {
+        return Ok(0);
+    }
 
+    let inner_paths: Vec<String> = missing
+        .iter()
+        .map(|img| {
+            let safe_name = img.replace(['/', ':'], "_");
+            format!("{INNER_IMAGE_CACHE_DIR}/{safe_name}.tar")
+        })
+        .collect();
+
+    ops.load_images_into_inner(container_id, &inner_paths).await
+}
+
+/// Pure helper: which images from `manifest.services` are not yet
+/// loaded in the inner daemon? Preserves manifest order, dedupes by
+/// image ref.
+fn plan_images_to_load(
+    manifest: &SsgManifest,
+    already_loaded: &std::collections::HashSet<String>,
+) -> Vec<String> {
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut out = Vec::new();
     for svc in &manifest.services {
-        if !seen_images.insert(svc.image.clone()) {
+        if !seen.insert(svc.image.clone()) {
             continue;
         }
-        if existing.contains(&svc.image) {
-            info!(image = %svc.image, "image already in inner daemon; skipping load");
+        if already_loaded.contains(&svc.image) {
             continue;
         }
-
-        let safe_name = svc.image.replace(['/', ':'], "_");
-        let inner_tarball_path = format!("{INNER_IMAGE_CACHE_DIR}/{safe_name}.tar");
-
-        let result = runtime
-            .exec_in_coast(container_id, &["docker", "load", "-i", &inner_tarball_path])
-            .await?;
-        if !result.success() {
-            return Err(CoastError::docker(format!(
-                "docker load failed for image '{}' (exit {}). stderr: {}",
-                svc.image, result.exit_code, result.stderr
-            )));
-        }
-        loaded += 1;
+        out.push(svc.image.clone());
     }
-
-    Ok(loaded)
-}
-
-async fn query_existing_inner_images(runtime: &DindRuntime, container_id: &str) -> HashSet<String> {
-    match runtime
-        .exec_in_coast(
-            container_id,
-            &["docker", "images", "--format", "{{.Repository}}:{{.Tag}}"],
-        )
-        .await
-    {
-        Ok(result) if result.success() => result
-            .stdout
-            .lines()
-            .map(|l| l.trim().to_string())
-            .filter(|l| !l.is_empty() && l != "<none>:<none>")
-            .collect(),
-        _ => HashSet::new(),
-    }
-}
-
-/// Run `docker <args>` on the host Docker daemon in a blocking context.
-///
-/// Used for reading outer DinD logs without round-tripping through the
-/// inner daemon.
-fn run_host_docker(args: &[String]) -> Result<coast_docker::runtime::ExecResult> {
-    let output = std::process::Command::new("docker")
-        .args(args)
-        .output()
-        .map_err(|e| CoastError::Docker {
-            message: format!("failed to spawn `docker {}`: {e}", args.join(" ")),
-            source: Some(Box::new(e)),
-        })?;
-    Ok(coast_docker::runtime::ExecResult {
-        exit_code: i64::from(output.status.code().unwrap_or(-1)),
-        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-    })
+    out
 }
 
 fn read_manifest(build_dir: &std::path::Path) -> Result<SsgManifest> {
@@ -830,10 +697,39 @@ fn build_response(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::build::artifact::SsgManifestService;
+    use crate::docker_ops::{MockCall, MockSsgDockerOps, SsgExecOutput};
+    use std::collections::HashSet;
 
-    // Unit tests focus on the small pure helpers. Lifecycle orchestration
-    // is covered by the Phase 3 integration tests (test_ssg_run_lifecycle,
-    // test_ssg_bind_mount_symmetric, test_ssg_named_volume_persists).
+    fn sample_manifest(services: Vec<(&str, &str, Vec<u16>)>) -> SsgManifest {
+        SsgManifest {
+            build_id: "b_test".to_string(),
+            built_at: chrono::Utc::now(),
+            coastfile_hash: "h".to_string(),
+            services: services
+                .into_iter()
+                .map(|(name, image, ports)| SsgManifestService {
+                    name: name.to_string(),
+                    image: image.to_string(),
+                    ports,
+                    env_keys: vec![],
+                    volumes: vec![],
+                    auto_create_db: false,
+                })
+                .collect(),
+        }
+    }
+
+    fn sample_record(status: &str, cid: Option<&str>) -> SsgRecord {
+        SsgRecord {
+            status: status.to_string(),
+            container_id: cid.map(str::to_string),
+            build_id: Some("b_test".to_string()),
+            created_at: "2026-04-20T00:00:00Z".to_string(),
+        }
+    }
+
+    // --- inner_compose_path ---
 
     #[test]
     fn inner_compose_path_is_under_artifact_dir() {
@@ -841,30 +737,54 @@ mod tests {
     }
 
     #[test]
+    fn constants_are_coast_ssg() {
+        assert_eq!(SSG_CONTAINER_NAME, "coast-ssg");
+        assert_eq!(SSG_COMPOSE_PROJECT, "coast-ssg");
+        assert_eq!(
+            INNER_VOLUME_LABEL_FILTER,
+            "com.docker.compose.project=coast-ssg"
+        );
+    }
+
+    // --- plan_images_to_load ---
+
+    #[test]
+    fn plan_images_skips_already_loaded() {
+        let manifest = sample_manifest(vec![
+            ("postgres", "postgres:16", vec![5432]),
+            ("redis", "redis:7", vec![6379]),
+        ]);
+        let loaded: HashSet<String> = ["postgres:16".to_string()].into_iter().collect();
+        let plan = plan_images_to_load(&manifest, &loaded);
+        assert_eq!(plan, vec!["redis:7"]);
+    }
+
+    #[test]
+    fn plan_images_dedupes_duplicates() {
+        let manifest = sample_manifest(vec![
+            ("a", "postgres:16", vec![5432]),
+            ("b", "postgres:16", vec![5433]),
+            ("c", "redis:7", vec![6379]),
+        ]);
+        let plan = plan_images_to_load(&manifest, &HashSet::new());
+        assert_eq!(plan, vec!["postgres:16", "redis:7"]);
+    }
+
+    #[test]
+    fn plan_images_returns_empty_when_all_loaded() {
+        let manifest = sample_manifest(vec![("postgres", "postgres:16", vec![5432])]);
+        let loaded: HashSet<String> = ["postgres:16".to_string()].into_iter().collect();
+        assert!(plan_images_to_load(&manifest, &loaded).is_empty());
+    }
+
+    // --- build_response ---
+
+    #[test]
     fn build_response_pairs_plans_with_manifest_services() {
-        let manifest = SsgManifest {
-            build_id: "b_20260101000000".to_string(),
-            built_at: chrono::Utc::now(),
-            coastfile_hash: "h".to_string(),
-            services: vec![
-                crate::build::artifact::SsgManifestService {
-                    name: "postgres".to_string(),
-                    image: "postgres:16".to_string(),
-                    ports: vec![5432],
-                    env_keys: vec![],
-                    volumes: vec![],
-                    auto_create_db: false,
-                },
-                crate::build::artifact::SsgManifestService {
-                    name: "redis".to_string(),
-                    image: "redis:7".to_string(),
-                    ports: vec![6379],
-                    env_keys: vec![],
-                    volumes: vec![],
-                    auto_create_db: false,
-                },
-            ],
-        };
+        let manifest = sample_manifest(vec![
+            ("postgres", "postgres:16", vec![5432]),
+            ("redis", "redis:7", vec![6379]),
+        ]);
         let plans = vec![
             SsgServicePortPlan {
                 service: "postgres".to_string(),
@@ -894,28 +814,246 @@ mod tests {
 
     #[test]
     fn build_response_marks_missing_plans_as_zero_port() {
-        let manifest = SsgManifest {
-            build_id: "b_20260101000000".to_string(),
-            built_at: chrono::Utc::now(),
-            coastfile_hash: "h".to_string(),
-            services: vec![crate::build::artifact::SsgManifestService {
-                name: "sidecar".to_string(),
-                image: "alpine:3".to_string(),
-                ports: vec![],
-                env_keys: vec![],
-                volumes: vec![],
-                auto_create_db: false,
-            }],
-        };
+        let manifest = sample_manifest(vec![("sidecar", "alpine:3", vec![])]);
         let resp = build_response(&manifest, &[], Some("running"), None, "ok".to_string());
         assert_eq!(resp.services[0].inner_port, 0);
         assert_eq!(resp.services[0].dynamic_host_port, 0);
         assert!(resp.ports.is_empty());
     }
 
-    #[test]
-    fn constants_are_coast_ssg() {
-        assert_eq!(SSG_CONTAINER_NAME, "coast-ssg");
-        assert_eq!(SSG_COMPOSE_PROJECT, "coast-ssg");
+    // --- stop_ssg ---
+
+    #[tokio::test]
+    async fn stop_ssg_calls_compose_down_then_stop_container() {
+        let mock = MockSsgDockerOps::new();
+        let record = sample_record("running", Some("cid-1"));
+        let outcome = stop_ssg(&mock, &record).await.unwrap();
+        assert_eq!(outcome.container_id.as_deref(), Some("cid-1"));
+        let calls = mock.calls();
+        assert_eq!(calls.len(), 2);
+        assert!(matches!(
+            calls[0],
+            MockCall::InnerComposeDown { ref container_id, ref project, .. }
+                if container_id == "cid-1" && project == "coast-ssg"
+        ));
+        assert!(matches!(
+            calls[1],
+            MockCall::StopContainer(ref cid) if cid == "cid-1"
+        ));
+    }
+
+    #[tokio::test]
+    async fn stop_ssg_swallows_compose_down_error_and_still_stops_container() {
+        let mock = MockSsgDockerOps::new();
+        mock.push_compose_down_result(Err(CoastError::docker("compose down exploded")));
+        let record = sample_record("running", Some("cid-1"));
+        stop_ssg(&mock, &record).await.unwrap();
+        let calls = mock.calls();
+        // Both calls happened despite the compose-down error.
+        assert!(matches!(calls[0], MockCall::InnerComposeDown { .. }));
+        assert!(matches!(calls[1], MockCall::StopContainer(_)));
+    }
+
+    #[tokio::test]
+    async fn stop_ssg_with_no_container_id_is_noop() {
+        let mock = MockSsgDockerOps::new();
+        let record = sample_record("stopped", None);
+        let outcome = stop_ssg(&mock, &record).await.unwrap();
+        assert!(outcome.container_id.is_none());
+        assert!(mock.calls().is_empty());
+    }
+
+    // --- rm_ssg ---
+
+    #[tokio::test]
+    async fn rm_ssg_with_data_removes_volumes_then_container() {
+        let mock = MockSsgDockerOps::new();
+        let record = sample_record("running", Some("cid-1"));
+        rm_ssg(&mock, &record, /*with_data=*/ true).await.unwrap();
+        let calls = mock.calls();
+        // running -> no transient start -> compose down -> remove volumes -> remove container.
+        assert!(matches!(calls[0], MockCall::InnerComposeDown { .. }));
+        assert!(matches!(
+            calls[1],
+            MockCall::RemoveInnerVolumes { ref label_filter, .. }
+                if label_filter == "com.docker.compose.project=coast-ssg"
+        ));
+        assert!(matches!(calls[2], MockCall::RemoveContainer(ref cid) if cid == "cid-1"));
+    }
+
+    #[tokio::test]
+    async fn rm_ssg_without_data_skips_volume_removal() {
+        let mock = MockSsgDockerOps::new();
+        let record = sample_record("running", Some("cid-1"));
+        rm_ssg(&mock, &record, /*with_data=*/ false).await.unwrap();
+        let calls = mock.calls();
+        assert!(matches!(calls[0], MockCall::InnerComposeDown { .. }));
+        assert!(matches!(calls[1], MockCall::RemoveContainer(_)));
+        for c in &calls {
+            assert!(
+                !matches!(c, MockCall::RemoveInnerVolumes { .. }),
+                "should not remove volumes without --with-data"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn rm_ssg_from_stopped_status_transient_starts_first() {
+        let mock = MockSsgDockerOps::new();
+        let record = sample_record("stopped", Some("cid-1"));
+        rm_ssg(&mock, &record, /*with_data=*/ false).await.unwrap();
+        let calls = mock.calls();
+        assert!(matches!(calls[0], MockCall::StartContainer(_)));
+        assert!(matches!(calls[1], MockCall::WaitForInnerDaemon { .. }));
+        assert!(matches!(calls[2], MockCall::InnerComposeDown { .. }));
+        assert!(matches!(calls[3], MockCall::RemoveContainer(_)));
+    }
+
+    // --- logs_ssg ---
+
+    #[tokio::test]
+    async fn logs_ssg_with_service_uses_inner_compose_logs() {
+        let mock = MockSsgDockerOps::new();
+        mock.push_compose_logs_result(Ok("compose log".to_string()));
+        let record = sample_record("running", Some("cid-1"));
+        let out = logs_ssg(&mock, &record, Some("postgres".to_string()), Some(10))
+            .await
+            .unwrap();
+        assert_eq!(out, "compose log");
+        match &mock.calls()[0] {
+            MockCall::InnerComposeLogs { service, tail, .. } => {
+                assert_eq!(service, "postgres");
+                assert_eq!(*tail, Some(10));
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn logs_ssg_without_service_uses_host_logs() {
+        let mock = MockSsgDockerOps::new();
+        mock.push_host_logs_result(Ok("host log".to_string()));
+        let record = sample_record("running", Some("cid-1"));
+        let out = logs_ssg(&mock, &record, None, None).await.unwrap();
+        assert_eq!(out, "host log");
+        match &mock.calls()[0] {
+            MockCall::HostContainerLogs { container_id, .. } => {
+                assert_eq!(container_id, "cid-1");
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn logs_ssg_missing_container_id_errors() {
+        let mock = MockSsgDockerOps::new();
+        let record = sample_record("stopped", None);
+        let err = logs_ssg(&mock, &record, None, None).await.unwrap_err();
+        assert!(err.to_string().contains("no container id"));
+    }
+
+    // --- exec_ssg ---
+
+    #[tokio::test]
+    async fn exec_ssg_with_service_routes_to_inner_compose_exec() {
+        let mock = MockSsgDockerOps::new();
+        mock.push_compose_exec_result(Ok(SsgExecOutput {
+            exit_code: 0,
+            stdout: "ok".to_string(),
+            stderr: String::new(),
+        }));
+        let record = sample_record("running", Some("cid-1"));
+        let out = exec_ssg(
+            &mock,
+            &record,
+            Some("postgres".to_string()),
+            vec!["psql".to_string(), "-U".to_string(), "coast".to_string()],
+        )
+        .await
+        .unwrap();
+        assert_eq!(out, "ok");
+        match &mock.calls()[0] {
+            MockCall::InnerComposeExec { service, argv, .. } => {
+                assert_eq!(service, "postgres");
+                assert_eq!(
+                    argv,
+                    &vec!["psql".to_string(), "-U".to_string(), "coast".to_string()]
+                );
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn exec_ssg_without_service_routes_to_exec_in_container() {
+        let mock = MockSsgDockerOps::new();
+        mock.push_exec_result(Ok(SsgExecOutput {
+            exit_code: 0,
+            stdout: "direct".to_string(),
+            stderr: String::new(),
+        }));
+        let record = sample_record("running", Some("cid-1"));
+        let out = exec_ssg(&mock, &record, None, vec!["uname".to_string()])
+            .await
+            .unwrap();
+        assert_eq!(out, "direct");
+        match &mock.calls()[0] {
+            MockCall::ExecInContainer { argv, .. } => {
+                assert_eq!(argv, &vec!["uname".to_string()]);
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn exec_ssg_empty_command_errors() {
+        let mock = MockSsgDockerOps::new();
+        let record = sample_record("running", Some("cid-1"));
+        let err = exec_ssg(&mock, &record, None, Vec::new())
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("requires a command"));
+    }
+
+    // --- load_ssg_images_into_inner ---
+
+    #[tokio::test]
+    async fn load_ssg_images_skips_already_loaded_entries() {
+        let mock = MockSsgDockerOps::new();
+        let already: HashSet<String> = ["postgres:16".to_string()].into_iter().collect();
+        mock.push_list_images_result(Ok(already));
+        mock.push_load_result(Ok(1));
+
+        let manifest = sample_manifest(vec![
+            ("postgres", "postgres:16", vec![5432]),
+            ("redis", "redis:7", vec![6379]),
+        ]);
+        let loaded = load_ssg_images_into_inner(&mock, "cid", &manifest)
+            .await
+            .unwrap();
+        assert_eq!(loaded, 1);
+
+        // Only the missing `redis:7` tarball is passed to load.
+        match &mock.calls()[1] {
+            MockCall::LoadImagesIntoInner { tarballs, .. } => {
+                assert_eq!(tarballs, &vec!["/image-cache/redis_7.tar".to_string()]);
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn load_ssg_images_empty_when_nothing_missing() {
+        let mock = MockSsgDockerOps::new();
+        let already: HashSet<String> = ["postgres:16".to_string()].into_iter().collect();
+        mock.push_list_images_result(Ok(already));
+        let manifest = sample_manifest(vec![("postgres", "postgres:16", vec![5432])]);
+        let loaded = load_ssg_images_into_inner(&mock, "cid", &manifest)
+            .await
+            .unwrap();
+        assert_eq!(loaded, 0);
+        // Only list was called; no load invoked.
+        assert_eq!(mock.calls().len(), 1);
+        assert!(matches!(mock.calls()[0], MockCall::ListInnerImages { .. }));
     }
 }

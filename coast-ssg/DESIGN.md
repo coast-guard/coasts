@@ -259,15 +259,15 @@ found in the Phase 9 post-hoc audit.
 
 ### Phase 12 — Pattern A: full lifecycle + images migration
 Completes the Pattern A work Phase 9 left partial. Supersedes §17 #37.
-- [ ] Expand `SsgDockerOps` trait with all lifecycle + image methods
-- [ ] Complete `BollardSsgDockerOps` real impl
-- [ ] Complete `MockSsgDockerOps` test impl
-- [ ] Refactor `runtime/lifecycle.rs` to take `&dyn SsgDockerOps`
-- [ ] Refactor `build/images.rs::pull_and_cache_ssg_images` to take the trait
-- [ ] Wire `BollardSsgDockerOps` at daemon entry points
-- [ ] ~70 new unit tests per verb with mock
-- [ ] Full integration regression: every `test_ssg_*.sh` still passes
-- [ ] Update §17 SETTLED #37 to document completion
+- [x] Expand `SsgDockerOps` trait with all lifecycle + image methods
+- [x] Complete `BollardSsgDockerOps` real impl
+- [x] Complete `MockSsgDockerOps` test impl
+- [x] Refactor `runtime/lifecycle.rs` to take `&dyn SsgDockerOps`
+- [x] Refactor `build/images.rs::pull_and_cache_ssg_images` to take the trait
+- [x] Wire `BollardSsgDockerOps` at daemon entry points
+- [x] ~40 new unit tests (proportional to real complexity; parity tests dropped — integration covers real impl)
+- [x] Full integration regression: every `test_ssg_*.sh` still passes
+- [x] Update §17 SETTLED #37 to document completion
 
 ### Phase 13 — `file:/path` inject runtime
 Supersedes §17 #20 / #21 (file-inject "deferred follow-up"). DESIGN §14
@@ -1681,24 +1681,32 @@ tracks state across sessions.
     no state is available (e.g., a future non-daemon caller) the
     function still falls back to the manifest-only view, preserving
     the pre-Phase-9 contract for compat.
-37. (SETTLED — Phase 9) **Narrow `SsgDockerOps` trait coexists with
-    the existing concrete `&Docker` + `DindRuntime` usage; full
-    lifecycle migration is incremental.** Phase 9 introduces
-    [`coast-ssg/src/docker_ops.rs`](./src/docker_ops.rs) with an
-    `SsgDockerOps` async trait, a `BollardSsgDockerOps` real impl,
-    and an in-tree handwritten `MockSsgDockerOps` (no `mockall`
-    dep) that records call order + scripts per-method responses.
-    The trait is **additive** — existing `runtime::lifecycle.rs`
-    and `build::images.rs` continue to use `&bollard::Docker`
-    directly. Rewriting every lifecycle verb to take
-    `&dyn SsgDockerOps` is a >1000-line refactor of battle-tested
-    async Docker code; the risk/reward didn't justify it in
-    Phase 9. Instead, Phase 9 extracts the *decision logic* from
-    lifecycle into pure helpers (`compute_missing_inner_images`,
-    `should_stop_before_remove`, `clamp_stop_timeout_seconds`,
-    `tarball_path_for`, `pull_step_label`) and tests those. The
-    trait is the stable seam future migrations can bind to when
-    individual functions move off the concrete `&Docker` handle.
+37. (SETTLED — Phase 9 / Phase 12) **`SsgDockerOps` trait is the
+    sole Docker seam in the SSG crate.** Phase 9 introduced the
+    trait + `BollardSsgDockerOps` real impl + `MockSsgDockerOps`
+    test double in [`coast-ssg/src/docker_ops.rs`](./src/docker_ops.rs)
+    alongside concrete `&bollard::Docker` + `DindRuntime` usage.
+    Phase 12 completed the migration: every SSG async lifecycle +
+    image code path
+    ([`runtime::lifecycle`](./src/runtime/lifecycle.rs),
+    [`build::images`](./src/build/images.rs),
+    [`runtime::auto_create_db`](./src/runtime/auto_create_db.rs),
+    [`daemon_integration`](./src/daemon_integration.rs)) now goes
+    through `&dyn SsgDockerOps`. `DindRuntime` and bollard's
+    `Docker` are isolated to `docker_ops.rs`'s real impl; lifecycle
+    orchestrators are unit-testable without Docker. `coast-daemon`
+    wraps once per entry point via
+    `BollardSsgDockerOps::new(docker.clone())` in
+    [`handlers/ssg/mod.rs`](../coast-daemon/src/handlers/ssg/mod.rs),
+    [`server.rs`](../coast-daemon/src/server.rs), and
+    [`handlers/run/{auto_create_db,ssg_integration}.rs`](../coast-daemon/src/handlers/run).
+    Pure argv builders (`build_inner_compose_{up,down,exec,logs}_argv`,
+    `build_host_docker_logs_argv`) are co-located with the trait so
+    the real impl and any future custom impl share the canonical
+    command shape. Invariant enforced in CI via grep: zero
+    `&bollard::Docker` or `DindRuntime` references remain in
+    `coast-ssg/src/runtime`, `coast-ssg/src/build`, or
+    `coast-ssg/src/daemon_integration.rs` outside docs.
 38. (SETTLED — Phase 11) **Consumer socat refresh invariant.** Every
     SSG lifecycle verb that can mutate
     `ssg_services.dynamic_host_port` (`run` / `start` / `restart`)
@@ -1719,6 +1727,27 @@ tracks state across sessions.
     `Refreshed shared-service proxies for: <project>/<instance>, …`.
     See
     [`coast-daemon/src/handlers/ssg/consumer_refresh.rs`](../coast-daemon/src/handlers/ssg/consumer_refresh.rs).
+39. (SETTLED — Phase 12) **Fat `SsgDockerOps` trait: one named
+    method per semantic operation.** The Phase 12 migration picked
+    the fat-trait shape over a leaner alternative that would have
+    kept `exec_in_container` as the generic primitive for every
+    inner-compose / inner-docker op. The fat trait has 15 methods:
+    outer-DinD lifecycle (`create_container`, `start_container`,
+    `stop_container`, `remove_container`, `wait_for_inner_daemon`,
+    `exec_in_container`), image ops (`pull_and_cache_image`,
+    `load_images_into_inner`, `list_inner_images`), inner-volume
+    ops (`remove_inner_volumes`), inner-compose ops
+    (`inner_compose_up`, `inner_compose_down`, `inner_compose_exec`,
+    `inner_compose_logs`), and host-level ops (`host_container_logs`).
+    Rationale: mock records stay semantic (tests assert "start
+    compose" rather than parsing the canonical `docker compose -f
+    …` argv), lifecycle orchestrators stay short, and the real
+    impl keeps its thin delegation shape.
+    [`MockSsgDockerOps`](./src/docker_ops.rs) exposes per-method
+    `push_*_result` setters and a `MockCall` variant per method.
+    The mock is also gated behind a `test-support` feature so
+    `coast-daemon`'s unit tests can construct one without
+    duplicating the code.
 
 ## 18. Risks
 

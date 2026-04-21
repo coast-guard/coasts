@@ -15,12 +15,10 @@
 //! services path (`coast-daemon/src/shared_services.rs::create_db_command`).
 //! This module owns only the nested-exec wrapper.
 
-use bollard::Docker;
-
 use coast_core::error::{CoastError, Result};
-use coast_docker::dind::DindRuntime;
-use coast_docker::runtime::{ExecResult, Runtime};
+use coast_docker::runtime::ExecResult;
 
+use crate::docker_ops::{build_inner_compose_exec_argv, SsgDockerOps};
 use crate::runtime::lifecycle::{inner_compose_path, SSG_COMPOSE_PROJECT};
 use crate::state::SsgRecord;
 
@@ -28,8 +26,10 @@ use crate::state::SsgRecord;
 /// container, via `docker compose exec -T <service>` on the outer
 /// DinD daemon.
 ///
-/// Broken out from [`exec_in_ssg_service`] so it can be unit-tested
-/// without a live Docker socket.
+/// Thin wrapper around [`build_inner_compose_exec_argv`] that adds
+/// empty-argument validation (the pure builder in `docker_ops`
+/// doesn't validate because it's also used for the happy-path
+/// lifecycle `exec_ssg` where validation has already happened).
 pub(crate) fn build_nested_compose_exec_argv(
     service_name: &str,
     command: &[String],
@@ -44,30 +44,23 @@ pub(crate) fn build_nested_compose_exec_argv(
             "Nested SSG exec requires a non-empty command vector.",
         ));
     }
-
-    let mut argv: Vec<String> = vec![
-        "docker".to_string(),
-        "compose".to_string(),
-        "-f".to_string(),
-        inner_compose_path(),
-        "-p".to_string(),
-        SSG_COMPOSE_PROJECT.to_string(),
-        "exec".to_string(),
-        "-T".to_string(),
-        service_name.to_string(),
-    ];
-    argv.extend(command.iter().cloned());
-    Ok(argv)
+    Ok(build_inner_compose_exec_argv(
+        &inner_compose_path(),
+        SSG_COMPOSE_PROJECT,
+        service_name,
+        command,
+    ))
 }
 
 /// Run `command` inside the inner `service_name` container of the SSG
 /// singleton DinD.
 ///
 /// Returns the raw [`ExecResult`]; the caller decides how to treat
-/// non-zero exits. [`daemon_integration::create_instance_db_for_consumer`]
-/// is the standard wrapper that promotes non-zero exits to errors.
+/// non-zero exits.
+/// [`crate::daemon_integration::create_instance_db_for_consumer`] is
+/// the standard wrapper that promotes non-zero exits to errors.
 pub async fn exec_in_ssg_service(
-    docker: &Docker,
+    ops: &dyn SsgDockerOps,
     record: &SsgRecord,
     service_name: &str,
     command: Vec<String>,
@@ -78,11 +71,20 @@ pub async fn exec_in_ssg_service(
         )
     })?;
 
-    let argv = build_nested_compose_exec_argv(service_name, &command)?;
-    let refs: Vec<&str> = argv.iter().map(String::as_str).collect();
+    // Validate via the nested-exec builder (keeps the existing
+    // empty-argv error messages verbatim for Phase 5 callers).
+    let _ = build_nested_compose_exec_argv(service_name, &command)?;
 
-    let runtime = DindRuntime::with_client(docker.clone());
-    runtime.exec_in_coast(&container_id, &refs).await
+    let out = ops
+        .inner_compose_exec(
+            &container_id,
+            &inner_compose_path(),
+            SSG_COMPOSE_PROJECT,
+            service_name,
+            &command,
+        )
+        .await?;
+    Ok(out.to_coast_exec())
 }
 
 #[cfg(test)]
@@ -140,6 +142,66 @@ mod tests {
             err.to_string().contains("non-empty command"),
             "unexpected error: {err}"
         );
+    }
+
+    // --- Phase 12 exec_in_ssg_service tests (MockSsgDockerOps) ---
+
+    use crate::docker_ops::{MockCall, MockSsgDockerOps, SsgExecOutput};
+
+    fn sample_record(cid: Option<&str>) -> SsgRecord {
+        SsgRecord {
+            status: "running".to_string(),
+            container_id: cid.map(str::to_string),
+            build_id: Some("b_test".to_string()),
+            created_at: "2026-04-20T00:00:00Z".to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn exec_in_ssg_service_delegates_to_inner_compose_exec() {
+        let mock = MockSsgDockerOps::new();
+        mock.push_compose_exec_result(Ok(SsgExecOutput {
+            exit_code: 0,
+            stdout: "CREATE DATABASE".to_string(),
+            stderr: String::new(),
+        }));
+        let record = sample_record(Some("cid-1"));
+        let out = exec_in_ssg_service(
+            &mock,
+            &record,
+            "postgres",
+            vec!["psql".to_string(), "-U".to_string(), "postgres".to_string()],
+        )
+        .await
+        .unwrap();
+        assert_eq!(out.exit_code, 0);
+        assert_eq!(out.stdout, "CREATE DATABASE");
+        match &mock.calls()[0] {
+            MockCall::InnerComposeExec {
+                container_id,
+                service,
+                argv,
+                ..
+            } => {
+                assert_eq!(container_id, "cid-1");
+                assert_eq!(service, "postgres");
+                assert_eq!(
+                    argv,
+                    &vec!["psql".to_string(), "-U".to_string(), "postgres".to_string(),]
+                );
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn exec_in_ssg_service_missing_container_id_errors() {
+        let mock = MockSsgDockerOps::new();
+        let record = sample_record(None);
+        let err = exec_in_ssg_service(&mock, &record, "postgres", vec!["psql".to_string()])
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("no container id"));
     }
 
     #[test]
