@@ -25,6 +25,11 @@ pub mod checkout;
 // `coast-ssg/src/doctor.rs` for the pure evaluator.
 pub mod doctor;
 
+// ssg-phase-11: refresh consumer socat forwarders after SSG lifecycle
+// verbs reallocate dynamic ports. See
+// `coast-ssg/DESIGN.md §0 Phase 11` + `§17-38 SETTLED`.
+pub(crate) mod consumer_refresh;
+
 use std::sync::Arc;
 
 use coast_core::error::{CoastError, Result};

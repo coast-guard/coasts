@@ -457,3 +457,9 @@ tests:
     script: integrated-examples/test_ssg_doctor.sh
     timeout: 600
     note: "coast ssg doctor reports ok/warn/info findings based on host bind-mount ownership; read-only"
+
+  # --- Shared Service Groups (coast-ssg) — Phase 11 (consumer socat refresh) ---
+  test_ssg_rm_run_refreshes_consumers:
+    script: integrated-examples/test_ssg_rm_run_refreshes_consumers.sh
+    timeout: 900
+    note: "ssg rm + run reallocates dyn ports; Phase 11 hook refreshes running consumer socat forwarders so psql keeps working without rebuilding the consumer"

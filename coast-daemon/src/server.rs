@@ -1154,6 +1154,12 @@ async fn run_streaming_run(
                     // checkout") are appended to the response so the
                     // CLI surfaces them.
                     append_checkout_respawn_messages(state, &mut resp).await;
+                    // Phase 11: with the SSG's own host checkouts
+                    // respawned, refresh every local running
+                    // consumer coast's in-dind socat forwarders so
+                    // they point at the fresh dynamic ports. See
+                    // `coast-ssg/DESIGN.md §17-38`.
+                    append_consumer_refresh_messages(state, &mut resp).await;
                     Response::Ssg(resp)
                 }
                 Err(e) => Response::Error(ErrorResponse {
@@ -1257,6 +1263,13 @@ async fn run_streaming_start_or_restart(
                     // existing ports; `restart` may allocate new
                     // ones. Either way this is the correct moment.
                     append_checkout_respawn_messages(state, &mut resp).await;
+                    // Phase 11: refresh consumer socat forwarders
+                    // against the current ssg_services rows. No-op
+                    // when no local running consumer references the
+                    // SSG, and idempotent when dynamic ports did not
+                    // change (the proxy script kills old PIDs before
+                    // re-spawning).
+                    append_consumer_refresh_messages(state, &mut resp).await;
                     Response::Ssg(resp)
                 }
                 Err(e) => Response::Error(ErrorResponse {
@@ -1285,6 +1298,32 @@ async fn append_checkout_respawn_messages(
         resp.message = messages.join("\n");
     } else {
         resp.message = format!("{}\n{}", resp.message, messages.join("\n"));
+    }
+}
+
+/// Phase 11: refresh consumer socat forwarders after an SSG
+/// lifecycle verb, then append a single-line summary of the
+/// refreshed instances to the response message. No-op when zero
+/// local running consumers reference the SSG. See
+/// `coast-ssg/DESIGN.md §17-38`.
+async fn append_consumer_refresh_messages(
+    state: &Arc<AppState>,
+    resp: &mut coast_core::protocol::SsgResponse,
+) {
+    let refreshed =
+        crate::handlers::ssg::consumer_refresh::refresh_consumer_proxies_after_lifecycle(state)
+            .await;
+    if refreshed.is_empty() {
+        return;
+    }
+    let line = format!(
+        "Refreshed shared-service proxies for: {}.",
+        refreshed.join(", ")
+    );
+    if resp.message.is_empty() {
+        resp.message = line;
+    } else {
+        resp.message = format!("{}\n{}", resp.message, line);
     }
 }
 

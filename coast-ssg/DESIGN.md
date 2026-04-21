@@ -241,21 +241,21 @@ Verification:
 ### Phase 10 — Cleanup + §17 resolution
 Strip every "this is a stub" / "this is future work" / "decide in
 Phase X" marker that Phase 9 audit found. See Addendum for context.
-- [ ] Delete `coast-ssg/src/port_checkout.rs` stub (actual code lives in `runtime/port_checkout.rs` + `handlers/ssg/checkout.rs`); remove `pub mod port_checkout;` from `lib.rs`
-- [ ] Strip `TODO(ssg-phase-N)` prefixes from `pub mod` comments in `coast-ssg/src/lib.rs`
-- [ ] Update `# Phase 0 status` doc-comment in `lib.rs` to reflect Phase 10+ reality
-- [ ] Promote §17 #3 (per-project network) to SETTLED
-- [ ] Promote §17 #5 (ssg_mutex vs RwLock) to SETTLED
-- [ ] Promote §17 #8 (checkout displacement `--force`) to SETTLED
+- [x] Delete `coast-ssg/src/port_checkout.rs` stub (actual code lives in `runtime/port_checkout.rs` + `handlers/ssg/checkout.rs`); remove `pub mod port_checkout;` from `lib.rs`
+- [x] Strip `TODO(ssg-phase-N)` prefixes from `pub mod` comments in `coast-ssg/src/lib.rs`
+- [x] Update `# Phase 0 status` doc-comment in `lib.rs` to reflect Phase 10+ reality
+- [x] Promote §17 #3 (per-project network) to SETTLED
+- [x] Promote §17 #5 (ssg_mutex vs RwLock) to SETTLED
+- [x] Promote §17 #8 (checkout displacement `--force`) to SETTLED
 
 ### Phase 11 — Consumer socat refresh after SSG re-run
 Fixes the "coast ssg rm + run invalidates consumer proxies" gap
 found in the Phase 9 post-hoc audit.
-- [ ] New `coast-daemon/src/handlers/ssg/consumer_refresh.rs::refresh_consumer_proxies_after_lifecycle`
-- [ ] Call site wiring after `run_streaming_run` + `run_streaming_start_or_restart`
-- [ ] Integration test `test_ssg_rm_run_refreshes_consumers`
-- [ ] Unit test using in-memory AppState (Pattern C)
-- [ ] §17 SETTLED #38 documenting the refresh invariant
+- [x] New `coast-daemon/src/handlers/ssg/consumer_refresh.rs::refresh_consumer_proxies_after_lifecycle`
+- [x] Call site wiring after `run_streaming_run` + `run_streaming_start_or_restart`
+- [x] Integration test `test_ssg_rm_run_refreshes_consumers`
+- [x] Unit test using in-memory AppState (Pattern C)
+- [x] §17 SETTLED #38 documenting the refresh invariant
 
 ### Phase 12 — Pattern A: full lifecycle + images migration
 Completes the Pattern A work Phase 9 left partial. Supersedes §17 #37.
@@ -1064,6 +1064,11 @@ is not currently running.
   `"Project 'X' references shared service 'postgres' from the Shared Service Group, but no SSG build exists. Run coast ssg build in the directory containing your Coastfile.shared_service_groups."`
 - Emit `CoastEvent::SsgStarting` / `SsgStarted` on the run progress
   channel so Coastguard can show boot progress inline.
+- After every `run` / `start` / `restart` commits new
+  `ssg_services.dynamic_host_port` rows, the daemon refreshes each
+  local running consumer's in-dind socat forwarders so existing
+  consumer coasts survive an SSG port reallocation without rebuilding.
+  See §17-38.
 
 ## 12. Host-side access + `coast ssg checkout`
 
@@ -1273,19 +1278,32 @@ tracks state across sessions.
 
 1. (SETTLED) Primary CLI verb is `coast ssg`, alias `coast shared-service-group`.
 2. (SETTLED) File discovery mirrors `coast build` (cwd lookup, `-f`, `--working-dir`, inline `--config`).
-3. **Per-project network** — today `coast-shared-{project}` networks
-   are created and coasts are attached. Since SSG routing uses
-   `host.docker.internal` via docker0 alias IPs, the network is not
-   strictly required. Proposal: keep the network creation (it is
-   cheap, keeps the compose rewriter uniform, and lets users attach
-   ad-hoc containers). Revisit if it causes issues.
+3. (SETTLED — Phase 10) **Per-project network kept.** `coast-shared-{project}`
+   networks are still created and coasts are still attached, even though
+   SSG routing uses `host.docker.internal` via docker0 alias IPs and
+   does not strictly require the bridge. Creation is cheap, keeps the
+   compose rewriter uniform across inline and `from_group` services,
+   and leaves users free to attach ad-hoc containers to the same
+   project bridge. No issues surfaced across Phases 2-9 or the Phase 9
+   post-hoc audit. See
+   [`coast-docker/src/network.rs`](../coast-docker/src/network.rs)
+   (`shared_network_name`, `create_shared_network`).
 4. (SETTLED) Auto-start SSG from `coast run` (hard error only if no
    SSG build exists).
-5. **Concurrent mutation** — every SSG-mutating handler acquires a
-   process-global `ssg_mutex: tokio::sync::Mutex<()>` in `AppState`.
-   Coast-run paths that auto-start the SSG check state first, then
-   acquire the write lock only when actually starting. TBD whether an
-   `RwLock` is warranted instead — decide in Phase 3.5.
+5. (SETTLED — Phase 3) **`Mutex<()>` kept; no `RwLock` migration.**
+   Every SSG-mutating handler acquires a process-global
+   `ssg_mutex: tokio::sync::Mutex<()>` in `AppState`. Coast-run paths
+   that auto-start the SSG check state first and only acquire the
+   lock when actually starting. Read-only verbs (`ps`, `ports`,
+   `logs`, `exec`) do not take the mutex at all, so the theoretical
+   `RwLock` win (many concurrent readers) has no practical payoff —
+   readers already run lock-free. An `RwLock` would only add
+   complexity and a footgun (readers accidentally held across
+   mutating awaits). See
+   [`coast-daemon/src/server.rs`](../coast-daemon/src/server.rs)
+   (`pub ssg_mutex: Mutex<()>` around line 221, and the
+   `_ssg_guard = state.ssg_mutex.lock().await` pattern in
+   `handle_ssg_lifecycle_streaming`).
 6. (SETTLED) Remote coasts use the existing
    `SharedServicePortForward` protocol (§20). `coast-service` is
    unchanged. Remote SSG is an explicit non-goal for v1.
@@ -1293,9 +1311,15 @@ tracks state across sessions.
    `extends` / `includes`. Reconsider in v2 once real-world usage
    shows whether users need composition (e.g. "dev-ssg extends
    base-ssg plus a test-seed service").
-8. **Checkout displacement UX** — proposal: no `--force` flag, emit a
-   clear CLI warning and a Coastguard event. Confirm with a real use
-   case in Phase 6.
+8. (SETTLED — Phase 6) **No `--force` flag on `coast ssg checkout`.**
+   Coast-tracked holders (a coast-instance's canonical-port socat, or
+   an existing `ssg_port_checkouts` row) are displaced cleanly with a
+   clear CLI warning. Unknown-process holders yield
+   `unknown_holder_error` and instruct the user to free the port
+   manually — silently killing an unknown process was judged too
+   dangerous. See SETTLED #23 for the full rules and the
+   [`unknown_holder_error`](../coast-daemon/src/handlers/ssg/checkout.rs)
+   call site.
 9. **Pinning a consumer coast to an older SSG build** — `coast ssg
    checkout-build <id>` mentioned in §6.1 as a future convenience. Not
    in v1; v1 requires `coast build` to pick up SSG changes.
@@ -1675,6 +1699,26 @@ tracks state across sessions.
     `tarball_path_for`, `pull_step_label`) and tests those. The
     trait is the stable seam future migrations can bind to when
     individual functions move off the concrete `&Docker` handle.
+38. (SETTLED — Phase 11) **Consumer socat refresh invariant.** Every
+    SSG lifecycle verb that can mutate
+    `ssg_services.dynamic_host_port` (`run` / `start` / `restart`)
+    triggers a best-effort refresh of every local running consumer
+    coast that references the SSG via `from_group = true`. The
+    refresh re-plans socat routing with the current `ssg_services`
+    rows and re-runs
+    [`ensure_shared_service_proxies`](../coast-daemon/src/handlers/shared_service_routing.rs)
+    inside the consumer dind; the proxy script tears down stale PIDs
+    before spawning new ones, so the hook is idempotent (no-op when
+    dynamic ports did not actually change). Remote shadow coasts
+    (`remote_host.is_some()`) are skipped — they re-establish via
+    the reverse-tunnel path on their own run cycle. `stop` and `rm`
+    do NOT refresh: there is nothing to point proxies at. Per-consumer
+    failures are logged and skipped; the lifecycle verb itself never
+    fails on refresh errors. Refresh results are announced in the
+    lifecycle response message as
+    `Refreshed shared-service proxies for: <project>/<instance>, …`.
+    See
+    [`coast-daemon/src/handlers/ssg/consumer_refresh.rs`](../coast-daemon/src/handlers/ssg/consumer_refresh.rs).
 
 ## 18. Risks
 
