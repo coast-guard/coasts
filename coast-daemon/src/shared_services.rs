@@ -7,9 +7,11 @@
 /// Shared service data outlives instance deletion -- `coast rm` never touches
 /// shared service data. Only `coast shared-services rm` does.
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use tracing::debug;
 
+use coast_core::error::{CoastError, Result};
 use coast_core::types::{InjectType, SharedServiceConfig};
 
 /// Label key for identifying coast-managed shared service containers.
@@ -258,9 +260,11 @@ pub fn consumer_db_name(instance: &str, project: &str) -> String {
 ///   Explicitly NOT the dynamic host port.
 /// - DB name: [`consumer_db_name`].
 ///
-/// `InjectType::File(_)` is ignored for Phase 5 — file injection is
-/// tracked as a follow-up. Services without a declared port fall back
-/// to the image's default (postgres 5432, mysql 3306, redis 6379) via
+/// Services with `inject = Some(InjectType::File(_))` are handled by
+/// the sibling function [`shared_service_inject_file_writes`] — this
+/// function only covers the `env:` variant. Services without a
+/// declared port fall back to the image's default (postgres 5432,
+/// mysql 3306, redis 6379) via
 /// [`coast_docker::compose::build_connection_url`].
 pub fn shared_service_inject_env_vars(
     services: &[SharedServiceConfig],
@@ -274,18 +278,73 @@ pub fn shared_service_inject_env_vars(
         let Some(inject) = &svc.inject else { continue };
         let var_name = match inject {
             InjectType::Env(name) => name,
+            // File injects produce file bodies, not env vars. The
+            // runtime path for those is
+            // `shared_service_inject_file_writes`.
             InjectType::File(_) => continue,
         };
-        let host = svc.name.as_str();
-        let port = svc
-            .ports
-            .first()
-            .map(|p| p.container_port)
-            .unwrap_or_else(|| default_port_for_image(&svc.image));
-        let url = coast_docker::compose::build_connection_url(&svc.image, host, port, &db_name);
+        let url = build_inject_url(svc, &db_name);
         out.insert(var_name.clone(), url);
     }
     out
+}
+
+/// Compute the file writes to inject into a consumer coast for every
+/// shared service with `inject = Some(InjectType::File(path))`.
+///
+/// Each entry pairs the inner container path declared by the
+/// consumer with the connection URL that would be written into the
+/// file. The URL is byte-identical to what
+/// [`shared_service_inject_env_vars`] would set for the same
+/// service, so either inject variant lands the consumer at the same
+/// database.
+///
+/// Errors when any `inject = "file:<path>"` is relative. Docker bind
+/// mounts require absolute paths and the parser (intentionally)
+/// accepts any string after `file:`; validating here keeps the error
+/// close to the user's Coastfile rather than surfacing as a
+/// late-stage Docker mount failure.
+pub fn shared_service_inject_file_writes(
+    services: &[SharedServiceConfig],
+    project: &str,
+    instance: &str,
+) -> Result<Vec<(PathBuf, Vec<u8>)>> {
+    let mut out = Vec::new();
+    let db_name = consumer_db_name(instance, project);
+
+    for svc in services {
+        let Some(inject) = &svc.inject else { continue };
+        let container_path = match inject {
+            InjectType::File(path) => path,
+            // Env injects are handled by the sibling function.
+            InjectType::Env(_) => continue,
+        };
+        if !container_path.is_absolute() {
+            return Err(CoastError::coastfile(format!(
+                "shared service '{service}' declares `inject = \"file:{path}\"` but the path must \
+                 be absolute (Docker bind mounts cannot target relative paths). Use e.g. \
+                 `file:/run/secrets/{service}_url`.",
+                service = svc.name,
+                path = container_path.display(),
+            )));
+        }
+        let url = build_inject_url(svc, &db_name);
+        out.push((container_path.clone(), url.into_bytes()));
+    }
+    Ok(out)
+}
+
+/// Canonical inject connection URL for a shared service + consumer
+/// (instance, project). Shared by the env and file inject paths so
+/// both variants produce byte-identical bodies. See DESIGN.md §14.
+fn build_inject_url(svc: &SharedServiceConfig, db_name: &str) -> String {
+    let host = svc.name.as_str();
+    let port = svc
+        .ports
+        .first()
+        .map(|p| p.container_port)
+        .unwrap_or_else(|| default_port_for_image(&svc.image));
+    coast_docker::compose::build_connection_url(&svc.image, host, port, db_name)
 }
 
 /// Canonical port fallback when a shared service declares no
@@ -866,6 +925,116 @@ mod tests {
         assert!(
             !url.contains("61234"),
             "must not embed dynamic host port, got {url}"
+        );
+    }
+
+    // -----------------------------------------------------------
+    // shared_service_inject_file_writes tests (Phase 13)
+    // -----------------------------------------------------------
+
+    #[test]
+    fn test_inject_file_writes_env_only_produces_no_file_writes() {
+        let svc = postgres_cfg_with_inject(Some(InjectType::Env("DATABASE_URL".to_string())));
+        let writes = shared_service_inject_file_writes(&[svc], "my-app", "dev-1").unwrap();
+        assert!(writes.is_empty());
+    }
+
+    #[test]
+    fn test_inject_file_writes_file_only_produces_one_write() {
+        let svc = postgres_cfg_with_inject(Some(InjectType::File(std::path::PathBuf::from(
+            "/run/secrets/db_url",
+        ))));
+        let writes = shared_service_inject_file_writes(&[svc], "my-app", "dev-1").unwrap();
+        assert_eq!(writes.len(), 1);
+        let (path, bytes) = &writes[0];
+        assert_eq!(path, &std::path::PathBuf::from("/run/secrets/db_url"));
+        assert_eq!(
+            std::str::from_utf8(bytes).unwrap(),
+            "postgres://postgres:dev@postgres:5432/dev-1_my-app"
+        );
+    }
+
+    #[test]
+    fn test_inject_file_writes_mixed_partitions_env_and_file() {
+        let pg = postgres_cfg_with_inject(Some(InjectType::File(std::path::PathBuf::from(
+            "/run/secrets/db_url",
+        ))));
+        let redis = SharedServiceConfig {
+            name: "redis".to_string(),
+            image: "redis:7".to_string(),
+            ports: vec![SharedServicePort::same(6379)],
+            volumes: vec![],
+            env: HashMap::new(),
+            auto_create_db: false,
+            inject: Some(InjectType::Env("REDIS_URL".to_string())),
+        };
+        let file_writes =
+            shared_service_inject_file_writes(&[pg.clone(), redis.clone()], "my-app", "dev-1")
+                .unwrap();
+        assert_eq!(file_writes.len(), 1);
+        assert_eq!(
+            file_writes[0].0,
+            std::path::PathBuf::from("/run/secrets/db_url")
+        );
+
+        let env_vars = shared_service_inject_env_vars(&[pg, redis], "my-app", "dev-1");
+        assert_eq!(env_vars.len(), 1);
+        assert!(env_vars.contains_key("REDIS_URL"));
+    }
+
+    #[test]
+    fn test_inject_file_writes_url_bytes_match_env_inject_bytes() {
+        // The file body must be byte-identical to the env var value
+        // for the same service + consumer so switching inject types
+        // doesn't surprise users.
+        let svc_env = postgres_cfg_with_inject(Some(InjectType::Env("DATABASE_URL".to_string())));
+        let svc_file = postgres_cfg_with_inject(Some(InjectType::File(std::path::PathBuf::from(
+            "/run/secrets/db_url",
+        ))));
+        let env_url = shared_service_inject_env_vars(&[svc_env], "my-app", "dev-1");
+        let file_url = shared_service_inject_file_writes(&[svc_file], "my-app", "dev-1").unwrap();
+
+        let env_bytes = env_url.get("DATABASE_URL").unwrap().as_bytes().to_vec();
+        let file_bytes = file_url[0].1.clone();
+        assert_eq!(env_bytes, file_bytes);
+    }
+
+    #[test]
+    fn test_inject_file_writes_rejects_relative_path() {
+        let svc = postgres_cfg_with_inject(Some(InjectType::File(std::path::PathBuf::from(
+            "run/secrets/db_url",
+        ))));
+        let err = shared_service_inject_file_writes(&[svc], "my-app", "dev-1").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("must be absolute"), "got: {msg}");
+        assert!(msg.contains("postgres"), "mentions service name: {msg}");
+    }
+
+    #[test]
+    fn test_inject_file_writes_skips_services_without_inject() {
+        let svc = postgres_cfg_with_inject(None);
+        let writes = shared_service_inject_file_writes(&[svc], "my-app", "dev-1").unwrap();
+        assert!(writes.is_empty());
+    }
+
+    #[test]
+    fn test_inject_file_writes_falls_back_to_default_port_when_ports_empty() {
+        let svc = SharedServiceConfig {
+            name: "postgres".to_string(),
+            image: "postgres:16".to_string(),
+            ports: vec![],
+            volumes: vec![],
+            env: HashMap::new(),
+            auto_create_db: false,
+            inject: Some(InjectType::File(std::path::PathBuf::from(
+                "/run/secrets/db_url",
+            ))),
+        };
+        let writes = shared_service_inject_file_writes(&[svc], "my-app", "dev-1").unwrap();
+        let body = std::str::from_utf8(&writes[0].1).unwrap();
+        assert!(
+            body.contains(":5432/"),
+            "expected canonical 5432, got {body}"
         );
     }
 }

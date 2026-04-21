@@ -413,6 +413,10 @@ tests:
     script: integrated-examples/test_ssg_inject_env.sh
     timeout: 600
     note: "consumer app container receives DATABASE_URL with canonical host/port"
+  test_ssg_inject_file:
+    script: integrated-examples/test_ssg_inject_file.sh
+    timeout: 600
+    note: "consumer app container receives the canonical connection URL at inject = \"file:<path>\"; env var unset; round-trip psql lands in the per-instance DB"
   test_shared_service_auto_create_db:
     script: integrated-examples/test_shared_service_auto_create_db.sh
     timeout: 600

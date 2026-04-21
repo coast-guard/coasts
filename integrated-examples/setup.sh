@@ -2277,6 +2277,47 @@ SSG_CONSUMER_AUTODB_COMPOSE_EOF
 
 setup_coast_ssg_consumer_auto_db
 
+# --- coast-ssg-consumer-inject-file ---
+# Phase 13 fixture: consumer with `inject = "file:<path>"` instead of
+# `env:NAME`. Verifies the file body is written inside the coast DinD
+# via the secret-file exec path and bind-mounted into every non-stubbed
+# inner compose service.
+
+setup_coast_ssg_consumer_inject_file() {
+    local dir="$PROJECTS_DIR/coast-ssg-consumer-inject-file"
+    echo "Setting up coast-ssg-consumer-inject-file..."
+    mkdir -p "$dir"
+    rm -rf "$dir/.git"
+
+    cat > "$dir/Coastfile" << 'SSG_CONSUMER_INJECT_FILE_COAST_EOF'
+[coast]
+name = "coast-ssg-consumer-inject-file"
+compose = "./docker-compose.yml"
+runtime = "dind"
+
+[shared_services.postgres]
+from_group = true
+inject = "file:/run/secrets/db_url"
+SSG_CONSUMER_INJECT_FILE_COAST_EOF
+
+    cat > "$dir/docker-compose.yml" << 'SSG_CONSUMER_INJECT_FILE_COMPOSE_EOF'
+services:
+  app:
+    image: postgres:16-alpine
+    command: ["sh", "-c", "while true; do sleep 10; done"]
+SSG_CONSUMER_INJECT_FILE_COMPOSE_EOF
+
+    cd "$dir"
+    git init -b main
+    git config user.name "Coast Dev"
+    git config user.email "dev@coasts.dev"
+    git add -A
+    git commit -m "initial commit: consumer with inject file:/run/secrets/db_url"
+    echo "  coast-ssg-consumer-inject-file ready"
+}
+
+setup_coast_ssg_consumer_inject_file
+
 # --- coast-shared-service-auto-db ---
 # INLINE shared-service variant (no SSG). Proves the Phase 5 wiring
 # also lights up auto_create_db + inject for `[shared_services.*]`

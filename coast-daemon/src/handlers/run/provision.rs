@@ -58,7 +58,21 @@ pub(super) async fn provision_instance(
 
     let resources = load_coastfile_resources(&coastfile_path, req, state, progress).await?;
 
-    let secret_plan = secrets::load_secrets_for_instance(&coastfile_path, &req.name);
+    let mut secret_plan = secrets::load_secrets_for_instance(&coastfile_path, &req.name);
+    // Phase 13: merge `inject = "file:<path>"` entries from every
+    // shared service (inline + SSG-synthesized) into the same
+    // container_paths / files_for_exec vectors secrets use. The
+    // downstream compose-rewrite and exec-write paths iterate one
+    // merged list uniformly; we don't duplicate plumbing for the
+    // two origins. Collisions with an existing secret path are
+    // hard errors so users don't silently shadow their own secrets.
+    // See `coast-ssg/DESIGN.md §14`.
+    merge_shared_service_file_injects_into_secret_plan(
+        &mut secret_plan,
+        &resources.shared_services,
+        &req.project,
+        &req.name,
+    )?;
     let secret_container_paths = secret_plan.container_paths.clone();
     let secret_files_for_exec = secret_plan.files_for_exec.clone();
     let has_volume_mounts = !resources.volume_mounts.is_empty();
@@ -288,6 +302,41 @@ async fn start_services(ctx: &InstanceConfig<'_>) -> Result<()> {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// Phase 13: merge shared-service `inject = "file:<path>"` entries
+/// into an existing `SecretInjectionPlan`. Appends one
+/// `(container_path, body_bytes)` pair per file-inject to both
+/// `container_paths` (for the compose-rewrite bind-mount step) and
+/// `files_for_exec` (for the exec-write step that materializes the
+/// file inside the DinD overlay).
+///
+/// Hard-errors on a container_path collision with an existing secret
+/// so users never silently shadow their own secrets.
+fn merge_shared_service_file_injects_into_secret_plan(
+    plan: &mut secrets::SecretInjectionPlan,
+    shared_services: &[coast_core::types::SharedServiceConfig],
+    project: &str,
+    instance: &str,
+) -> Result<()> {
+    let file_writes = crate::shared_services::shared_service_inject_file_writes(
+        shared_services,
+        project,
+        instance,
+    )?;
+    for (container_path, bytes) in file_writes {
+        let path_str = container_path.to_string_lossy().to_string();
+        if plan.container_paths.iter().any(|p| p == &path_str) {
+            return Err(CoastError::coastfile(format!(
+                "shared-service file inject at '{path_str}' conflicts with a secret declared at \
+                 the same path. Pick a different path for one of them (e.g. \
+                 `inject = \"file:/run/secrets/<service>_url\"`)."
+            )));
+        }
+        plan.container_paths.push(path_str.clone());
+        plan.files_for_exec.push((path_str, bytes));
+    }
+    Ok(())
+}
 
 fn resolve_code_path(project: &str, build_id: Option<&str>) -> std::path::PathBuf {
     let project_dir = paths::project_images_dir(project);

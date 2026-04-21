@@ -272,12 +272,12 @@ Completes the Pattern A work Phase 9 left partial. Supersedes §17 #37.
 ### Phase 13 — `file:/path` inject runtime
 Supersedes §17 #20 / #21 (file-inject "deferred follow-up"). DESIGN §14
 becomes reality, not half-reality.
-- [ ] Remove `InjectType::File(_) => continue` early-return in `shared_services.rs`
-- [ ] Add `shared_service_inject_file_writes` helper
-- [ ] Compose rewrite mounts the host files into every non-stubbed service
-- [ ] Integration test `test_ssg_inject_file`
-- [ ] DESIGN §14 stripped of "deferred" language
-- [ ] §17 SETTLED #20/#21 updated to "DONE in Phase 13"
+- [x] Remove `InjectType::File(_) => continue` early-return in `shared_services.rs`
+- [x] Add `shared_service_inject_file_writes` helper
+- [x] Compose rewrite mounts the host files into every non-stubbed service
+- [x] Integration test `test_ssg_inject_file`
+- [x] DESIGN §14 stripped of "deferred" language
+- [x] §17 SETTLED #20/#21 updated to "DONE in Phase 13"
 
 ### Phase 14 — Phase 9 integration test backfill
 Phase 9 fixed 6 user-facing behaviors but only had unit tests. Add
@@ -1166,12 +1166,25 @@ Result: the inject string a coast sees at runtime is always something
 like `postgres://coast:coast@postgres:5432/app`, regardless of the
 SSG's dynamic port. That invariance is the whole point.
 
-Phase 5 scope (`inject`): `env:NAME` is fully wired end-to-end for
-both inline and SSG shared services via
-[`coast-daemon/src/shared_services.rs::shared_service_inject_env_vars`].
-`file:/path` is recognized by the parser but is a deferred follow-up;
-the runtime currently skips file-inject silently. See §17-21 and the
-issue tracker once this doc is split.
+Both `env:NAME` and `file:/path` are fully wired for inline and
+SSG-backed shared services:
+
+- **`env:NAME`** — via
+  [`coast-daemon/src/shared_services.rs::shared_service_inject_env_vars`].
+  Sets `$NAME` in every non-stubbed inner compose service.
+- **`file:/path`** — via
+  [`coast-daemon/src/shared_services.rs::shared_service_inject_file_writes`].
+  Writes the same canonical connection URL bytes inside the
+  consumer's coast DinD (through the secret-file exec path at
+  [`handlers/run/secrets.rs::write_secret_files_via_exec`](../coast-daemon/src/handlers/run/secrets.rs))
+  and bind-mounts `{path}:{path}:ro` into every non-stubbed inner
+  compose service via
+  [`handlers/run/compose_rewrite.rs::ensure_secret_mounts`](../coast-daemon/src/handlers/run/compose_rewrite.rs).
+  The host file body is byte-identical to what `env:NAME` would
+  have set, so the two variants are interchangeable for consumers.
+  Non-absolute container paths are rejected at provision time; path
+  collisions with existing secrets are hard errors. See §17-20 /
+  §17-21 for the full settlement.
 
 ## 15. File organization
 
@@ -1486,8 +1499,9 @@ tracks state across sessions.
     (reading the base name from the service's own env). Both would
     decouple the DB name from the inject URL and introduce new
     failure modes.
-20. (SETTLED — Phase 5) **Inline `auto_create_db` was not actually
-    implemented before Phase 5, despite §13 claiming otherwise.**
+20. (SETTLED — Phase 5 / Phase 13) **Inline `auto_create_db` was not
+    actually implemented before Phase 5, despite §13 claiming
+    otherwise.**
     [`coast-daemon/src/shared_services.rs::create_db_command`](../coast-daemon/src/shared_services.rs)
     has existed since before Phase 0 but had no caller. Similarly,
     [`coast-docker/src/compose.rs::generate_shared_service_override`](../coast-docker/src/compose.rs)
@@ -1501,9 +1515,18 @@ tracks state across sessions.
     [`coast-daemon/src/shared_services.rs::shared_service_inject_env_vars`](../coast-daemon/src/shared_services.rs).
     The SQL builder and connection-URL builder are reused verbatim
     so inline and SSG paths emit byte-identical DDL + env vars.
-    `file:/path` inject is deferred — parsed but runtime skips it.
-    Integration coverage: `test_ssg_auto_create_db`,
-    `test_ssg_inject_env`, `test_shared_service_auto_create_db`.
+    `file:/path` inject was deferred in Phase 5 and is **fully
+    implemented in Phase 13** via
+    [`shared_service_inject_file_writes`](../coast-daemon/src/shared_services.rs):
+    the URL bytes go through
+    [`handlers/run/secrets.rs::write_secret_files_via_exec`](../coast-daemon/src/handlers/run/secrets.rs)
+    into the consumer DinD at the declared path and then get
+    bind-mounted into every non-stubbed inner compose service via
+    the existing
+    [`ensure_secret_mounts`](../coast-daemon/src/handlers/run/compose_rewrite.rs)
+    machinery. Integration coverage:
+    `test_ssg_auto_create_db`, `test_ssg_inject_env`,
+    `test_ssg_inject_file`, `test_shared_service_auto_create_db`.
 19. (SETTLED — Phase 4.5) **`shared_service_tunnel_pids` is an
     in-memory-only map, not a SQLite table.** Phase 4.5 needs
     `coast ssg stop/rm --force` to tear down reverse SSH tunnels for
