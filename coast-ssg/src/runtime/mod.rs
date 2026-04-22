@@ -37,5 +37,10 @@ pub mod port_checkout;
 // bollard and delegates here to rewrite the SSG Coastfile.
 pub mod host_volume_import;
 
+// ssg-phase-16: consumer pinning (DESIGN.md §17-9 SETTLED).
+// `coast ssg checkout-build` writes the pin; drift check + auto-start
+// read it and prefer the pinned build over `latest`.
+pub mod pinning;
+
 pub use port_checkout::{plan_checkouts, SsgCheckoutPlan, SsgCheckoutTarget};
 pub use ports::{allocate_service_ports, SsgServicePortPlan};

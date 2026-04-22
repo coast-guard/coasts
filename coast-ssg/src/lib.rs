@@ -42,7 +42,9 @@ pub mod runtime;
 
 // ssg-phase-2: StateDb extension trait for SSG rows (see DESIGN.md §8).
 pub mod state;
-pub use state::{SsgPortCheckoutRecord, SsgRecord, SsgServiceRecord, SsgStateExt};
+pub use state::{
+    SsgConsumerPinRecord, SsgPortCheckoutRecord, SsgRecord, SsgServiceRecord, SsgStateExt,
+};
 
 // TODO(ssg-phase-2): Filesystem path helpers (`~/.coast/ssg/...`).
 pub mod paths;

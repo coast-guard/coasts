@@ -83,6 +83,26 @@ pub enum SsgRequest {
     /// image's expected value (e.g. postgres expects 999:999).
     /// Does not modify anything. See `coast-ssg/DESIGN.md §10.5`.
     Doctor,
+    /// Pin the consumer coast in `project` to a specific SSG
+    /// `build_id`. Drift checks and auto-start honor the pin. See
+    /// `DESIGN.md §17-9` (SETTLED — Phase 16).
+    CheckoutBuild {
+        /// Consumer project name (from `[coast].name`).
+        project: String,
+        /// SSG build id to pin to. Must resolve to an on-disk
+        /// build dir with a `manifest.json`; validated at pin time.
+        build_id: String,
+    },
+    /// Clear the SSG build pin for `project`. Idempotent.
+    UncheckoutBuild {
+        /// Consumer project name (from `[coast].name`).
+        project: String,
+    },
+    /// Show the current SSG build pin for `project` (if any).
+    ShowPin {
+        /// Consumer project name (from `[coast].name`).
+        project: String,
+    },
     /// Zero-copy migration helper: resolve a host Docker named
     /// volume's mountpoint and emit (or apply) the equivalent SSG
     /// Coastfile bind-mount entry. See `DESIGN.md §10.7`.

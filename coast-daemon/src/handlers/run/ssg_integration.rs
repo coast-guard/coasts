@@ -63,9 +63,34 @@ pub async fn ensure_ready_for_consumer(
         .map(|r| r.name.clone())
         .collect();
 
+    // Phase 16: resolve the effective build for this consumer. If a
+    // pin exists, validate its build dir exists on disk. If a pin is
+    // set but the build is gone, the pinned-build-missing hard-error
+    // surfaces here so the user notices BEFORE we try to start the
+    // SSG under it.
+    let pin = {
+        let db = state.db.lock().await;
+        db.get_ssg_consumer_pin(project)?
+    };
+    let pinned_build_id: Option<String> = match pin {
+        Some(p) => {
+            let build_dir = coast_ssg::paths::ssg_build_dir(&p.build_id)?;
+            if !build_dir.is_dir() {
+                return Err(coast_ssg::runtime::pinning::pinned_build_missing_error(
+                    &p.build_id,
+                ));
+            }
+            Some(p.build_id)
+        }
+        None => None,
+    };
+
     // Precondition: an SSG build must exist. DESIGN.md §11.1 specifies
     // the verbatim error the user sees when it doesn't.
-    if coast_ssg::paths::resolve_latest_build_id().is_none() {
+    // With a valid pin, that check is already satisfied (the pin
+    // points at a dir we just verified). Without a pin, require
+    // `latest` to resolve.
+    if pinned_build_id.is_none() && coast_ssg::paths::resolve_latest_build_id().is_none() {
         return Err(missing_ssg_build_error(project, &referenced_service_names));
     }
 
@@ -109,7 +134,9 @@ pub async fn ensure_ready_for_consumer(
     });
 
     let outcome = match record {
-        None => DispatchOutcome::Created(run_and_apply(state, &docker, progress).await?),
+        None => DispatchOutcome::Created(
+            run_and_apply(state, &docker, pinned_build_id.as_deref(), progress).await?,
+        ),
         Some(r) if r.status == "running" => DispatchOutcome::AlreadyRunning(
             r.build_id.clone().unwrap_or_else(|| "unknown".to_string()),
         ),
@@ -165,6 +192,7 @@ impl DispatchOutcome {
 async fn run_and_apply(
     state: &AppState,
     docker: &bollard::Docker,
+    pinned_build_id: Option<&str>,
     progress: &Sender<BuildProgressEvent>,
 ) -> Result<String> {
     let (inner_tx, mut inner_rx) = tokio::sync::mpsc::channel::<BuildProgressEvent>(64);
@@ -179,7 +207,9 @@ async fn run_and_apply(
     });
 
     let ops = coast_ssg::docker_ops::BollardSsgDockerOps::new(docker.clone());
-    let outcome = coast_ssg::daemon_integration::run_ssg(&ops, inner_tx).await?;
+    let outcome =
+        coast_ssg::daemon_integration::run_ssg_with_build_id(&ops, pinned_build_id, inner_tx)
+            .await?;
 
     // Ensure the forwarder drains after the inner sender drops.
     let _ = forwarder.await;
@@ -375,11 +405,33 @@ const DRIFT_DESIGN_SENTENCE: &str = "SSG has changed since this coast was built.
 /// verbatim sentence when any referenced service's image changed
 /// or is missing.
 pub async fn validate_ssg_drift(
+    project: &str,
     coastfile: &Coastfile,
     manifest_path: &std::path::Path,
+    state: &AppState,
     progress: &Sender<BuildProgressEvent>,
 ) -> Result<()> {
-    validate_ssg_drift_with_loader(coastfile, manifest_path, progress, read_active_ssg_manifest)
+    // Phase 16: the "active" manifest is either the pinned build or
+    // `latest`, depending on whether the consumer's project has a pin
+    // in `ssg_consumer_pins`. Read the pin once here and hand the
+    // resolution closure to the inner helper.
+    let pin = {
+        let db = state.db.lock().await;
+        db.get_ssg_consumer_pin(project)?
+    };
+    let loader_pin = pin.map(|p| coast_ssg::runtime::pinning::PinRecord {
+        project: p.project,
+        build_id: p.build_id,
+    });
+    validate_ssg_drift_with_loader(coastfile, manifest_path, progress, move || {
+        // Returns `Ok(Some(manifest))` on hit, `Ok(None)` when no
+        // pin + no latest (fall through to existing
+        // `drift_missing_ssg_error`), or propagates a hard error
+        // when a pin is set but its build dir is missing
+        // (pin-pruned, per §17-41 SETTLED).
+        coast_ssg::runtime::pinning::resolve_effective_manifest(loader_pin.as_ref())
+            .map(|opt| opt.map(|(_, manifest)| manifest))
+    })
 }
 
 /// Inner drift validator with the active-SSG-manifest loader injected.
@@ -387,6 +439,11 @@ pub async fn validate_ssg_drift(
 /// unit tests pass a deterministic closure instead of mutating
 /// `COAST_HOME`, which races with other test modules that touch the
 /// same env var.
+///
+/// The loader now returns `Result<Option<SsgManifest>>` (Phase 16):
+/// - `Ok(Some(manifest))` — an effective SSG build is available.
+/// - `Ok(None)` — no build exists (pre-existing "missing SSG" path).
+/// - `Err(e)` — pinned build has been pruned; surface as-is.
 fn validate_ssg_drift_with_loader<F>(
     coastfile: &Coastfile,
     manifest_path: &std::path::Path,
@@ -394,7 +451,7 @@ fn validate_ssg_drift_with_loader<F>(
     active_loader: F,
 ) -> Result<()>
 where
-    F: FnOnce() -> Option<coast_ssg::build::artifact::SsgManifest>,
+    F: FnOnce() -> Result<Option<coast_ssg::build::artifact::SsgManifest>>,
 {
     if coastfile.shared_service_group_refs.is_empty() {
         return Ok(());
@@ -407,9 +464,11 @@ where
         return Ok(());
     };
 
-    // Recorded manifest says there was an SSG at build time; if none
-    // exists now, that's a hard error — the user must rebuild.
-    let Some(active) = active_loader() else {
+    // Recorded manifest says there was an SSG at build time; resolve
+    // the effective (pin-aware) manifest. Pinned-build-pruned
+    // propagates as a hard error; missing-entirely uses the
+    // pre-existing §6.1 wording.
+    let Some(active) = active_loader()? else {
         return Err(drift_missing_ssg_error(&recorded));
     };
 
@@ -463,15 +522,6 @@ fn read_recorded_ssg_ref(manifest_path: &std::path::Path) -> Option<coast_ssg::R
     let manifest: serde_json::Value = serde_json::from_str(&content).ok()?;
     let ssg = manifest.get("ssg")?;
     serde_json::from_value(ssg.clone()).ok()
-}
-
-/// Read the currently-active SSG manifest from `~/.coast/ssg/builds/latest/`.
-/// Returns `None` when no SSG build exists.
-fn read_active_ssg_manifest() -> Option<coast_ssg::build::artifact::SsgManifest> {
-    let build_id = coast_ssg::paths::resolve_latest_build_id()?;
-    let build_dir = coast_ssg::paths::ssg_build_dir(&build_id).ok()?;
-    let contents = std::fs::read_to_string(build_dir.join("manifest.json")).ok()?;
-    serde_json::from_str(&contents).ok()
 }
 
 fn drift_missing_ssg_error(recorded: &coast_ssg::RecordedSsgRef) -> CoastError {
@@ -885,10 +935,10 @@ name = "consumer"
         let (tx, _rx) = tokio::sync::mpsc::channel::<BuildProgressEvent>(8);
 
         validate_ssg_drift_with_loader(&coastfile, &manifest_path, &tx, || {
-            Some(fake_active_manifest(
+            Ok(Some(fake_active_manifest(
                 "build-A",
                 &[("postgres", "postgres:16-alpine")],
-            ))
+            )))
         })
         .expect("matching build ids should succeed");
     }
@@ -907,10 +957,10 @@ name = "consumer"
         let (tx, _rx) = tokio::sync::mpsc::channel::<BuildProgressEvent>(8);
 
         let err = validate_ssg_drift_with_loader(&coastfile, &manifest_path, &tx, || {
-            Some(fake_active_manifest(
+            Ok(Some(fake_active_manifest(
                 "build-B",
                 &[("postgres", "postgres:17-alpine")],
-            ))
+            )))
         })
         .expect_err("image change must hard-error");
         let msg = err.to_string();
@@ -937,7 +987,7 @@ name = "consumer"
         let (tx, _rx) = tokio::sync::mpsc::channel::<BuildProgressEvent>(8);
 
         // Active loader returns None -> SSG removed between build and run.
-        let err = validate_ssg_drift_with_loader(&coastfile, &manifest_path, &tx, || None)
+        let err = validate_ssg_drift_with_loader(&coastfile, &manifest_path, &tx, || Ok(None))
             .expect_err("missing active SSG must hard-error");
         let msg = err.to_string();
         assert!(msg.contains("SSG has changed since this coast was built"));
@@ -945,5 +995,59 @@ name = "consumer"
             msg.contains("build-A"),
             "error should mention recorded build id: {msg}"
         );
+    }
+
+    // --- Phase 16: pin-aware drift loader ---
+
+    #[test]
+    fn validate_drift_loader_error_propagates_pin_pruned() {
+        // The loader closure returns `Err(..)` when a pin is set but
+        // the pinned build dir is gone. Drift validator must surface
+        // that error verbatim so users see the Phase 16 pin-pruned
+        // message.
+        let coastfile = coastfile_with_group_refs(&["postgres"]);
+        let artifact_tmp = tempfile::tempdir().unwrap();
+        write_manifest_with_ssg_block(
+            artifact_tmp.path(),
+            "build-A",
+            &[("postgres", "postgres:16-alpine")],
+        );
+        let manifest_path = artifact_tmp.path().join("manifest.json");
+        let (tx, _rx) = tokio::sync::mpsc::channel::<BuildProgressEvent>(8);
+
+        let err = validate_ssg_drift_with_loader(&coastfile, &manifest_path, &tx, || {
+            Err(coast_ssg::runtime::pinning::pinned_build_missing_error(
+                "b_pinned",
+            ))
+        })
+        .expect_err("loader error must surface unchanged");
+        let msg = err.to_string();
+        assert!(msg.contains("no longer exists"), "got: {msg}");
+        assert!(msg.contains("b_pinned"));
+    }
+
+    #[test]
+    fn validate_drift_loader_match_against_pinned_manifest_succeeds() {
+        // Consumer recorded build-A; the effective manifest closure
+        // returns build-A (same build_id, same image refs). Drift
+        // check should pass regardless of whether build-A came from
+        // `latest` or a pin — the loader abstracts that away.
+        let coastfile = coastfile_with_group_refs(&["postgres"]);
+        let artifact_tmp = tempfile::tempdir().unwrap();
+        write_manifest_with_ssg_block(
+            artifact_tmp.path(),
+            "build-A",
+            &[("postgres", "postgres:16-alpine")],
+        );
+        let manifest_path = artifact_tmp.path().join("manifest.json");
+        let (tx, _rx) = tokio::sync::mpsc::channel::<BuildProgressEvent>(8);
+
+        validate_ssg_drift_with_loader(&coastfile, &manifest_path, &tx, || {
+            Ok(Some(fake_active_manifest(
+                "build-A",
+                &[("postgres", "postgres:16-alpine")],
+            )))
+        })
+        .expect("pinned-manifest match should succeed");
     }
 }

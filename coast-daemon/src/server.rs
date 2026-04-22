@@ -1044,6 +1044,18 @@ async fn handle_ssg_build_streaming(
         config,
     };
 
+    // Phase 16: read consumer pin ids before the async build so
+    // auto_prune can preserve them. Scoped block so the state guard
+    // doesn't cross any awaits below.
+    let pinned_build_ids: std::collections::HashSet<String> = {
+        use coast_ssg::state::SsgStateExt;
+        let db = state.db.lock().await;
+        db.list_ssg_consumer_pins()?
+            .into_iter()
+            .map(|p| p.build_id)
+            .collect()
+    };
+
     let handler: std::pin::Pin<
         Box<
             dyn std::future::Future<
@@ -1052,7 +1064,7 @@ async fn handle_ssg_build_streaming(
         >,
     > = Box::pin(async move {
         let ops = coast_ssg::docker_ops::BollardSsgDockerOps::new(docker);
-        coast_ssg::daemon_integration::build_ssg(inputs, &ops, tx).await
+        coast_ssg::daemon_integration::build_ssg(inputs, &ops, pinned_build_ids, tx).await
     });
 
     let build_result =

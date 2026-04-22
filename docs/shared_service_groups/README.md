@@ -88,6 +88,7 @@ Then `coast build && coast run dev-1` as usual. The SSG auto-starts if it's not 
 | [Volumes](VOLUMES.md) | Host bind mounts, symmetric-path mechanics, inner named volumes, permission caveats, the `coast ssg doctor` command, and the host-volume migration recipe |
 | [Consuming](CONSUMING.md) | `from_group = true`, forbidden fields, drift detection between `coast build` and `coast run`, `auto_create_db`, `inject`, and remote coasts |
 | [Checkout](CHECKOUT.md) | `coast ssg checkout` / `uncheckout` for host-side access to canonical ports, displacement semantics, and stop/start behavior |
+| [Pinning](PINNING.md) | `coast ssg checkout-build` / `uncheckout-build` / `show-pin` -- pin a consumer project to a specific SSG build so rebuilds don't drift the consumer |
 | [CLI](CLI.md) | One-line summary of every `coast ssg` subcommand |
 
 ## See Also

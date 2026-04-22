@@ -509,6 +509,7 @@
   "docs.nav.ssgVolumes": "볼륨",
   "docs.nav.ssgConsuming": "소비자 Coasts",
   "docs.nav.ssgCheckout": "체크아웃",
+  "docs.nav.ssgPinning": "고정",
   "docs.nav.ssgCli": "CLI",
   "docs.nav.secretsAndExtractors": "Secrets & Extractors",
   "docs.nav.builds": "Builds",

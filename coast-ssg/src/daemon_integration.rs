@@ -108,9 +108,16 @@ fn find_coastfile_in(dir: &Path) -> Option<PathBuf> {
 ///
 /// Streams progress events through `progress` while running; returns
 /// a final [`SsgResponse`] with the per-service summary.
+///
+/// `pinned_build_ids` is the set of `ssg_consumer_pins.build_id`
+/// values loaded by the daemon before this call; any build matching
+/// one of these ids survives the auto-prune pass (Phase 16). Pass an
+/// empty set when pin-aware pruning is not desired (e.g. first build
+/// ever, tests).
 pub async fn build_ssg(
     inputs: SsgBuildInputs,
     ops: &dyn SsgDockerOps,
+    pinned_build_ids: std::collections::HashSet<String>,
     progress: Sender<BuildProgressEvent>,
 ) -> Result<SsgResponse> {
     // --- Step 1: parse ---
@@ -206,7 +213,7 @@ pub async fn build_ssg(
             total,
         ))
         .await;
-    let pruned = build_artifact::auto_prune(5)?;
+    let pruned = build_artifact::auto_prune_preserving(5, &pinned_build_ids)?;
     let _ = progress
         .send(BuildProgressEvent::done(
             "Prune old builds",
@@ -330,8 +337,8 @@ pub fn load_latest_ssg_manifest_with_id() -> Result<Option<(String, build_artifa
 // apply writes afterwards.
 
 pub use crate::runtime::lifecycle::{
-    exec_ssg, logs_ssg, ports_ssg, restart_ssg, rm_ssg, run_ssg, start_ssg, stop_ssg,
-    SsgRunOutcome, SsgStartOutcome, SsgStopOutcome,
+    exec_ssg, logs_ssg, ports_ssg, restart_ssg, rm_ssg, run_ssg, run_ssg_with_build_id, start_ssg,
+    stop_ssg, SsgRunOutcome, SsgStartOutcome, SsgStopOutcome,
 };
 
 // --- Phase 15: host-volume import orchestrator ------------------------------

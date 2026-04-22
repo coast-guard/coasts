@@ -509,6 +509,7 @@
   "docs.nav.ssgVolumes": "ボリューム",
   "docs.nav.ssgConsuming": "コンシューマーCoast",
   "docs.nav.ssgCheckout": "チェックアウト",
+  "docs.nav.ssgPinning": "ピン留め",
   "docs.nav.ssgCli": "CLI",
   "docs.nav.secretsAndExtractors": "Secrets & Extractors",
   "docs.nav.builds": "Builds",

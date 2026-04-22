@@ -12,7 +12,9 @@ use rusqlite::{params, OptionalExtension};
 use tracing::{debug, instrument};
 
 use coast_core::error::{CoastError, Result};
-use coast_ssg::state::{SsgPortCheckoutRecord, SsgRecord, SsgServiceRecord, SsgStateExt};
+use coast_ssg::state::{
+    SsgConsumerPinRecord, SsgPortCheckoutRecord, SsgRecord, SsgServiceRecord, SsgStateExt,
+};
 
 use super::StateDb;
 
@@ -272,6 +274,97 @@ impl SsgStateExt for StateDb {
             .execute("DELETE FROM ssg_port_checkouts", [])
             .map_err(|e| state_err(format!("failed to clear ssg_port_checkouts: {e}"), e))?;
         Ok(())
+    }
+
+    // --- ssg_consumer_pins (Phase 16) ---
+
+    #[instrument(level = "debug", skip(self), fields(project = %rec.project, build_id = %rec.build_id))]
+    fn upsert_ssg_consumer_pin(&self, rec: &SsgConsumerPinRecord) -> Result<()> {
+        self.conn
+            .execute(
+                "INSERT OR REPLACE INTO ssg_consumer_pins
+                   (project, build_id, created_at)
+                 VALUES (?1, ?2, ?3)",
+                params![rec.project, rec.build_id, rec.created_at],
+            )
+            .map_err(|e| {
+                state_err(
+                    format!(
+                        "failed to upsert ssg_consumer_pin for '{}': {e}",
+                        rec.project
+                    ),
+                    e,
+                )
+            })?;
+        debug!("upserted ssg_consumer_pin");
+        Ok(())
+    }
+
+    #[instrument(level = "debug", skip(self), fields(project = %project))]
+    fn get_ssg_consumer_pin(&self, project: &str) -> Result<Option<SsgConsumerPinRecord>> {
+        self.conn
+            .query_row(
+                "SELECT project, build_id, created_at FROM ssg_consumer_pins WHERE project = ?1",
+                params![project],
+                |row| {
+                    Ok(SsgConsumerPinRecord {
+                        project: row.get(0)?,
+                        build_id: row.get(1)?,
+                        created_at: row.get(2)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(|e| {
+                state_err(
+                    format!("failed to read ssg_consumer_pin for '{project}': {e}"),
+                    e,
+                )
+            })
+    }
+
+    #[instrument(level = "debug", skip(self), fields(project = %project))]
+    fn delete_ssg_consumer_pin(&self, project: &str) -> Result<bool> {
+        let affected = self
+            .conn
+            .execute(
+                "DELETE FROM ssg_consumer_pins WHERE project = ?1",
+                params![project],
+            )
+            .map_err(|e| {
+                state_err(
+                    format!("failed to delete ssg_consumer_pin for '{project}': {e}"),
+                    e,
+                )
+            })?;
+        Ok(affected > 0)
+    }
+
+    fn list_ssg_consumer_pins(&self) -> Result<Vec<SsgConsumerPinRecord>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT project, build_id, created_at
+                 FROM ssg_consumer_pins
+                 ORDER BY project ASC",
+            )
+            .map_err(|e| state_err(format!("failed to prepare list_ssg_consumer_pins: {e}"), e))?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(SsgConsumerPinRecord {
+                    project: row.get(0)?,
+                    build_id: row.get(1)?,
+                    created_at: row.get(2)?,
+                })
+            })
+            .map_err(|e| state_err(format!("failed to list ssg_consumer_pins: {e}"), e))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(
+                row.map_err(|e| state_err(format!("row parse in list_ssg_consumer_pins: {e}"), e))?,
+            );
+        }
+        Ok(out)
     }
 }
 
@@ -638,5 +731,111 @@ mod tests {
             .next()
             .unwrap();
         assert_eq!(rec.created_at, fixed_ts);
+    }
+
+    // --- ssg_consumer_pins (Phase 16) ---
+
+    fn pin(project: &str, build_id: &str) -> SsgConsumerPinRecord {
+        SsgConsumerPinRecord {
+            project: project.to_string(),
+            build_id: build_id.to_string(),
+            created_at: "2026-04-22T00:00:00Z".to_string(),
+        }
+    }
+
+    #[test]
+    fn get_ssg_consumer_pin_returns_none_before_insert() {
+        let db = db();
+        assert!(db.get_ssg_consumer_pin("proj").unwrap().is_none());
+    }
+
+    #[test]
+    fn upsert_and_get_ssg_consumer_pin_round_trips() {
+        let db = db();
+        db.upsert_ssg_consumer_pin(&pin("proj", "b1_20260422"))
+            .unwrap();
+        let r = db.get_ssg_consumer_pin("proj").unwrap().unwrap();
+        assert_eq!(r.project, "proj");
+        assert_eq!(r.build_id, "b1_20260422");
+    }
+
+    #[test]
+    fn upsert_ssg_consumer_pin_replaces_by_project() {
+        let db = db();
+        db.upsert_ssg_consumer_pin(&pin("proj", "b1")).unwrap();
+        db.upsert_ssg_consumer_pin(&pin("proj", "b2")).unwrap();
+        let r = db.get_ssg_consumer_pin("proj").unwrap().unwrap();
+        assert_eq!(r.build_id, "b2", "same project should replace the pin");
+        // Only one row — primary key on project.
+        assert_eq!(db.list_ssg_consumer_pins().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn delete_ssg_consumer_pin_reports_whether_a_row_existed() {
+        let db = db();
+        // Nothing to delete yet.
+        assert!(!db.delete_ssg_consumer_pin("proj").unwrap());
+        db.upsert_ssg_consumer_pin(&pin("proj", "b1")).unwrap();
+        assert!(db.delete_ssg_consumer_pin("proj").unwrap());
+        // Second delete is a no-op.
+        assert!(!db.delete_ssg_consumer_pin("proj").unwrap());
+    }
+
+    #[test]
+    fn delete_ssg_consumer_pin_only_affects_named_project() {
+        let db = db();
+        db.upsert_ssg_consumer_pin(&pin("proj-a", "b1")).unwrap();
+        db.upsert_ssg_consumer_pin(&pin("proj-b", "b2")).unwrap();
+        db.delete_ssg_consumer_pin("proj-a").unwrap();
+        assert!(db.get_ssg_consumer_pin("proj-a").unwrap().is_none());
+        assert_eq!(
+            db.get_ssg_consumer_pin("proj-b").unwrap().unwrap().build_id,
+            "b2"
+        );
+    }
+
+    #[test]
+    fn list_ssg_consumer_pins_orders_alphabetically_by_project() {
+        let db = db();
+        db.upsert_ssg_consumer_pin(&pin("zeta", "bz")).unwrap();
+        db.upsert_ssg_consumer_pin(&pin("alpha", "ba")).unwrap();
+        db.upsert_ssg_consumer_pin(&pin("mike", "bm")).unwrap();
+        let names: Vec<_> = db
+            .list_ssg_consumer_pins()
+            .unwrap()
+            .into_iter()
+            .map(|p| p.project)
+            .collect();
+        assert_eq!(names, vec!["alpha", "mike", "zeta"]);
+    }
+
+    #[test]
+    fn list_ssg_consumer_pins_empty_when_no_rows() {
+        let db = db();
+        assert!(db.list_ssg_consumer_pins().unwrap().is_empty());
+    }
+
+    #[test]
+    fn ssg_consumer_pin_created_at_is_preserved_verbatim() {
+        let db = db();
+        let rec = SsgConsumerPinRecord {
+            project: "proj".to_string(),
+            build_id: "b1".to_string(),
+            created_at: "2026-01-02T03:04:05+00:00".to_string(),
+        };
+        db.upsert_ssg_consumer_pin(&rec).unwrap();
+        let out = db.get_ssg_consumer_pin("proj").unwrap().unwrap();
+        assert_eq!(out.created_at, "2026-01-02T03:04:05+00:00");
+    }
+
+    #[test]
+    fn ssg_consumer_pin_build_id_round_trips_nonalphanumeric_chars() {
+        // build_ids are `{hash}_{timestamp}` with underscores; make
+        // sure we don't mangle them.
+        let db = db();
+        db.upsert_ssg_consumer_pin(&pin("proj", "df5bddb5b7a39b11_20260422051132"))
+            .unwrap();
+        let out = db.get_ssg_consumer_pin("proj").unwrap().unwrap();
+        assert_eq!(out.build_id, "df5bddb5b7a39b11_20260422051132");
     }
 }

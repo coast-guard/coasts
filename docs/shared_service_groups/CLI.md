@@ -21,6 +21,9 @@ All commands accept a global `--silent` / `-s` flag that suppresses progress out
 | `coast ssg checkout [--service <name> \| --all]` | Bind canonical host ports via socat. Displaces Coast-instance holders with a warning; errors on unknown processes. See [Checkout](CHECKOUT.md). |
 | `coast ssg uncheckout [--service <name> \| --all]` | Tear down canonical-port socats. Does not auto-restore displaced Coasts. See [Checkout](CHECKOUT.md). |
 | `coast ssg doctor` | Read-only permission check on host bind mounts of known-image services. Emits ok/warn/info findings with `chown` remediation. See [Volumes -> coast ssg doctor](VOLUMES.md#coast-ssg-doctor). |
+| `coast ssg checkout-build <BUILD_ID> [--project <name>] [--working-dir <dir>] [-f <file>]` | Pin this project's consumer coast to a specific SSG build. Drift and auto-start use the pin instead of `latest`. See [Pinning](PINNING.md). |
+| `coast ssg uncheckout-build [--project <name>] [--working-dir <dir>] [-f <file>]` | Clear the pin for this project. Idempotent. See [Pinning](PINNING.md). |
+| `coast ssg show-pin [--project <name>] [--working-dir <dir>] [-f <file>]` | Show the current SSG build pin for this project. See [Pinning](PINNING.md). |
 
 ## Exit Codes
 
@@ -34,3 +37,4 @@ All commands accept a global `--silent` / `-s` flag that suppresses progress out
 - [Volumes](VOLUMES.md)
 - [Consuming](CONSUMING.md)
 - [Checkout](CHECKOUT.md)
+- [Pinning](PINNING.md)

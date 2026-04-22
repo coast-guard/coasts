@@ -1173,7 +1173,8 @@ async fn handle_remote_run(
     // See `coast-ssg/DESIGN.md §6.1` and `§17-24`.
     let remote_artifact_dir = paths::project_images_dir(&req.project).join(&remote_build_id);
     let remote_manifest_path = remote_artifact_dir.join("manifest.json");
-    ssg_integration::validate_ssg_drift(&cf, &remote_manifest_path, progress).await?;
+    ssg_integration::validate_ssg_drift(&req.project, &cf, &remote_manifest_path, state, progress)
+        .await?;
 
     // --- Step 11: Port forwarding ---
     emit(

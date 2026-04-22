@@ -184,6 +184,12 @@ impl StateDb {
                     socat_pid       INTEGER,
                     created_at      TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS ssg_consumer_pins (
+                    project     TEXT PRIMARY KEY,
+                    build_id    TEXT NOT NULL,
+                    created_at  TEXT NOT NULL
+                );
                 ",
             )
             .map_err(|e| CoastError::State {

@@ -99,6 +99,7 @@ const DOC_TITLE_KEYS: Record<string, string> = {
   'shared_service_groups/VOLUMES.md': 'docs.nav.ssgVolumes',
   'shared_service_groups/CONSUMING.md': 'docs.nav.ssgConsuming',
   'shared_service_groups/CHECKOUT.md': 'docs.nav.ssgCheckout',
+  'shared_service_groups/PINNING.md': 'docs.nav.ssgPinning',
   'shared_service_groups/CLI.md': 'docs.nav.ssgCli',
 };
 

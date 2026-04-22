@@ -47,6 +47,20 @@ pub struct SsgPortCheckoutRecord {
     pub created_at: String,
 }
 
+/// Consumer-local pin to a specific SSG build (Phase 16, §17-9
+/// SETTLED). Drift check and auto-start evaluate against the
+/// pinned build instead of the current `latest` symlink.
+///
+/// Primary key is the consumer project name. Multiple worktrees of
+/// the same project share one pin.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SsgConsumerPinRecord {
+    pub project: String,
+    pub build_id: String,
+    /// RFC 3339 timestamp.
+    pub created_at: String,
+}
+
 /// Typed CRUD for the SSG state tables.
 ///
 /// Implemented on `coast_daemon::state::StateDb` in
@@ -117,4 +131,21 @@ pub trait SsgStateExt {
     /// `coast ssg rm` (destructive — user explicitly removed the
     /// SSG, so stale checkouts must go).
     fn clear_ssg_port_checkouts(&self) -> Result<()>;
+
+    // --- ssg_consumer_pins (Phase 16) ---
+
+    /// Insert (or replace by `project`) a pin row.
+    fn upsert_ssg_consumer_pin(&self, rec: &SsgConsumerPinRecord) -> Result<()>;
+
+    /// Read the pin row for `project`, or `None` if not pinned.
+    fn get_ssg_consumer_pin(&self, project: &str) -> Result<Option<SsgConsumerPinRecord>>;
+
+    /// Delete the pin row for `project`, if any. Returns `true` when
+    /// a row existed, `false` when the call was a no-op. Idempotent.
+    fn delete_ssg_consumer_pin(&self, project: &str) -> Result<bool>;
+
+    /// List every pin row, ordered alphabetically by `project`. Used
+    /// by `auto_prune_preserving` to enumerate build_ids that must
+    /// survive a prune pass.
+    fn list_ssg_consumer_pins(&self) -> Result<Vec<SsgConsumerPinRecord>>;
 }

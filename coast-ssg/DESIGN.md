@@ -304,14 +304,15 @@ of existing host Docker volumes into SSG bind mounts.
 ### Phase 16 — `coast ssg checkout-build <id>` consumer pinning
 Supersedes DESIGN §17-9 "Not in v1". Lets a consumer pin to an older
 SSG build so drift doesn't break them.
-- [ ] New state table `ssg_consumer_pins`
-- [ ] `SsgRequest::CheckoutBuild` / `UncheckoutBuild` / `ShowPin`
-- [ ] `coast ssg checkout-build` / `uncheckout-build` / `show-pin` CLI verbs
-- [ ] `validate_ssg_drift` respects the pin
-- [ ] `ensure_ready_for_consumer` auto-starts the pinned build
-- [ ] Docs new page `docs/shared_service_groups/PINNING.md`
-- [ ] Integration tests: pin-protects, uncheckout-restores-latest, missing-build-errors
-- [ ] §17 SETTLED #40 + §17-9 promoted
+- [x] New state table `ssg_consumer_pins`
+- [x] `SsgRequest::CheckoutBuild` / `UncheckoutBuild` / `ShowPin`
+- [x] `coast ssg checkout-build` / `uncheckout-build` / `show-pin` CLI verbs
+- [x] `validate_ssg_drift` respects the pin
+- [x] `ensure_ready_for_consumer` auto-starts the pinned build
+- [x] `auto_prune` is pin-aware (pinned builds are never pruned)
+- [x] Docs new page `docs/shared_service_groups/PINNING.md`
+- [x] Integration tests: pin-protects, uncheckout-restores-latest, missing-build-errors
+- [x] §17 SETTLED #41 + §17-9 promoted
 
 ### Phase 17 — `extends` / `includes` on SSG Coastfile
 Supersedes §17-7. Mirrors the regular-Coastfile inheritance system.
@@ -322,7 +323,7 @@ Supersedes §17-7. Mirrors the regular-Coastfile inheritance system.
 - [ ] ~15 unit tests
 - [ ] Integration test `test_ssg_coastfile_inheritance`
 - [ ] `docs/coastfiles/SHARED_SERVICE_GROUPS.md` + DESIGN §5 updated
-- [ ] §17 SETTLED #41 + §17-7 promoted
+- [ ] §17 SETTLED #42 + §17-7 promoted
 
 ---
 
@@ -1339,9 +1340,17 @@ tracks state across sessions.
    dangerous. See SETTLED #23 for the full rules and the
    [`unknown_holder_error`](../coast-daemon/src/handlers/ssg/checkout.rs)
    call site.
-9. **Pinning a consumer coast to an older SSG build** — `coast ssg
-   checkout-build <id>` mentioned in §6.1 as a future convenience. Not
-   in v1; v1 requires `coast build` to pick up SSG changes.
+9. (SETTLED — Phase 16) **Pinning a consumer coast to an older SSG
+   build** — `coast ssg checkout-build <BUILD_ID>` now exists.
+   Consumer-local pins keyed by project name override the
+   `~/.coast/ssg/latest` symlink for drift evaluation and auto-start;
+   `auto_prune` preserves every pinned build across rebuilds; a
+   pruned pin hard-errors with remediation guidance. See
+   [`coast-ssg/src/runtime/pinning.rs`](src/runtime/pinning.rs),
+   [`coast-daemon/src/handlers/ssg/pin.rs`](../coast-daemon/src/handlers/ssg/pin.rs),
+   [`coast-ssg/src/build/artifact.rs::auto_prune_preserving`](src/build/artifact.rs),
+   `docs/shared_service_groups/PINNING.md`, and SETTLED #41 for the
+   six design decisions.
 10. (SETTLED — Phase 2) **Home for shared Docker helpers.** Original
     plan wanted to lift `pull_and_cache_image` from `coast-daemon` into
     `coast-core` so `coast-ssg` could reuse it. This was changed to
@@ -1821,6 +1830,45 @@ tracks state across sessions.
       dispatch** (`handlers/ssg/mod.rs::handle`). The verb is
       analytics-tagged as `ssg/import-host-volume`.
     Regression test: `integrated-examples/test_ssg_import_host_volume.sh`.
+
+41. (SETTLED — Phase 16) **Consumer pinning shape
+    (`coast ssg checkout-build`).** Phase 16 wires
+    `ssg_consumer_pins` and the
+    [`coast_ssg::runtime::pinning`](./src/runtime/pinning.rs)
+    orchestrator, with drift + auto-start + auto-prune all honoring
+    the pin. Design decisions locked in:
+    - **Pins are keyed by project name** (from `RunRequest.project`),
+      `PRIMARY KEY (project)`. Multiple worktrees of the same project
+      share one pin. Per-worktree scoping was rejected as
+      over-engineering for v1; the concurrent-run case is rare enough
+      that the simpler schema wins.
+    - **`checkout-build` validates the build dir exists on disk at
+      pin time** via
+      [`validate_pinnable_build`](./src/runtime/pinning.rs).
+      Typos and pruned ids fail fast with a message pointing at
+      `ls ~/.coast/ssg/builds/`.
+    - **`auto_prune` is pin-aware** via
+      [`auto_prune_preserving`](./src/build/artifact.rs). The daemon
+      loads `ssg_consumer_pins` before the async build, passes the
+      set of pinned build ids through `build_ssg`, and pruning skips
+      any matching entry. Pinned builds survive SSG churn.
+    - **Running SSG + mismatched pin → drift hard-error.** Auto-swap
+      would disrupt other consumers sharing the singleton. The user
+      resolves explicitly with `coast ssg stop` → `coast run`
+      (auto-start boots the pin) or `uncheckout-build` (fall back to
+      latest).
+    - **Auto-start dispatches on the pinned build id** via
+      [`run_ssg_with_build_id`](./src/runtime/lifecycle.rs) rather
+      than the `latest` symlink. `run_ssg` keeps its existing
+      signature and delegates with `None` so all other callers are
+      unchanged.
+    - **No `list-pins` in v1.** `show-pin` scopes to the current
+      project (resolved from the consumer's Coastfile or `--project`).
+      Multi-project listings are low-signal for a local dev tool.
+    Regression tests: `test_ssg_pin_protects_from_drift`,
+    `test_ssg_uncheckout_build_restores_latest`,
+    `test_ssg_pin_missing_build_errors`. Docs:
+    `docs/shared_service_groups/PINNING.md`.
 
 ## 18. Risks
 

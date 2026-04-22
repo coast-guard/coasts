@@ -133,11 +133,32 @@ pub async fn run_ssg(
     ops: &dyn SsgDockerOps,
     progress: Sender<BuildProgressEvent>,
 ) -> Result<SsgRunOutcome> {
+    run_ssg_with_build_id(ops, None, progress).await
+}
+
+/// Same as [`run_ssg`] but boots the SSG from an explicit `build_id`
+/// instead of resolving `~/.coast/ssg/latest`.
+///
+/// Phase 16: when a consumer project has a pin in
+/// `ssg_consumer_pins`, `ensure_ready_for_consumer` calls this with
+/// the pinned id so the SSG auto-starts on the pinned build rather
+/// than `latest`. When `build_id` is `None`, behavior matches
+/// [`run_ssg`] exactly.
+pub async fn run_ssg_with_build_id(
+    ops: &dyn SsgDockerOps,
+    build_id: Option<&str>,
+    progress: Sender<BuildProgressEvent>,
+) -> Result<SsgRunOutcome> {
     emit(&progress, "Preparing SSG", 1, RUN_STEPS).await;
 
-    let build_id = paths::resolve_latest_build_id().ok_or_else(|| {
-        CoastError::coastfile("no SSG build found. Run `coast ssg build` before `coast ssg run`.")
-    })?;
+    let build_id = match build_id {
+        Some(id) => id.to_string(),
+        None => paths::resolve_latest_build_id().ok_or_else(|| {
+            CoastError::coastfile(
+                "no SSG build found. Run `coast ssg build` before `coast ssg run`.",
+            )
+        })?,
+    };
     let build_dir = paths::ssg_build_dir(&build_id)?;
     let manifest = read_manifest(&build_dir)?;
     let coastfile = load_coastfile(&build_dir)?;

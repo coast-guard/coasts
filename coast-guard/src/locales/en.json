@@ -595,6 +595,7 @@
   "docs.nav.ssgVolumes": "Volumes",
   "docs.nav.ssgConsuming": "Consumer Coasts",
   "docs.nav.ssgCheckout": "Checkout",
+  "docs.nav.ssgPinning": "Pinning",
   "docs.nav.ssgCli": "CLI",
   "docs.nav.secretsAndExtractors": "Secrets & Extractors",
   "docs.nav.builds": "Builds",

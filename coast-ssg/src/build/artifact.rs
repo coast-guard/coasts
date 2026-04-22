@@ -220,7 +220,26 @@ pub fn flip_latest(_build_id: &str) -> Result<()> {
 /// Sort key is the manifest's `built_at` timestamp. Builds that are
 /// missing or have an unparseable manifest are sorted to the front
 /// (oldest) so they get pruned first.
+///
+/// Delegates to [`auto_prune_preserving`] with an empty preserve set.
+/// Phase 16's `build_ssg` caller uses `auto_prune_preserving`
+/// directly to keep consumer-pinned builds around.
 pub fn auto_prune(keep: usize) -> Result<usize> {
+    auto_prune_preserving(keep, &std::collections::HashSet::new())
+}
+
+/// Like [`auto_prune`] but also refuses to remove any build id in
+/// `pinned_build_ids`.
+///
+/// Phase 16: when consumers have pinned specific SSG builds via
+/// `coast ssg checkout-build`, those builds must survive SSG churn
+/// even if they would otherwise be the oldest entries. The daemon's
+/// build orchestrator reads `ssg_consumer_pins` and passes the
+/// referenced ids through here.
+pub fn auto_prune_preserving(
+    keep: usize,
+    pinned_build_ids: &std::collections::HashSet<String>,
+) -> Result<usize> {
     let builds_dir = ssg_builds_dir()?;
     if !builds_dir.exists() {
         return Ok(0);
@@ -268,6 +287,10 @@ pub fn auto_prune(keep: usize) -> Result<usize> {
         if let Some(ref n) = name {
             if Some(n) == latest_target.as_ref() {
                 // Protect the currently-pinned build even if it's old.
+                continue;
+            }
+            if pinned_build_ids.contains(n) {
+                // Phase 16: preserve consumer-pinned builds.
                 continue;
             }
         }
@@ -631,6 +654,97 @@ env = { POSTGRES_USER = "coast", POSTGRES_PASSWORD = "secret" }
             let dir = write_artifact(&manifest, &cf, "v2").unwrap();
             let compose = std::fs::read_to_string(dir.join("compose.yml")).unwrap();
             assert_eq!(compose, "v2", "second write must overwrite");
+        });
+    }
+
+    // --- Phase 16: auto_prune_preserving ---
+
+    fn write_build_with_ts(builds: &Path, id: &str, built_at: &str) {
+        let dir = builds.join(id);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("manifest.json"),
+            format!(
+                r#"{{"build_id":"{id}","built_at":"{built_at}","coastfile_hash":"h","services":[]}}"#
+            ),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn auto_prune_preserving_skips_pinned_build_even_if_oldest() {
+        with_coast_home(|root| {
+            let builds = root.join("ssg").join("builds");
+            std::fs::create_dir_all(&builds).unwrap();
+
+            // 6 builds, ordered oldest to newest.
+            let ids = ["p0", "p1", "p2", "p3", "p4", "p5"];
+            for (i, id) in ids.iter().enumerate() {
+                write_build_with_ts(&builds, id, &format!("2026-01-0{}T00:00:00Z", i + 1));
+            }
+
+            // Pin the OLDEST build (p0). With keep=3 + no pin, prune
+            // would remove p0/p1/p2. Pin must preserve p0.
+            let mut pinned = std::collections::HashSet::new();
+            pinned.insert("p0".to_string());
+
+            let removed = auto_prune_preserving(3, &pinned).unwrap();
+            // Skipped p0 (pinned), removed p1 and p2.
+            assert_eq!(removed, 2, "should only remove 2 unpinned old builds");
+            assert!(builds.join("p0").exists(), "pinned build must survive");
+            assert!(!builds.join("p1").exists(), "p1 should be pruned");
+            assert!(!builds.join("p2").exists(), "p2 should be pruned");
+            assert!(builds.join("p3").exists());
+            assert!(builds.join("p4").exists());
+            assert!(builds.join("p5").exists());
+        });
+    }
+
+    #[test]
+    fn auto_prune_preserving_with_empty_set_matches_auto_prune() {
+        with_coast_home(|root| {
+            let builds = root.join("ssg").join("builds");
+            std::fs::create_dir_all(&builds).unwrap();
+            for i in 0..5u32 {
+                write_build_with_ts(
+                    &builds,
+                    &format!("b{i}"),
+                    &format!("2026-01-0{}T00:00:00Z", i + 1),
+                );
+            }
+            let removed = auto_prune_preserving(3, &std::collections::HashSet::new()).unwrap();
+            assert_eq!(removed, 2);
+            assert!(!builds.join("b0").exists());
+            assert!(!builds.join("b1").exists());
+        });
+    }
+
+    #[test]
+    fn auto_prune_preserving_keeps_multiple_pinned_builds_beyond_keep() {
+        with_coast_home(|root| {
+            let builds = root.join("ssg").join("builds");
+            std::fs::create_dir_all(&builds).unwrap();
+
+            // 5 old builds + 1 newest.
+            for i in 0..6u32 {
+                write_build_with_ts(
+                    &builds,
+                    &format!("b{i}"),
+                    &format!("2026-01-0{}T00:00:00Z", i + 1),
+                );
+            }
+
+            // Pin the 3 oldest builds. keep=1 -> prune 5 otherwise;
+            // with 3 pins preserved, we expect only b3 and b4 to go
+            // (b5 is newest/kept by keep=1, b0..b2 pinned).
+            let pinned: std::collections::HashSet<String> =
+                ["b0", "b1", "b2"].iter().map(|s| s.to_string()).collect();
+
+            let removed = auto_prune_preserving(1, &pinned).unwrap();
+            assert_eq!(removed, 2, "only non-pinned old builds pruned");
+            for id in ["b0", "b1", "b2", "b5"] {
+                assert!(builds.join(id).exists(), "{id} should survive");
+            }
         });
     }
 }

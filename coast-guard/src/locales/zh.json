@@ -509,6 +509,7 @@
   "docs.nav.ssgVolumes": "卷",
   "docs.nav.ssgConsuming": "消费者 Coasts",
   "docs.nav.ssgCheckout": "签出",
+  "docs.nav.ssgPinning": "固定",
   "docs.nav.ssgCli": "CLI",
   "docs.nav.secretsAndExtractors": "Secrets & Extractors",
   "docs.nav.builds": "Builds",

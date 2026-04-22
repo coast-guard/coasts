@@ -1765,6 +1765,30 @@ fn test_ssg_response_findings_default_when_absent_in_json() {
     }
 }
 
+// --- Phase 16: SsgRequest::CheckoutBuild / UncheckoutBuild / ShowPin ---
+
+#[test]
+fn test_ssg_request_checkout_build_roundtrip() {
+    roundtrip_request(Request::Ssg(SsgRequest::CheckoutBuild {
+        project: "my-consumer".to_string(),
+        build_id: "df5bddb5b7a39b11_20260422051132".to_string(),
+    }));
+}
+
+#[test]
+fn test_ssg_request_uncheckout_build_roundtrip() {
+    roundtrip_request(Request::Ssg(SsgRequest::UncheckoutBuild {
+        project: "my-consumer".to_string(),
+    }));
+}
+
+#[test]
+fn test_ssg_request_show_pin_roundtrip() {
+    roundtrip_request(Request::Ssg(SsgRequest::ShowPin {
+        project: "my-consumer".to_string(),
+    }));
+}
+
 // --- Phase 15: SsgRequest::ImportHostVolume ---
 
 #[test]

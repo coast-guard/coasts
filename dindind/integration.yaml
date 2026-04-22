@@ -495,3 +495,17 @@ tests:
     script: integrated-examples/test_ssg_import_host_volume.sh
     timeout: 600
     note: "coast ssg import-host-volume snippet + --apply + .bak + duplicate mount + missing volume; ssg build succeeds on rewritten Coastfile (DESIGN §10.7)"
+
+  # --- Shared Service Groups (coast-ssg) — Phase 16 (consumer pinning) ---
+  test_ssg_pin_protects_from_drift:
+    script: integrated-examples/test_ssg_pin_protects_from_drift.sh
+    timeout: 600
+    note: "coast ssg checkout-build pins a consumer; rebuilding the SSG does not surface drift warn; pinned build survives auto_prune (DESIGN §17-9 SETTLED #41)"
+  test_ssg_uncheckout_build_restores_latest:
+    script: integrated-examples/test_ssg_uncheckout_build_restores_latest.sh
+    timeout: 600
+    note: "uncheckout-build drops the pin; drift now evaluates against latest and hard-errors on image ref change (DESIGN §17-9)"
+  test_ssg_pin_missing_build_errors:
+    script: integrated-examples/test_ssg_pin_missing_build_errors.sh
+    timeout: 600
+    note: "deleting the pinned build dir + coast run -> hard-error citing uncheckout-build + coast ssg build (DESIGN §17-9 pin-pruned path)"

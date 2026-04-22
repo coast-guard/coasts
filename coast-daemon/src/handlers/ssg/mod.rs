@@ -35,6 +35,11 @@ pub(crate) mod consumer_refresh;
 // See `coast-ssg/DESIGN.md §10.7`.
 pub mod host_volume_import;
 
+// ssg-phase-16: consumer pinning — `coast ssg checkout-build`,
+// `uncheckout-build`, and `show-pin`. See
+// `coast-ssg/DESIGN.md §17-9` (SETTLED — Phase 16).
+pub mod pin;
+
 use std::sync::Arc;
 
 use coast_core::error::{CoastError, Result};
@@ -97,6 +102,14 @@ pub async fn handle(state: Arc<AppState>, req: SsgRequest) -> Result<SsgResponse
         }
 
         SsgRequest::Doctor => doctor::handle_doctor(&state).await,
+
+        SsgRequest::CheckoutBuild { project, build_id } => {
+            pin::handle_checkout_build(&state, project, build_id).await
+        }
+        SsgRequest::UncheckoutBuild { project } => {
+            pin::handle_uncheckout_build(&state, project).await
+        }
+        SsgRequest::ShowPin { project } => pin::handle_show_pin(&state, project).await,
 
         SsgRequest::ImportHostVolume {
             volume,

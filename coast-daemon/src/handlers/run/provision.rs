@@ -414,15 +414,18 @@ fn load_artifact_coastfile_or_log(
 /// clippy cognitive-complexity threshold. See
 /// [`coast-ssg/DESIGN.md §6.1`].
 async fn validate_drift_for_local_artifact(
+    project: &str,
     coastfile: &coast_core::coastfile::Coastfile,
     coastfile_path: &std::path::Path,
+    state: &AppState,
     progress: &tokio::sync::mpsc::Sender<BuildProgressEvent>,
 ) -> Result<()> {
     let manifest_path = coastfile_path
         .parent()
         .map(|p| p.join("manifest.json"))
         .unwrap_or_else(|| std::path::PathBuf::from("manifest.json"));
-    super::ssg_integration::validate_ssg_drift(coastfile, &manifest_path, progress).await
+    super::ssg_integration::validate_ssg_drift(project, coastfile, &manifest_path, state, progress)
+        .await
 }
 
 async fn build_host_images(
@@ -480,7 +483,8 @@ async fn load_coastfile_resources(
         "loaded artifact Coastfile for run resources"
     );
 
-    validate_drift_for_local_artifact(&coastfile, coastfile_path, progress).await?;
+    validate_drift_for_local_artifact(&req.project, &coastfile, coastfile_path, state, progress)
+        .await?;
 
     // SSG auto-start (Phase 3.5): when the consumer references SSG
     // services via `from_group = true`, bring the singleton up before

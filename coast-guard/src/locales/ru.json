@@ -496,6 +496,7 @@
   "docs.nav.ssgVolumes": "Тома",
   "docs.nav.ssgConsuming": "Coasts-потребители",
   "docs.nav.ssgCheckout": "Checkout",
+  "docs.nav.ssgPinning": "Закрепление",
   "docs.nav.ssgCli": "CLI",
   "docs.nav.secretsAndExtractors": "Secrets & Extractors",
   "docs.nav.builds": "Builds",

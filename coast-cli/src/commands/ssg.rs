@@ -199,6 +199,53 @@ pub enum SsgAction {
         #[arg(long)]
         apply: bool,
     },
+    /// Pin this project's consumer coast to a specific SSG build.
+    ///
+    /// Drift checks and auto-start on `coast run` use the pinned
+    /// build instead of `latest`, so the SSG can be rebuilt without
+    /// disturbing your consumer until you explicitly unpin or repin.
+    /// Pinned builds also survive `auto_prune`. See
+    /// `coast-ssg/DESIGN.md §17-9 SETTLED #41`.
+    CheckoutBuild {
+        /// SSG build id to pin to. Validated against
+        /// `~/.coast/ssg/builds/<id>/manifest.json` at pin time.
+        #[arg(value_name = "BUILD_ID")]
+        build_id: String,
+        /// Project name override. Defaults to `[coast].name` read
+        /// from the consumer Coastfile in `--working-dir` / cwd.
+        #[arg(long)]
+        project: Option<String>,
+        /// Working directory for Coastfile discovery. Defaults to
+        /// cwd. Ignored when `--project` is set.
+        #[arg(long = "working-dir")]
+        working_dir: Option<PathBuf>,
+        /// Path to the consumer Coastfile. Ignored when `--project`
+        /// is set.
+        #[arg(short = 'f', long)]
+        file: Option<PathBuf>,
+    },
+    /// Clear the SSG build pin for this project. Idempotent.
+    UncheckoutBuild {
+        /// Project name override. Defaults to `[coast].name` read
+        /// from the consumer Coastfile in `--working-dir` / cwd.
+        #[arg(long)]
+        project: Option<String>,
+        #[arg(long = "working-dir")]
+        working_dir: Option<PathBuf>,
+        #[arg(short = 'f', long)]
+        file: Option<PathBuf>,
+    },
+    /// Show the current SSG build pin for this project, if any.
+    ShowPin {
+        /// Project name override. Defaults to `[coast].name` read
+        /// from the consumer Coastfile in `--working-dir` / cwd.
+        #[arg(long)]
+        project: Option<String>,
+        #[arg(long = "working-dir")]
+        working_dir: Option<PathBuf>,
+        #[arg(short = 'f', long)]
+        file: Option<PathBuf>,
+    },
 }
 
 pub async fn execute(args: &SsgArgs, cli_working_dir: &Option<PathBuf>) -> Result<()> {
@@ -298,6 +345,11 @@ pub async fn execute(args: &SsgArgs, cli_working_dir: &Option<PathBuf>) -> Resul
             .await
         }
         SsgAction::Doctor => execute_doctor(args.silent).await,
+        SsgAction::CheckoutBuild { .. }
+        | SsgAction::UncheckoutBuild { .. }
+        | SsgAction::ShowPin { .. } => {
+            execute_pin_action(&args.action, args.silent, cli_working_dir).await
+        }
         SsgAction::ImportHostVolume {
             volume,
             service,
@@ -328,6 +380,131 @@ pub async fn execute(args: &SsgArgs, cli_working_dir: &Option<PathBuf>) -> Resul
             .await
         }
     }
+}
+
+/// Dispatch for the Phase 16 pinning verbs. Extracted out of
+/// [`execute`] to keep that function under the
+/// `clippy::too_many_lines` threshold. Each variant resolves the
+/// project name with [`resolve_consumer_project`] and forwards to
+/// `execute_simple`.
+async fn execute_pin_action(
+    action: &SsgAction,
+    silent: bool,
+    cli_working_dir: &Option<PathBuf>,
+) -> Result<()> {
+    match action {
+        SsgAction::CheckoutBuild {
+            build_id,
+            project,
+            working_dir,
+            file,
+        } => {
+            let resolved_working_dir = working_dir.clone().or_else(|| cli_working_dir.clone());
+            let resolved_project = resolve_consumer_project(project, &resolved_working_dir, file)?;
+            execute_simple(
+                SsgRequest::CheckoutBuild {
+                    project: resolved_project,
+                    build_id: build_id.clone(),
+                },
+                silent,
+            )
+            .await
+        }
+        SsgAction::UncheckoutBuild {
+            project,
+            working_dir,
+            file,
+        } => {
+            let resolved_working_dir = working_dir.clone().or_else(|| cli_working_dir.clone());
+            let resolved_project = resolve_consumer_project(project, &resolved_working_dir, file)?;
+            execute_simple(
+                SsgRequest::UncheckoutBuild {
+                    project: resolved_project,
+                },
+                silent,
+            )
+            .await
+        }
+        SsgAction::ShowPin {
+            project,
+            working_dir,
+            file,
+        } => {
+            let resolved_working_dir = working_dir.clone().or_else(|| cli_working_dir.clone());
+            let resolved_project = resolve_consumer_project(project, &resolved_working_dir, file)?;
+            execute_simple(
+                SsgRequest::ShowPin {
+                    project: resolved_project,
+                },
+                silent,
+            )
+            .await
+        }
+        _ => unreachable!("execute_pin_action only handles CheckoutBuild/UncheckoutBuild/ShowPin"),
+    }
+}
+
+/// Resolve the consumer project name for `coast ssg
+/// checkout-build / uncheckout-build / show-pin`:
+/// - If `--project` is set, use it verbatim.
+/// - Else parse the consumer's Coastfile (by `-f` or by discovery
+///   rooted at `--working-dir` / cwd) and use `[coast].name`.
+/// - Else hard-error with guidance.
+///
+/// Mirrors the fallback chain `coast run` uses for its `project`
+/// field so users don't have to repeat `--project` when they're
+/// already in the consumer's checkout.
+fn resolve_consumer_project(
+    project: &Option<String>,
+    working_dir: &Option<PathBuf>,
+    file: &Option<PathBuf>,
+) -> Result<String> {
+    if let Some(p) = project {
+        let trimmed = p.trim();
+        if trimmed.is_empty() {
+            bail!("coast ssg: --project cannot be empty.");
+        }
+        return Ok(trimmed.to_string());
+    }
+
+    let cwd = match working_dir {
+        Some(p) => p.clone(),
+        None => std::env::current_dir().map_err(|e| {
+            anyhow::anyhow!("failed to read current directory for Coastfile discovery: {e}")
+        })?,
+    };
+
+    let coastfile_path = if let Some(f) = file {
+        if f.is_absolute() {
+            f.clone()
+        } else {
+            cwd.join(f)
+        }
+    } else {
+        coast_core::coastfile::Coastfile::find_coastfile(&cwd, "Coastfile").ok_or_else(|| {
+            anyhow::anyhow!(
+                "coast ssg: could not resolve the consumer project name. No Coastfile found \
+                 near '{}'. Run from the consumer's Coastfile directory, pass --working-dir, \
+                 -f <path>, or --project <name>.",
+                cwd.display()
+            )
+        })?
+    };
+
+    let coastfile = coast_core::coastfile::Coastfile::from_file(&coastfile_path).map_err(|e| {
+        anyhow::anyhow!(
+            "coast ssg: failed to parse Coastfile '{}': {e}",
+            coastfile_path.display()
+        )
+    })?;
+    if coastfile.name.trim().is_empty() {
+        bail!(
+            "coast ssg: Coastfile at '{}' has an empty [coast].name. Pass --project <name> \
+             explicitly.",
+            coastfile_path.display()
+        );
+    }
+    Ok(coastfile.name)
 }
 
 /// Resolve `coast ssg checkout [service|--service <s>|--all]` inputs into
@@ -401,6 +578,79 @@ mod tests {
     #[test]
     fn checkout_resolver_all_alone_returns_none() {
         assert_eq!(resolve_checkout_service(&None, &None, true).unwrap(), None);
+    }
+
+    // --- Phase 16: resolve_consumer_project ---
+
+    #[test]
+    fn resolve_consumer_project_prefers_explicit_project() {
+        let out = resolve_consumer_project(&Some("my-proj".into()), &None, &None).unwrap();
+        assert_eq!(out, "my-proj");
+    }
+
+    #[test]
+    fn resolve_consumer_project_trims_whitespace() {
+        let out = resolve_consumer_project(&Some("  trimmed  ".into()), &None, &None).unwrap();
+        assert_eq!(out, "trimmed");
+    }
+
+    #[test]
+    fn resolve_consumer_project_rejects_empty_explicit() {
+        let err = resolve_consumer_project(&Some("   ".into()), &None, &None)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("cannot be empty"), "got: {err}");
+    }
+
+    #[test]
+    fn resolve_consumer_project_reads_name_from_explicit_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cf_path = tmp.path().join("Coastfile");
+        std::fs::write(
+            &cf_path,
+            r#"[coast]
+name = "my-consumer"
+runtime = "dind"
+compose = "docker-compose.yml"
+"#,
+        )
+        .unwrap();
+        // Empty compose file to satisfy parser.
+        std::fs::write(tmp.path().join("docker-compose.yml"), "services: {}\n").unwrap();
+
+        let out = resolve_consumer_project(&None, &None, &Some(cf_path)).unwrap();
+        assert_eq!(out, "my-consumer");
+    }
+
+    #[test]
+    fn resolve_consumer_project_reads_name_via_working_dir_discovery() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("Coastfile"),
+            r#"[coast]
+name = "discovered"
+runtime = "dind"
+compose = "docker-compose.yml"
+"#,
+        )
+        .unwrap();
+        std::fs::write(tmp.path().join("docker-compose.yml"), "services: {}\n").unwrap();
+
+        let out = resolve_consumer_project(&None, &Some(tmp.path().to_path_buf()), &None).unwrap();
+        assert_eq!(out, "discovered");
+    }
+
+    #[test]
+    fn resolve_consumer_project_errors_when_no_coastfile_found() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Fresh tempdir, no Coastfile.
+        let err = resolve_consumer_project(&None, &Some(tmp.path().to_path_buf()), &None)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("could not resolve the consumer project name"),
+            "got: {err}"
+        );
     }
 }
 
