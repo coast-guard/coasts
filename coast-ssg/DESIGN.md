@@ -282,13 +282,13 @@ becomes reality, not half-reality.
 ### Phase 14 — Phase 9 integration test backfill
 Phase 9 fixed 6 user-facing behaviors but only had unit tests. Add
 integration coverage.
-- [ ] `test_ssg_build_global_working_dir`
-- [ ] `test_ssg_checkout_positional`
-- [ ] `test_ssg_consumer_disables_auto_create_db`
-- [ ] `test_ssg_ps_live_state`
-- [ ] `test_ssg_coast_build_hard_errors_no_ssg`
-- [ ] `test_ssg_auto_start_on_run` updated to assert event ordering
-- [ ] Each new test registered in `dindind/integration.yaml`
+- [x] `test_ssg_build_global_working_dir`
+- [x] `test_ssg_checkout_positional`
+- [x] `test_ssg_consumer_disables_auto_create_db`
+- [x] `test_ssg_ps_live_state`
+- [x] `test_ssg_coast_build_hard_errors_no_ssg`
+- [x] `test_ssg_auto_start_on_run` updated to assert event ordering
+- [x] Each new test registered in `dindind/integration.yaml`
 
 ### Phase 15 — `coast ssg import-host-volume <name>`
 Supersedes DESIGN §10.7 "out of scope for v1". Zero-copy migration
@@ -1672,27 +1672,41 @@ tracks state across sessions.
     block when refs exist. The run-time §11.1 error now acts as a
     belt for the narrow case where the SSG was removed between
     `coast build` and `coast run`.
-34. (SETTLED — Phase 9) **Consumer `auto_create_db = false` is an
-    explicit disable override.** Originally
+34. (SETTLED — Phase 9 / Phase 14) **Consumer `auto_create_db = false`
+    is an explicit disable override.** Originally
     [`parse_shared_service_group_ref`](../coast-core/src/coastfile/field_parsers.rs)
     mapped the serde-defaulted `bool` through `if raw { Some(true) }
     else { None }`, which meant the consumer could only force-enable,
     never force-disable. DESIGN.md §6 explicitly allows both. Phase 9
-    changes `RawSharedServiceConfig::auto_create_db` to
-    `Option<bool>` so `Some(false)` round-trips correctly.
-    [`synthesize_shared_service_configs`](./src/daemon_integration.rs)
-    already did `consumer_ref.auto_create_db.unwrap_or(manifest_svc.auto_create_db)`
-    — the three-valued override now works end-to-end.
-35. (SETTLED — Phase 9) **`SsgStarting` fires before the dispatch;
-    `SsgStarted` fires after.** Originally both events were emitted
-    together after `run_and_apply` / `start_and_apply` completed,
-    which made `Starting` meaningless. Phase 9 emits `Starting`
-    before the auto-start work begins (with the existing SSG's
-    `build_id` as a best-effort identifier, or `"pending"` when we
-    are about to create a fresh one), and `Started` after. Both
-    still fire unconditionally on every successful auto-start
+    changed `RawSharedServiceConfig::auto_create_db` to
+    `Option<bool>` so `Some(false)` round-trips correctly at the
+    parser layer; `synthesize_shared_service_configs` already did
+    `consumer_ref.auto_create_db.unwrap_or(manifest_svc.auto_create_db)`.
+    **Phase 14 closed a round-trip gap in
+    [`coast-core/src/coastfile/serializer.rs`](../coast-core/src/coastfile/serializer.rs):**
+    the artifact serializer was emitting `auto_create_db = true`
+    only when the value was `Some(true)`, silently dropping
+    `Some(false)`. After re-parse the field read back as `None` and
+    fell through to the SSG default (usually `true`). The serializer
+    now emits `auto_create_db = {true|false}` whenever `Some(_)` and
+    omits the line only for `None` (inherit), so the three-valued
+    override survives build → artifact → run. Regression test:
+    `integrated-examples/test_ssg_consumer_disables_auto_create_db.sh`.
+35. (SETTLED — Phase 9 / Phase 14 test) **`SsgStarting` fires before
+    the dispatch; `SsgStarted` fires after.** Originally both events
+    were emitted together after `run_and_apply` / `start_and_apply`
+    completed, which made `Starting` meaningless. Phase 9 emits
+    `Starting` before the auto-start work begins (with the existing
+    SSG's `build_id` as a best-effort identifier, or `"pending"`
+    when we are about to create a fresh one), and `Started` after.
+    Both still fire unconditionally on every successful auto-start
     (including the already-running short-circuit) so subscribers
     can rely on the pair as a standard handshake (§17-16).
+    `SsgStarting` / `SsgStarted` are daemon-bus events (not
+    rendered on CLI); Phase 14's `test_ssg_auto_start_on_run` test
+    asserts the CLI-observable handshake instead — the outer
+    `Ensure SSG ready` progress line appears before the first
+    `SSG:` prefixed inner event in `coast run` output.
 36. (SETTLED — Phase 9) **`coast ssg ps` merges live state from
     `ssg_services` + the SSG container record.** §7's table says
     `ps` should show "SSG status + inner service statuses + dynamic

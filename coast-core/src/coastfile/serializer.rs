@@ -237,8 +237,14 @@ fn write_shared_services_section(coastfile: &Coastfile, out: &mut String) {
     for ref_entry in &coastfile.shared_service_group_refs {
         writeln!(out, "\n[shared_services.{}]", toml_key(&ref_entry.name)).unwrap();
         writeln!(out, "from_group = true").unwrap();
-        if matches!(ref_entry.auto_create_db, Some(true)) {
-            writeln!(out, "auto_create_db = true").unwrap();
+        // Three-valued `auto_create_db` override (DESIGN.md §6,
+        // §17-34): `Some(true)` force-enables, `Some(false)`
+        // explicitly disables, `None` inherits from the SSG service.
+        // Previous implementations only serialized `Some(true)`
+        // which silently demoted `false` to `None` across the
+        // artifact round-trip and broke the explicit-disable case.
+        if let Some(value) = ref_entry.auto_create_db {
+            writeln!(out, "auto_create_db = {value}").unwrap();
         }
         if let Some(ref inject) = ref_entry.inject {
             writeln!(out, "inject = {}", toml_quote(&inject.to_inject_string())).unwrap();
@@ -594,5 +600,77 @@ mod tests {
             Some(&AssignAction::Restart)
         );
         assert_eq!(reparsed.services[0].name, "worker.main");
+    }
+
+    // --- Phase 14 regression: `auto_create_db` three-valued
+    // override round-trips through the artifact serializer.
+    // DESIGN.md §17 SETTLED #34 requires `Some(false)` to mean
+    // "explicitly disable" and survive build -> artifact -> run.
+    // Previously the serializer emitted only `Some(true)` which
+    // silently demoted `false` to `None` and let the SSG's own
+    // `auto_create_db = true` win. See
+    // `integrated-examples/test_ssg_consumer_disables_auto_create_db.sh`.
+
+    fn minimal_consumer_with_ssg_ref(auto_create_db: Option<bool>) -> crate::coastfile::Coastfile {
+        use crate::types::SharedServiceGroupRef;
+        let mut cf = crate::coastfile::Coastfile::parse(
+            "[coast]\nname = \"consumer\"\n",
+            std::path::Path::new("/tmp"),
+        )
+        .expect("minimal coastfile parses");
+        cf.shared_service_group_refs = vec![SharedServiceGroupRef {
+            name: "postgres".to_string(),
+            auto_create_db,
+            inject: None,
+        }];
+        cf
+    }
+
+    #[test]
+    fn standalone_toml_emits_auto_create_db_false_for_from_group_ref() {
+        let cf = minimal_consumer_with_ssg_ref(Some(false));
+        let toml = cf.to_standalone_toml();
+        assert!(toml.contains("from_group = true"));
+        assert!(
+            toml.contains("auto_create_db = false"),
+            "expected `auto_create_db = false` in serialized output, got:\n{toml}"
+        );
+    }
+
+    #[test]
+    fn standalone_toml_emits_auto_create_db_true_for_from_group_ref() {
+        let cf = minimal_consumer_with_ssg_ref(Some(true));
+        let toml = cf.to_standalone_toml();
+        assert!(toml.contains("auto_create_db = true"));
+    }
+
+    #[test]
+    fn standalone_toml_omits_auto_create_db_when_inherit_for_from_group_ref() {
+        let cf = minimal_consumer_with_ssg_ref(None);
+        let toml = cf.to_standalone_toml();
+        assert!(
+            !toml.contains("auto_create_db"),
+            "None must not emit the field at all, got:\n{toml}"
+        );
+    }
+
+    #[test]
+    fn standalone_toml_round_trips_explicit_false_override() {
+        let cf = minimal_consumer_with_ssg_ref(Some(false));
+        let toml = cf.to_standalone_toml();
+
+        // Round-trip: write to a temp file named Coastfile (the
+        // parser gates `[remote]` on the filename; we don't use
+        // remote here, so any valid Coastfile name works) and re-parse.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Coastfile");
+        std::fs::write(&path, toml).unwrap();
+        let reparsed = crate::coastfile::Coastfile::from_file(&path).unwrap();
+        assert_eq!(reparsed.shared_service_group_refs.len(), 1);
+        assert_eq!(
+            reparsed.shared_service_group_refs[0].auto_create_db,
+            Some(false),
+            "explicit-disable override must round-trip through the artifact"
+        );
     }
 }

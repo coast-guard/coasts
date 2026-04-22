@@ -2277,6 +2277,48 @@ SSG_CONSUMER_AUTODB_COMPOSE_EOF
 
 setup_coast_ssg_consumer_auto_db
 
+# --- coast-ssg-consumer-disable-auto-db ---
+# Phase 14 fixture: consumer with `auto_create_db = false` overriding
+# the SSG postgres's `auto_create_db = true`. Proves the three-valued
+# `Option<bool>` parser from Phase 9 SETTLED #34 — the consumer can
+# explicitly disable DB creation even when the SSG would create one.
+
+setup_coast_ssg_consumer_disable_auto_db() {
+    local dir="$PROJECTS_DIR/coast-ssg-consumer-disable-auto-db"
+    echo "Setting up coast-ssg-consumer-disable-auto-db..."
+    mkdir -p "$dir"
+    rm -rf "$dir/.git"
+
+    cat > "$dir/Coastfile" << 'SSG_CONSUMER_DISABLE_AUTODB_COAST_EOF'
+[coast]
+name = "coast-ssg-consumer-disable-auto-db"
+compose = "./docker-compose.yml"
+runtime = "dind"
+
+[shared_services.postgres]
+from_group = true
+auto_create_db = false
+inject = "env:DATABASE_URL"
+SSG_CONSUMER_DISABLE_AUTODB_COAST_EOF
+
+    cat > "$dir/docker-compose.yml" << 'SSG_CONSUMER_DISABLE_AUTODB_COMPOSE_EOF'
+services:
+  app:
+    image: postgres:16-alpine
+    command: ["sh", "-c", "while true; do sleep 10; done"]
+SSG_CONSUMER_DISABLE_AUTODB_COMPOSE_EOF
+
+    cd "$dir"
+    git init -b main
+    git config user.name "Coast Dev"
+    git config user.email "dev@coasts.dev"
+    git add -A
+    git commit -m "initial commit: consumer overriding auto_create_db=false"
+    echo "  coast-ssg-consumer-disable-auto-db ready"
+}
+
+setup_coast_ssg_consumer_disable_auto_db
+
 # --- coast-ssg-consumer-inject-file ---
 # Phase 13 fixture: consumer with `inject = "file:<path>"` instead of
 # `env:NAME`. Verifies the file body is written inside the coast DinD

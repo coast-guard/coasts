@@ -80,6 +80,30 @@ echo "$RUN_OUT" | tail -20
 assert_contains "$RUN_OUT" "Ensure SSG ready" "run output shows the auto-start step"
 pass "consumer coast run triggered SSG auto-start"
 
+# Phase 9 SETTLED #35 — the outer `Ensure SSG ready` progress line
+# must precede the inner `SSG: ...` prefixed events that the
+# auto-start path forwards from the daemon. SsgStarting / SsgStarted
+# themselves are daemon-bus events and never reach the CLI; this
+# byte-offset ordering on stdout is the user-visible shape of the
+# invariant.
+#
+# Non-TTY `ProgressDisplay` uses `eprint!` without trailing newlines
+# for "started" events, so the outer and inner events can end up on
+# the same captured line. We compare byte offsets in the raw output
+# rather than line numbers.
+OUTER_OFFSET=$(printf '%s' "$RUN_OUT" | grep -ob 'Ensure SSG ready' | head -1 | awk -F: '{print $1}')
+INNER_OFFSET=$(printf '%s' "$RUN_OUT" | grep -ob 'SSG: ' | head -1 | awk -F: '{print $1}')
+if [ -z "$OUTER_OFFSET" ] || [ -z "$INNER_OFFSET" ]; then
+    echo "could not locate both outer and inner SSG progress markers; dumping run output:"
+    echo "$RUN_OUT"
+    fail "missing progress events for auto-start ordering assertion"
+fi
+if [ "$OUTER_OFFSET" -ge "$INNER_OFFSET" ]; then
+    echo "outer_offset=$OUTER_OFFSET inner_offset=$INNER_OFFSET"
+    fail "'Ensure SSG ready' must appear before any 'SSG:' prefixed inner event"
+fi
+pass "SSG auto-start ordering: 'Ensure SSG ready' (byte $OUTER_OFFSET) precedes 'SSG:' inner event (byte $INNER_OFFSET)"
+
 DOCKER_PS_AFTER=$(docker ps --filter "name=^coast-ssg$" --format "{{.Names}}")
 assert_eq "$DOCKER_PS_AFTER" "coast-ssg" "coast-ssg container is running after consumer run"
 

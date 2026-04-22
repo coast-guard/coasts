@@ -467,3 +467,25 @@ tests:
     script: integrated-examples/test_ssg_rm_run_refreshes_consumers.sh
     timeout: 900
     note: "ssg rm + run reallocates dyn ports; Phase 11 hook refreshes running consumer socat forwarders so psql keeps working without rebuilding the consumer"
+
+  # --- Shared Service Groups (coast-ssg) — Phase 14 (Phase 9 test backfill) ---
+  test_ssg_build_global_working_dir:
+    script: integrated-examples/test_ssg_build_global_working_dir.sh
+    timeout: 600
+    note: "coast --working-dir <dir> ssg build succeeds from unrelated cwd; subcommand flag wins over global"
+  test_ssg_checkout_positional:
+    script: integrated-examples/test_ssg_checkout_positional.sh
+    timeout: 600
+    note: "coast ssg checkout <service> (positional) and --service equivalent; conflicts and --all+SERVICE rejected"
+  test_ssg_consumer_disables_auto_create_db:
+    script: integrated-examples/test_ssg_consumer_disables_auto_create_db.sh
+    timeout: 600
+    note: "consumer auto_create_db=false overrides SSG auto_create_db=true; per-instance DB is not created"
+  test_ssg_ps_live_state:
+    script: integrated-examples/test_ssg_ps_live_state.sh
+    timeout: 600
+    note: "coast ssg ps shows built -> running -> stopped with live dynamic_host_port from state DB"
+  test_ssg_coast_build_hard_errors_no_ssg:
+    script: integrated-examples/test_ssg_coast_build_hard_errors_no_ssg.sh
+    timeout: 600
+    note: "coast build on a from_group consumer hard-errors when no SSG build exists (DESIGN §6.1 drift)"
