@@ -132,7 +132,55 @@ Caveats:
 - Postgres running as UID 999 still needs the directory's ownership to match. If `docker-compose` previously chown'd the volume, you are already fine. If not, run `sudo chown -R 999:999 /var/lib/docker/volumes/infra_postgres_data/_data` first.
 - After the migration, consider copying the data out to a dedicated path (`/var/coast-data/postgres`) once you have confirmed the SSG is serving correctly. That decouples the SSG from Docker's internal volume layout.
 
-A future `coast ssg import-host-volume <name>` subcommand will automate this recipe. It is out of scope for the current release.
+### Automating the recipe: `coast ssg import-host-volume`
+
+`coast ssg import-host-volume` resolves the volume's `Mountpoint` via `docker volume inspect` and emits (or applies) the equivalent bind-mount line for you, so you do not have to hand-construct the `/var/lib/docker/volumes/<name>/_data` path.
+
+Snippet mode (default) prints the TOML fragment to paste:
+
+```bash
+coast ssg import-host-volume infra_postgres_data \
+    --service postgres \
+    --mount /var/lib/postgresql/data
+```
+
+The output is a `[shared_services.postgres]` block with the new `volumes = [...]` entry already merged in, plus a one-line summary of the resolved bind:
+
+```text
+# Add the following to Coastfile.shared_service_groups (infra_postgres_data -> /var/lib/postgresql/data):
+
+[shared_services.postgres]
+image = "postgres:16-alpine"
+ports = [5432]
+volumes = [
+    "pg_data:/var/lib/postgresql/data-existing",
+    "/var/lib/docker/volumes/infra_postgres_data/_data:/var/lib/postgresql/data",
+]
+env = { POSTGRES_PASSWORD = "coast" }
+
+# Bind line: /var/lib/docker/volumes/infra_postgres_data/_data:/var/lib/postgresql/data
+```
+
+Apply mode rewrites `Coastfile.shared_service_groups` in place and saves the original to `Coastfile.shared_service_groups.bak`:
+
+```bash
+coast ssg import-host-volume infra_postgres_data \
+    --service postgres \
+    --mount /var/lib/postgresql/data \
+    --apply
+```
+
+Flags:
+
+- `<VOLUME>` (positional) -- host Docker named volume. Must already exist (`docker volume inspect` is the check); create or rename with `docker volume create` first otherwise.
+- `--service` -- the `[shared_services.<name>]` section to edit. The section must already exist; this command adds to an existing service, not a new one.
+- `--mount` -- absolute container path. Relative paths are rejected. Duplicate mount paths on the same service are hard-errors (remove the existing entry first or pick a different container path).
+- `--file` / `--working-dir` / `--config` -- SSG Coastfile discovery, same rules as `coast ssg build`.
+- `--apply` -- rewrite the Coastfile in place. Cannot be combined with `--config` (inline text has nothing to write back to).
+
+The `.bak` file contains the original bytes verbatim (not the re-serialized output), so you can recover the exact pre-apply state if needed.
+
+See [DESIGN §10.7](https://github.com/coasts-dev/coasts/blob/main/coast-ssg/DESIGN.md) for the full design and [SETTLED #40](https://github.com/coasts-dev/coasts/blob/main/coast-ssg/DESIGN.md) for the design decisions (bollard vs. subprocess, reuse of the parser+serializer round-trip for apply mode, duplicate-rejection policy).
 
 ## Lifecycle Summary
 

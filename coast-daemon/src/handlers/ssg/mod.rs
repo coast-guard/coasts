@@ -30,6 +30,11 @@ pub mod doctor;
 // `coast-ssg/DESIGN.md §0 Phase 11` + `§17-38 SETTLED`.
 pub(crate) mod consumer_refresh;
 
+// ssg-phase-15: `coast ssg import-host-volume` — zero-copy migration
+// of existing host Docker named volumes into SSG bind-mount entries.
+// See `coast-ssg/DESIGN.md §10.7`.
+pub mod host_volume_import;
+
 use std::sync::Arc;
 
 use coast_core::error::{CoastError, Result};
@@ -92,6 +97,30 @@ pub async fn handle(state: Arc<AppState>, req: SsgRequest) -> Result<SsgResponse
         }
 
         SsgRequest::Doctor => doctor::handle_doctor(&state).await,
+
+        SsgRequest::ImportHostVolume {
+            volume,
+            service,
+            mount,
+            file,
+            working_dir,
+            config,
+            apply,
+        } => {
+            host_volume_import::handle_import_host_volume(
+                &state,
+                host_volume_import::ImportHostVolumeArgs {
+                    volume,
+                    service,
+                    mount,
+                    file,
+                    working_dir,
+                    config,
+                    apply,
+                },
+            )
+            .await
+        }
     }
 }
 

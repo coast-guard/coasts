@@ -166,6 +166,39 @@ pub enum SsgAction {
     /// fix it), or `info` when the directory does not exist yet.
     /// Does not modify anything. See `coast-ssg/DESIGN.md §10.5`.
     Doctor,
+    /// Zero-copy migration: resolve a host Docker named volume's
+    /// mountpoint and add it to the SSG Coastfile as a bind-mount
+    /// entry for a given service.
+    ///
+    /// Default prints the TOML snippet to paste. Pass `--apply` to
+    /// rewrite the SSG Coastfile in place (with a `.bak` backup).
+    /// Use `--file` / `--working-dir` / `--config` to point at the
+    /// SSG Coastfile; discovery mirrors `coast ssg build`.
+    /// See `coast-ssg/DESIGN.md §10.7`.
+    ImportHostVolume {
+        /// Host Docker named volume name (must already exist).
+        #[arg(value_name = "VOLUME")]
+        volume: String,
+        /// Target `[shared_services.<name>]` section.
+        #[arg(long)]
+        service: String,
+        /// Absolute container path to bind the volume mountpoint at.
+        #[arg(long)]
+        mount: PathBuf,
+        /// Path to the SSG Coastfile (overrides discovery).
+        #[arg(short = 'f', long)]
+        file: Option<PathBuf>,
+        /// Working directory for SSG Coastfile discovery.
+        #[arg(long = "working-dir")]
+        working_dir: Option<PathBuf>,
+        /// Inline TOML config for the SSG Coastfile (cannot combine
+        /// with `--apply`; the helper has nothing to write back to).
+        #[arg(long)]
+        config: Option<String>,
+        /// Rewrite the SSG Coastfile in place with a `.bak` backup.
+        #[arg(long)]
+        apply: bool,
+    },
 }
 
 pub async fn execute(args: &SsgArgs, cli_working_dir: &Option<PathBuf>) -> Result<()> {
@@ -265,6 +298,35 @@ pub async fn execute(args: &SsgArgs, cli_working_dir: &Option<PathBuf>) -> Resul
             .await
         }
         SsgAction::Doctor => execute_doctor(args.silent).await,
+        SsgAction::ImportHostVolume {
+            volume,
+            service,
+            mount,
+            file,
+            working_dir,
+            config,
+            apply,
+        } => {
+            // Global `coast --working-dir <dir>` is threaded into the
+            // subcommand field by clap (flag is `global = true`); we
+            // also fall back to it explicitly so `coast --working-dir
+            // <dir> ssg import-host-volume ...` works without the
+            // subcommand repeating the flag.
+            let resolved_working_dir = working_dir.clone().or_else(|| cli_working_dir.clone());
+            execute_simple(
+                SsgRequest::ImportHostVolume {
+                    volume: volume.clone(),
+                    service: service.clone(),
+                    mount: mount.clone(),
+                    file: file.clone(),
+                    working_dir: resolved_working_dir,
+                    config: config.clone(),
+                    apply: *apply,
+                },
+                args.silent,
+            )
+            .await
+        }
     }
 }
 

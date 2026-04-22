@@ -520,6 +520,7 @@ pub fn request_command_name(req: &Request) -> String {
             SsgRequest::Checkout { .. } => "ssg/checkout",
             SsgRequest::Uncheckout { .. } => "ssg/uncheckout",
             SsgRequest::Doctor => "ssg/doctor",
+            SsgRequest::ImportHostVolume { .. } => "ssg/import-host-volume",
         }
         .into(),
     }

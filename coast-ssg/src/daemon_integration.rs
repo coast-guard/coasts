@@ -334,6 +334,48 @@ pub use crate::runtime::lifecycle::{
     SsgRunOutcome, SsgStartOutcome, SsgStopOutcome,
 };
 
+// --- Phase 15: host-volume import orchestrator ------------------------------
+
+pub use crate::runtime::host_volume_import::{run_import, HostVolumeImportInputs};
+
+/// Resolve an SSG Coastfile from the standard discovery triplet
+/// (`file` / `working_dir` / inline `config`) and return both the
+/// on-disk path (when the source is a file) and the raw TOML text.
+///
+/// Shared by `build_ssg` and `coast ssg import-host-volume` so both
+/// verbs follow the exact same resolution rules and error messages.
+/// Inline `config` returns `(None, config_text)` — callers that
+/// need an on-disk path (e.g. `--apply`) hard-error on `None`
+/// themselves with a phase-specific message.
+pub fn resolve_ssg_coastfile_source(
+    file: Option<&Path>,
+    working_dir: Option<&Path>,
+    config: Option<&str>,
+) -> Result<(Option<PathBuf>, String)> {
+    if let Some(inline) = config {
+        return Ok((None, inline.to_string()));
+    }
+    let path = if let Some(p) = file {
+        p.to_path_buf()
+    } else {
+        let base = working_dir
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        find_coastfile_in(&base).ok_or_else(|| {
+            CoastError::coastfile(format!(
+                "no Coastfile.shared_service_groups found in '{}' (looked for both the plain and .toml forms)",
+                base.display()
+            ))
+        })?
+    };
+    let raw = std::fs::read_to_string(&path).map_err(|e| CoastError::Io {
+        message: format!("failed to read SSG Coastfile '{}': {e}", path.display()),
+        path: path.clone(),
+        source: Some(e),
+    })?;
+    Ok((Some(path), raw))
+}
+
 // --- Phase 4 consumer wiring -----------------------------------------------
 
 /// Synthesize a `SharedServiceConfig` per `from_group = true` entry in

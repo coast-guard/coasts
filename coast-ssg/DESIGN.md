@@ -293,13 +293,13 @@ integration coverage.
 ### Phase 15 — `coast ssg import-host-volume <name>`
 Supersedes DESIGN §10.7 "out of scope for v1". Zero-copy migration
 of existing host Docker volumes into SSG bind mounts.
-- [ ] `SsgRequest::ImportHostVolume` protocol variant
-- [ ] `coast ssg import-host-volume <name>` CLI subcommand
-- [ ] `coast-ssg/src/runtime/host_volume_import.rs` orchestrator
-- [ ] `--apply` flag rewrites the SSG Coastfile in place (with backup)
-- [ ] Docs update in `docs/shared_service_groups/VOLUMES.md`
-- [ ] Integration test `test_ssg_import_host_volume`
-- [ ] §17 SETTLED #39 + DESIGN §10.7 updated
+- [x] `SsgRequest::ImportHostVolume` protocol variant
+- [x] `coast ssg import-host-volume <name>` CLI subcommand
+- [x] `coast-ssg/src/runtime/host_volume_import.rs` orchestrator
+- [x] `--apply` flag rewrites the SSG Coastfile in place (with backup)
+- [x] Docs update in `docs/shared_service_groups/VOLUMES.md`
+- [x] Integration test `test_ssg_import_host_volume`
+- [x] §17 SETTLED #40 + DESIGN §10.7 updated (slot #39 was taken by Phase 12's fat-trait entry)
 
 ### Phase 16 — `coast ssg checkout-build <id>` consumer pinning
 Supersedes DESIGN §17-9 "Not in v1". Lets a consumer pin to an older
@@ -1022,8 +1022,14 @@ volumes = [
 ]
 ```
 
-Ugly but zero-copy. A future `coast ssg import-host-volume <name>`
-subcommand can automate this — out of scope for v1.
+Ugly but zero-copy. Phase 15's
+[`coast ssg import-host-volume`](../docs/shared_service_groups/VOLUMES.md#automating-the-recipe-coast-ssg-import-host-volume)
+command automates this: it resolves the host volume's `Mountpoint`
+via bollard's `inspect_volume`, validates the target service exists
+in the SSG Coastfile, rejects duplicate mount paths, and either
+prints the TOML snippet (default) or rewrites the Coastfile in
+place with a `.bak` backup (`--apply`). See §17-40 for the full
+set of design decisions.
 
 ## 11. Port plumbing (coast -> SSG)
 
@@ -1785,6 +1791,36 @@ tracks state across sessions.
     The mock is also gated behind a `test-support` feature so
     `coast-daemon`'s unit tests can construct one without
     duplicating the code.
+40. (SETTLED — Phase 15) **`coast ssg import-host-volume` shape.**
+    Phase 15 wires the `SsgRequest::ImportHostVolume` verb and the
+    [`coast_ssg::runtime::host_volume_import::run_import`](./src/runtime/host_volume_import.rs)
+    orchestrator. Design decisions locked in:
+    - **`bollard::Docker::inspect_volume`, not a subprocess.** The
+      daemon already holds a `bollard::Docker` handle via
+      `AppState.docker`; shelling out `docker volume inspect` would
+      add a parsing layer and a new failure mode. The mountpoint
+      string comes straight off the `Volume` struct.
+    - **`--apply` reuses [`SsgCoastfile::to_standalone_toml`].** The
+      parser+serializer round-trip is already verified by existing
+      Coastfile tests; no surgical in-place TOML editor is needed.
+      The `.bak` backup holds the **original bytes verbatim** so
+      users can recover comments and formatting if they want to.
+    - **Explicit `--service` + `--mount`, no inference.** A volume
+      called `pg_data` targets a container path inside whatever
+      service the user says. Guessing ("pg_data" -> "postgres") is
+      fragile enough that the error surface outweighs the
+      convenience.
+    - **Inline `--config` + `--apply` is rejected at validation
+      time.** There is no file to write back to; emitting the
+      snippet is still possible.
+    - **Duplicate `--mount` on the same service is a hard error.**
+      Silently merging a second entry targeting the same
+      container_path would let a single service declare
+      conflicting binds with no warning.
+    - **Handler runs through the standard non-streaming SSG
+      dispatch** (`handlers/ssg/mod.rs::handle`). The verb is
+      analytics-tagged as `ssg/import-host-volume`.
+    Regression test: `integrated-examples/test_ssg_import_host_volume.sh`.
 
 ## 18. Risks
 

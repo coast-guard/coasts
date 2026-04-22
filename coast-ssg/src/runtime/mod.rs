@@ -32,5 +32,10 @@ pub mod ports;
 // ssg-phase-6: pure planner for `coast ssg checkout` / `uncheckout`.
 pub mod port_checkout;
 
+// ssg-phase-15: zero-copy host-volume import orchestrator
+// (DESIGN.md §10.7). The daemon resolves the volume's Mountpoint via
+// bollard and delegates here to rewrite the SSG Coastfile.
+pub mod host_volume_import;
+
 pub use port_checkout::{plan_checkouts, SsgCheckoutPlan, SsgCheckoutTarget};
 pub use ports::{allocate_service_ports, SsgServicePortPlan};

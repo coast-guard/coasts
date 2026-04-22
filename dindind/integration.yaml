@@ -489,3 +489,9 @@ tests:
     script: integrated-examples/test_ssg_coast_build_hard_errors_no_ssg.sh
     timeout: 600
     note: "coast build on a from_group consumer hard-errors when no SSG build exists (DESIGN §6.1 drift)"
+
+  # --- Shared Service Groups (coast-ssg) — Phase 15 (import-host-volume) ---
+  test_ssg_import_host_volume:
+    script: integrated-examples/test_ssg_import_host_volume.sh
+    timeout: 600
+    note: "coast ssg import-host-volume snippet + --apply + .bak + duplicate mount + missing volume; ssg build succeeds on rewritten Coastfile (DESIGN §10.7)"

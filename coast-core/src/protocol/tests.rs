@@ -1764,3 +1764,35 @@ fn test_ssg_response_findings_default_when_absent_in_json() {
         other => panic!("expected Response::Ssg, got {other:?}"),
     }
 }
+
+// --- Phase 15: SsgRequest::ImportHostVolume ---
+
+#[test]
+fn test_ssg_request_import_host_volume_minimal_roundtrip() {
+    // Snippet mode (no --apply, no Coastfile discovery overrides).
+    roundtrip_request(Request::Ssg(SsgRequest::ImportHostVolume {
+        volume: "infra_pg_data".to_string(),
+        service: "postgres".to_string(),
+        mount: std::path::PathBuf::from("/var/lib/postgresql/data"),
+        file: None,
+        working_dir: None,
+        config: None,
+        apply: false,
+    }));
+}
+
+#[test]
+fn test_ssg_request_import_host_volume_all_fields_roundtrip() {
+    // Apply mode with every discovery field populated.
+    roundtrip_request(Request::Ssg(SsgRequest::ImportHostVolume {
+        volume: "legacy-pg".to_string(),
+        service: "postgres".to_string(),
+        mount: std::path::PathBuf::from("/var/lib/postgresql/data"),
+        file: Some(std::path::PathBuf::from(
+            "/proj/Coastfile.shared_service_groups",
+        )),
+        working_dir: Some(std::path::PathBuf::from("/proj")),
+        config: Some("[ssg]\nruntime = \"dind\"\n".to_string()),
+        apply: true,
+    }));
+}

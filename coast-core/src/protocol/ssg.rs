@@ -83,6 +83,29 @@ pub enum SsgRequest {
     /// image's expected value (e.g. postgres expects 999:999).
     /// Does not modify anything. See `coast-ssg/DESIGN.md §10.5`.
     Doctor,
+    /// Zero-copy migration helper: resolve a host Docker named
+    /// volume's mountpoint and emit (or apply) the equivalent SSG
+    /// Coastfile bind-mount entry. See `DESIGN.md §10.7`.
+    ImportHostVolume {
+        /// Host Docker named volume name (must already exist).
+        volume: String,
+        /// Target `[shared_services.<name>]` section.
+        service: String,
+        /// Absolute container path to bind the volume mountpoint at.
+        mount: PathBuf,
+        /// SSG Coastfile discovery (same triplet as `Build`).
+        #[serde(default)]
+        file: Option<PathBuf>,
+        #[serde(default)]
+        working_dir: Option<PathBuf>,
+        #[serde(default)]
+        config: Option<String>,
+        /// When `true`, rewrite the SSG Coastfile in place with a
+        /// `.bak` backup. When `false`, print a TOML snippet to
+        /// stdout. Rejected when combined with inline `config`.
+        #[serde(default)]
+        apply: bool,
+    },
 }
 
 /// Response for SSG operations.
