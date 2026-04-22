@@ -15,9 +15,9 @@ For the concept, lifecycle, volumes, and consumer wiring, see the [Shared Servic
 
 ## Accepted Sections
 
-Only `[ssg]` and `[shared_services.<name>]` are accepted. Any other top-level key (`[coast]`, `[ports]`, `[services]`, `[volumes]`, `[secrets]`, `[assign]`, ...) is rejected at parse.
+Only `[ssg]`, `[shared_services.<name>]`, and `[unset]` are accepted. Any other top-level key (`[coast]`, `[ports]`, `[services]`, `[volumes]`, `[secrets]`, `[assign]`, `[omit]`, ...) is rejected at parse.
 
-`extends` and `includes` are not supported in the current release -- the SSG is a singleton and composition is intentionally deferred.
+`[ssg] extends = "<path>"` and `[ssg] includes = ["<path>", ...]` are supported for composition. See [Inheritance](#inheritance) below.
 
 ## `[ssg]`
 
@@ -113,6 +113,72 @@ A consumer Coastfile can override this value per project -- see [Consuming -> au
 
 `inject` is **not** valid on SSG service definitions. Injection is a consumer-side concern (different projects may want the same SSG Postgres exposed under different env-var names). See [Coastfile: Shared Services](SHARED_SERVICES.md#inject) for the consumer-side `inject` semantics.
 
+## Inheritance
+
+SSG Coastfiles support the same `extends` / `includes` / `[unset]` mechanism as regular Coastfiles. See [Coastfile Inheritance](INHERITANCE.md) for the shared mental model; this section documents the SSG-specific shape.
+
+### `[ssg] extends` -- pull in a parent Coastfile
+
+```toml
+[ssg]
+extends = "Coastfile.ssg-base"
+
+[shared_services.postgres]
+image = "postgres:17-alpine"
+```
+
+The parent file is resolved relative to the child's parent directory. The `.toml` tie-break applies (the parser tries `Coastfile.ssg-base.toml` first, then plain `Coastfile.ssg-base`). Absolute paths are also accepted.
+
+### `[ssg] includes` -- merge fragment files
+
+```toml
+[ssg]
+includes = ["dev-seed.toml", "extra-caches.toml"]
+
+[shared_services.postgres]
+image = "postgres:16-alpine"
+```
+
+Fragments are merged in order before the including file itself. Fragment paths are resolved relative to the including file's parent directory (no `.toml` tie-break -- fragments are typically named exactly).
+
+**Fragments cannot themselves use `extends` or `includes`.** They must be self-contained. This keeps the dependency graph a tree rooted at a single `from_file` call.
+
+### Merge semantics
+
+- **`[ssg]` scalars** (`runtime`) -- child wins when present, else inherit.
+- **`[shared_services.*]`** -- by-name replace. If parent and child both define `postgres`, the child's entry fully replaces the parent's (whole-entry replacement, not field-level merge). Parent services not re-declared by the child are inherited.
+- **Load order** -- `extends` parent loads first, then each `includes` fragment in order, then the top-level file itself. Later layers win on collision.
+
+### `[unset]` -- drop inherited services
+
+```toml
+[ssg]
+extends = "Coastfile.ssg-base"
+
+[unset]
+shared_services = ["mongodb"]
+```
+
+Removes named entries **after** the merge, so a child can selectively drop something the parent provides. Only the `shared_services` key is supported -- no other collection exists in the SSG schema.
+
+Standalone SSG Coastfiles may technically contain `[unset]`, but it is silently ignored (matches regular Coastfile behavior: unset only applies when the file participates in inheritance).
+
+### Cycles
+
+Direct cycles (`A` extends `B` extends `A`, or `A` extends itself) are hard-errored with `circular extends/includes dependency detected: '<path>'`. Diamond inheritance (two separate paths that both end at the same parent) is allowed -- the visit-set is per-recursion and pops on return.
+
+### `[omit]` is not applicable
+
+Regular Coastfiles support `[omit]` to strip services / volumes from the compose file. The SSG has no compose file to strip -- it generates inner compose from `[shared_services.*]` entries directly. Use `[unset]` to drop inherited services instead.
+
+### Inline `--config` rejects `extends` / `includes`
+
+`coast ssg build --config '<toml>'` cannot resolve a parent path because there is no on-disk location to anchor relative paths to. Passing `extends` / `includes` in inline TOML hard-errors with `extends and includes require file-based parsing`. Use `-f <file>` or `--working-dir <dir>` instead.
+
+### Build artifact is the flattened form
+
+`coast ssg build` writes a standalone TOML to `~/.coast/ssg/builds/<id>/ssg-coastfile.toml`. The artifact contains the post-inheritance merged result with no `extends`, `includes`, or `[unset]` directives, so the build can be inspected or re-run without the parent / fragment files being present. The `build_id` hash also reflects the flattened form, so a parent-only change invalidates the cache correctly.
+
 ## Example
 
 Minimal Postgres + Redis:
@@ -140,3 +206,4 @@ volumes = ["/var/coast-data/redis:/data"]
 - [SSG Building](../shared_service_groups/BUILDING.md) -- what `coast ssg build` does with this file
 - [SSG Volumes](../shared_service_groups/VOLUMES.md) -- volume declaration shapes, permissions, and the host-volume migration recipe
 - [Coastfile: Shared Services](SHARED_SERVICES.md) -- consumer-side `from_group = true` syntax
+- [Coastfile Inheritance](INHERITANCE.md) -- the shared `extends` / `includes` / `[unset]` mental model

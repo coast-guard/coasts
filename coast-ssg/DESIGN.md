@@ -316,14 +316,14 @@ SSG build so drift doesn't break them.
 
 ### Phase 17 — `extends` / `includes` on SSG Coastfile
 Supersedes §17-7. Mirrors the regular-Coastfile inheritance system.
-- [ ] `RawSsgCoastfile` accepts `[ssg] extends = ...` and `includes = [...]`
-- [ ] Parser merges extended/included chains
-- [ ] Validation: extended file must be a valid SSG Coastfile; no cycles
-- [ ] `[unset]` / `[omit]` sections mirror regular Coastfile
-- [ ] ~15 unit tests
-- [ ] Integration test `test_ssg_coastfile_inheritance`
-- [ ] `docs/coastfiles/SHARED_SERVICE_GROUPS.md` + DESIGN §5 updated
-- [ ] §17 SETTLED #42 + §17-7 promoted
+- [x] `RawSsgCoastfile` accepts `[ssg] extends = ...` and `includes = [...]`
+- [x] Parser merges extended/included chains
+- [x] Validation: extended file must be a valid SSG Coastfile; no cycles
+- [x] `[unset]` supports the SSG's one named collection (`shared_services`); `[omit]` is N/A (no compose file)
+- [x] 18 unit tests
+- [x] Integration test `test_ssg_coastfile_inheritance`
+- [x] `docs/coastfiles/SHARED_SERVICE_GROUPS.md` + DESIGN §5 updated
+- [x] §17 SETTLED #42 + §17-7 promoted
 
 ---
 
@@ -396,7 +396,6 @@ We want:
   user action. Users run `coast ssg checkout <service>` when they want
   host-side `localhost:5432`.
 - Auto-migrating existing inlined shared services to SSG.
-- `extends` / `includes` support in the SSG Coastfile (keep v1 simple).
 
 ## 4. High-level architecture
 
@@ -584,8 +583,14 @@ env = { MONGO_INITDB_ROOT_USERNAME = "coast", MONGO_INITDB_ROOT_PASSWORD = "coas
 - Only `[ssg]` and `[shared_services.*]` sections are accepted. Any
   other top-level key (`[coast]`, `[ports]`, `[services]`, etc.) is
   rejected at parse.
-- `extends` and `includes` are NOT supported in v1 (keep singleton
-  simple). Track as §17 open question.
+- `[ssg] extends = "..."` and `[ssg] includes = [...]` are supported
+  (Phase 17 / SETTLED #42). Merge semantics mirror the regular
+  Coastfile: by-name replace for `[shared_services.*]`, child-wins
+  scalars for `[ssg]`. Top-level `[unset]` supports
+  `shared_services = [...]` to drop inherited entries. Fragments
+  cannot themselves use `extends` / `includes`. `[omit]` is N/A for
+  SSG (no compose file). See
+  [`docs/coastfiles/SHARED_SERVICE_GROUPS.md#inheritance`](../docs/coastfiles/SHARED_SERVICE_GROUPS.md).
 - `volumes` entries are one of two shapes (see §10):
   - `"/absolute/host/path:/container/path"` — host bind mount.
   - `"name:/container/path"` — inner named volume (lives inside the
@@ -1327,10 +1332,16 @@ tracks state across sessions.
 6. (SETTLED) Remote coasts use the existing
    `SharedServicePortForward` protocol (§20). `coast-service` is
    unchanged. Remote SSG is an explicit non-goal for v1.
-7. **Coastfile.shared_service_groups inheritance** — v1 disallows
-   `extends` / `includes`. Reconsider in v2 once real-world usage
-   shows whether users need composition (e.g. "dev-ssg extends
-   base-ssg plus a test-seed service").
+7. (SETTLED — Phase 17) **Coastfile.shared_service_groups
+   inheritance** — `[ssg] extends = "..."`, `[ssg] includes = [...]`,
+   and top-level `[unset] shared_services = [...]` are wired.
+   Fragments cannot themselves use `extends` / `includes`;
+   `[omit]` is N/A (no compose file in the SSG); cycles
+   hard-error. `build_id` hashes the flattened
+   [`to_standalone_toml`](./src/coastfile/mod.rs) output so
+   parent-only changes invalidate the cache correctly. See
+   [`docs/coastfiles/SHARED_SERVICE_GROUPS.md#inheritance`](../docs/coastfiles/SHARED_SERVICE_GROUPS.md)
+   and SETTLED #42 for the 8 design decisions.
 8. (SETTLED — Phase 6) **No `--force` flag on `coast ssg checkout`.**
    Coast-tracked holders (a coast-instance's canonical-port socat, or
    an existing `ssg_port_checkouts` row) are displaced cleanly with a
@@ -1869,6 +1880,60 @@ tracks state across sessions.
     `test_ssg_uncheckout_build_restores_latest`,
     `test_ssg_pin_missing_build_errors`. Docs:
     `docs/shared_service_groups/PINNING.md`.
+
+42. (SETTLED — Phase 17) **SSG Coastfile inheritance
+    (`extends` / `includes` / `[unset]`).** Phase 17 mirrors the
+    regular-Coastfile inheritance system on
+    `Coastfile.shared_service_groups`. Implementation:
+    [`coast_ssg::coastfile::SsgCoastfile::from_file_with_ancestry`](./src/coastfile/mod.rs),
+    `merge_raw_onto`, `apply_unset`, `find_ssg_coastfile`. Design
+    decisions locked in:
+    - **Duplicated the pattern inside `coast-ssg`** rather than
+      extract helpers from `coast_core::coastfile`. SSG schema is
+      narrow (2 sections); duplication is ~200 lines and avoids
+      promoting `pub(super)` internals across crates. Cross-crate
+      reuse already exists for `interpolate_env_vars`; no
+      additional shared code was needed.
+    - **Merge at the raw-TOML level, then validate once.** The
+      regular Coastfile merges validated `Coastfile` objects; the
+      SSG merges `RawSsgCoastfile` and calls `validate_and_build`
+      once on the merged result. Simpler for the narrow schema and
+      avoids duplicating validation per layer.
+    - **`[unset]` scoped to `shared_services` only.** It's the
+      only named collection in the SSG schema. `runtime` is a
+      scalar (child-wins handles override). `[omit]` is N/A —
+      the SSG has no compose file to strip services from.
+    - **Fragments (`includes` targets) cannot themselves use
+      `extends` / `includes`.** Matches regular Coastfile. Keeps
+      the dependency graph a tree rooted at a single `from_file`
+      call; `includes_cannot_have_extends_in_fragment` /
+      `includes_cannot_have_includes_in_fragment` tests enforce.
+    - **`.toml` tie-break on `extends`**, exact filename on
+      `includes`. Matches regular Coastfile. Path resolution is
+      relative to the extending/including file's parent directory.
+      No `.git` worktree traversal (SSG is host-level; its
+      Coastfiles don't live inside worktrees the way regular ones
+      do).
+    - **`SsgCoastfile::parse(content, _)` rejects
+      `extends` / `includes`** with
+      `"extends and includes require file-based parsing. Use
+      SsgCoastfile::from_file() instead."` — inheritance needs
+      disk access to resolve paths. Inline `coast ssg build
+      --config '<toml>'` hits this rejection naturally.
+    - **`build_id` hashes the flattened
+      `SsgCoastfile::to_standalone_toml()`** output rather than
+      the raw top-level bytes. Correctness fix: a parent-only
+      change now invalidates the build cache, and the artifact
+      already stores the same flattened form on disk at
+      `~/.coast/ssg/builds/<id>/ssg-coastfile.toml`. Unit test:
+      [`coastfile_hash_is_stable_across_equivalent_formatting`](./src/build/artifact.rs).
+    - **Artifact stores the flattened standalone TOML.**
+      `to_standalone_toml` never emits `extends`, `includes`, or
+      `[unset]`, so build artifacts remain self-contained and
+      `coast ssg run` needs no parent files to resolve. Matches
+      regular Coastfile artifact behavior.
+    Regression test: `test_ssg_coastfile_inheritance`. Docs:
+    [`docs/coastfiles/SHARED_SERVICE_GROUPS.md#inheritance`](../docs/coastfiles/SHARED_SERVICE_GROUPS.md).
 
 ## 18. Risks
 

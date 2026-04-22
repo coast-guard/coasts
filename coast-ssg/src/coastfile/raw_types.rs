@@ -24,6 +24,11 @@ pub(super) struct RawSsgCoastfile {
     pub ssg: RawSsgSection,
     #[serde(default)]
     pub shared_services: HashMap<String, RawSsgSharedServiceConfig>,
+    /// Phase 17: `[unset]` block (applied after inheritance merge).
+    /// Scoped to `shared_services` — the only named collection in
+    /// the SSG schema. See `DESIGN.md §17 SETTLED #42`.
+    #[serde(default)]
+    pub unset: Option<RawSsgUnsetConfig>,
 }
 
 /// `[ssg]` section.
@@ -32,6 +37,29 @@ pub(super) struct RawSsgCoastfile {
 pub(super) struct RawSsgSection {
     #[serde(default)]
     pub runtime: Option<String>,
+    /// Phase 17: path to a parent SSG Coastfile to inherit from.
+    /// Resolved relative to the containing file's parent dir;
+    /// `.toml` tie-break applies.
+    #[serde(default)]
+    pub extends: Option<String>,
+    /// Phase 17: list of fragment files to merge into this Coastfile.
+    /// Resolved relative to the containing file's parent dir.
+    /// Fragments themselves cannot use `extends` / `includes`.
+    #[serde(default)]
+    pub includes: Option<Vec<String>>,
+}
+
+/// `[unset]` block — list named `shared_services` entries to drop
+/// after merging parents/includes. Only applied when the current
+/// Coastfile uses `extends` or `includes`; standalone files never
+/// reach the unset pass. Mirrors
+/// [`coast_core::coastfile::raw_types::RawUnsetConfig`] (narrow
+/// version for the SSG schema).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RawSsgUnsetConfig {
+    #[serde(default)]
+    pub shared_services: Vec<String>,
 }
 
 /// A single `[shared_services.<name>]` entry.

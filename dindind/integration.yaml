@@ -509,3 +509,9 @@ tests:
     script: integrated-examples/test_ssg_pin_missing_build_errors.sh
     timeout: 600
     note: "deleting the pinned build dir + coast run -> hard-error citing uncheckout-build + coast ssg build (DESIGN §17-9 pin-pruned path)"
+
+  # --- Shared Service Groups (coast-ssg) — Phase 17 (Coastfile inheritance) ---
+  test_ssg_coastfile_inheritance:
+    script: integrated-examples/test_ssg_coastfile_inheritance.sh
+    timeout: 600
+    note: "Coastfile.shared_service_groups [ssg] extends/includes: parent merged into child, child wins on conflict, flattened artifact, [unset] removes, cycle detection hard-errors (DESIGN §17 SETTLED #42)"

@@ -121,7 +121,7 @@ pub async fn build_ssg(
     progress: Sender<BuildProgressEvent>,
 ) -> Result<SsgResponse> {
     // --- Step 1: parse ---
-    let (cf, raw) = {
+    let (cf, _raw) = {
         let _ = progress
             .send(BuildProgressEvent::started("Parse coastfile", 1, 1))
             .await;
@@ -143,8 +143,15 @@ pub async fn build_ssg(
         .send(BuildProgressEvent::started("Resolve build id", 2, total))
         .await;
     let now = chrono::Utc::now();
-    let build_id = build_artifact::compute_build_id(&raw, &cf, now);
-    let coastfile_hash = build_artifact::coastfile_hash_for(&raw, &cf);
+    // Phase 17: hash the flattened (post-inheritance) standalone
+    // form rather than the raw top-level bytes. This is the
+    // correctness fix for `extends` / `includes`: a parent-only
+    // change must invalidate the build cache, and the artifact
+    // directory already stores the same flattened form on disk via
+    // `write_artifact`. See `DESIGN.md §17 SETTLED #42`.
+    let flattened = cf.to_standalone_toml();
+    let build_id = build_artifact::compute_build_id(&flattened, &cf, now);
+    let coastfile_hash = build_artifact::coastfile_hash_for(&flattened, &cf);
     let _ = progress
         .send(BuildProgressEvent::done("Resolve build id", &build_id))
         .await;

@@ -747,4 +747,57 @@ env = { POSTGRES_USER = "coast", POSTGRES_PASSWORD = "secret" }
             }
         });
     }
+
+    // ---- Phase 17: hash invariance over formatting ----
+
+    #[test]
+    fn coastfile_hash_is_stable_across_equivalent_formatting() {
+        // Two TOML strings that parse to the same `SsgCoastfile`
+        // must hash identically when we feed the flattened
+        // standalone form to `coastfile_hash_for`. This is the
+        // correctness property Phase 17 wants: a parent-only change
+        // or a top-level whitespace-only change does not spuriously
+        // invalidate the build cache.
+        let cf_a = SsgCoastfile::parse(
+            r#"
+[ssg]
+runtime = "dind"
+
+[shared_services.postgres]
+image = "postgres:16-alpine"
+ports = [5432]
+"#,
+            Path::new("/tmp"),
+        )
+        .unwrap();
+
+        let cf_b = SsgCoastfile::parse(
+            // Same services, different formatting / blank lines /
+            // map ordering. Parses to an equal SsgCoastfile.
+            r#"
+[shared_services.postgres]
+ports = [5432]
+image = "postgres:16-alpine"
+
+[ssg]
+runtime = "dind"
+"#,
+            Path::new("/tmp"),
+        )
+        .unwrap();
+
+        let flat_a = cf_a.to_standalone_toml();
+        let flat_b = cf_b.to_standalone_toml();
+        assert_eq!(
+            flat_a, flat_b,
+            "to_standalone_toml must be formatting-invariant"
+        );
+
+        let hash_a = coastfile_hash_for(&flat_a, &cf_a);
+        let hash_b = coastfile_hash_for(&flat_b, &cf_b);
+        assert_eq!(
+            hash_a, hash_b,
+            "equivalent coastfiles must yield the same hash"
+        );
+    }
 }
