@@ -27,7 +27,7 @@ _ssg_remote_cleanup() {
     pkill -f "coastd --foreground" 2>/dev/null || true
     sleep 1
     pkill -f "socat TCP-LISTEN.*fork,reuseaddr" 2>/dev/null || true
-    pkill -f "ssh -N -R 0.0.0.0:5432" 2>/dev/null || true
+    pkill -f "ssh -N -R" 2>/dev/null || true
     rm -f ~/.coast/state.db ~/.coast/state.db-wal ~/.coast/state.db-shm
     rm -f ~/.coast/coastd.sock ~/.coast/coastd.pid
     docker rm -f coast-ssg 2>/dev/null || true
@@ -78,7 +78,7 @@ sleep 3
 echo ""
 echo "=== Step 2: capture the reverse ssh PIDs before --force ==="
 
-BEFORE_PIDS=$(pgrep -f "ssh -N -R 0.0.0.0:5432" 2>/dev/null || true)
+BEFORE_PIDS=$(pgrep -f "ssh -N -R 0.0.0.0:" 2>/dev/null || true)
 echo "reverse ssh PIDs before: '$BEFORE_PIDS'"
 [ -n "$BEFORE_PIDS" ] || fail "expected at least one reverse ssh child before --force"
 pass "found reverse ssh children: $BEFORE_PIDS"

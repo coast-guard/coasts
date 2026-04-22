@@ -275,6 +275,19 @@ async fn handle_remote_rm(
         let _ = docker.remove_container(&shell_container, Some(opts)).await;
     }
 
+    // Phase 18: tear down shared-service reverse tunnels (ssh -N -R)
+    // before deleting the instance row. The FK `ON DELETE CASCADE` on
+    // `shared_service_forwards.(project, instance)` drops the persisted
+    // state when we delete the instance below.
+    {
+        let mut map = state.shared_service_tunnel_pids.lock().await;
+        if let Some(pids) = map.remove(&(req.project.clone(), req.name.clone())) {
+            for pid in pids {
+                super::ssg::kill_ssh_tunnel_pid(pid);
+            }
+        }
+    }
+
     let db = state.db.lock().await;
     db.delete_port_allocations(&req.project, &req.name)?;
     db.delete_instance(&req.project, &req.name)?;

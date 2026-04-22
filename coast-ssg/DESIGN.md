@@ -325,6 +325,37 @@ Supersedes §17-7. Mirrors the regular-Coastfile inheritance system.
 - [x] `docs/coastfiles/SHARED_SERVICE_GROUPS.md` + DESIGN §5 updated
 - [x] §17 SETTLED #42 + §17-7 promoted
 
+### Phase 18 — Symmetric remote shared-service routing
+Resolves the inline-vs-SSG collision on shared remotes by mirroring
+the local topology (docker0 alias IP + socat inside DinD) on the
+remote side. Replaces the Phase 4.5 gateway-IP design in §20. See
+§17 SETTLED #43 for rationale.
+
+- [x] Protocol: add `remote_port: u16` to `coast_core::protocol::SharedServicePortForward`
+- [x] Lift local shared-service routing helpers out of
+      `coast-daemon/src/handlers/shared_service_routing.rs` into a
+      shared crate (`coast-docker::shared_service_routing` or new
+      `coast-routing`) so both `coast-daemon` and `coast-service`
+      call the same primitives
+- [x] `coast-daemon::handlers::run::mod::setup_shared_service_tunnels`
+      allocates a unique `remote_port` per forward via
+      `port_manager::allocate_dynamic_port`, sends it in the RunRequest
+- [x] `coast-daemon` reverse-tunnel pairs become
+      `(remote_port, local_port)` where `local_port` is the value
+      already produced by `rewrite_reverse_tunnel_pairs`
+- [x] `coast-service::handlers::run` spawns inside-DinD socat + docker0
+      alias IP setup, forwarding canonical -> `host.docker.internal:{remote_port}`
+- [x] `coast-service::handlers::run::add_shared_extra_hosts` emits
+      `{name}:{alias_ip}` instead of `{name}:{gateway_ip}`
+- [x] `RemoteInstance` state tracks per-service `remote_port` for
+      lifecycle cleanup (stop/rm/daemon-restart recovery)
+- [x] Unit tests: alias-IP allocation inside coast-service, socat script
+      generation, `SharedServicePortForward.remote_port` round-trip
+- [x] Integration test `test_remote_mixed_inline_and_ssg_no_collision`
+      (two coasts on one remote, same canonical port, different upstreams)
+- [x] Integration test `test_remote_multi_instance_independent_tunnels`
+- [x] `make lint`, `make test`, and full `integrated-examples/remote/test_*.sh` regression green
+
 ---
 
 ## 1. Problem
@@ -1935,12 +1966,44 @@ tracks state across sessions.
     Regression test: `test_ssg_coastfile_inheritance`. Docs:
     [`docs/coastfiles/SHARED_SERVICE_GROUPS.md#inheritance`](../docs/coastfiles/SHARED_SERVICE_GROUPS.md).
 
+43. (SETTLED — Phase 18) **Inline-vs-SSG collision on shared remotes.**
+    The pre-Phase-18 design bound the reverse-tunnel remote port to the
+    canonical port. Two consumer coasts on one remote declaring the
+    same canonical port (e.g. both `postgres:5432`) with different
+    local upstreams (one inline, one SSG) collided: the second
+    `reverse_forward_ports` call failed at bind time, and the
+    `Err(_) => info!("already bound, reusing existing")` arm in
+    [`coast-daemon/src/handlers/run/mod.rs`](../coast-daemon/src/handlers/run/mod.rs)
+    silently treated the pre-existing tunnel as fungible, so the
+    second coast's traffic reached the first coast's upstream.
+    Alternatives considered:
+    - **Error-instead-of-reuse when upstreams differ.** Minimal (~50 LOC),
+      enforces a constraint on users rather than fixing it.
+    - **One-coast-per-VM.** Sidesteps at the cost of cloud spend and
+      loses the multi-instance-per-remote property.
+    - **Loopback-alias remote binds** (`-R 127.0.0.2:5432:...`).
+      sshd supports client-specified binds, but the inner container
+      needs per-coast `extra_hosts` addresses the VM has to provision,
+      and those loopback aliases aren't routable from the DinD's own
+      netns without bridge-side plumbing. More machinery, less symmetric.
+    - **Symmetric topology (chosen).** Remote port becomes dynamic per
+      forward; socat inside the remote DinD does canonical<->dynamic
+      translation exactly like the local path (§11 /
+      [`shared_service_routing.rs`](../coast-daemon/src/handlers/shared_service_routing.rs)).
+      Collisions impossible because every coast owns its own remote
+      port. Minor cost: lifts the shared-routing helpers into a common
+      crate and adds socat inside DinD on the remote. See §20 for the
+      full specification.
+
 ## 18. Risks
 
 - **Hidden port collisions.** Dynamic ports can clash with other
   processes that grab the port between allocation and `docker run`.
   Mitigated by the existing `allocate_dynamic_port` helper which
-  already handles retries; SSG reuses it.
+  already handles retries; SSG reuses it. Cross-coast canonical-port
+  collisions on a shared remote VM are impossible by construction
+  under the Phase 18 symmetric-routing design (every reverse tunnel
+  binds its own ephemeral `remote_port`); see §20 and §17 SETTLED #43.
 - **DinD-in-DinD confusion.** Coasts are DinD; the SSG is DinD. They
   are *siblings* on the host Docker daemon, not nested. Coasts reach
   the SSG via `host.docker.internal`, never by nesting. Add a
@@ -1979,103 +2042,152 @@ tracks state across sessions.
 
 ### 20.1 The contract
 
-`coast-service` never learns about SSGs. It already speaks a
-daemon-agnostic contract via `RunRequest::shared_service_ports:
-Vec<SharedServicePortForward>`:
+`coast-service` stays daemon-agnostic: it does not know or care
+whether a given shared service is inline on the local host or served
+by the SSG. It receives a `RunRequest::shared_service_ports:
+Vec<SharedServicePortForward>` in which every entry names the service
+and its **canonical** (inner) port plus a **remote-side dynamic port**
+the daemon has allocated on the remote VM:
 
 ```rust
-pub struct SharedServicePortForward { pub name: String, pub port: u16 }
+pub struct SharedServicePortForward {
+    pub name: String,
+    pub port: u16,          // canonical port the app dials, e.g. 5432
+    pub remote_port: u16,   // dynamic port sshd binds on the remote VM
+}
 ```
 
-On the remote side, [`coast-service/src/handlers/run.rs`](../coast-service/src/handlers/run.rs):
+On the remote side, [`coast-service/src/handlers/run.rs`](../coast-service/src/handlers/run.rs)
+mirrors the local Phase 4 consumer path (§11), not the old Phase 4.5
+gateway-IP design. For each forward:
 
-1. Reads `req.shared_service_ports`.
-2. Strips the named services from the inner compose project.
-3. Adds `extra_hosts: {name}: host-gateway` so inner containers
-   resolve the service DNS name to `host.docker.internal` inside the
-   remote DinD.
-4. Adds `host.docker.internal:host-gateway` to the remote DinD's own
-   extra hosts.
+1. Strip the named service from the inner compose project and its
+   `depends_on` references.
+2. Allocate a docker0 alias IP from the top of the remote DinD's own
+   docker0 subnet (same algorithm as
+   [`coast-daemon/src/handlers/shared_service_routing.rs::allocate_alias_ip`](../coast-daemon/src/handlers/shared_service_routing.rs)
+   — lifted into a shared crate in Phase 18 so both sides call the
+   same primitive).
+3. Inside the remote DinD, `ip addr add {alias_ip}/{prefix} dev docker0`
+   and spawn
+   `socat TCP-LISTEN:{port},bind={alias_ip},fork,reuseaddr TCP:host.docker.internal:{remote_port}`.
+4. Rewrite every remaining inner-compose service's
+   `extra_hosts` to include `{name}:{alias_ip}` so app code that dials
+   `postgres` lands on the alias IP inside the DinD's netns.
+5. Add `host.docker.internal:host-gateway` on the remote DinD itself
+   so the inside-DinD socat can reach `remote_port` on the VM host.
 
-From the remote's point of view, there is "some process" on the other
-side of the reverse SSH tunnel on port `{container_port}`. What that
-process is — inline shared service, SSG-owned service, or future
-remote-SSG — is invisible.
+Coast-service has no knowledge of what's listening on the local end of
+the reverse tunnel. The daemon owns that: "inline shared service"
+vs "SSG dynamic host port" is a local-only distinction (see §20.2).
 
-### 20.2 Local-side changes only
+### 20.2 Local-side allocation
 
-In `coast-daemon/src/handlers/run/mod.rs::setup_shared_service_tunnels`,
-only the **local** side of each reverse-tunnel pair changes:
+In [`coast-daemon/src/handlers/run/mod.rs::setup_shared_service_tunnels`](../coast-daemon/src/handlers/run/mod.rs),
+**both** ends of every reverse-tunnel pair are dynamic:
 
 ```rust
-// Existing:
-let reverse_pairs: Vec<(u16, u16)> =
-    forwards.iter().map(|fwd| (fwd.port, fwd.port)).collect();
-
-// After Phase 4.5:
-let reverse_pairs = coast_ssg::remote_tunnel::rewrite_reverse_tunnel_pairs(
-    forwards,
-    &ssg_state,
-);
-// For each fwd:
-//   (fwd.port /* remote canonical */, ssg_services[fwd.name].dynamic_host_port /* local */)
-//   falls back to (fwd.port, fwd.port) when the service is inline.
+// For each fwd in the consumer's shared_service_ports:
+//   let remote_port = port_manager::allocate_dynamic_port(…);
+//   let local_port  = rewrite_reverse_tunnel_pairs(forwards, &ssg_state)
+//                       .get(fwd)  // canonical for inline, SSG dynamic for from_group
+//   (remote_port, local_port)
 ```
 
-The tunnel itself is built by the existing
-[`coast-daemon/src/handlers/remote/tunnel.rs::reverse_forward_ports`](../coast-daemon/src/handlers/remote/tunnel.rs),
-which already accepts arbitrary `(remote_port, local_port)` pairs:
+The existing
+[`coast-daemon/src/handlers/remote/tunnel.rs::reverse_forward_ports`](../coast-daemon/src/handlers/remote/tunnel.rs)
+already accepts arbitrary `(remote_port, local_port)` pairs and
+spawns:
 
 ```text
 ssh -R 0.0.0.0:{remote_port}:localhost:{local_port} ...
 ```
 
-No signature change, no new ssh flag, no new RPC.
+Because every forward gets its own ephemeral `remote_port`, two
+coasts on a shared remote cannot collide on a canonical port.
+Coast A's postgres tunnel binds remote `61034`; coast B's postgres
+tunnel binds remote `59210`; both apps still dial `postgres:5432`
+inside their DinDs. See §17 SETTLED #43 for the pre-Phase-18 failure
+this replaces.
 
 ### 20.3 Flow diagram
 
 ```text
-REMOTE (coast-service)                       LOCAL (coast-daemon + coast-ssg)
-+----------------------------+               +-----------------------------+
-| inner app container        |               |                             |
-|   -> postgres:5432         |               |                             |
-|   (extra_hosts override)   |               |                             |
-|       |                    |               |                             |
-|       v                    |               |                             |
-| DinD host-gateway          |               |                             |
-|       |                    |               |                             |
-|       v                    |               |                             |
-| DinD published port 5432   |<---ssh -R---->| local :{SSG_DYN} (54201)    |
-|                            |               |       |                     |
-|                            |               |       v                     |
-|                            |               | SSG DinD publishes 54201    |
-|                            |               |   -> inner postgres :5432   |
-|                            |               |       |                     |
-|                            |               |       v                     |
-|                            |               | host bind /var/coast-data   |
-+----------------------------+               +-----------------------------+
+REMOTE VM                                    LOCAL HOST
++-------------------------------------+      +-------------------------------+
+| Remote DinD                         |      |                               |
+|   inner app container               |      |                               |
+|     -> postgres:5432                |      |                               |
+|     (extra_hosts: postgres:ALIAS)   |      |                               |
+|         |                           |      |                               |
+|         v                           |      |                               |
+|   ALIAS_IP:5432 on docker0          |      |                               |
+|   (ip addr add + socat inside DinD) |      |                               |
+|         |                           |      |                               |
+|         v  socat forwards to        |      |                               |
+|         host.docker.internal        |      |                               |
+|         :{remote_port}              |      |                               |
+|         |                           |      |                               |
+|         v                           |      |                               |
+| sshd bound 0.0.0.0:{remote_port} ---|--R---|--> ssh client (coast-daemon)  |
++-------------------------------------+      |       |                       |
+                                             |       v                       |
+                                             | localhost:{local_port}        |
+                                             |   inline: canonical port      |
+                                             |   SSG:    SSG dynamic port    |
+                                             |       |                       |
+                                             |       v                       |
+                                             |   inline container            |
+                                             |   OR SSG DinD publish ->      |
+                                             |      inner postgres :5432     |
+                                             +-------------------------------+
 ```
+
+```mermaid
+flowchart LR
+  subgraph remoteDind [Remote DinD]
+    web[inner web] -->|"postgres:5432"| aliasIp["alias IP :5432 on docker0"]
+    aliasIp --> socatDind["socat inside DinD"]
+  end
+  subgraph remoteHost [Remote VM host]
+    socatDind -->|"host.docker.internal:remote_port"| sshdListener["sshd -R 0.0.0.0:remote_port"]
+  end
+  subgraph localHost [Local host]
+    sshdListener -.->|"SSH session"| sshClient["ssh client (coast-daemon)"]
+    sshClient -->|"localhost:local_port"| localTarget["inline container OR SSG dynamic port"]
+  end
+```
+
+Canonical<->dynamic translation happens **inside the remote DinD**
+(via socat on a docker0 alias IP), identical in shape to the local
+Phase 4 consumer topology described in §11. The symmetry is the
+point: one mental model works for both local and remote.
 
 ### 20.4 `auto_create_db` is always local
 
-Per-instance DB creation for remote consumer coasts still happens on
-the local machine, against the SSG's inner postgres, via nested
-`docker exec`. No exec ever runs on `coast-service` for SSG services —
-the remote is purely a consumer of the tunnel.
+Per-instance DB creation for remote consumer coasts happens on the
+local machine, against the SSG's inner postgres, via nested
+`docker exec` into the coast-ssg container. No exec ever runs on
+`coast-service` for SSG services — the remote is purely a consumer of
+the reverse tunnel.
 
 ### 20.5 Ordering in `handle_remote_run`
 
 [`coast-daemon/src/handlers/run/mod.rs::handle_remote_run`](../coast-daemon/src/handlers/run/mod.rs)
-gains one extra step at the front of its pipeline (before the existing
-"Starting shared services" phase):
+gains one extra step at the front of its pipeline (before the
+existing "Starting shared services" phase):
 
 0. Resolve SSG references from the local artifact's Coastfile.
 1. If any, ensure SSG is running (auto-start per §11.1, guarded by
    `ssg_mutex`).
-2. Run the existing `setup_shared_service_tunnels` with SSG dynamic
-   ports on the local side of each pair (§20.2).
+2. `setup_shared_service_tunnels` allocates a `remote_port` per
+   forward, rewrites the local side of each pair for SSG-backed
+   services via `rewrite_reverse_tunnel_pairs`, and spawns
+   `ssh -R 0.0.0.0:{remote_port}:localhost:{local_port}` processes
+   (§20.2). The allocated `remote_port`s ride on the `RunRequest` so
+   coast-service can bind them to its inside-DinD socats (§20.1).
 3. Run `auto_create_db` locally against the SSG (§20.4).
-4. Forward `RunRequest` to `coast-service`, unchanged.
+4. Forward `RunRequest` to `coast-service`.
 
 ### 20.6 SSG lifecycle respects active remote shadow instances
 
@@ -2207,6 +2319,7 @@ Pinned glossary for context-compacted sessions.
 | Symmetric path | The bind-mount plan in §10.2 — the same host path string on both mount hops |
 | Displacement | `coast ssg checkout` taking over a canonical port held by a coast instance |
 | Drift | Mismatch between a coast build's recorded SSG reference and the current SSG state (§6.1) |
+| Remote dynamic tunnel port | The per-forward ephemeral port on the remote VM that sshd binds for the reverse tunnel under Phase 18. Independent per coast, so two coasts on one remote can both have a `postgres:5432` consumer without collision (§20). |
 
 ---
 
@@ -2265,3 +2378,6 @@ execution order (least-coupled first):
 6. Phase 15 — import-host-volume, 1 day
 7. Phase 16 — checkout-build consumer pinning, 2-3 days
 8. Phase 17 — extends / includes, 2-3 days
+9. Phase 18 — symmetric remote shared-service routing, 2-3 days
+   (land after Phase 17 so the shared-routing crate lift is the
+   only large refactor in flight)

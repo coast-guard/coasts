@@ -36,7 +36,7 @@ _ssg_remote_cleanup() {
     pkill -f "coastd --foreground" 2>/dev/null || true
     sleep 1
     pkill -f "socat TCP-LISTEN.*fork,reuseaddr" 2>/dev/null || true
-    pkill -f "ssh -N -R 0.0.0.0:5432" 2>/dev/null || true
+    pkill -f "ssh -N -R" 2>/dev/null || true
     rm -f ~/.coast/state.db ~/.coast/state.db-wal ~/.coast/state.db-shm
     rm -f ~/.coast/coastd.sock ~/.coast/coastd.pid
     docker rm -f coast-ssg 2>/dev/null || true
@@ -124,13 +124,15 @@ sleep 5
 echo ""
 echo "=== Step 5: reverse tunnel uses SSG dynamic port on local side ==="
 
-# ssh -R 0.0.0.0:5432:localhost:<SSG_DYNAMIC> is what Phase 4.5
-# rewrites the local side to. If the map is missing, the tunnel would
-# read `localhost:5432` instead. Assert the dynamic value is present.
-PGREP_OUT=$(pgrep -af "ssh -N -R 0.0.0.0:5432" 2>&1 || true)
+# Phase 18: the remote side of the reverse tunnel is a dynamic port
+# (not canonical 5432); the local side is still the SSG's dynamic
+# port because rewrite_reverse_tunnel_pairs still maps SSG forwards.
+PGREP_OUT=$(pgrep -af "ssh -N -R 0.0.0.0:" 2>&1 || true)
 echo "$PGREP_OUT"
-assert_contains "$PGREP_OUT" "0.0.0.0:5432:localhost:$SSG_DYNAMIC" \
-    "reverse ssh tunnel targets SSG dynamic port ($SSG_DYNAMIC) locally"
+if ! echo "$PGREP_OUT" | grep -qE "ssh -N -R 0\.0\.0\.0:[0-9]+:localhost:$SSG_DYNAMIC"; then
+    fail "reverse ssh tunnel should bind a dynamic remote port and terminate at localhost:$SSG_DYNAMIC"
+fi
+pass "reverse ssh tunnel targets SSG dynamic port ($SSG_DYNAMIC) locally (Phase 18)"
 
 echo ""
 echo "=== Step 6: app container inside remote coast reaches SSG postgres ==="

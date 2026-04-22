@@ -12,4 +12,5 @@ pub mod image_cache;
 pub mod network;
 pub mod podman;
 pub mod runtime;
+pub mod shared_service_routing;
 pub mod sysbox;

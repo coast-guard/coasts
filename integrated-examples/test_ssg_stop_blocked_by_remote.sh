@@ -24,7 +24,7 @@ _ssg_remote_cleanup() {
     pkill -f "coastd --foreground" 2>/dev/null || true
     sleep 1
     pkill -f "socat TCP-LISTEN.*fork,reuseaddr" 2>/dev/null || true
-    pkill -f "ssh -N -R 0.0.0.0:5432" 2>/dev/null || true
+    pkill -f "ssh -N -R" 2>/dev/null || true
     rm -f ~/.coast/state.db ~/.coast/state.db-wal ~/.coast/state.db-shm
     rm -f ~/.coast/coastd.sock ~/.coast/coastd.pid
     docker rm -f coast-ssg 2>/dev/null || true

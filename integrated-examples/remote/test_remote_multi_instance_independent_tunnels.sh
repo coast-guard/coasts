@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
 #
-# Integration test: second remote instance on same remote must reuse
-# existing shared service tunnels instead of failing on port conflicts.
+# Phase 18 integration test: two remote instances of the same project
+# on the same remote VM must each get their OWN dynamic `remote_port`
+# for every shared-service reverse tunnel.
 #
-# Verifies is_remote_port_listening: when reverse tunnel ports are
-# already bound on the remote, new tunnel creation is skipped.
+# Pre-Phase-18 the second run's reverse_forward_ports call would fail
+# the bind and the daemon would log "already bound, reusing existing",
+# silently aliasing coast B's traffic onto coast A's tunnel. Phase 18
+# allocates a unique `remote_port` per forward so each coast's sshd
+# listener sits on a distinct port.
+#
+# Replaces the pre-Phase-18 `test_remote_shared_tunnel_reuse.sh`.
 
 set -euo pipefail
 
@@ -22,6 +28,7 @@ _cleanup() {
     pkill -f "coastd --foreground" 2>/dev/null || true
     sleep 1
     pkill -f "socat TCP-LISTEN.*fork,reuseaddr" 2>/dev/null || true
+    pkill -f "ssh -N -R" 2>/dev/null || true
     pkill -f "mutagen" 2>/dev/null || true
     rm -f ~/.coast/state.db ~/.coast/state.db-wal ~/.coast/state.db-shm
     rm -f ~/.coast/coastd.sock ~/.coast/coastd.pid
@@ -29,7 +36,7 @@ _cleanup() {
 }
 trap '_cleanup' EXIT
 
-echo "=== Remote Shared Tunnel Reuse Test ==="
+echo "=== Phase 18: Multi-instance independent tunnels ==="
 echo ""
 preflight_checks
 echo ""
@@ -53,7 +60,7 @@ start_daemon
 "$COAST" build --type remote 2>&1 >/dev/null
 
 # ============================================================
-# Test 1: First instance creates tunnels
+# Test 1: First instance creates a tunnel on some dynamic port
 # ============================================================
 
 echo ""
@@ -68,15 +75,18 @@ pass "First instance running"
 
 sleep 3
 
-echo "  Daemon log (tunnel creation):"
-grep -E "reverse.*forward|shared.*tunnel|port already bound|skipping" /tmp/coastd-test.log 2>/dev/null | tail -5 || true
+FIRST_REMOTE_PORT=$(pgrep -af "ssh -N -R 0.0.0.0:" | \
+    grep -oE '0\.0\.0\.0:[0-9]+:localhost:5432' | \
+    head -1 | cut -d: -f2)
+[ -n "$FIRST_REMOTE_PORT" ] || fail "could not identify first instance's reverse-tunnel remote port"
+pass "First instance tunnel: remote_port=$FIRST_REMOTE_PORT -> localhost:5432 (canonical, inline)"
 
 # ============================================================
-# Test 2: Second instance succeeds (no port conflict)
+# Test 2: Second instance succeeds with a DIFFERENT remote port
 # ============================================================
 
 echo ""
-echo "=== Test 2: Run second instance (same remote) ==="
+echo "=== Test 2: Run second instance on same remote ==="
 
 set +e
 RUN2_OUT=$("$COAST" run shared-2 --type remote 2>&1)
@@ -85,22 +95,41 @@ set -e
 
 if [ "$RUN2_EXIT" -ne 0 ]; then
     echo "  Output: $RUN2_OUT"
-    fail "Second run failed -- shared service tunnel port conflict"
+    fail "Second run failed -- shared-service tunnel allocation collided"
 fi
 CLEANUP_INSTANCES+=("shared-2")
-pass "Second instance created (no tunnel conflict)"
+pass "Second instance created"
 
 sleep 3
 
-echo "  Daemon log (tunnel reuse):"
-grep -E "port already bound|skipping|tunnel.*reuse\|reverse.*forward" /tmp/coastd-test.log 2>/dev/null | tail -5 || true
-
 # ============================================================
-# Test 3: Both instances listed and running
+# Test 3: Each instance owns a distinct remote tunnel port
 # ============================================================
 
 echo ""
-echo "=== Test 3: Both instances running ==="
+echo "=== Test 3: Distinct remote tunnel ports ==="
+
+ALL_REMOTE_PORTS=$(pgrep -af "ssh -N -R 0.0.0.0:" | \
+    grep -oE '0\.0\.0\.0:[0-9]+:localhost:5432' | \
+    awk -F: '{print $2}' | sort -u)
+
+PORT_COUNT=$(echo "$ALL_REMOTE_PORTS" | grep -cv '^$' || echo 0)
+echo "  Distinct remote ports bound by sshd: $PORT_COUNT"
+echo "$ALL_REMOTE_PORTS" | sed 's/^/    /'
+
+if [ "$PORT_COUNT" -lt 2 ]; then
+    echo "--- daemon log tail ---"
+    tail -60 /tmp/coastd-test.log 2>/dev/null || true
+    fail "Phase 18 requires each instance to bind its own remote port; got $PORT_COUNT"
+fi
+pass "Both instances have independent reverse-tunnel remote ports"
+
+# ============================================================
+# Test 4: Both instances listed and running
+# ============================================================
+
+echo ""
+echo "=== Test 4: Both instances running ==="
 
 LS_OUT=$("$COAST" ls 2>&1)
 RUNNING=$(echo "$LS_OUT" | grep -c "remote.*running" || echo 0)
@@ -126,5 +155,5 @@ pass "Cleaned up"
 
 echo ""
 echo "=========================================="
-echo "  All shared tunnel reuse tests passed!"
+echo "  Phase 18 multi-instance independence OK"
 echo "=========================================="

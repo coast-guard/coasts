@@ -386,6 +386,19 @@ async fn handle_remote_stop(
         BuildProgressEvent::started("Killing tunnels", 3, 3),
     );
 
+    // Phase 18: also tear down shared-service reverse tunnels (ssh -N -R)
+    // and clear the tracked PIDs so the next `coast start` can rebind
+    // them freshly. Rows in `shared_service_forwards` are preserved so
+    // the reallocated remote_port values carry across stop/start.
+    {
+        let mut map = state.shared_service_tunnel_pids.lock().await;
+        if let Some(pids) = map.remove(&(req.project.clone(), req.name.clone())) {
+            for pid in pids {
+                super::ssg::kill_ssh_tunnel_pid(pid);
+            }
+        }
+    }
+
     let db = state.db.lock().await;
     kill_instance_socat_processes(&db, &req.project, &req.name)?;
     db.update_instance_status(&req.project, &req.name, &InstanceStatus::Stopped)?;

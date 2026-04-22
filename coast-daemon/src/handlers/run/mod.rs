@@ -850,6 +850,7 @@ async fn setup_shared_service_tunnels(
                 .map(|p| coast_core::protocol::SharedServicePortForward {
                     name: svc.name.clone(),
                     port: p.container_port,
+                    remote_port: 0, // filled in after allocation, below
                 })
         })
         .collect();
@@ -864,30 +865,72 @@ async fn setup_shared_service_tunnels(
     let mut forwards = inline_forwards;
     forwards.extend(ssg_forwards);
 
-    if !forwards.is_empty() {
-        // Rewrite the local side of each pair so SSG forwards target
-        // the dynamic host port instead of the canonical. Inline
-        // forwards fall back to identity mapping. See DESIGN.md §20.2.
-        let reverse_pairs =
-            coast_ssg::remote_tunnel::rewrite_reverse_tunnel_pairs(&forwards, &ssg_services);
-        match super::remote::tunnel::reverse_forward_ports(remote_config, &reverse_pairs).await {
-            Ok(pids) => {
-                info!(
-                    host = %remote_config.host,
-                    tunnels = pids.len(),
-                    "shared service reverse tunnels created"
-                );
-                if !pids.is_empty() {
-                    let mut map = state.shared_service_tunnel_pids.lock().await;
-                    map.insert((req.project.clone(), req.name.clone()), pids);
-                }
+    if forwards.is_empty() {
+        return Ok(forwards);
+    }
+
+    // Phase 18: allocate a unique dynamic `remote_port` per forward so
+    // concurrent consumer coasts on one remote VM never collide on a
+    // canonical port. See coast-ssg/DESIGN.md §20.2.
+    let mut allocated: std::collections::HashSet<u16> = std::collections::HashSet::new();
+    for fwd in &mut forwards {
+        let port =
+            crate::port_manager::allocate_dynamic_port_excluding(&allocated).map_err(|e| {
+                coast_core::error::CoastError::port(format!(
+                    "failed to allocate remote_port for shared service '{}' port {}: {e}",
+                    fwd.name, fwd.port
+                ))
+            })?;
+        allocated.insert(port);
+        fwd.remote_port = port;
+    }
+
+    // Rewrite pairs: remote side = fwd.remote_port, local side =
+    // canonical for inline / SSG dynamic for from_group.
+    let reverse_pairs =
+        coast_ssg::remote_tunnel::rewrite_reverse_tunnel_pairs(&forwards, &ssg_services);
+
+    // Persist the (remote_port, local_port) pairs BEFORE spawning ssh so
+    // daemon-restart recovery (§20.5) can replay them even if we crash
+    // mid-spawn.
+    {
+        let db = state.db.lock().await;
+        for (fwd, (remote_port, local_port)) in forwards.iter().zip(reverse_pairs.iter()) {
+            db.upsert_shared_service_forward(&crate::state::SharedServiceForwardRecord {
+                project: req.project.clone(),
+                instance: req.name.clone(),
+                service_name: fwd.name.clone(),
+                port: fwd.port,
+                local_port: *local_port,
+                remote_port: *remote_port,
+            })?;
+        }
+    }
+
+    match super::remote::tunnel::reverse_forward_ports(remote_config, &reverse_pairs).await {
+        Ok(pids) => {
+            info!(
+                host = %remote_config.host,
+                tunnels = pids.len(),
+                "shared service reverse tunnels created"
+            );
+            if !pids.is_empty() {
+                let mut map = state.shared_service_tunnel_pids.lock().await;
+                map.insert((req.project.clone(), req.name.clone()), pids);
             }
-            Err(_) => {
-                info!(
-                    host = %remote_config.host,
-                    "shared service tunnels already bound (reusing existing)"
-                );
-            }
+        }
+        Err(e) => {
+            // Phase 18: because every pair uses its own unique
+            // remote_port, a bind-already-in-use error now indicates a
+            // real collision with something outside Coast, not a
+            // cross-coast reuse. Log and continue rather than failing
+            // the run — the specific failing ports are already logged
+            // by reverse_forward_ports' per-port retry loop.
+            info!(
+                host = %remote_config.host,
+                error = %e,
+                "some shared-service reverse tunnels failed to bind; see earlier warnings"
+            );
         }
     }
 

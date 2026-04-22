@@ -9,9 +9,10 @@ use coast_core::protocol::{BuildProgressEvent, CoastEvent, StartRequest, StartRe
 use coast_core::types::{InstanceStatus, PortMapping};
 use coast_docker::runtime::Runtime;
 
-use crate::handlers::shared_service_routing::{
+use coast_docker::shared_service_routing::{
     ensure_shared_service_proxies, plan_shared_service_routing,
 };
+
 use crate::server::AppState;
 
 /// Emit a progress event if a sender is provided.
@@ -686,9 +687,10 @@ async fn reestablish_shared_service_tunnels(
     project: &str,
     name: &str,
 ) {
-    // Phase 4.5: SSG-aware pairs (local side rewritten to dynamic
-    // ports for SSG-backed services).
-    let pairs = crate::shared_service_reverse_pairs_with_ssg(state, project).await;
+    // Phase 18: read persisted (remote_port, local_port) pairs for this
+    // instance. No reallocation; we replay what was spawned on the
+    // previous run.
+    let pairs = crate::shared_service_reverse_pairs_with_ssg(state, project, name).await;
     if pairs.is_empty() {
         return;
     }

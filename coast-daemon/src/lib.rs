@@ -1024,7 +1024,7 @@ async fn apply_shared_service_plan(
     shared_services: &[coast_core::types::SharedServiceConfig],
     target_containers: &std::collections::HashMap<String, String>,
 ) {
-    let plan = match handlers::shared_service_routing::plan_shared_service_routing(
+    let plan = match coast_docker::shared_service_routing::plan_shared_service_routing(
         docker,
         container_id,
         shared_services,
@@ -1039,7 +1039,7 @@ async fn apply_shared_service_plan(
         }
     };
 
-    match handlers::shared_service_routing::ensure_shared_service_proxies(
+    match coast_docker::shared_service_routing::ensure_shared_service_proxies(
         docker,
         container_id,
         &plan,
@@ -1397,98 +1397,37 @@ async fn restore_shared_service_tunnels(
     }
 }
 
-/// Phase 4.5: async SSG-aware variant of `shared_service_reverse_pairs`.
+/// Read the persisted reverse-tunnel pairs for an instance from the
+/// daemon state DB.
 ///
-/// Today the legacy `shared_service_reverse_pairs` only emits
-/// `(container_port, container_port)` pairs for inline shared
-/// services. This variant additionally:
-///
-///   1. Includes forwards synthesized from the consumer's
-///      `shared_service_group_refs`.
-///   2. Rewrites the local side of each pair via
-///      `coast_ssg::remote_tunnel::rewrite_reverse_tunnel_pairs` so
-///      SSG-backed services tunnel to the SSG's dynamic host port
-///      while inline services keep their identity mapping.
-///
-/// Returns an empty vec when the project's artifact Coastfile is
-/// missing, can't be parsed, or declares nothing that needs a
-/// reverse tunnel. Errors are swallowed (logged) to match the
-/// best-effort posture of the legacy helper.
+/// Phase 18: the pairs are allocated once in
+/// `setup_shared_service_tunnels` and stored in `shared_service_forwards`
+/// so daemon-restart recovery (`restore_tunnels_for_instance`) and
+/// `reestablish_shared_service_tunnels` (on `coast start`) can replay
+/// the exact same tunnels without having to reallocate `remote_port`s
+/// or re-evaluate SSG state. Returns an empty vec when the instance has
+/// no recorded forwards.
 pub(crate) async fn shared_service_reverse_pairs_with_ssg(
     state: &server::AppState,
     project: &str,
+    instance: &str,
 ) -> Vec<(u16, u16)> {
-    use coast_ssg::state::SsgStateExt;
-
-    let Ok(images_dir) = coast_core::artifact::artifact_dir(project) else {
-        return Vec::new();
-    };
-    let coastfile_path = ["latest-remote", "latest"].iter().find_map(|name| {
-        let p = images_dir.join(name).join("coastfile.toml");
-        if p.exists() {
-            Some(p)
-        } else {
-            None
+    let db = state.db.lock().await;
+    let rows = match db.list_shared_service_forwards_for_instance(project, instance) {
+        Ok(rows) => rows,
+        Err(e) => {
+            tracing::warn!(
+                project = %project,
+                instance = %instance,
+                error = %e,
+                "failed to read shared_service_forwards; skipping reverse tunnels"
+            );
+            return Vec::new();
         }
-    });
-    let Some(cf_path) = coastfile_path else {
-        return Vec::new();
     };
-    let Ok(content) = std::fs::read_to_string(&cf_path) else {
-        return Vec::new();
-    };
-    let Ok(cf) = coast_core::coastfile::Coastfile::parse(&content, &images_dir) else {
-        return Vec::new();
-    };
-
-    // Inline forwards (canonical:canonical on both sides).
-    let mut forwards: Vec<coast_core::protocol::SharedServicePortForward> = cf
-        .shared_services
-        .iter()
-        .flat_map(|svc| {
-            svc.ports
-                .iter()
-                .map(|p| coast_core::protocol::SharedServicePortForward {
-                    name: svc.name.clone(),
-                    port: p.container_port,
-                })
-        })
-        .collect();
-
-    // SSG-backed forwards, if any.
-    let ssg_services = if cf.shared_service_group_refs.is_empty() {
-        Vec::new()
-    } else {
-        // Best-effort: if the SSG manifest is gone or ssg_services is
-        // empty, we still emit what we can — rewrite_reverse_tunnel_pairs
-        // will fall back to identity for unmatched forwards.
-        let services = {
-            let db = state.db.lock().await;
-            db.list_ssg_services().unwrap_or_default()
-        };
-        if let Some(build_id) = coast_ssg::paths::resolve_latest_build_id() {
-            if let Ok(build_dir) = coast_ssg::paths::ssg_build_dir(&build_id) {
-                let manifest_path = build_dir.join("manifest.json");
-                if let Ok(manifest_contents) = std::fs::read_to_string(&manifest_path) {
-                    if let Ok(manifest) = serde_json::from_str::<
-                        coast_ssg::build::artifact::SsgManifest,
-                    >(&manifest_contents)
-                    {
-                        if let Ok(extras) =
-                            coast_ssg::daemon_integration::synthesize_remote_forwards_for_consumer(
-                                &cf, &manifest, &services,
-                            )
-                        {
-                            forwards.extend(extras);
-                        }
-                    }
-                }
-            }
-        }
-        services
-    };
-
-    coast_ssg::remote_tunnel::rewrite_reverse_tunnel_pairs(&forwards, &ssg_services)
+    rows.into_iter()
+        .map(|r| (r.remote_port, r.local_port))
+        .collect()
 }
 
 async fn restore_tunnels_for_instance(
@@ -1497,10 +1436,12 @@ async fn restore_tunnels_for_instance(
     remotes: &[coast_core::types::RemoteEntry],
     restored_hosts: &mut std::collections::HashSet<String>,
 ) {
-    // Phase 4.5: the pairs may include SSG-backed services with their
-    // local side rewritten to the dynamic host port; fetch them via
-    // the async helper that consults `ssg_services`.
-    let reverse_pairs = shared_service_reverse_pairs_with_ssg(state.as_ref(), &inst.project).await;
+    // Phase 18: read the persisted (remote_port, local_port) pairs from
+    // the state DB. Allocation happened once in
+    // `setup_shared_service_tunnels`; we replay without re-evaluating
+    // SSG state or reallocating remote ports.
+    let reverse_pairs =
+        shared_service_reverse_pairs_with_ssg(state.as_ref(), &inst.project, &inst.name).await;
     if reverse_pairs.is_empty() {
         return;
     }

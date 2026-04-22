@@ -17,9 +17,12 @@ mod ports;
 pub(crate) use ports::PortAllocationRecord;
 pub mod remotes;
 mod settings;
+mod shared_service_forwards;
 mod shared_services;
 mod ssg;
 mod user_config;
+
+pub use shared_service_forwards::SharedServiceForwardRecord;
 
 use std::path::Path;
 
@@ -189,6 +192,19 @@ impl StateDb {
                     project     TEXT PRIMARY KEY,
                     build_id    TEXT NOT NULL,
                     created_at  TEXT NOT NULL
+                );
+
+                -- Phase 18: per-forward reverse-tunnel state for remote coasts.
+                -- See coast-ssg/DESIGN.md §20.
+                CREATE TABLE IF NOT EXISTS shared_service_forwards (
+                    project      TEXT NOT NULL,
+                    instance     TEXT NOT NULL,
+                    service_name TEXT NOT NULL,
+                    port         INTEGER NOT NULL,
+                    local_port   INTEGER NOT NULL,
+                    remote_port  INTEGER NOT NULL,
+                    PRIMARY KEY (project, instance, service_name, port),
+                    FOREIGN KEY (project, instance) REFERENCES instances(project, name) ON DELETE CASCADE
                 );
                 ",
             )

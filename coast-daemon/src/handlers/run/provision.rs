@@ -6,10 +6,10 @@ use coast_core::error::{CoastError, Result};
 use coast_core::protocol::{BuildProgressEvent, RunRequest};
 use coast_docker::runtime::Runtime;
 
-use crate::handlers::shared_service_routing::{
+use crate::server::AppState;
+use coast_docker::shared_service_routing::{
     ensure_shared_service_proxies, plan_shared_service_routing,
 };
-use crate::server::AppState;
 
 use super::paths;
 use super::service_start::{start_and_wait_for_services, StartServicesRequest};
@@ -197,7 +197,7 @@ async fn setup_shared_services(ctx: &InstanceConfig<'_>) -> Result<()> {
 
     let shared_service_hosts = shared_service_routing.as_ref().map_or_else(
         HashMap::new,
-        super::super::shared_service_routing::SharedServiceRoutingPlan::host_map,
+        coast_docker::shared_service_routing::SharedServiceRoutingPlan::host_map,
     );
 
     // Phase 5: compute inject env vars here so they go into the

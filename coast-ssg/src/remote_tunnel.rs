@@ -1,40 +1,38 @@
 //! Reverse SSH tunnel pair helpers for remote coasts consuming the SSG.
 //!
-//! Phase: ssg-phase-4.5. See `DESIGN.md §20`.
+//! Phase: ssg-phase-4.5 initial, rewritten in Phase 18 for symmetric
+//! remote routing. See `DESIGN.md §20`.
 //!
-//! The remote `coast-service` binary is completely SSG-agnostic: it
-//! continues to receive `SharedServicePortForward { name, port }` in the
-//! `RunRequest` and knows only that "some process" is reachable at
-//! `host.docker.internal:{port}` on its side of the reverse tunnel.
+//! The remote `coast-service` binary is SSG-agnostic: it receives
+//! `SharedServicePortForward { name, port, remote_port }` in the
+//! `RunRequest` and runs alias-IP + socat routing inside the remote
+//! DinD that forwards canonical `{name}:{port}` to
+//! `host.docker.internal:{remote_port}`. What sits on the local end of
+//! the reverse tunnel (inline container vs SSG DinD publish) is a
+//! local-only distinction.
 //!
-//! All SSG-awareness lives on the local side. `coast-daemon` calls into
-//! this module to rewrite the local end of each reverse-tunnel pair:
-//!
-//! ```text
-//! old: (canonical_port /* remote */, canonical_port /* local */)
-//! new: (canonical_port /* remote */, ssg_dynamic_port /* local */)
-//! ```
-//!
-//! No change to the remote's compose rewriter, no new RPC, no new
-//! protocol type. `coast-service` does not import this module and
-//! never will.
+//! This module builds the `(remote_port, local_port)` pairs that
+//! `coast-daemon` hands to `ssh -R`. The **local** side of each pair is
+//! rewritten for SSG-backed forwards to target the SSG's dynamic host
+//! port; the **remote** side is always the `remote_port` the daemon
+//! allocated in `setup_shared_service_tunnels`.
 
 use coast_core::protocol::SharedServicePortForward;
 
 use crate::state::SsgServiceRecord;
 
-/// Rewrite the local side of each reverse-tunnel pair so that
-/// SSG-backed services point at the SSG's dynamic host port while
-/// inline services keep their existing identity mapping.
+/// Build the `(remote_port, local_port)` pairs for `ssh -R`.
 ///
-/// A `forward.name` that matches an entry in `ssg_services` with the
-/// same `container_port` produces `(forward.port, svc.dynamic_host_port)`.
-/// Any other forward (inline shared service, or an SSG ref that
-/// doesn't appear in `ssg_services`) falls back to
-/// `(forward.port, forward.port)` — the pre-Phase-4.5 behavior.
+/// For each forward:
+/// - `remote_port` comes straight from `fwd.remote_port` — the dynamic
+///   port the daemon allocated on the remote VM.
+/// - `local_port` is the SSG's dynamic host port when the forward
+///   matches an `ssg_services` entry by `(service_name, container_port)`,
+///   otherwise falls back to `fwd.port` (the canonical port, which is
+///   what inline shared services want the tunnel to hit on localhost).
 ///
-/// The returned vector has exactly one entry per input forward, in
-/// the same order as `forwards`.
+/// The returned vector has exactly one entry per input forward, in the
+/// same order as `forwards`.
 pub fn rewrite_reverse_tunnel_pairs(
     forwards: &[SharedServicePortForward],
     ssg_services: &[SsgServiceRecord],
@@ -47,7 +45,7 @@ pub fn rewrite_reverse_tunnel_pairs(
                 .find(|svc| svc.service_name == fwd.name && svc.container_port == fwd.port)
                 .map(|svc| svc.dynamic_host_port)
                 .unwrap_or(fwd.port);
-            (fwd.port, local_port)
+            (fwd.remote_port, local_port)
         })
         .collect()
 }
@@ -56,10 +54,11 @@ pub fn rewrite_reverse_tunnel_pairs(
 mod tests {
     use super::*;
 
-    fn fwd(name: &str, port: u16) -> SharedServicePortForward {
+    fn fwd(name: &str, port: u16, remote_port: u16) -> SharedServicePortForward {
         SharedServicePortForward {
             name: name.to_string(),
             port,
+            remote_port,
         }
     }
 
@@ -79,74 +78,78 @@ mod tests {
     }
 
     #[test]
-    fn ssg_only_rewrites_local_side() {
-        let forwards = vec![fwd("postgres", 5432), fwd("redis", 6379)];
+    fn ssg_only_rewrites_local_side_keeps_remote_port() {
+        let forwards = vec![fwd("postgres", 5432, 61001), fwd("redis", 6379, 61002)];
         let services = vec![svc("postgres", 5432, 60001), svc("redis", 6379, 60002)];
         let pairs = rewrite_reverse_tunnel_pairs(&forwards, &services);
-        assert_eq!(pairs, vec![(5432, 60001), (6379, 60002)]);
+        // remote side = fwd.remote_port (61xxx), local side = SSG dynamic (60xxx).
+        assert_eq!(pairs, vec![(61001, 60001), (61002, 60002)]);
     }
 
     #[test]
-    fn inline_only_keeps_identity_mapping() {
-        let forwards = vec![fwd("postgres", 5432), fwd("redis", 6379)];
+    fn inline_only_uses_canonical_as_local_and_remote_port_as_remote() {
+        let forwards = vec![fwd("postgres", 5432, 61001), fwd("redis", 6379, 61002)];
         let pairs = rewrite_reverse_tunnel_pairs(&forwards, &[]);
-        assert_eq!(pairs, vec![(5432, 5432), (6379, 6379)]);
+        // Inline: local side = canonical (fwd.port), remote side = fwd.remote_port.
+        assert_eq!(pairs, vec![(61001, 5432), (61002, 6379)]);
     }
 
     #[test]
     fn mixed_rewrites_ssg_entries_only() {
         let forwards = vec![
-            fwd("postgres", 5432),  // SSG-backed
-            fwd("my_inline", 8080), // inline (not in SSG)
-            fwd("redis", 6379),     // SSG-backed
+            fwd("postgres", 5432, 61001),  // SSG-backed
+            fwd("my_inline", 8080, 61002), // inline
+            fwd("redis", 6379, 61003),     // SSG-backed
         ];
         let services = vec![svc("postgres", 5432, 60001), svc("redis", 6379, 60002)];
         let pairs = rewrite_reverse_tunnel_pairs(&forwards, &services);
-        assert_eq!(pairs, vec![(5432, 60001), (8080, 8080), (6379, 60002)]);
+        assert_eq!(pairs, vec![(61001, 60001), (61002, 8080), (61003, 60002)]);
     }
 
     #[test]
     fn multi_port_service_emits_one_pair_per_forward() {
-        // kafka declares 3 ports; forwards has 3 entries, SSG services
-        // has 3 matching rows (one per container_port).
-        let forwards = vec![fwd("kafka", 9092), fwd("kafka", 9093), fwd("kafka", 9094)];
+        let forwards = vec![
+            fwd("kafka", 9092, 61010),
+            fwd("kafka", 9093, 61011),
+            fwd("kafka", 9094, 61012),
+        ];
         let services = vec![
             svc("kafka", 9092, 60010),
             svc("kafka", 9093, 60011),
             svc("kafka", 9094, 60012),
         ];
         let pairs = rewrite_reverse_tunnel_pairs(&forwards, &services);
-        assert_eq!(pairs, vec![(9092, 60010), (9093, 60011), (9094, 60012)]);
+        assert_eq!(pairs, vec![(61010, 60010), (61011, 60011), (61012, 60012)]);
     }
 
     #[test]
-    fn unknown_name_falls_back_to_identity() {
-        let forwards = vec![fwd("mongo", 27017)];
+    fn unknown_name_falls_back_to_canonical_local_port() {
+        let forwards = vec![fwd("mongo", 27017, 61020)];
         let services = vec![svc("postgres", 5432, 60001)];
         let pairs = rewrite_reverse_tunnel_pairs(&forwards, &services);
-        assert_eq!(pairs, vec![(27017, 27017)]);
+        assert_eq!(pairs, vec![(61020, 27017)]);
     }
 
     #[test]
-    fn matching_name_but_wrong_port_falls_back_to_identity() {
+    fn matching_name_but_wrong_port_falls_back_to_canonical_local_port() {
         // If an SSG service is named `postgres` on 5432 but the forward
         // targets port 9999, we should NOT use the 5432 record's
-        // dynamic port. The tunnel pair keeps the inline identity.
-        let forwards = vec![fwd("postgres", 9999)];
+        // dynamic port. The tunnel pair keeps the canonical local side.
+        let forwards = vec![fwd("postgres", 9999, 61030)];
         let services = vec![svc("postgres", 5432, 60001)];
         let pairs = rewrite_reverse_tunnel_pairs(&forwards, &services);
-        assert_eq!(pairs, vec![(9999, 9999)]);
+        assert_eq!(pairs, vec![(61030, 9999)]);
     }
 
     #[test]
     fn preserves_input_order_even_with_mixed_ssg_matches() {
         let forwards = vec![
-            fwd("z_last", 10000),
-            fwd("a_first", 5432),
-            fwd("m_middle", 7777),
+            fwd("z_last", 10000, 61040),
+            fwd("a_first", 5432, 61041),
+            fwd("m_middle", 7777, 61042),
         ];
         let services = vec![svc("a_first", 5432, 60001), svc("z_last", 10000, 60002)];
         let pairs = rewrite_reverse_tunnel_pairs(&forwards, &services);
-        assert_eq!(pairs, vec![(10000, 60002), (5432, 60001), (7777, 7777)]);
+        assert_eq!(pairs, vec![(61040, 60002), (61041, 60001), (61042, 7777)]);
     }
 }

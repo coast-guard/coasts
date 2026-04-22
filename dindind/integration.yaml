@@ -333,8 +333,11 @@ tests:
   test_remote_run_syncs_generated:
     script: integrated-examples/remote/test_remote_run_syncs_generated.sh
     timeout: 300
-  test_remote_shared_tunnel_reuse:
-    script: integrated-examples/remote/test_remote_shared_tunnel_reuse.sh
+  test_remote_multi_instance_independent_tunnels:
+    script: integrated-examples/remote/test_remote_multi_instance_independent_tunnels.sh
+    timeout: 300
+  test_remote_mixed_inline_and_ssg_no_collision:
+    script: integrated-examples/remote/test_remote_mixed_inline_and_ssg_no_collision.sh
     timeout: 300
   test_remote_port_recovery_after_restart:
     script: integrated-examples/remote/test_remote_port_recovery_after_restart.sh

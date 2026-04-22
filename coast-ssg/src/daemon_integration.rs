@@ -499,9 +499,12 @@ pub fn synthesize_remote_forwards_for_consumer(
             .iter()
             .filter(|s| s.service_name == consumer_ref.name)
         {
+            // `remote_port` is placeholder-zero here; the daemon allocates
+            // a real port on top of this synthesized list in Phase 18 step 3.
             forwards.push(coast_core::protocol::SharedServicePortForward {
                 name: consumer_ref.name.clone(),
                 port: svc.container_port,
+                remote_port: 0,
             });
         }
     }

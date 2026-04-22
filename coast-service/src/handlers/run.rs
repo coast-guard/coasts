@@ -277,14 +277,25 @@ pub(crate) fn read_compose_project_dir(artifact_dir: &Path) -> String {
 
 /// Generate a merged compose file that removes shared services, strips
 /// `depends_on` references to them, and adds `extra_hosts` entries so
-/// remaining services can reach the shared services via reverse SSH tunnel.
+/// remaining services can reach the shared services via a docker0 alias
+/// IP inside the remote DinD (Phase 18 symmetric routing).
 ///
-/// Written to the artifact directory **before** the DinD container is
-/// created, so it's available via the read-only bind mount.
+/// `host_map` is produced by
+/// [`coast_docker::shared_service_routing::SharedServiceRoutingPlan::host_map`]
+/// and maps `service_name -> alias_ip`. The in-DinD socat running on
+/// each alias IP forwards canonical traffic to
+/// `host.docker.internal:{remote_port}`, which the daemon's reverse
+/// SSH tunnel exposes on the VM host.
+///
+/// Called **after** the DinD container is up (we need docker0's
+/// subnet to allocate alias IPs), and written to the artifact directory
+/// via the shared host-side bind mount so the inner compose can pick
+/// it up at `docker compose -f` time.
 fn write_shared_service_compose_override(
     artifact_dir: &Path,
     compose_path: &Path,
     shared_service_ports: &[coast_core::protocol::SharedServicePortForward],
+    host_map: &std::collections::HashMap<String, String>,
 ) -> Result<bool> {
     if shared_service_ports.is_empty() {
         return Ok(false);
@@ -303,7 +314,7 @@ fn write_shared_service_compose_override(
 
     remove_shared_services(&mut yaml, &shared_names);
     strip_shared_depends_on(&mut yaml, &shared_names);
-    add_shared_extra_hosts(&mut yaml, &shared_names);
+    add_shared_extra_hosts(&mut yaml, host_map);
     make_env_files_optional(&mut yaml);
     remove_orphaned_top_level_volumes(&mut yaml, &shared_names, &content);
 
@@ -316,6 +327,7 @@ fn write_shared_service_compose_override(
 
     info!(
         shared_services_removed = shared_names.len(),
+        alias_ip_entries = host_map.len(),
         path = %merged_path.display(),
         "wrote merged compose with shared service routing"
     );
@@ -373,12 +385,21 @@ fn strip_shared_depends_on(
     }
 }
 
+/// Inject `extra_hosts` entries on every remaining inner-compose service
+/// so app code can dial `{service_name}` and land on the alias IP that
+/// the in-DinD socat listens on.
+///
+/// Phase 18: each entry resolves to the alias IP allocated by
+/// [`coast_docker::shared_service_routing::plan_shared_service_routing`]
+/// for the target DinD's docker0 subnet. That alias IP is on the DinD's
+/// own docker0 interface, so inner containers reach it via their
+/// gateway with no further routing. `host.docker.internal:host-gateway`
+/// is also injected (using Docker's built-in magic value) so inner
+/// services can reach the VM host directly if they need to.
 fn add_shared_extra_hosts(
     yaml: &mut serde_yaml::Value,
-    shared_names: &std::collections::HashSet<String>,
+    host_map: &std::collections::HashMap<String, String>,
 ) {
-    let gateway_ip = resolve_docker_gateway_ip();
-
     let Some(services) = yaml.get_mut("services").and_then(|s| s.as_mapping_mut()) else {
         return;
     };
@@ -396,15 +417,18 @@ fn add_shared_extra_hosts(
             continue;
         };
 
-        let docker_internal = format!("host.docker.internal:{gateway_ip}");
+        // Docker resolves `host-gateway` to the inner daemon's bridge
+        // gateway at container-start time — no need for us to compute it.
         if !seq.iter().any(|v| {
             v.as_str()
                 .is_some_and(|s| s.starts_with("host.docker.internal:"))
         }) {
-            seq.push(serde_yaml::Value::String(docker_internal));
+            seq.push(serde_yaml::Value::String(
+                "host.docker.internal:host-gateway".to_string(),
+            ));
         }
-        for name in shared_names {
-            let entry = format!("{name}:{gateway_ip}");
+        for (name, alias_ip) in host_map {
+            let entry = format!("{name}:{alias_ip}");
             if !seq.iter().any(|v| {
                 v.as_str()
                     .is_some_and(|s| s.starts_with(&format!("{name}:")))
@@ -413,55 +437,6 @@ fn add_shared_extra_hosts(
             }
         }
     }
-}
-
-/// Resolve the Docker bridge gateway IP from the daemon config.
-///
-/// Reads `/etc/docker/daemon.json` to find the `bip` setting (e.g.,
-/// `"10.200.0.1/16"`), extracts the IP part. Falls back to `host-gateway`
-/// if the config can't be read (e.g., on Docker Desktop where it's not needed).
-/// Resolve the IP that inner compose services should use to reach the host
-/// where shared service tunnels listen.
-///
-/// In the dev image (coast-service runs its own dockerd inside the container),
-/// `daemon.json` has a custom `bip` -- inner services use that gateway IP
-/// because the tunnel also terminates inside the same container.
-///
-/// In production (host Docker socket), DinD containers run on the host Docker.
-/// Inner services need to reach the host, so we resolve the Docker bridge
-/// gateway IP (`docker0` interface) which is the host IP from the DinD
-/// container's perspective.
-pub(crate) fn resolve_docker_gateway_ip() -> String {
-    let config_path = std::path::Path::new("/etc/docker/daemon.json");
-    if let Ok(content) = std::fs::read_to_string(config_path) {
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
-            if let Some(bip) = json.get("bip").and_then(|v| v.as_str()) {
-                if let Some(ip) = bip.split('/').next() {
-                    info!(gateway_ip = %ip, "resolved Docker bridge gateway from daemon.json");
-                    return ip.to_string();
-                }
-            }
-        }
-    }
-    // In production (host Docker socket), query the bridge network gateway.
-    // This is the host IP from the perspective of Docker containers.
-    if let Ok(output) = std::process::Command::new("docker")
-        .args([
-            "network",
-            "inspect",
-            "bridge",
-            "--format",
-            "{{range .IPAM.Config}}{{.Gateway}}{{end}}",
-        ])
-        .output()
-    {
-        let ip = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if !ip.is_empty() && ip.contains('.') {
-            info!(gateway_ip = %ip, "resolved Docker bridge gateway from network inspect");
-            return ip;
-        }
-    }
-    "host-gateway".to_string()
 }
 
 /// Convert all `env_file` entries in compose services to the long form
@@ -627,18 +602,46 @@ async fn initialize_container_services(
 }
 
 /// Create and start the DinD container, load images, inject secrets, and start compose.
-async fn provision_dind_container(
-    docker: &bollard::Docker,
-    req: &RunRequest,
-    ws_path: &Path,
-    coast_image: Option<&str>,
-    artifact_dir: Option<&Path>,
-    cache_path: &Path,
-    env_secrets: &std::collections::HashMap<String, String>,
-    ports: &[(String, u16)],
-    dynamic_ports: &[u16],
-    secrets: &[coast_secrets::keystore::StoredSecret],
-) -> Result<String> {
+///
+/// Phase 18 ordering: the shared-service alias-IP + socat setup inside
+/// the DinD runs **after** `wait_for_inner_daemon`, because we need to
+/// inspect the DinD's own `docker0` subnet to allocate alias IPs. The
+/// resulting `host_map` feeds the compose override, which is written
+/// via the shared host-side bind mount so the inner `docker compose -f`
+/// reads the alias-IP `extra_hosts` at startup.
+/// Inputs to [`provision_dind_container`]. Bundled into a struct to
+/// keep the async function's argument count below clippy's limit
+/// after Phase 18 added the `state` handle for persisting
+/// `remote_shared_forwards` rows.
+pub(crate) struct ProvisionInputs<'a> {
+    pub docker: &'a bollard::Docker,
+    pub req: &'a RunRequest,
+    pub ws_path: &'a Path,
+    pub coast_image: Option<&'a str>,
+    pub artifact_dir: Option<&'a Path>,
+    pub cache_path: &'a Path,
+    pub env_secrets: &'a std::collections::HashMap<String, String>,
+    pub ports: &'a [(String, u16)],
+    pub dynamic_ports: &'a [u16],
+    pub secrets: &'a [coast_secrets::keystore::StoredSecret],
+    pub state: &'a ServiceState,
+}
+
+async fn provision_dind_container(inputs: ProvisionInputs<'_>) -> Result<String> {
+    let ProvisionInputs {
+        docker,
+        req,
+        ws_path,
+        coast_image,
+        artifact_dir,
+        cache_path,
+        env_secrets,
+        ports,
+        dynamic_ports,
+        secrets,
+        state,
+    } = inputs;
+
     let config = build_container_config(
         req,
         ws_path,
@@ -649,14 +652,6 @@ async fn provision_dind_container(
         ports,
         dynamic_ports,
     );
-
-    let has_shared_service_override = if let Some(adir) = artifact_dir {
-        let compose_path = adir.join("compose.yml");
-        write_shared_service_compose_override(adir, &compose_path, &req.shared_service_ports)
-            .unwrap_or(false)
-    } else {
-        false
-    };
 
     let rt = DindRuntime::with_client(docker.clone());
     let container_name = config.container_name();
@@ -676,6 +671,25 @@ async fn provision_dind_container(
     rt.start_coast_container(&cid).await?;
 
     wait_for_inner_daemon(docker, &cid).await?;
+
+    // Phase 18: allocate docker0 alias IPs inside the remote DinD and
+    // spawn the socat proxies that forward canonical ports to
+    // `host.docker.internal:{remote_port}`. The alias IPs drive the
+    // compose override written below. See coast-ssg/DESIGN.md §20.
+    let host_map = setup_shared_service_proxies(docker, &cid, req, state).await?;
+
+    let has_shared_service_override = if let Some(adir) = artifact_dir {
+        let compose_path = adir.join("compose.yml");
+        write_shared_service_compose_override(
+            adir,
+            &compose_path,
+            &req.shared_service_ports,
+            &host_map,
+        )
+        .unwrap_or(false)
+    } else {
+        false
+    };
 
     let loaded = load_cached_images(docker, &cid).await.unwrap_or(0);
     info!(
@@ -698,6 +712,87 @@ async fn provision_dind_container(
     .await;
 
     Ok(cid)
+}
+
+/// Phase 18: plan + apply docker0 alias IPs and the socat proxies
+/// inside the newly-started DinD, and persist the (alias_ip, remote_port)
+/// mapping so `coast start` can restore it after a stop/start cycle.
+///
+/// Returns the `name -> alias_ip` map that the compose override injects
+/// into each remaining inner service's `extra_hosts`. Returns an empty
+/// map when the instance has no shared-service forwards, in which case
+/// the caller leaves the compose file unrewritten.
+async fn setup_shared_service_proxies(
+    docker: &bollard::Docker,
+    container_id: &str,
+    req: &RunRequest,
+    state: &ServiceState,
+) -> Result<std::collections::HashMap<String, String>> {
+    if req.shared_service_ports.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+
+    // Build synthetic SharedServiceConfig entries. The shared
+    // `plan_shared_service_routing` helper reads `ports[i].host_port`
+    // as the socat upstream port; for Phase 18's remote path that's
+    // the dynamic `remote_port` the daemon allocated.
+    let synthesized: Vec<coast_core::types::SharedServiceConfig> = req
+        .shared_service_ports
+        .iter()
+        .map(|fwd| coast_core::types::SharedServiceConfig {
+            name: fwd.name.clone(),
+            image: String::new(),
+            ports: vec![coast_core::types::SharedServicePort {
+                host_port: fwd.remote_port,
+                container_port: fwd.port,
+            }],
+            volumes: Vec::new(),
+            env: std::collections::HashMap::new(),
+            auto_create_db: false,
+            inject: None,
+        })
+        .collect();
+
+    let targets: std::collections::HashMap<String, String> = synthesized
+        .iter()
+        .map(|c| (c.name.clone(), "host.docker.internal".to_string()))
+        .collect();
+
+    let plan = coast_docker::shared_service_routing::plan_shared_service_routing(
+        docker,
+        container_id,
+        &synthesized,
+        &targets,
+    )
+    .await?;
+    coast_docker::shared_service_routing::ensure_shared_service_proxies(
+        docker,
+        container_id,
+        &plan,
+    )
+    .await?;
+
+    // Persist the (alias_ip, remote_port) pairs for restart recovery.
+    let host_map = plan.host_map();
+    {
+        let db = state.db.lock().await;
+        for route in &plan.routes {
+            for port in &route.ports {
+                db.upsert_remote_shared_forward(
+                    &crate::state::remote_shared_forwards::RemoteSharedForwardRecord {
+                        project: req.project.clone(),
+                        instance: req.name.clone(),
+                        service_name: route.service_name.clone(),
+                        port: port.container_port,
+                        remote_port: port.host_port,
+                        alias_ip: route.alias_ip.to_string(),
+                    },
+                )?;
+            }
+        }
+    }
+
+    Ok(host_map)
 }
 
 pub async fn handle(req: RunRequest, state: &ServiceState) -> Result<RunResponse> {
@@ -761,18 +856,19 @@ pub async fn handle(req: RunRequest, state: &ServiceState) -> Result<RunResponse
 
     let container_id = if let Some(ref docker) = state.docker {
         Some(
-            provision_dind_container(
+            provision_dind_container(ProvisionInputs {
                 docker,
-                &req,
-                &ws_path,
-                coast_image.as_deref(),
-                artifact_dir.as_deref(),
-                &cache_path,
-                &env_secrets,
-                &ports,
-                &dynamic_ports,
-                &secrets,
-            )
+                req: &req,
+                ws_path: &ws_path,
+                coast_image: coast_image.as_deref(),
+                artifact_dir: artifact_dir.as_deref(),
+                cache_path: &cache_path,
+                env_secrets: &env_secrets,
+                ports: &ports,
+                dynamic_ports: &dynamic_ports,
+                secrets: &secrets,
+                state,
+            })
             .await?,
         )
     } else {
@@ -1382,6 +1478,7 @@ mod tests {
         req.shared_service_ports = vec![coast_core::protocol::SharedServicePortForward {
             name: "postgres".to_string(),
             port: 5432,
+            remote_port: 60001,
         }];
         let ws_path = PathBuf::from("/tmp/ws");
         let cache_path = PathBuf::from("/nonexistent/cache");
@@ -1449,10 +1546,12 @@ mod tests {
                 coast_core::protocol::SharedServicePortForward {
                     name: "postgres".to_string(),
                     port: 5432,
+                    remote_port: 60001,
                 },
                 coast_core::protocol::SharedServicePortForward {
                     name: "redis".to_string(),
                     port: 6379,
+                    remote_port: 60002,
                 },
             ],
         };
@@ -1461,7 +1560,143 @@ mod tests {
         assert_eq!(deserialized.shared_service_ports.len(), 2);
         assert_eq!(deserialized.shared_service_ports[0].name, "postgres");
         assert_eq!(deserialized.shared_service_ports[0].port, 5432);
+        assert_eq!(deserialized.shared_service_ports[0].remote_port, 60001);
         assert_eq!(deserialized.shared_service_ports[1].name, "redis");
         assert_eq!(deserialized.shared_service_ports[1].port, 6379);
+        assert_eq!(deserialized.shared_service_ports[1].remote_port, 60002);
+    }
+
+    // --- Phase 18: add_shared_extra_hosts uses alias IPs from host_map ---
+
+    fn extra_hosts_for(yaml: &serde_yaml::Value, service: &str) -> Vec<String> {
+        yaml.get("services")
+            .and_then(|s| s.get(service))
+            .and_then(|s| s.get("extra_hosts"))
+            .and_then(|v| v.as_sequence())
+            .map(|seq| {
+                seq.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn test_add_shared_extra_hosts_injects_alias_ip_not_gateway() {
+        let compose = r#"
+services:
+  web:
+    image: nginx
+"#;
+        let mut yaml: serde_yaml::Value = serde_yaml::from_str(compose).unwrap();
+        let mut host_map = std::collections::HashMap::new();
+        host_map.insert("postgres".to_string(), "172.17.255.254".to_string());
+        host_map.insert("redis".to_string(), "172.17.255.253".to_string());
+
+        add_shared_extra_hosts(&mut yaml, &host_map);
+
+        let hosts = extra_hosts_for(&yaml, "web");
+        // Alias IPs are emitted verbatim.
+        assert!(
+            hosts.contains(&"postgres:172.17.255.254".to_string()),
+            "expected postgres alias IP, got {hosts:?}"
+        );
+        assert!(
+            hosts.contains(&"redis:172.17.255.253".to_string()),
+            "expected redis alias IP, got {hosts:?}"
+        );
+        // host.docker.internal uses Docker's built-in sentinel, NOT a
+        // resolved IP. This is the Phase 18 regression guard — we
+        // must not fall back to the old gateway-IP code path.
+        assert!(
+            hosts.contains(&"host.docker.internal:host-gateway".to_string()),
+            "expected host-gateway sentinel, got {hosts:?}"
+        );
+        assert!(
+            !hosts.iter().any(|h| h.starts_with("postgres:10.")
+                || h.starts_with("postgres:172.17.0.")
+                || h.starts_with("host.docker.internal:10.")
+                || h.starts_with("host.docker.internal:172.17.0.")),
+            "no entry should resolve to a gateway-IP-shaped address: {hosts:?}"
+        );
+    }
+
+    #[test]
+    fn test_add_shared_extra_hosts_preserves_existing_entries() {
+        // If the user's compose already declared a matching extra_hosts
+        // entry, we should not duplicate it.
+        let compose = r#"
+services:
+  web:
+    extra_hosts:
+      - postgres:10.0.0.99
+      - host.docker.internal:10.0.0.1
+"#;
+        let mut yaml: serde_yaml::Value = serde_yaml::from_str(compose).unwrap();
+        let mut host_map = std::collections::HashMap::new();
+        host_map.insert("postgres".to_string(), "172.17.255.254".to_string());
+
+        add_shared_extra_hosts(&mut yaml, &host_map);
+
+        let hosts = extra_hosts_for(&yaml, "web");
+        // The user's prior entries win (no duplicate postgres:X).
+        let postgres_entries: Vec<_> = hosts
+            .iter()
+            .filter(|h| h.starts_with("postgres:"))
+            .collect();
+        assert_eq!(
+            postgres_entries.len(),
+            1,
+            "exactly one postgres entry expected, got {postgres_entries:?}"
+        );
+        let hdi_entries: Vec<_> = hosts
+            .iter()
+            .filter(|h| h.starts_with("host.docker.internal:"))
+            .collect();
+        assert_eq!(
+            hdi_entries.len(),
+            1,
+            "exactly one host.docker.internal entry expected, got {hdi_entries:?}"
+        );
+    }
+
+    #[test]
+    fn test_add_shared_extra_hosts_applies_to_every_service() {
+        let compose = r#"
+services:
+  web:
+    image: nginx
+  worker:
+    image: python
+"#;
+        let mut yaml: serde_yaml::Value = serde_yaml::from_str(compose).unwrap();
+        let mut host_map = std::collections::HashMap::new();
+        host_map.insert("postgres".to_string(), "172.17.255.254".to_string());
+
+        add_shared_extra_hosts(&mut yaml, &host_map);
+
+        for svc in ["web", "worker"] {
+            let hosts = extra_hosts_for(&yaml, svc);
+            assert!(
+                hosts.contains(&"postgres:172.17.255.254".to_string()),
+                "{svc} should have postgres alias, got {hosts:?}"
+            );
+            assert!(
+                hosts.contains(&"host.docker.internal:host-gateway".to_string()),
+                "{svc} should have host-gateway sentinel, got {hosts:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_add_shared_extra_hosts_empty_host_map_still_adds_host_docker_internal() {
+        let compose = "services:\n  web:\n    image: nginx\n";
+        let mut yaml: serde_yaml::Value = serde_yaml::from_str(compose).unwrap();
+        let host_map = std::collections::HashMap::new();
+
+        add_shared_extra_hosts(&mut yaml, &host_map);
+
+        let hosts = extra_hosts_for(&yaml, "web");
+        assert_eq!(hosts, vec!["host.docker.internal:host-gateway".to_string()]);
     }
 }

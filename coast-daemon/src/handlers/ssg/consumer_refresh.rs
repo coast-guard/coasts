@@ -35,10 +35,11 @@ use tracing::{info, warn};
 use coast_core::coastfile::Coastfile;
 use coast_core::types::InstanceStatus;
 
-use crate::handlers::run::paths::project_images_dir;
-use crate::handlers::shared_service_routing::{
+use coast_docker::shared_service_routing::{
     ensure_shared_service_proxies, plan_shared_service_routing,
 };
+
+use crate::handlers::run::paths::project_images_dir;
 use crate::server::AppState;
 
 /// One local running consumer that references at least one SSG

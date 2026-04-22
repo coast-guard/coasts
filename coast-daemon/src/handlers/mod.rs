@@ -340,7 +340,6 @@ pub mod secret;
 pub mod set_analytics;
 pub mod set_language;
 pub mod shared;
-pub mod shared_service_routing;
 pub mod ssg;
 pub mod start;
 pub mod stop;

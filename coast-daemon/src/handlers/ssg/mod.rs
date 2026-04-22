@@ -400,7 +400,7 @@ fn resolve_artifact_dir(project: &str, build_id: Option<&str>) -> std::path::Pat
 
 /// Send SIGTERM to a reverse-tunnel ssh child PID. Best-effort: a
 /// missing PID (already died) is not an error.
-fn kill_ssh_tunnel_pid(pid: u32) {
+pub(crate) fn kill_ssh_tunnel_pid(pid: u32) {
     use nix::sys::signal::{kill, Signal};
     use nix::unistd::Pid;
     let Ok(signed_pid) = i32::try_from(pid) else {
