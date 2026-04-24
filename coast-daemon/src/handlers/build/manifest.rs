@@ -232,11 +232,40 @@ async fn build_ssg_manifest_block(
             ))
         })?;
 
+    // Phase 29: this is the "cheap typo catcher" that replaces the
+    // deleted runtime drift audit. A consumer Coastfile that names
+    // an SSG service the group does not publish is a build-time
+    // error — we don't want to wait until `coast run` or until the
+    // service socket returns ECONNREFUSED to tell the user.
+    let active_by_name: std::collections::HashMap<
+        &str,
+        &coast_ssg::build::artifact::SsgManifestService,
+    > = active
+        .services
+        .iter()
+        .map(|s| (s.name.as_str(), s))
+        .collect();
     let mut images = std::collections::BTreeMap::new();
     for name in &referenced {
-        if let Some(svc) = active.services.iter().find(|s| s.name == *name) {
-            images.insert(name.clone(), svc.image.clone());
-        }
+        let Some(svc) = active_by_name.get(name.as_str()) else {
+            let known = if active.services.is_empty() {
+                "(none)".to_string()
+            } else {
+                active
+                    .services
+                    .iter()
+                    .map(|s| s.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
+            return Err(CoastError::coastfile(format!(
+                "Coastfile in project '{project}' references SSG service '{name}' via \
+                 `from_group = true`, but the project's Coastfile.shared_service_groups \
+                 does not declare a service by that name. Known services: [{known}].",
+                project = coastfile.name,
+            )));
+        };
+        images.insert(name.clone(), svc.image.clone());
     }
 
     Ok(Some(serde_json::json!({
@@ -346,6 +375,66 @@ compose = "./docker-compose.yml"
             assert!(
                 err.contains("consumer"),
                 "error must name the project; got: {err}"
+            );
+        });
+    }
+
+    #[test]
+    fn block_hard_errors_when_referenced_service_missing_from_ssg() {
+        // Phase 29: consumer references `postgres` via `from_group =
+        // true`, but the SSG manifest on disk only publishes
+        // `redis`. This must fail at build time with a clear error
+        // naming the missing service and listing the known services.
+        with_coast_home(|home| {
+            let build_id = "phase29-missing_20260424000000";
+            let ssg_home = home.join("ssg");
+            let build_dir = ssg_home.join("builds").join(build_id);
+            std::fs::create_dir_all(&build_dir).unwrap();
+            let manifest = serde_json::json!({
+                "build_id": build_id,
+                "built_at": "2026-04-24T00:00:00Z",
+                "coastfile_hash": "phase29-missing",
+                "services": [{
+                    "name": "redis",
+                    "image": "redis:7-alpine",
+                    "ports": [6379],
+                    "env_keys": [],
+                    "volumes": [],
+                    "auto_create_db": false,
+                }],
+            });
+            std::fs::write(
+                build_dir.join("manifest.json"),
+                serde_json::to_string_pretty(&manifest).unwrap(),
+            )
+            .unwrap();
+
+            let state = fresh_state();
+            {
+                use coast_ssg::state::SsgStateExt;
+                let db = block_on(state.db.lock());
+                db.set_latest_build_id("consumer", build_id).unwrap();
+            }
+
+            let cf = consumer_coastfile(true);
+            let err = block_on(build_ssg_manifest_block(&cf, &state))
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains("references SSG service 'postgres'"),
+                "error must name the missing service; got: {err}"
+            );
+            assert!(
+                err.contains("Coastfile.shared_service_groups"),
+                "error must point at the SSG Coastfile; got: {err}"
+            );
+            assert!(
+                err.contains("Known services: [redis]"),
+                "error must list known services; got: {err}"
+            );
+            assert!(
+                err.contains("project 'consumer'"),
+                "error must name the consumer project; got: {err}"
             );
         });
     }

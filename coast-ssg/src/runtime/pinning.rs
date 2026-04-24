@@ -3,9 +3,8 @@
 //! Phase: ssg-phase-16. See `DESIGN.md §17-9` (SETTLED — Phase 16).
 //!
 //! A consumer coast pins its project to a specific SSG `build_id`.
-//! Drift evaluation in [`coast-daemon/src/handlers/run/ssg_integration.rs::validate_ssg_drift`]
-//! and auto-start in `ensure_ready_for_consumer` both read the pin
-//! and prefer the pinned manifest over the `latest` symlink.
+//! Auto-start in `ensure_ready_for_consumer` reads the pin and
+//! prefers the pinned manifest over the project's latest build.
 //!
 //! This module owns two pure helpers:
 //!
@@ -15,8 +14,8 @@
 //!   `coast ssg checkout-build <typo>` fails fast.
 //! - [`resolve_effective_manifest`] returns `(build_id, manifest)`
 //!   for the pin if one exists and its build dir is still on disk,
-//!   otherwise falls back to the `latest` symlink. Returns `None`
-//!   when no build exists at all.
+//!   and errors loudly if the pin references a build that has been
+//!   pruned. Returns `None` when no pin is in play.
 //!
 //! Neither helper touches the daemon state DB — the caller passes a
 //! loaded [`PinRecord`] (or `None` for "no pin") so this module
@@ -58,49 +57,36 @@ pub fn validate_pinnable_build(build_id: &str) -> Result<SsgManifest> {
     read_manifest_from(&build_dir, build_id)
 }
 
-/// Resolve the "effective" SSG manifest for drift check + auto-start:
-/// prefer the pinned build if a pin is provided AND its directory is
-/// still on disk; otherwise fall back to `latest_build_id` (the
-/// caller-supplied default build for this project).
+/// Resolve the "effective" SSG manifest for auto-start: load the
+/// pinned build's manifest if a pin is provided AND its directory is
+/// still on disk, else return `None`.
 ///
-/// Phase 23: the second argument is the project's `latest_build_id`
-/// resolved from daemon state (`ssg.latest_build_id`), NOT the
-/// global `~/.coast/ssg/latest` symlink. Passing `None` means the
-/// caller has decided there is no default build for this project —
-/// the function returns `Ok(None)` in that case.
+/// Phase 29: this helper no longer takes a project-latest fallback.
+/// Callers that want to honor `ssg.latest_build_id` load that
+/// manifest directly from daemon state. Pin resolution is the only
+/// concern here.
 ///
-/// Returns `(build_id, manifest)` when a build is available, `None`
-/// when neither a pin nor a project-latest is in play, and
-/// propagates an error when the pin is provided but its build has
-/// been pruned — that's a hard error so consumers notice before
-/// `coast run` silently falls through to latest.
+/// Returns `(build_id, manifest)` when the pin resolves, `None` when
+/// no pin was supplied, and propagates an error when the pin is
+/// provided but its build has been pruned — that's a hard error so
+/// consumers notice before `coast run` silently falls through.
 pub fn resolve_effective_manifest(
     pin: Option<&PinRecord>,
-    project_latest_build_id: Option<&str>,
 ) -> Result<Option<(String, SsgManifest)>> {
-    if let Some(pin) = pin {
-        let build_dir = paths::ssg_build_dir(&pin.build_id)?;
-        if !build_dir.is_dir() {
-            return Err(pinned_build_missing_error(&pin.build_id));
-        }
-        let manifest = read_manifest_from(&build_dir, &pin.build_id)?;
-        return Ok(Some((pin.build_id.clone(), manifest)));
-    }
-
-    let Some(latest_id) = project_latest_build_id else {
+    let Some(pin) = pin else {
         return Ok(None);
     };
-    let build_dir = paths::ssg_build_dir(latest_id)?;
+    let build_dir = paths::ssg_build_dir(&pin.build_id)?;
     if !build_dir.is_dir() {
-        return Ok(None);
+        return Err(pinned_build_missing_error(&pin.build_id));
     }
-    let manifest = read_manifest_from(&build_dir, latest_id)?;
-    Ok(Some((latest_id.to_string(), manifest)))
+    let manifest = read_manifest_from(&build_dir, &pin.build_id)?;
+    Ok(Some((pin.build_id.clone(), manifest)))
 }
 
 /// Hard-error message when a pinned build has been pruned out from
-/// under a consumer. Promoted to a free function so the daemon drift
-/// handler can reuse the exact wording.
+/// under a consumer. Promoted to a free function so daemon handlers
+/// can reuse the exact wording.
 pub fn pinned_build_missing_error(build_id: &str) -> CoastError {
     CoastError::coastfile(format!(
         "SSG build '{build_id}' is pinned for this coast but no longer exists on disk. \
@@ -150,12 +136,6 @@ mod tests {
         )
     }
 
-    fn flip_latest(root: &Path, build_id: &str) {
-        let latest = root.join("ssg").join("latest");
-        let _ = std::fs::remove_file(&latest);
-        std::os::unix::fs::symlink(std::path::Path::new("builds").join(build_id), &latest).unwrap();
-    }
-
     // --- validate_pinnable_build ---
 
     #[test]
@@ -197,73 +177,35 @@ mod tests {
     // --- resolve_effective_manifest ---
 
     #[test]
-    fn resolve_effective_manifest_returns_none_when_no_builds() {
+    fn resolve_effective_manifest_returns_none_when_no_pin() {
         with_coast_home(|_root| {
-            let out = resolve_effective_manifest(None, None).unwrap();
+            let out = resolve_effective_manifest(None).unwrap();
             assert!(out.is_none());
         });
     }
 
     #[test]
-    fn resolve_effective_manifest_returns_project_latest_when_no_pin() {
+    fn resolve_effective_manifest_loads_pinned_build() {
         with_coast_home(|root| {
-            write_build(root, "b_latest", &minimal_manifest("b_latest"));
-            // Phase 23: no more global `latest` symlink fallback —
-            // the caller supplies the project's own latest directly.
-            let (id, _) = resolve_effective_manifest(None, Some("b_latest"))
-                .unwrap()
-                .unwrap();
-            assert_eq!(id, "b_latest");
-        });
-    }
-
-    #[test]
-    fn resolve_effective_manifest_returns_none_when_project_has_no_latest() {
-        with_coast_home(|root| {
-            // Build exists on disk but the caller says this project
-            // has no latest build (no row in `ssg.latest_build_id`).
-            write_build(
-                root,
-                "b_other_project",
-                &minimal_manifest("b_other_project"),
-            );
-            // A global `latest` symlink is meaningless here and must
-            // NOT be used — that leak is the Phase 23 regression.
-            flip_latest(root, "b_other_project");
-            let out = resolve_effective_manifest(None, None).unwrap();
-            assert!(
-                out.is_none(),
-                "no project-latest must not fall through to global symlink: {out:?}"
-            );
-        });
-    }
-
-    #[test]
-    fn resolve_effective_manifest_prefers_pin_over_project_latest() {
-        with_coast_home(|root| {
-            write_build(root, "b_old", &minimal_manifest("b_old"));
-            write_build(root, "b_latest", &minimal_manifest("b_latest"));
+            write_build(root, "b_pin", &minimal_manifest("b_pin"));
             let pin = PinRecord {
                 project: "proj".to_string(),
-                build_id: "b_old".to_string(),
+                build_id: "b_pin".to_string(),
             };
-            let (id, m) = resolve_effective_manifest(Some(&pin), Some("b_latest"))
-                .unwrap()
-                .unwrap();
-            assert_eq!(id, "b_old");
-            assert_eq!(m.build_id, "b_old");
+            let (id, m) = resolve_effective_manifest(Some(&pin)).unwrap().unwrap();
+            assert_eq!(id, "b_pin");
+            assert_eq!(m.build_id, "b_pin");
         });
     }
 
     #[test]
     fn resolve_effective_manifest_hard_errors_when_pinned_build_pruned() {
-        with_coast_home(|root| {
-            write_build(root, "b_latest", &minimal_manifest("b_latest"));
+        with_coast_home(|_root| {
             let pin = PinRecord {
                 project: "proj".to_string(),
                 build_id: "b_pruned".to_string(),
             };
-            let err = resolve_effective_manifest(Some(&pin), Some("b_latest")).unwrap_err();
+            let err = resolve_effective_manifest(Some(&pin)).unwrap_err();
             let msg = err.to_string();
             assert!(msg.contains("no longer exists"), "got: {msg}");
             assert!(msg.contains("b_pruned"));

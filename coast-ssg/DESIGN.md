@@ -720,39 +720,60 @@ argv is stable forever and the legacy Phase 11 refresh code is gone.
 Fourth step. Remove the runtime drift audit; keep the static parse-
 time check. Consumer manifest's `ssg` block survives as
 informational metadata only.
-- [ ] Delete [coast-ssg/src/drift.rs](/Users/jamie/work/coasts/coast-ssg/src/drift.rs)
+- [x] Delete [coast-ssg/src/drift.rs](/Users/jamie/work/coasts/coast-ssg/src/drift.rs)
       (7 unit tests). Update [coast-ssg/src/lib.rs](/Users/jamie/work/coasts/coast-ssg/src/lib.rs)
-      and [coast-ssg/src/runtime/mod.rs](/Users/jamie/work/coasts/coast-ssg/src/runtime/mod.rs)
-      to drop the module.
-- [ ] Strip drift branches from
+      to drop the `pub mod drift;` declaration and the
+      `pub use drift::{...}` re-exports. (`runtime/mod.rs` did not
+      need changes — it never declared `drift` as a submodule; the
+      spec sentence was slightly imprecise.)
+- [x] Strip drift branches from
       [coast-daemon/src/handlers/run/ssg_integration.rs](/Users/jamie/work/coasts/coast-daemon/src/handlers/run/ssg_integration.rs):
-      specifically `validate_ssg_drift` and its call sites. Delete
-      the matching "SSG has changed since this coast was built"
-      error text. ~36 call sites (`rg 'drift|validate_ssg' -c`).
-- [ ] Simplify [coast-ssg/src/runtime/pinning.rs](/Users/jamie/work/coasts/coast-ssg/src/runtime/pinning.rs):
-      `resolve_effective_manifest` no longer needs to compare
-      against drift; it just honors the pin or falls back to
-      `latest_build_id`. Drop the `project_latest_build_id` second
-      argument (callers update accordingly).
-- [ ] Keep the static Coastfile parse-time check: `coast build`
-      fails with a named error if any `[shared_services.X]
-      from_group = true` in the consumer doesn't resolve in the
-      SSG Coastfile. This lives in
-      [coast-daemon/src/handlers/build/](/Users/jamie/work/coasts/coast-daemon/src/handlers/build/)
-      and is ~20 LOC — cheap typo catcher.
-- [ ] Consumer manifest `ssg` block in
+      deleted `validate_ssg_drift`, `validate_ssg_drift_with_loader`,
+      `read_recorded_ssg_ref`, `drift_missing_ssg_error`,
+      `drift_hard_error`, the `DRIFT_DESIGN_SENTENCE` constant, and
+      the `coast_ssg::{evaluate_drift, DriftOutcome, ...}` imports.
+      Deleted the 6 `validate_drift_*` unit tests in the same file.
+      Call sites removed in `run/mod.rs` (remote rerun path) and
+      `run/provision.rs` (local consumer provision, including the
+      `validate_drift_for_local_artifact` wrapper).
+- [x] Simplify [coast-ssg/src/runtime/pinning.rs](/Users/jamie/work/coasts/coast-ssg/src/runtime/pinning.rs):
+      `resolve_effective_manifest` now takes only
+      `pin: Option<&PinRecord>`. A one-arm body: pin present →
+      load that build's manifest; pin absent → `Ok(None)`. The
+      "fall back to project latest" behavior is a caller-side
+      concern now and belongs wherever the caller already has
+      `ssg.latest_build_id` loaded from state (currently only
+      `ensure_ready_for_consumer`). Four tests updated; the
+      project-latest fallback tests were deleted (no caller).
+- [x] Keep the static Coastfile parse-time check: at
+      [coast-daemon/src/handlers/build/manifest.rs](/Users/jamie/work/coasts/coast-daemon/src/handlers/build/manifest.rs)
+      `build_ssg_manifest_block` now hard-errors when a consumer's
+      `from_group = true` ref names a service the SSG manifest
+      does not declare. Error cites the missing service name, the
+      list of known services, and the project name. ~25 LOC
+      product + 1 unit test
+      (`block_hard_errors_when_referenced_service_missing_from_ssg`).
+- [x] Consumer manifest `ssg` block in
       [coast-daemon/src/handlers/build/manifest.rs](/Users/jamie/work/coasts/coast-daemon/src/handlers/build/manifest.rs):
-      keep writing it (humans still want to see which SSG build was
-      current when the consumer was built), but no runtime code
-      reads it. Mark the field `#[serde(default)]` so older
-      artifacts parse cleanly.
-- [ ] Unit test deletions / updates: 7 from drift.rs (delete), ~6
-      in `ssg_integration.rs` tests (delete or adapt), ~4 in
-      `pinning.rs` (simplify signatures), ~2 in `manifest.rs` (drop
-      drift-comparison tests).
-- [ ] Acceptance gate: Cargo trio green after the deletions. No
-      new tests; the behavior "runtime misrouting fails fast" is
-      covered by Phase 27/28 tests + Phase 31 new tests.
+      keep writing it (humans still want to see which SSG build
+      was current when the consumer was built), but no runtime
+      code reads it. **Spec clarification:** no `#[serde(default)]`
+      attribute change is needed. The `ssg` block is written as
+      `serde_json::Value` directly into the manifest JSON and is
+      never consumed via a typed struct field; `read_recorded_ssg_ref`
+      (the only reader that existed) was already doing ad-hoc
+      `serde_json::from_value` deserialization with
+      `.ok()?` fallthrough, and is deleted in this phase anyway.
+- [x] Unit test deletions / updates: 7 from `drift.rs` (whole
+      module deleted), 6 from `ssg_integration.rs`
+      (`validate_drift_*` cases), ~2 fallback tests deleted from
+      `pinning.rs` (signature simplified; project-latest fallback
+      cases had no caller left), +1 added to `manifest.rs` for the
+      new static check.
+- [x] Acceptance gate: Cargo trio green after the deletions. No
+      new integration tests; the "runtime misrouting fails fast"
+      behavior is covered by Phase 27/28 tests + the Phase 31 new
+      tests.
 
 ### Phase 30 — Remote tunnel retargets virtual port
 Fifth step. The local side works; now fix the remote counterpart.
@@ -1201,6 +1222,16 @@ Every SSG-referenced service must be declared explicitly. There is no
 
 ### 6.1 Coast builds record an SSG reference
 
+> **Superseded by §24.4 (Phase 29).** The runtime drift audit
+> described below was deleted. The consumer manifest's `ssg` block
+> is still written by `coast build` (for humans who want to inspect
+> which SSG build was current at coast-build time), but no runtime
+> code reads it — drift manifests as connection failure at runtime
+> against a stable virtual port (§24) instead of a pre-flight audit.
+> The "cheap typo catcher" at `build_ssg_manifest_block` hard-errors
+> when a referenced service is missing from the SSG manifest; that
+> part is retained.
+
 A regular `coast build` whose Coastfile contains at least one
 `from_group = true` block records its dependency in `manifest.json`:
 
@@ -1214,26 +1245,18 @@ A regular `coast build` whose Coastfile contains at least one
 }
 ```
 
-At `coast run`, drift handling is pure-evaluated via
-[`coast_ssg::evaluate_drift`](../coast-ssg/src/drift.rs), invoked
-from
-[`validate_ssg_drift`](../coast-daemon/src/handlers/run/ssg_integration.rs)
-on both the local and `--type remote` paths. Always evaluates
-against the active SSG's `latest` (not any currently-running SSG —
-users who haven't restarted the SSG after building it still see the
-drift they introduced):
+Pre-Phase-29 behavior (now deleted): `coast run` pure-evaluated
+three drift outcomes (match / same-image warn / hard error) against
+the active SSG's `latest`. Phase 29 replaced that with a combination
+of (a) a static build-time check that `from_group = true` names a
+service the SSG actually publishes, and (b) no drift audit at run
+time — runtime shape mismatches surface as connection failure when
+the consumer tries to connect through its virtual port.
 
-1. `manifest.ssg.build_id` matches active SSG `latest` -> proceed.
-2. Differs but image refs are identical for every referenced service
-   -> warn and proceed.
-3. Image refs differ or a referenced service is missing -> hard error:
-   `"SSG has changed since this coast was built. Re-run `coast build` to pick up the new SSG, or pin the SSG to the old build."`
-   Plus a concrete suffix: either `(service '<name>' image changed:
-   <old> -> <new>)` or `(service '<name>' is no longer in the active
-   SSG; available: [...])`.
-
-Pinning to an old SSG build (`coast ssg checkout-build <id>`) is
-tracked as a future enhancement in §17; v1 requires rebuild.
+Pinning to an old SSG build (`coast ssg checkout-build <id>`) still
+works as a reproducibility anchor: the pinned build's manifest is
+preferred over `ssg.latest_build_id` when the consumer auto-starts
+its SSG.
 
 ## 7. CLI surface
 

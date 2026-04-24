@@ -408,26 +408,6 @@ fn load_artifact_coastfile_or_log(
     }
 }
 
-/// Phase 7: thin wrapper that derives the artifact's `manifest.json`
-/// path from its `coastfile.toml` path and hands it to the drift
-/// validator. Extracted so `load_coastfile_resources` stays under the
-/// clippy cognitive-complexity threshold. See
-/// [`coast-ssg/DESIGN.md §6.1`].
-async fn validate_drift_for_local_artifact(
-    project: &str,
-    coastfile: &coast_core::coastfile::Coastfile,
-    coastfile_path: &std::path::Path,
-    state: &AppState,
-    progress: &tokio::sync::mpsc::Sender<BuildProgressEvent>,
-) -> Result<()> {
-    let manifest_path = coastfile_path
-        .parent()
-        .map(|p| p.join("manifest.json"))
-        .unwrap_or_else(|| std::path::PathBuf::from("manifest.json"));
-    super::ssg_integration::validate_ssg_drift(project, coastfile, &manifest_path, state, progress)
-        .await
-}
-
 async fn build_host_images(
     validated: &ValidatedRun,
     code_path: &std::path::Path,
@@ -482,9 +462,6 @@ async fn load_coastfile_resources(
         ssg_ref_count = coastfile.shared_service_group_refs.len(),
         "loaded artifact Coastfile for run resources"
     );
-
-    validate_drift_for_local_artifact(&req.project, &coastfile, coastfile_path, state, progress)
-        .await?;
 
     // SSG auto-start (Phase 3.5): when the consumer references SSG
     // services via `from_group = true`, bring the singleton up before

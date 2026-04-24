@@ -1247,17 +1247,6 @@ async fn handle_remote_run(
     )
     .await?;
 
-    // Phase 7: validate drift against the downloaded artifact's
-    // manifest.json (patched locally by `download_remote_artifact` to
-    // carry the SSG block, since `coast-service` stays SSG-free).
-    // Runs AFTER the build so we have the manifest, BEFORE port
-    // forwarding so a hard error fails fast without further commit.
-    // See `coast-ssg/DESIGN.md §6.1` and `§17-24`.
-    let remote_artifact_dir = paths::project_images_dir(&req.project).join(&remote_build_id);
-    let remote_manifest_path = remote_artifact_dir.join("manifest.json");
-    ssg_integration::validate_ssg_drift(&req.project, &cf, &remote_manifest_path, state, progress)
-        .await?;
-
     // --- Step 11: Port forwarding ---
     emit(
         progress,
