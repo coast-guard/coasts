@@ -262,27 +262,8 @@ pub async fn execute(args: &SsgArgs, cli_working_dir: &Option<PathBuf>) -> Resul
             working_dir,
             config,
         } => dispatch_build(file, working_dir, config, args.silent, cli_working_dir).await,
-        SsgAction::ImportHostVolume {
-            volume,
-            service,
-            mount,
-            file,
-            working_dir,
-            config,
-            apply,
-        } => {
-            dispatch_import_host_volume(
-                volume,
-                service,
-                mount,
-                file,
-                working_dir,
-                config,
-                *apply,
-                args.silent,
-                cli_working_dir,
-            )
-            .await
+        SsgAction::ImportHostVolume { .. } => {
+            dispatch_import_host_volume(&args.action, args.silent, cli_working_dir).await
         }
         SsgAction::CheckoutBuild { .. }
         | SsgAction::UncheckoutBuild { .. }
@@ -324,32 +305,40 @@ async fn dispatch_build(
 
 /// `coast ssg import-host-volume` — resolves project the same way as
 /// `build` since they share the same `--working-dir` / `-f` /
-/// `--config` discovery triplet.
-#[allow(clippy::too_many_arguments)]
+/// `--config` discovery triplet. Takes `&SsgAction` so the dispatcher
+/// stays under clippy's `too_many_arguments` gate.
 async fn dispatch_import_host_volume(
-    volume: &str,
-    service: &str,
-    mount: &std::path::Path,
-    file: &Option<PathBuf>,
-    working_dir: &Option<PathBuf>,
-    config: &Option<String>,
-    apply: bool,
+    action: &SsgAction,
     silent: bool,
     cli_working_dir: &Option<PathBuf>,
 ) -> Result<()> {
+    let SsgAction::ImportHostVolume {
+        volume,
+        service,
+        mount,
+        file,
+        working_dir,
+        config,
+        apply,
+    } = action
+    else {
+        unreachable!(
+            "dispatch_import_host_volume is only called with SsgAction::ImportHostVolume"
+        )
+    };
     let resolved_working_dir = working_dir.clone().or_else(|| cli_working_dir.clone());
     let project = resolve_consumer_project(&None, &resolved_working_dir, &None)?;
     execute_simple(
         SsgRequest {
             project,
             action: ProtoSsgAction::ImportHostVolume {
-                volume: volume.to_string(),
-                service: service.to_string(),
-                mount: mount.to_path_buf(),
+                volume: volume.clone(),
+                service: service.clone(),
+                mount: mount.clone(),
                 file: file.clone(),
                 working_dir: resolved_working_dir,
                 config: config.clone(),
-                apply,
+                apply: *apply,
             },
         },
         silent,
