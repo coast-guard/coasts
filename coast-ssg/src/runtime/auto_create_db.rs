@@ -7,7 +7,7 @@
 //!
 //! ```text
 //! docker exec <ssg-outer> \
-//!   docker compose -f /coast-artifact/compose.yml -p coast-ssg exec -T <service> \
+//!   docker compose -f /coast-artifact/compose.yml -p {project}-ssg exec -T <service> \
 //!   psql -U postgres -c "... \\gexec"
 //! ```
 //!
@@ -19,7 +19,7 @@ use coast_core::error::{CoastError, Result};
 use coast_docker::runtime::ExecResult;
 
 use crate::docker_ops::{build_inner_compose_exec_argv, SsgDockerOps};
-use crate::runtime::lifecycle::{inner_compose_path, SSG_COMPOSE_PROJECT};
+use crate::runtime::lifecycle::{inner_compose_path, ssg_compose_project};
 use crate::state::SsgRecord;
 
 /// Build the argv that runs `command` inside an inner SSG service
@@ -31,6 +31,7 @@ use crate::state::SsgRecord;
 /// doesn't validate because it's also used for the happy-path
 /// lifecycle `exec_ssg` where validation has already happened).
 pub(crate) fn build_nested_compose_exec_argv(
+    project: &str,
     service_name: &str,
     command: &[String],
 ) -> Result<Vec<String>> {
@@ -46,7 +47,7 @@ pub(crate) fn build_nested_compose_exec_argv(
     }
     Ok(build_inner_compose_exec_argv(
         &inner_compose_path(),
-        SSG_COMPOSE_PROJECT,
+        &ssg_compose_project(project),
         service_name,
         command,
     ))
@@ -73,13 +74,13 @@ pub async fn exec_in_ssg_service(
 
     // Validate via the nested-exec builder (keeps the existing
     // empty-argv error messages verbatim for Phase 5 callers).
-    let _ = build_nested_compose_exec_argv(service_name, &command)?;
+    let _ = build_nested_compose_exec_argv(&record.project, service_name, &command)?;
 
     let out = ops
         .inner_compose_exec(
             &container_id,
             &inner_compose_path(),
-            SSG_COMPOSE_PROJECT,
+            &ssg_compose_project(&record.project),
             service_name,
             &command,
         )
@@ -94,6 +95,7 @@ mod tests {
     #[test]
     fn build_argv_minimal_psql_command() {
         let argv = build_nested_compose_exec_argv(
+            "cg",
             "postgres",
             &[
                 "psql".to_string(),
@@ -113,7 +115,9 @@ mod tests {
                 "-f",
                 "/coast-artifact/compose.yml",
                 "-p",
-                "coast-ssg",
+                // Per-project SSG (§23): compose label derives from
+                // the consumer project name, not a global constant.
+                "cg-ssg",
                 "exec",
                 "-T",
                 "postgres",
@@ -128,7 +132,7 @@ mod tests {
 
     #[test]
     fn build_argv_errors_on_empty_service_name() {
-        let err = build_nested_compose_exec_argv("", &["psql".to_string()]).unwrap_err();
+        let err = build_nested_compose_exec_argv("cg", "", &["psql".to_string()]).unwrap_err();
         assert!(
             err.to_string().contains("service name is required"),
             "unexpected error: {err}"
@@ -137,7 +141,7 @@ mod tests {
 
     #[test]
     fn build_argv_errors_on_empty_command() {
-        let err = build_nested_compose_exec_argv("postgres", &[]).unwrap_err();
+        let err = build_nested_compose_exec_argv("cg", "postgres", &[]).unwrap_err();
         assert!(
             err.to_string().contains("non-empty command"),
             "unexpected error: {err}"
@@ -217,7 +221,7 @@ mod tests {
             "-c".to_string(),
             "SELECT 'CREATE DATABASE \"foo\"' ... \\gexec".to_string(),
         ];
-        let argv = build_nested_compose_exec_argv("db", &cmd).unwrap();
+        let argv = build_nested_compose_exec_argv("cg", "db", &cmd).unwrap();
 
         // First 9 elements are the fixed prefix + service.
         assert_eq!(
@@ -228,7 +232,7 @@ mod tests {
                 "-f",
                 "/coast-artifact/compose.yml",
                 "-p",
-                "coast-ssg",
+                "cg-ssg",
                 "exec",
                 "-T",
                 "db",

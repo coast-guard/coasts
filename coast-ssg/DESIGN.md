@@ -395,13 +395,16 @@ placeholder constant.
 Flips `SSG_CONTAINER_NAME`, `SSG_COMPOSE_PROJECT`, and `INNER_VOLUME_LABEL_FILTER`
 from constants to pure functions of `project`. The single-line change
 to `DindConfigParams::new("coast", "ssg", ...)` is what makes Docker
-Desktop show `{project}-coasts/ssg` instead of `coast-coasts/ssg`.
-- [ ] `fn ssg_container_name(project: &str) -> String` returns `{project}-ssg`
-- [ ] `fn ssg_compose_project(project: &str) -> String`
-- [ ] `fn inner_volume_label_filter(project: &str) -> String`
-- [ ] `DindConfigParams::new("coast", "ssg", ...)` → `DindConfigParams::new(project, "ssg", ...)`
-- [ ] Update `auto_create_db` `-p "coast-ssg"` call sites to use the derived project compose label
-- [ ] Unit tests for naming functions and Docker label expectations
+Desktop show `{project}-coasts/{project}-ssg` instead of
+`coast-coasts/coast-ssg`.
+- [x] `fn ssg_container_name(project: &str) -> String` returns `{project}-ssg`
+- [x] `fn ssg_compose_project(project: &str) -> String`
+- [x] `fn inner_volume_label_filter(project: &str) -> String`
+- [x] `DindConfigParams::new("coast", "ssg", ...)` → `DindConfigParams::new(project, "ssg", ...)`
+- [x] Update `auto_create_db` `-p "coast-ssg"` call sites to use `ssg_compose_project(project)` (plus the daemon-side `handle_ssg_logs_streaming` literal)
+- [x] Thread `project: &str` through `run_ssg` / `run_ssg_with_build_id`; per-record functions (`stop_ssg` / `start_ssg` / `restart_ssg` / `rm_ssg` / `exec_ssg` / `logs_ssg`) use `record.project` directly
+- [x] Unit tests: `naming_helpers_derive_from_project`; mock assertions flipped to `{test-proj}-ssg` labels; `build_argv_minimal_psql_command` now takes a project and asserts the derived compose label
+- [x] `cargo build --workspace` green; `cargo test -p coast-daemon -p coast-ssg -p coast-core` green (2161 tests); `cargo clippy --workspace -- -D warnings` clean
 
 ### Phase 22 — CLI + lifecycle: resolve project from cwd
 Every `SsgRequest` variant grows `project: String`. The CLI resolves

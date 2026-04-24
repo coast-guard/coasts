@@ -38,12 +38,25 @@ use crate::runtime::bind_mounts::{ensure_host_bind_dirs_exist, outer_bind_mounts
 use crate::runtime::ports::{allocate_service_ports, SsgServicePortPlan};
 use crate::state::{SsgRecord, SsgServiceRecord, SsgStateExt};
 
-/// Canonical singleton container name per `DESIGN.md §4`.
-pub const SSG_CONTAINER_NAME: &str = "coast-ssg";
+/// Per-project SSG container name (`DESIGN.md §23`). E.g.
+/// `ssg_container_name("cg") == "cg-ssg"`.
+pub fn ssg_container_name(project: &str) -> String {
+    format!("{project}-ssg")
+}
 
-/// Compose project name used inside the SSG DinD's inner daemon. All
-/// inner service containers and named volumes get labeled with this.
-pub const SSG_COMPOSE_PROJECT: &str = "coast-ssg";
+/// Per-project inner compose project label used inside the SSG DinD.
+/// Matches [`ssg_container_name`] so `docker volume ls --filter
+/// label=com.docker.compose.project=<x>` and `docker exec <ssg>
+/// docker compose -p <x>` reference the same string everywhere.
+pub fn ssg_compose_project(project: &str) -> String {
+    format!("{project}-ssg")
+}
+
+/// Per-project Docker label filter used by `remove_inner_volumes`
+/// to scope `docker volume rm` to this SSG's inner named volumes.
+pub fn inner_volume_label_filter(project: &str) -> String {
+    format!("com.docker.compose.project={project}-ssg")
+}
 
 /// Inner path the artifact directory is mounted at (see
 /// [`DindConfigParams::artifact_dir`]).
@@ -56,13 +69,6 @@ const INNER_IMAGE_CACHE_DIR: &str = "/image-cache";
 /// Inner daemon readiness timeout. Matches the default used for
 /// regular coasts.
 const INNER_DAEMON_TIMEOUT_SECS: u64 = 120;
-
-/// `com.docker.compose.project=<SSG_COMPOSE_PROJECT>` — the filter
-/// `remove_inner_volumes` uses to scope `docker volume rm` to this
-/// SSG's inner named volumes only. Kept as a literal (not a
-/// `concat!` of `SSG_COMPOSE_PROJECT`) to avoid pulling in a
-/// compile-time string concat crate for a one-line constant.
-const INNER_VOLUME_LABEL_FILTER: &str = "com.docker.compose.project=coast-ssg";
 
 /// Total steps in the `run_ssg` progress plan.
 ///
@@ -137,10 +143,11 @@ impl SsgRunOutcome {
 /// - No SSG container is currently running — the caller is expected to
 ///   check and either short-circuit or error out.
 pub async fn run_ssg(
+    project: &str,
     ops: &dyn SsgDockerOps,
     progress: Sender<BuildProgressEvent>,
 ) -> Result<SsgRunOutcome> {
-    run_ssg_with_build_id(ops, None, progress).await
+    run_ssg_with_build_id(project, ops, None, progress).await
 }
 
 /// Same as [`run_ssg`] but boots the SSG from an explicit `build_id`
@@ -152,6 +159,7 @@ pub async fn run_ssg(
 /// than `latest`. When `build_id` is `None`, behavior matches
 /// [`run_ssg`] exactly.
 pub async fn run_ssg_with_build_id(
+    project: &str,
     ops: &dyn SsgDockerOps,
     build_id: Option<&str>,
     progress: Sender<BuildProgressEvent>,
@@ -189,7 +197,8 @@ pub async fn run_ssg_with_build_id(
     })?;
 
     let container_id =
-        create_ssg_container(ops, &build_dir, &cache_dir, &coastfile, &port_plans).await?;
+        create_ssg_container(project, ops, &build_dir, &cache_dir, &coastfile, &port_plans)
+            .await?;
     done(&progress, "Creating SSG container", &container_id).await;
 
     // --- start container ---
@@ -215,8 +224,12 @@ pub async fn run_ssg_with_build_id(
 
     // --- compose up ---
     emit(&progress, "Starting inner services", 6, RUN_STEPS).await;
-    ops.inner_compose_up(&container_id, &inner_compose_path(), SSG_COMPOSE_PROJECT)
-        .await?;
+    ops.inner_compose_up(
+        &container_id,
+        &inner_compose_path(),
+        &ssg_compose_project(project),
+    )
+    .await?;
     done(&progress, "Starting inner services", "ok").await;
 
     Ok(SsgRunOutcome {
@@ -247,7 +260,11 @@ pub struct SsgStopOutcome {
 pub async fn stop_ssg(ops: &dyn SsgDockerOps, record: &SsgRecord) -> Result<SsgStopOutcome> {
     if let Some(ref cid) = record.container_id {
         if let Err(e) = ops
-            .inner_compose_down(cid, &inner_compose_path(), SSG_COMPOSE_PROJECT)
+            .inner_compose_down(
+                cid,
+                &inner_compose_path(),
+                &ssg_compose_project(&record.project),
+            )
             .await
         {
             warn!(error = %e, container_id = %cid, "inner compose down failed; continuing");
@@ -330,8 +347,12 @@ pub async fn start_ssg(
     done(&progress, "Waiting for inner daemon", "ready").await;
 
     emit(&progress, "Starting inner services", 3, 3).await;
-    ops.inner_compose_up(&container_id, &inner_compose_path(), SSG_COMPOSE_PROJECT)
-        .await?;
+    ops.inner_compose_up(
+        &container_id,
+        &inner_compose_path(),
+        &ssg_compose_project(&record.project),
+    )
+    .await?;
     done(&progress, "Starting inner services", "ok").await;
 
     let build_dir = paths::ssg_build_dir(&build_id)?;
@@ -375,7 +396,7 @@ pub async fn restart_ssg(
 pub async fn rm_ssg(ops: &dyn SsgDockerOps, record: &SsgRecord, with_data: bool) -> Result<()> {
     if let Some(ref cid) = record.container_id {
         let was_running = record.status == "running";
-        teardown_ssg_container(ops, cid, was_running, with_data).await;
+        teardown_ssg_container(&record.project, ops, cid, was_running, with_data).await;
     }
     Ok(())
 }
@@ -388,6 +409,7 @@ pub async fn rm_ssg(ops: &dyn SsgDockerOps, record: &SsgRecord, with_data: bool)
 /// All inner errors are logged as warnings rather than propagated —
 /// a partial cleanup is preferable to leaving the state row behind.
 async fn teardown_ssg_container(
+    project: &str,
     ops: &dyn SsgDockerOps,
     cid: &str,
     was_running: bool,
@@ -396,25 +418,25 @@ async fn teardown_ssg_container(
     if !was_running {
         transient_start_for_cleanup(ops, cid).await;
     }
-    inner_compose_down_best_effort(ops, cid).await;
+    inner_compose_down_best_effort(project, ops, cid).await;
     if with_data {
-        remove_inner_volumes_best_effort(ops, cid).await;
+        remove_inner_volumes_best_effort(project, ops, cid).await;
     }
     remove_container_best_effort(ops, cid).await;
 }
 
-async fn inner_compose_down_best_effort(ops: &dyn SsgDockerOps, cid: &str) {
+async fn inner_compose_down_best_effort(project: &str, ops: &dyn SsgDockerOps, cid: &str) {
     if let Err(e) = ops
-        .inner_compose_down(cid, &inner_compose_path(), SSG_COMPOSE_PROJECT)
+        .inner_compose_down(cid, &inner_compose_path(), &ssg_compose_project(project))
         .await
     {
         warn!(error = %e, container_id = %cid, "inner compose down during rm failed; continuing");
     }
 }
 
-async fn remove_inner_volumes_best_effort(ops: &dyn SsgDockerOps, cid: &str) {
+async fn remove_inner_volumes_best_effort(project: &str, ops: &dyn SsgDockerOps, cid: &str) {
     if let Err(e) = ops
-        .remove_inner_volumes(cid, INNER_VOLUME_LABEL_FILTER)
+        .remove_inner_volumes(cid, &inner_volume_label_filter(project))
         .await
     {
         warn!(error = %e, container_id = %cid, "remove_inner_volumes failed; continuing");
@@ -461,7 +483,7 @@ pub async fn logs_ssg(
         ops.inner_compose_logs(
             &container_id,
             &inner_compose_path(),
-            SSG_COMPOSE_PROJECT,
+            &ssg_compose_project(&record.project),
             svc,
             tail,
         )
@@ -498,7 +520,7 @@ pub async fn exec_ssg(
         ops.inner_compose_exec(
             &container_id,
             &inner_compose_path(),
-            SSG_COMPOSE_PROJECT,
+            &ssg_compose_project(&record.project),
             &svc,
             &command,
         )
@@ -570,6 +592,7 @@ pub(crate) fn inner_compose_path() -> String {
 }
 
 async fn create_ssg_container(
+    project: &str,
     ops: &dyn SsgDockerOps,
     build_dir: &std::path::Path,
     cache_dir: &std::path::Path,
@@ -582,8 +605,11 @@ async fn create_ssg_container(
         bind_mounts,
         artifact_dir: Some(build_dir),
         image_cache_path: Some(cache_dir),
-        container_name_override: Some(SSG_CONTAINER_NAME.to_string()),
-        ..DindConfigParams::new("coast", "ssg", build_dir)
+        container_name_override: Some(ssg_container_name(project)),
+        // Per-project SSG (§23): the outer Docker compose label uses
+        // the consumer project name so Docker Desktop groups the SSG
+        // under `{project}-coasts/{project}-ssg`.
+        ..DindConfigParams::new(project, "ssg", build_dir)
     });
 
     for plan in plans {
@@ -772,12 +798,20 @@ mod tests {
     }
 
     #[test]
-    fn constants_are_coast_ssg() {
-        assert_eq!(SSG_CONTAINER_NAME, "coast-ssg");
-        assert_eq!(SSG_COMPOSE_PROJECT, "coast-ssg");
+    fn naming_helpers_derive_from_project() {
+        // Per-project SSG (§23): every real Docker label flows from
+        // the consumer project name, not a global constant.
+        assert_eq!(ssg_container_name("cg"), "cg-ssg");
+        assert_eq!(ssg_compose_project("cg"), "cg-ssg");
         assert_eq!(
-            INNER_VOLUME_LABEL_FILTER,
-            "com.docker.compose.project=coast-ssg"
+            inner_volume_label_filter("cg"),
+            "com.docker.compose.project=cg-ssg"
+        );
+        // Project name with hyphens/underscores flows through verbatim.
+        assert_eq!(ssg_container_name("my-app_2"), "my-app_2-ssg");
+        assert_eq!(
+            inner_volume_label_filter("filemap"),
+            "com.docker.compose.project=filemap-ssg"
         );
     }
 
@@ -869,7 +903,7 @@ mod tests {
         assert!(matches!(
             calls[0],
             MockCall::InnerComposeDown { ref container_id, ref project, .. }
-                if container_id == "cid-1" && project == "coast-ssg"
+                if container_id == "cid-1" && project == "test-proj-ssg"
         ));
         assert!(matches!(
             calls[1],
@@ -911,7 +945,7 @@ mod tests {
         assert!(matches!(
             calls[1],
             MockCall::RemoveInnerVolumes { ref label_filter, .. }
-                if label_filter == "com.docker.compose.project=coast-ssg"
+                if label_filter == "com.docker.compose.project=test-proj-ssg"
         ));
         assert!(matches!(calls[2], MockCall::RemoveContainer(ref cid) if cid == "cid-1"));
     }

@@ -211,9 +211,13 @@ async fn run_and_apply(
     });
 
     let ops = coast_ssg::docker_ops::BollardSsgDockerOps::new(docker.clone());
-    let outcome =
-        coast_ssg::daemon_integration::run_ssg_with_build_id(&ops, pinned_build_id, inner_tx)
-            .await?;
+    let outcome = coast_ssg::daemon_integration::run_ssg_with_build_id(
+        project,
+        &ops,
+        pinned_build_id,
+        inner_tx,
+    )
+    .await?;
 
     // Ensure the forwarder drains after the inner sender drops.
     let _ = forwarder.await;

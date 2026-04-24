@@ -1165,6 +1165,7 @@ async fn run_streaming_run(
     let (tx, mut rx) = tokio::sync::mpsc::channel::<BuildProgressEvent>(64);
 
     let docker_clone = docker.clone();
+    let project_for_task = project.to_string();
     let handler: std::pin::Pin<
         Box<
             dyn std::future::Future<
@@ -1176,7 +1177,7 @@ async fn run_streaming_run(
         >,
     > = Box::pin(async move {
         let ops = coast_ssg::docker_ops::BollardSsgDockerOps::new(docker_clone);
-        coast_ssg::daemon_integration::run_ssg(&ops, tx).await
+        coast_ssg::daemon_integration::run_ssg(&project_for_task, &ops, tx).await
     });
 
     let result = forward_streaming_progress(handler, &mut rx, writer, Response::SsgProgress).await;
@@ -1440,6 +1441,8 @@ async fn handle_ssg_logs_streaming(
     let tail_value = tail.unwrap_or(200).to_string();
 
     let mut cmd = tokio::process::Command::new("docker");
+    let inner_compose_project =
+        coast_ssg::runtime::lifecycle::ssg_compose_project(&project);
     match service {
         Some(ref svc) => {
             cmd.args([
@@ -1450,7 +1453,7 @@ async fn handle_ssg_logs_streaming(
                 "-f",
                 "/coast-artifact/compose.yml",
                 "-p",
-                "coast-ssg",
+                &inner_compose_project,
                 "logs",
                 "--tail",
                 &tail_value,
