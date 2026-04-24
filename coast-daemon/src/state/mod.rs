@@ -239,9 +239,17 @@ impl StateDb {
     }
 
     /// Migration: create the `ssg_virtual_ports` table that holds
-    /// the host-owned, stable-per-`(project, service_name)` virtual
-    /// port the consumer socat forwards to. See
+    /// the host-owned, stable-per-`(project, service_name, container_port)`
+    /// virtual port the consumer socat forwards to. See
     /// `coast-ssg/DESIGN.md §24.5` for the allocation contract.
+    ///
+    /// Phase 28: PK is per `(project, service_name, container_port)`
+    /// — one virtual port per `ssg_services` row — so multi-port
+    /// shared services (e.g. minio's 9000+9001) route correctly.
+    /// Phase 26 used `(project, service_name)` and is incompatible
+    /// with multi-port services; the migration drops and recreates
+    /// because no production daemon ever wrote to the old shape
+    /// (`host_socat` was never wired).
     ///
     /// Kept separate from `ssg_services` because the latter is
     /// wiped-and-reinserted on every `ssg run`
@@ -249,14 +257,27 @@ impl StateDb {
     /// are identity-scoped state and must survive lifecycle writes.
     /// Same design as `ssg_consumer_pins` vs. `ssg`.
     fn migrate_add_ssg_virtual_ports_table(&self) -> Result<()> {
+        // Phase 28: drop the Phase 26 shape if it exists so the
+        // recreate below installs the per-port PK. No production
+        // data is at stake — `host_socat::spawn_or_update` never ran
+        // before Phase 28, so the table is empty in every real
+        // daemon. This keeps developer DBs current without
+        // requiring a manual `coast-dev nuke`.
+        self.conn
+            .execute_batch("DROP TABLE IF EXISTS ssg_virtual_ports;")
+            .map_err(|e| CoastError::State {
+                message: format!("failed to drop legacy ssg_virtual_ports table: {e}"),
+                source: Some(Box::new(e)),
+            })?;
         self.conn
             .execute_batch(
                 "CREATE TABLE IF NOT EXISTS ssg_virtual_ports (
-                    project      TEXT NOT NULL,
-                    service_name TEXT NOT NULL,
-                    port         INTEGER NOT NULL,
-                    created_at   TEXT NOT NULL,
-                    PRIMARY KEY (project, service_name)
+                    project        TEXT    NOT NULL,
+                    service_name   TEXT    NOT NULL,
+                    container_port INTEGER NOT NULL,
+                    port           INTEGER NOT NULL,
+                    created_at     TEXT    NOT NULL,
+                    PRIMARY KEY (project, service_name, container_port)
                 );",
             )
             .map_err(|e| CoastError::State {

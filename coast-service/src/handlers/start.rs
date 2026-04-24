@@ -97,7 +97,7 @@ async fn restore_shared_service_proxies(
             })
             .ports
             .push(coast_core::types::SharedServicePort {
-                host_port: rec.remote_port,
+                forwarding_port: rec.remote_port,
                 container_port: rec.port,
             });
     }

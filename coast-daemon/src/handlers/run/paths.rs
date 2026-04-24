@@ -47,12 +47,19 @@ pub(crate) fn host_socats_dir() -> PathBuf {
 }
 
 /// Return `(pidfile, logfile)` paths for the host socat backing
-/// `(project, service_name)`. Uses `--` (double-dash) between the
-/// project and service so a project name that contains a single
-/// dash can't collide with a service name that starts with a dash.
-pub(crate) fn host_socat_paths(project: &str, service: &str) -> (PathBuf, PathBuf) {
+/// `(project, service_name, container_port)`. Uses `--` (double-dash)
+/// between segments so a project name that contains a single dash
+/// can't collide with a service name that starts with a dash. The
+/// container port is included in the stem so multi-port services
+/// (e.g. minio's 9000+9001) get distinct pid/log files — one host
+/// socat process per `ssg_services` row.
+pub(crate) fn host_socat_paths(
+    project: &str,
+    service: &str,
+    container_port: u16,
+) -> (PathBuf, PathBuf) {
     let dir = host_socats_dir();
-    let stem = format!("{project}--{service}");
+    let stem = format!("{project}--{service}--{container_port}");
     (
         dir.join(format!("{stem}.pid")),
         dir.join(format!("{stem}.log")),

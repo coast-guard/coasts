@@ -733,9 +733,10 @@ async fn setup_shared_service_proxies(
     }
 
     // Build synthetic SharedServiceConfig entries. The shared
-    // `plan_shared_service_routing` helper reads `ports[i].host_port`
-    // as the socat upstream port; for Phase 18's remote path that's
-    // the dynamic `remote_port` the daemon allocated.
+    // `plan_shared_service_routing` helper reads
+    // `ports[i].forwarding_port` as the socat upstream port; for
+    // Phase 18's remote path that's the dynamic `remote_port` the
+    // daemon allocated.
     let synthesized: Vec<coast_core::types::SharedServiceConfig> = req
         .shared_service_ports
         .iter()
@@ -743,7 +744,7 @@ async fn setup_shared_service_proxies(
             name: fwd.name.clone(),
             image: String::new(),
             ports: vec![coast_core::types::SharedServicePort {
-                host_port: fwd.remote_port,
+                forwarding_port: fwd.remote_port,
                 container_port: fwd.port,
             }],
             volumes: Vec::new(),
@@ -784,7 +785,7 @@ async fn setup_shared_service_proxies(
                         instance: req.name.clone(),
                         service_name: route.service_name.clone(),
                         port: port.container_port,
-                        remote_port: port.host_port,
+                        remote_port: port.forwarding_port,
                         alias_ip: route.alias_ip.to_string(),
                     },
                 )?;

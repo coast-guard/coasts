@@ -28,7 +28,7 @@ fn toml_key(key: &str) -> String {
 
 fn format_shared_service_port(port: &SharedServicePort) -> String {
     if port.is_identity_mapping() {
-        port.host_port.to_string()
+        port.forwarding_port.to_string()
     } else {
         toml_quote(&port.to_string())
     }

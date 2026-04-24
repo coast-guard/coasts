@@ -446,18 +446,29 @@ pub fn resolve_ssg_coastfile_source(
 /// `compose_rewrite` pipeline can consume SSG-backed services the same
 /// way it consumes inline ones.
 ///
-/// Inputs are pulled from three places:
+/// Inputs are pulled from four places:
 /// - `coastfile.shared_service_group_refs` gives us the list of
 ///   consumer references and their per-project overrides (inject,
 ///   auto_create_db).
 /// - `manifest` (the active SSG build's `manifest.json`) provides the
 ///   image reference and the default `auto_create_db` for each service.
-/// - `services` (the daemon's `ssg_services` rows) provides the dynamic
-///   host port per inner container port.
+/// - `services` (the daemon's `ssg_services` rows) provides the
+///   declared `container_port`s the consumer should publish.
+/// - `virtual_ports` (the daemon's `ssg_virtual_ports` rows for this
+///   project) provides the stable host-side `forwarding_port` each
+///   consumer socat connects to. Phase 28: consumers no longer see
+///   the SSG's ephemeral dyn port; they always go through the
+///   daemon-managed host socat at `host.docker.internal:<vport>`.
+///   See `coast-ssg/DESIGN.md §24`.
 ///
 /// Returns `Err` with a DESIGN.md §6.1-shaped message listing the
 /// actually-available service names when a consumer references a name
-/// the active SSG does not publish.
+/// the active SSG does not publish, OR when a referenced service has
+/// no virtual port allocated for one of its declared container ports
+/// (which means the host socat supervisor never spawned for that
+/// service — typically because `ssg run` hasn't completed yet, but
+/// it could also indicate a host-socat startup failure that the
+/// caller failed to surface).
 ///
 /// `volumes` and `env` are left empty: the consumer does not touch the
 /// SSG container. They only appear on `SharedServiceConfig` because the
@@ -466,10 +477,20 @@ pub fn synthesize_shared_service_configs(
     coastfile: &coast_core::coastfile::Coastfile,
     manifest: &build_artifact::SsgManifest,
     services: &[crate::state::SsgServiceRecord],
+    virtual_ports: &[crate::state::SsgVirtualPortRecord],
 ) -> Result<Vec<coast_core::types::SharedServiceConfig>> {
     if coastfile.shared_service_group_refs.is_empty() {
         return Ok(Vec::new());
     }
+
+    // Build a `(service_name, container_port) -> virtual_port` map so
+    // each port lookup is O(1). The allocator persists exactly one
+    // row per (project, service, container_port), so no key collides
+    // here within a single call.
+    let vport_by_key: std::collections::HashMap<(&str, u16), u16> = virtual_ports
+        .iter()
+        .map(|r| ((r.service_name.as_str(), r.container_port), r.port))
+        .collect();
 
     let mut synthesized = Vec::with_capacity(coastfile.shared_service_group_refs.len());
 
@@ -482,14 +503,20 @@ pub fn synthesize_shared_service_configs(
                 missing_ssg_service_error(&consumer_ref.name, &coastfile.name, manifest)
             })?;
 
-        let ports: Vec<coast_core::types::SharedServicePort> = services
+        let mut ports: Vec<coast_core::types::SharedServicePort> = Vec::new();
+        for svc in services
             .iter()
             .filter(|s| s.service_name == consumer_ref.name)
-            .map(|s| coast_core::types::SharedServicePort {
-                host_port: s.dynamic_host_port,
-                container_port: s.container_port,
-            })
-            .collect();
+        {
+            let key = (svc.service_name.as_str(), svc.container_port);
+            let virtual_port = vport_by_key.get(&key).copied().ok_or_else(|| {
+                missing_virtual_port_error(&svc.service_name, svc.container_port, &coastfile.name)
+            })?;
+            ports.push(coast_core::types::SharedServicePort {
+                forwarding_port: virtual_port,
+                container_port: svc.container_port,
+            });
+        }
 
         synthesized.push(coast_core::types::SharedServiceConfig {
             name: consumer_ref.name.clone(),
@@ -588,6 +615,21 @@ fn missing_ssg_service_error(
     ))
 }
 
+/// Phase 28: surfaced when a consumer references a service whose
+/// virtual port has not been allocated yet. In production this means
+/// the SSG hasn't successfully run for this project, so
+/// `host_socat::reconcile_project` never persisted a row in
+/// `ssg_virtual_ports`. The error text directs the user back to the
+/// `coast ssg run` lifecycle (which is the only path that allocates).
+fn missing_virtual_port_error(service: &str, container_port: u16, project: &str) -> CoastError {
+    CoastError::coastfile(format!(
+        "service '{service}' container port {container_port} (referenced via \
+         `from_group = true` in project '{project}') has no virtual port allocated. \
+         Run `coast ssg run` in project '{project}' to bring the SSG up so its host \
+         socats are spawned, then re-run."
+    ))
+}
+
 // --- Phase 5 auto_create_db nested-exec bridge -----------------------------
 
 /// Execute `command` inside the inner `service_name` container of the
@@ -626,7 +668,7 @@ pub async fn create_instance_db_for_consumer(
 mod tests {
     use super::*;
     use crate::build::artifact::{SsgManifest, SsgManifestService};
-    use crate::state::SsgServiceRecord;
+    use crate::state::{SsgServiceRecord, SsgVirtualPortRecord};
     use coast_core::coastfile::Coastfile;
     use coast_core::types::{InjectType, SharedServiceGroupRef};
     use std::path::Path;
@@ -660,6 +702,19 @@ mod tests {
         }
     }
 
+    /// Phase 28 helper: build a virtual port record for tests that
+    /// exercise the new synthesis path. Most call sites pair this
+    /// with `sample_record` of the same `(service, container_port)`.
+    fn sample_vport(service: &str, container_port: u16, port: u16) -> SsgVirtualPortRecord {
+        SsgVirtualPortRecord {
+            project: "test-proj".to_string(),
+            service_name: service.to_string(),
+            container_port,
+            port,
+            created_at: "2026-04-24T00:00:00Z".to_string(),
+        }
+    }
+
     fn coastfile_with_refs(refs: Vec<SharedServiceGroupRef>) -> Coastfile {
         let mut cf = Coastfile::parse("[coast]\nname = \"consumer\"\n", Path::new("/tmp"))
             .expect("minimal coastfile parses");
@@ -680,23 +735,32 @@ mod tests {
         let cf = coastfile_with_refs(vec![]);
         let manifest = sample_manifest(vec![("postgres", "postgres:16-alpine", vec![5432], false)]);
         let services = vec![sample_record("postgres", 5432, 60000)];
-        let result = synthesize_shared_service_configs(&cf, &manifest, &services).unwrap();
+        let vports = vec![sample_vport("postgres", 5432, 42001)];
+        let result = synthesize_shared_service_configs(&cf, &manifest, &services, &vports).unwrap();
         assert!(result.is_empty());
     }
 
     #[test]
-    fn synthesize_single_service_uses_manifest_image_and_dynamic_port() {
+    fn synthesize_single_service_uses_manifest_image_and_virtual_port() {
+        // Phase 28: forwarding_port is the stable VIRTUAL port from
+        // ssg_virtual_ports — NOT the SSG's ephemeral dyn port. The
+        // dyn port (60001) is what the host socat forwards to;
+        // consumers only see the virtual port (42001).
         let cf = coastfile_with_refs(vec![simple_ref("postgres")]);
         let manifest = sample_manifest(vec![("postgres", "postgres:16-alpine", vec![5432], false)]);
         let services = vec![sample_record("postgres", 5432, 60001)];
-        let result = synthesize_shared_service_configs(&cf, &manifest, &services).unwrap();
+        let vports = vec![sample_vport("postgres", 5432, 42001)];
+        let result = synthesize_shared_service_configs(&cf, &manifest, &services, &vports).unwrap();
         assert_eq!(result.len(), 1);
         let cfg = &result[0];
         assert_eq!(cfg.name, "postgres");
         assert_eq!(cfg.image, "postgres:16-alpine");
         assert_eq!(cfg.ports.len(), 1);
         assert_eq!(cfg.ports[0].container_port, 5432);
-        assert_eq!(cfg.ports[0].host_port, 60001);
+        assert_eq!(
+            cfg.ports[0].forwarding_port, 42001,
+            "forwarding_port must be the virtual port, not dyn port (60001)"
+        );
         assert!(cfg.volumes.is_empty(), "volumes are inert for consumers");
         assert!(cfg.env.is_empty(), "env is inert for consumers");
         assert!(!cfg.auto_create_db);
@@ -714,9 +778,39 @@ mod tests {
             sample_record("postgres", 5432, 60001),
             sample_record("redis", 6379, 60002),
         ];
-        let result = synthesize_shared_service_configs(&cf, &manifest, &services).unwrap();
+        let vports = vec![
+            sample_vport("postgres", 5432, 42001),
+            sample_vport("redis", 6379, 42002),
+        ];
+        let result = synthesize_shared_service_configs(&cf, &manifest, &services, &vports).unwrap();
         let names: Vec<&str> = result.iter().map(|c| c.name.as_str()).collect();
         assert_eq!(names, vec!["postgres", "redis"]);
+    }
+
+    #[test]
+    fn synthesize_errors_when_referenced_service_lacks_virtual_port() {
+        // Phase 28: synthesis hard-errors when a referenced service
+        // has an ssg_services row but no matching ssg_virtual_ports
+        // row. In production this means host_socat::reconcile_project
+        // never persisted the row, which means the SSG hasn't run.
+        let cf = coastfile_with_refs(vec![simple_ref("postgres")]);
+        let manifest = sample_manifest(vec![("postgres", "postgres:16-alpine", vec![5432], false)]);
+        let services = vec![sample_record("postgres", 5432, 60001)];
+        // No virtual port for postgres:5432.
+        let err = synthesize_shared_service_configs(&cf, &manifest, &services, &[]).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("service 'postgres' container port 5432"),
+            "must name service + port; got: {msg}"
+        );
+        assert!(
+            msg.contains("no virtual port allocated"),
+            "must explain the missing allocation; got: {msg}"
+        );
+        assert!(
+            msg.contains("coast ssg run"),
+            "must direct user to `coast ssg run`; got: {msg}"
+        );
     }
 
     #[test]
@@ -730,7 +824,9 @@ mod tests {
             ("redis", "redis:7-alpine", vec![6379], false),
         ]);
         let services = vec![sample_record("postgres", 5432, 60001)];
-        let err = synthesize_shared_service_configs(&cf, &manifest, &services).unwrap_err();
+        let vports = vec![sample_vport("postgres", 5432, 42001)];
+        let err =
+            synthesize_shared_service_configs(&cf, &manifest, &services, &vports).unwrap_err();
         let message = err.to_string();
         assert!(
             message.contains("service 'mongo' is declared `from_group = true`"),
@@ -761,7 +857,7 @@ mod tests {
         // no services)" wording).
         let cf = coastfile_with_refs(vec![simple_ref("mongo")]);
         let manifest = sample_manifest(vec![]);
-        let err = synthesize_shared_service_configs(&cf, &manifest, &[]).unwrap_err();
+        let err = synthesize_shared_service_configs(&cf, &manifest, &[], &[]).unwrap_err();
         let message = err.to_string();
         assert!(message.contains("Available services: (none)"));
     }
@@ -775,7 +871,8 @@ mod tests {
         }]);
         let manifest = sample_manifest(vec![("postgres", "postgres:16-alpine", vec![5432], false)]);
         let services = vec![sample_record("postgres", 5432, 60001)];
-        let result = synthesize_shared_service_configs(&cf, &manifest, &services).unwrap();
+        let vports = vec![sample_vport("postgres", 5432, 42001)];
+        let result = synthesize_shared_service_configs(&cf, &manifest, &services, &vports).unwrap();
         match &result[0].inject {
             Some(InjectType::Env(name)) => assert_eq!(name, "DATABASE_URL"),
             other => panic!("expected Env(DATABASE_URL), got {other:?}"),
@@ -792,7 +889,8 @@ mod tests {
         // Manifest says false, ref overrides to true.
         let manifest = sample_manifest(vec![("postgres", "postgres:16-alpine", vec![5432], false)]);
         let services = vec![sample_record("postgres", 5432, 60001)];
-        let result = synthesize_shared_service_configs(&cf, &manifest, &services).unwrap();
+        let vports = vec![sample_vport("postgres", 5432, 42001)];
+        let result = synthesize_shared_service_configs(&cf, &manifest, &services, &vports).unwrap();
         assert!(result[0].auto_create_db);
     }
 
@@ -802,7 +900,8 @@ mod tests {
         // Manifest says true; ref doesn't override.
         let manifest = sample_manifest(vec![("postgres", "postgres:16-alpine", vec![5432], true)]);
         let services = vec![sample_record("postgres", 5432, 60001)];
-        let result = synthesize_shared_service_configs(&cf, &manifest, &services).unwrap();
+        let vports = vec![sample_vport("postgres", 5432, 42001)];
+        let result = synthesize_shared_service_configs(&cf, &manifest, &services, &vports).unwrap();
         assert!(result[0].auto_create_db);
     }
 
@@ -818,7 +917,8 @@ mod tests {
         }]);
         let manifest = sample_manifest(vec![("postgres", "postgres:16-alpine", vec![5432], true)]);
         let services = vec![sample_record("postgres", 5432, 60001)];
-        let result = synthesize_shared_service_configs(&cf, &manifest, &services).unwrap();
+        let vports = vec![sample_vport("postgres", 5432, 42001)];
+        let result = synthesize_shared_service_configs(&cf, &manifest, &services, &vports).unwrap();
         assert!(
             !result[0].auto_create_db,
             "Some(false) must override SSG auto_create_db = true"
@@ -827,6 +927,15 @@ mod tests {
 
     #[test]
     fn synthesize_multi_port_service_emits_one_entry_per_port() {
+        // Phase 28: each (service, container_port) pair gets its own
+        // virtual port via `ssg_virtual_ports`. The synthesis pairs
+        // them up by `(service, container_port)`. NOTE: today's
+        // `ssg_services` PK is `(project, service_name)` (one row
+        // per service), so multi-port scenarios like this cannot
+        // currently be produced by the daemon's lifecycle — the
+        // test asserts on the per-port keying so a future schema
+        // amendment to per-port `ssg_services` rows lights up
+        // correctly without further synthesis changes.
         let cf = coastfile_with_refs(vec![simple_ref("kafka")]);
         let manifest = sample_manifest(vec![("kafka", "kafka:3", vec![9092, 9093, 9094], false)]);
         let services = vec![
@@ -834,16 +943,22 @@ mod tests {
             sample_record("kafka", 9093, 60011),
             sample_record("kafka", 9094, 60012),
         ];
-        let result = synthesize_shared_service_configs(&cf, &manifest, &services).unwrap();
+        let vports = vec![
+            sample_vport("kafka", 9092, 42010),
+            sample_vport("kafka", 9093, 42011),
+            sample_vport("kafka", 9094, 42012),
+        ];
+        let result = synthesize_shared_service_configs(&cf, &manifest, &services, &vports).unwrap();
         assert_eq!(result.len(), 1);
         let ports: Vec<(u16, u16)> = result[0]
             .ports
             .iter()
-            .map(|p| (p.container_port, p.host_port))
+            .map(|p| (p.container_port, p.forwarding_port))
             .collect();
-        assert!(ports.contains(&(9092, 60010)));
-        assert!(ports.contains(&(9093, 60011)));
-        assert!(ports.contains(&(9094, 60012)));
+        // forwarding_port is the virtual port (42010+), not the dyn port (60010+).
+        assert!(ports.contains(&(9092, 42010)));
+        assert!(ports.contains(&(9093, 42011)));
+        assert!(ports.contains(&(9094, 42012)));
     }
 
     // --- synthesize_remote_forwards_for_consumer (Phase 4.5) ---

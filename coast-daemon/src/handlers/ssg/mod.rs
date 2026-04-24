@@ -25,21 +25,17 @@ pub mod checkout;
 // `coast-ssg/src/doctor.rs` for the pure evaluator.
 pub mod doctor;
 
-// ssg-phase-11: refresh consumer socat forwarders after SSG lifecycle
-// verbs reallocate dynamic ports. See
-// `coast-ssg/DESIGN.md §0 Phase 11` + `§17-38 SETTLED`.
-pub(crate) mod consumer_refresh;
-
-// ssg-phase-26 (§24.5): stable virtual-port allocator. Unused in
-// Phase 26 itself — Phase 27 wires the host socat supervisor against
-// it, Phase 28 threads it into consumer provisioning.
+// ssg-phase-26 / 28 (§24.5): stable virtual-port allocator.
+// Wired into production by Phase 28's host_socat lifecycle hooks.
 pub(crate) mod virtual_port_allocator;
 
-// ssg-phase-27 (§24): daemon-managed host socat supervisor. One
-// long-lived process per `(project, service_name)` pair, bound to
-// the stable virtual port from Phase 26, forwarding to the current
-// SSG dynamic port. Dormant in Phase 27 — Phase 28 wires it into
-// SSG lifecycle verbs and adds the daemon-start reconciliation.
+// ssg-phase-27 / 28 (§24): daemon-managed host socat supervisor. One
+// long-lived process per `(project, service_name, container_port)`
+// pair, bound to the stable virtual port from Phase 26, forwarding
+// to the current SSG dynamic port. Phase 28 wired this into SSG
+// lifecycle verbs (run/start/restart/stop/rm) plus daemon-start
+// reconciliation. Replaces the legacy `consumer_refresh` machinery
+// (deleted in Phase 28).
 pub(crate) mod host_socat;
 
 // ssg-phase-15: `coast ssg import-host-volume` — zero-copy migration
@@ -240,6 +236,15 @@ async fn handle_stop(project: &str, state: &Arc<AppState>, force: bool) -> Resul
     // re-spawns against the new dynamic ports.
     checkout::kill_active_checkout_socats_preserve_rows(project, state).await;
 
+    // Phase 28: kill the per-service host socats so consumers
+    // attempting to reach a stopped SSG fail fast with
+    // `ECONNREFUSED` (no orphan socat forwarding traffic into a
+    // dead dyn port). Virtual port allocations stay in
+    // `ssg_virtual_ports` — the same numbers come back on the next
+    // `ssg run/start` so consumer in-DinD socats never need to
+    // change.
+    kill_host_socats_for_project_services(project, state).await;
+
     Ok(build_stop_response_success())
 }
 
@@ -271,14 +276,76 @@ async fn handle_rm(
     // at a partially-removed SSG.
     checkout::kill_and_clear_all_checkouts(project, state).await;
 
+    // Phase 28: snapshot the service rows BEFORE the Docker rm runs
+    // so we still know which host socats to kill even after
+    // `clear_ssg_services` wipes the table below.
+    let services_for_socat_teardown = {
+        let db = state.db.lock().await;
+        db.list_ssg_services(project).unwrap_or_default()
+    };
+
     let ops = coast_ssg::docker_ops::BollardSsgDockerOps::new(docker.clone());
     coast_ssg::daemon_integration::rm_ssg(&ops, &record, with_data).await?;
 
-    let db = state.db.lock().await;
-    db.clear_ssg(project)?;
-    db.clear_ssg_services(project)?;
+    {
+        let db = state.db.lock().await;
+        db.clear_ssg(project)?;
+        db.clear_ssg_services(project)?;
+        if with_data {
+            // `--with-data` means the user is wiping identity too.
+            // Release the virtual port band slots so they can be
+            // reused by other projects on the same host. Without
+            // `--with-data`, virtual ports survive — the user is
+            // doing a rebuild-style rm/run cycle and consumer
+            // socats must keep pointing at the same targets.
+            db.clear_ssg_virtual_ports(project)?;
+        }
+    }
+
+    // Phase 28: kill the per-service host socats. We do this after
+    // the Docker rm so a failed rm doesn't leave us with neither a
+    // dyn port nor a socat (which would silently hide the failure
+    // until the next `run`).
+    use crate::handlers::ssg::host_socat;
+    for svc in services_for_socat_teardown {
+        if let Err(err) = host_socat::kill(project, &svc.service_name, svc.container_port) {
+            tracing::warn!(
+                project = %project,
+                service = %svc.service_name,
+                container_port = svc.container_port,
+                error = %err,
+                "host socat kill failed during ssg rm; pidfile may be stale"
+            );
+        }
+    }
 
     Ok(build_rm_response_success(with_data))
+}
+
+/// Kill every host socat backing a service in `project`. Used by
+/// `handle_stop` (preserves virtual port allocations) and called
+/// inline from `handle_rm` (which also clears virtual ports under
+/// `--with-data`). Reads `ssg_services` to enumerate the
+/// `(service, container_port)` pairs.
+async fn kill_host_socats_for_project_services(project: &str, state: &Arc<AppState>) {
+    use crate::handlers::ssg::host_socat;
+    use coast_ssg::state::SsgStateExt;
+
+    let services = {
+        let db = state.db.lock().await;
+        db.list_ssg_services(project).unwrap_or_default()
+    };
+    for svc in services {
+        if let Err(err) = host_socat::kill(project, &svc.service_name, svc.container_port) {
+            tracing::warn!(
+                project = %project,
+                service = %svc.service_name,
+                container_port = svc.container_port,
+                error = %err,
+                "host socat kill failed during ssg stop; pidfile may be stale"
+            );
+        }
+    }
 }
 
 async fn handle_logs(

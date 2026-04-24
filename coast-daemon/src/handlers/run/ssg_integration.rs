@@ -253,13 +253,22 @@ async fn run_and_apply(
     let _ = forwarder.await;
 
     let build_id = outcome.build_id.clone();
-    let db = state.db.lock().await;
-    let _ = outcome.apply_to_state_and_response(
-        project,
-        &*db,
-        "running",
-        format!("SSG running on build {build_id}"),
-    )?;
+    {
+        let db = state.db.lock().await;
+        let _ = outcome.apply_to_state_and_response(
+            project,
+            &*db,
+            "running",
+            format!("SSG running on build {build_id}"),
+        )?;
+    }
+    // Phase 28: refresh per-service host socats so the consumer's
+    // virtual-port resolves to the just-allocated dyn ports. Done
+    // here (after the SSG state apply) on the auto-start path so
+    // `synthesize_configs_for_consumer` can read the persisted
+    // virtual ports immediately afterward. See
+    // `coast-ssg/DESIGN.md §24`.
+    refresh_host_socats_for_project(project, state).await;
     Ok(build_id)
 }
 
@@ -304,13 +313,52 @@ async fn start_and_apply(
     let _ = forwarder.await;
 
     let build_id = outcome.build_id.clone();
-    let db = state.db.lock().await;
-    let _ = outcome.apply_to_state_and_response(
-        project,
-        &*db,
-        format!("SSG started on build {build_id}"),
-    )?;
+    {
+        let db = state.db.lock().await;
+        let _ = outcome.apply_to_state_and_response(
+            project,
+            &*db,
+            format!("SSG started on build {build_id}"),
+        )?;
+    }
+    // Phase 28: refresh per-service host socats — see `run_and_apply`
+    // above for the rationale.
+    refresh_host_socats_for_project(project, state).await;
     Ok(build_id)
+}
+
+/// Bring up (or refresh) the host socats for `project` after the
+/// auto-start path has written fresh dyn ports. Errors are logged
+/// at `warn!` rather than propagated: the SSG itself is up, so a
+/// host-socat hiccup leaves consumers temporarily unable to reach
+/// shared services but doesn't fail the consumer's `coast run` —
+/// they'll see ECONNREFUSED on connect, which is the same signal
+/// any other shared-service outage would surface.
+async fn refresh_host_socats_for_project(project: &str, state: &AppState) {
+    use crate::handlers::ssg::host_socat;
+    use crate::handlers::ssg::virtual_port_allocator::AllocatorConfig;
+
+    let cfg = AllocatorConfig::from_env();
+    match host_socat::reconcile_project(state, project, &cfg).await {
+        Ok(report) => {
+            for notice in report.rebound {
+                warn!(
+                    project = %project,
+                    label = %notice.label,
+                    old_virtual_port = notice.old_virtual_port,
+                    new_virtual_port = notice.new_virtual_port,
+                    "virtual port rebound during SSG auto-start; running consumers may \
+                     need to be re-run to pick up the new port"
+                );
+            }
+        }
+        Err(err) => warn!(
+            project = %project,
+            error = %err,
+            "host socat reconcile_project failed during SSG auto-start; consumers may \
+             see ECONNREFUSED on shared services until the next ssg run/start/restart"
+        ),
+    }
 }
 
 fn emit_started(progress: &Sender<BuildProgressEvent>) {
@@ -361,12 +409,19 @@ pub async fn synthesize_configs_for_consumer(
     // overrides the project's own `latest_build_id`). No global
     // `~/.coast/ssg/latest` fallback — that leaked another project's
     // build into this consumer.
-    let (build_id, services) = {
+    //
+    // Phase 28: also load `ssg_virtual_ports` rows so the synthesis
+    // can substitute the stable virtual port for each declared
+    // container port. Consumers connect through
+    // `host.docker.internal:<virtual_port>`, which the daemon-managed
+    // host socat forwards to the SSG's current dyn port.
+    let (build_id, services, virtual_ports) = {
         let db = state.db.lock().await;
         let pin = db.get_ssg_consumer_pin(&coastfile.name)?;
         let latest = db.get_ssg(&coastfile.name)?.and_then(|r| r.latest_build_id);
         let services = db.list_ssg_services(&coastfile.name)?;
-        (pin.map(|p| p.build_id).or(latest), services)
+        let vports = db.list_ssg_virtual_ports(&coastfile.name)?;
+        (pin.map(|p| p.build_id).or(latest), services, vports)
     };
     let build_id = build_id.ok_or_else(|| {
         CoastError::coastfile(format!(
@@ -396,7 +451,10 @@ pub async fn synthesize_configs_for_consumer(
         })?;
 
     coast_ssg::daemon_integration::synthesize_shared_service_configs(
-        coastfile, &manifest, &services,
+        coastfile,
+        &manifest,
+        &services,
+        &virtual_ports,
     )
 }
 

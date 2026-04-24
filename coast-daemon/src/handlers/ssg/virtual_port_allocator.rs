@@ -1,11 +1,16 @@
-//! Phase 26 / §24.5: stable virtual-port allocator.
+//! Phase 26 / 28 / §24.5: stable virtual-port allocator.
 //!
 //! Picks a host-owned port in the `[band_start, band_end]` range,
-//! persists it in `ssg_virtual_ports` keyed by `(project,
-//! service_name)`, and returns the same port on subsequent calls for
-//! the same key. When the persisted port is in use by something else
-//! (another program grabbed it between daemon runs), falls forward to
-//! the next free port in the band and repersists.
+//! persists it in `ssg_virtual_ports` keyed by
+//! `(project, service_name, container_port)`, and returns the same
+//! port on subsequent calls for the same key. When the persisted port
+//! is in use by something else (another program grabbed it between
+//! daemon runs), falls forward to the next free port in the band and
+//! repersists.
+//!
+//! Phase 28 amended the key from per-service to per-port so multi-port
+//! services (e.g. minio's 9000+9001) get a stable virtual port per
+//! published port — one host socat process per `ssg_services` row.
 //!
 //! This module is pure logic plus two capabilities:
 //! - State access via the `SsgStateExt` trait (read/write the table).
@@ -14,14 +19,9 @@
 //!
 //! The signature takes `&dyn SsgStateExt` (not `&AppState`) so tests
 //! can drive an in-memory `StateDb` directly without constructing an
-//! `AppState`. The rest of the daemon will call `state.db.lock().await`
-//! at the call site (Phase 27/28) and pass the guarded `StateDb`.
-//!
-//! Phase 26 intentionally leaves this module unwired from production
-//! code paths; the unit tests exercise the full public surface. The
-//! call sites land in Phase 27 (host socat supervisor) and Phase 28
-//! (consumer provisioning).
-#![allow(dead_code)]
+//! `AppState`. The rest of the daemon calls `state.db.lock().await`
+//! at the call site (Phase 28 lifecycle wiring) and passes the
+//! guarded `StateDb`.
 
 use std::collections::HashSet;
 use std::net::TcpListener;
@@ -92,27 +92,30 @@ fn probe_port_free(port: u16) -> bool {
     TcpListener::bind(("0.0.0.0", port)).is_ok()
 }
 
-/// Return the stable virtual port for `(project, service_name)`.
+/// Return the stable virtual port for
+/// `(project, service_name, container_port)`.
 ///
 /// 1. If a port is persisted AND still free, return it.
 /// 2. Otherwise scan `[band_start, band_end]`. Skip ports already
-///    assigned to any other `(project, service_name)` pair and
-///    ports currently bound by some other process. First match
-///    wins; persisted immediately; returned.
+///    assigned to any other `(project, service_name, container_port)`
+///    triple and ports currently bound by some other process. First
+///    match wins; persisted immediately; returned.
 /// 3. If the band is exhausted, returns a clear error naming the
 ///    band bounds and the env var to widen them.
 pub fn allocate_or_reuse(
     db: &dyn SsgStateExt,
     project: &str,
     service_name: &str,
+    container_port: u16,
     config: &AllocatorConfig,
 ) -> Result<u16> {
     // Reuse path.
-    if let Some(persisted) = db.get_ssg_virtual_port(project, service_name)? {
-        // A port that's ALSO persisted for another (project, service)
-        // should never happen here (the allocator is the sole writer
-        // and enforces uniqueness), but the probe still guards
-        // against a process outside Coast grabbing it.
+    if let Some(persisted) = db.get_ssg_virtual_port(project, service_name, container_port)? {
+        // A port that's ALSO persisted for another
+        // (project, service, container_port) should never happen
+        // here (the allocator is the sole writer and enforces
+        // uniqueness), but the probe still guards against a process
+        // outside Coast grabbing it.
         if probe_port_free(persisted) {
             return Ok(persisted);
         }
@@ -132,7 +135,7 @@ pub fn allocate_or_reuse(
         if !probe_port_free(candidate) {
             continue;
         }
-        db.upsert_ssg_virtual_port(project, service_name, candidate)?;
+        db.upsert_ssg_virtual_port(project, service_name, container_port, candidate)?;
         return Ok(candidate);
     }
 
@@ -163,13 +166,17 @@ mod tests {
         StateDb::open_in_memory().expect("in-memory statedb")
     }
 
+    /// Default container port used in tests where the value doesn't
+    /// matter; postgres' canonical port is fine.
+    const PG: u16 = 5432;
+
     #[test]
     fn stable_across_rebuild() {
         let db = fresh_db();
         let cfg = test_config();
 
-        let first = allocate_or_reuse(&db, "cg", "postgres", &cfg).unwrap();
-        let second = allocate_or_reuse(&db, "cg", "postgres", &cfg).unwrap();
+        let first = allocate_or_reuse(&db, "cg", "postgres", PG, &cfg).unwrap();
+        let second = allocate_or_reuse(&db, "cg", "postgres", PG, &cfg).unwrap();
 
         assert_eq!(first, second);
         assert!((cfg.band_start..=cfg.band_end).contains(&first));
@@ -180,8 +187,8 @@ mod tests {
         let db = fresh_db();
         let cfg = test_config();
 
-        let pg = allocate_or_reuse(&db, "cg", "postgres", &cfg).unwrap();
-        let redis = allocate_or_reuse(&db, "cg", "redis", &cfg).unwrap();
+        let pg = allocate_or_reuse(&db, "cg", "postgres", PG, &cfg).unwrap();
+        let redis = allocate_or_reuse(&db, "cg", "redis", 6379, &cfg).unwrap();
 
         assert_ne!(pg, redis);
     }
@@ -191,12 +198,28 @@ mod tests {
         let db = fresh_db();
         let cfg = test_config();
 
-        let cg_pg = allocate_or_reuse(&db, "cg", "postgres", &cfg).unwrap();
-        let fm_pg = allocate_or_reuse(&db, "filemap", "postgres", &cfg).unwrap();
+        let cg_pg = allocate_or_reuse(&db, "cg", "postgres", PG, &cfg).unwrap();
+        let fm_pg = allocate_or_reuse(&db, "filemap", "postgres", PG, &cfg).unwrap();
 
         // Different (project, service_name) pairs → distinct ports,
-        // even though both are "postgres".
+        // even though both are "postgres" on 5432.
         assert_ne!(cg_pg, fm_pg);
+    }
+
+    #[test]
+    fn distinct_container_ports_within_one_service() {
+        // Phase 28: a multi-port service like minio (9000 + 9001)
+        // gets one virtual port per declared container port.
+        let db = fresh_db();
+        let cfg = test_config();
+
+        let api = allocate_or_reuse(&db, "cg", "minio", 9000, &cfg).unwrap();
+        let console = allocate_or_reuse(&db, "cg", "minio", 9001, &cfg).unwrap();
+
+        assert_ne!(api, console);
+        // Reuse remains stable per (service, container_port).
+        let api_again = allocate_or_reuse(&db, "cg", "minio", 9000, &cfg).unwrap();
+        assert_eq!(api, api_again);
     }
 
     #[test]
@@ -210,7 +233,7 @@ mod tests {
         };
         let _blocker = TcpListener::bind(("0.0.0.0", cfg.band_start)).expect("pre-bind first port");
 
-        let got = allocate_or_reuse(&db, "cg", "postgres", &cfg).unwrap();
+        let got = allocate_or_reuse(&db, "cg", "postgres", PG, &cfg).unwrap();
         assert_eq!(got, cfg.band_end);
     }
 
@@ -226,7 +249,7 @@ mod tests {
         let _a = TcpListener::bind(("0.0.0.0", cfg.band_start)).unwrap();
         let _b = TcpListener::bind(("0.0.0.0", cfg.band_end)).unwrap();
 
-        let err = allocate_or_reuse(&db, "cg", "postgres", &cfg).unwrap_err();
+        let err = allocate_or_reuse(&db, "cg", "postgres", PG, &cfg).unwrap_err();
         let msg = err.to_string();
         assert!(
             msg.contains("exhausted"),
@@ -240,16 +263,16 @@ mod tests {
         let db = fresh_db();
         let cfg = test_config();
 
-        let first = allocate_or_reuse(&db, "cg", "postgres", &cfg).unwrap();
+        let first = allocate_or_reuse(&db, "cg", "postgres", PG, &cfg).unwrap();
 
         // Simulate "daemon restart" by re-reading the persisted row
-        // against a fresh allocator call. Same DB, same (project,
-        // service) → same port.
-        let second = allocate_or_reuse(&db, "cg", "postgres", &cfg).unwrap();
+        // against a fresh allocator call. Same DB, same triple →
+        // same port.
+        let second = allocate_or_reuse(&db, "cg", "postgres", PG, &cfg).unwrap();
         assert_eq!(first, second);
 
         // And confirm the DB layer returns it too.
-        let via_db = db.get_ssg_virtual_port("cg", "postgres").unwrap();
+        let via_db = db.get_ssg_virtual_port("cg", "postgres", PG).unwrap();
         assert_eq!(via_db, Some(first));
     }
 
@@ -258,10 +281,10 @@ mod tests {
         let db = fresh_db();
         let cfg = test_config();
 
-        let first = allocate_or_reuse(&db, "cg", "postgres", &cfg).unwrap();
+        let first = allocate_or_reuse(&db, "cg", "postgres", PG, &cfg).unwrap();
         db.clear_ssg_virtual_ports("cg").unwrap();
 
-        let second = allocate_or_reuse(&db, "cg", "postgres", &cfg).unwrap();
+        let second = allocate_or_reuse(&db, "cg", "postgres", PG, &cfg).unwrap();
         assert!((cfg.band_start..=cfg.band_end).contains(&second));
         // We don't assert first == second — the order of iteration
         // + probe races may land a different port in rare cases.
@@ -274,21 +297,24 @@ mod tests {
         let db = fresh_db();
         let cfg = test_config();
 
-        let cg_pg = allocate_or_reuse(&db, "cg", "postgres", &cfg).unwrap();
-        let fm_pg = allocate_or_reuse(&db, "filemap", "postgres", &cfg).unwrap();
+        let cg_pg = allocate_or_reuse(&db, "cg", "postgres", PG, &cfg).unwrap();
+        let fm_pg = allocate_or_reuse(&db, "filemap", "postgres", PG, &cfg).unwrap();
 
         db.clear_ssg_virtual_ports("cg").unwrap();
 
         // filemap's persisted port survives.
         assert_eq!(
-            db.get_ssg_virtual_port("filemap", "postgres").unwrap(),
+            db.get_ssg_virtual_port("filemap", "postgres", PG).unwrap(),
             Some(fm_pg)
         );
         // cg's is gone.
-        assert!(db.get_ssg_virtual_port("cg", "postgres").unwrap().is_none());
+        assert!(db
+            .get_ssg_virtual_port("cg", "postgres", PG)
+            .unwrap()
+            .is_none());
 
         // Re-allocating cg must not accidentally steal filemap's port.
-        let cg_pg_again = allocate_or_reuse(&db, "cg", "postgres", &cfg).unwrap();
+        let cg_pg_again = allocate_or_reuse(&db, "cg", "postgres", PG, &cfg).unwrap();
         assert_ne!(cg_pg_again, fm_pg);
         let _ = cg_pg;
     }

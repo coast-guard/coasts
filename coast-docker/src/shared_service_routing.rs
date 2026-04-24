@@ -15,8 +15,12 @@
 //!   that `remote_port` via a reverse SSH tunnel.
 //!
 //! Callers decide what upstream port each route targets by setting
-//! `SharedServicePort.host_port` on the input `SharedServiceConfig` values;
-//! the generated socat upstream is always `TCP:host.docker.internal:{host_port}`.
+//! `SharedServicePort.forwarding_port` on the input
+//! `SharedServiceConfig` values; the generated socat upstream is
+//! always `TCP:host.docker.internal:{forwarding_port}`. After
+//! Phase 28 the forwarding port is the daemon-managed virtual port
+//! supervised by `coast-daemon::handlers::ssg::host_socat`, so the
+//! consumer side is stable across SSG rebuilds.
 //!
 //! See [`coast-ssg/DESIGN.md §11`](../../coast-ssg/DESIGN.md) for the
 //! local topology and [`§20`](../../coast-ssg/DESIGN.md) for the Phase 18
@@ -309,7 +313,7 @@ fn build_proxy_setup_script(plan: &SharedServiceRoutingPlan) -> String {
                 "TCP-LISTEN:{},bind={},fork,reuseaddr",
                 port.container_port, alias_ip
             );
-            let upstream_addr = format!("TCP:{}:{}", route.target_container, port.host_port);
+            let upstream_addr = format!("TCP:{}:{}", route.target_container, port.forwarding_port);
             let log_path = format!(
                 "/var/log/coast/shared-service-proxies/{}-{}.log",
                 route.service_name, port.container_port
@@ -522,8 +526,8 @@ mod tests {
                 alias_ip: Ipv4Addr::new(172, 17, 255, 254),
                 target_container: SOCAT_UPSTREAM_HOST.to_string(),
                 ports: vec![SharedServicePort {
-                    host_port: 61034,     // dynamic remote_port
-                    container_port: 5432, // canonical
+                    forwarding_port: 61034, // dynamic remote_port
+                    container_port: 5432,   // canonical
                 }],
             }],
         };

@@ -33,40 +33,58 @@ pub struct VolumeConfig {
     pub snapshot_source: Option<String>,
 }
 
-/// Configuration for a shared service in the Coastfile.
+/// One published port on a shared service.
+///
+/// Phase 28 renamed `host_port` to `forwarding_port` to reflect what
+/// the value actually means: it's the port a consumer's in-DinD
+/// socat connects to via `host.docker.internal:<forwarding_port>`,
+/// not literally a "Docker host publish port" anymore. After
+/// Phase 28's host-socat supervisor lands, `forwarding_port` is the
+/// stable virtual port that fronts the SSG's ephemeral dyn port; the
+/// SSG itself can rebuild without consumers ever observing a change
+/// in this value.
+///
+/// The serialized name stays `host_port` (`#[serde(rename)]`) so
+/// existing artifact manifests, snapshots, and protocol payloads
+/// continue to round-trip without a breaking wire change. TOML
+/// Coastfile syntax is unaffected — `host_port`/`container_port`
+/// never appeared as struct field names there; the parser
+/// constructs a `SharedServicePort` from a `"host:container"` string
+/// (see `coast-core/src/coastfile/field_parsers.rs`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct SharedServicePort {
-    pub host_port: u16,
+    #[serde(rename = "host_port")]
+    pub forwarding_port: u16,
     pub container_port: u16,
 }
 
 impl SharedServicePort {
     pub const fn same(port: u16) -> Self {
         Self {
-            host_port: port,
+            forwarding_port: port,
             container_port: port,
         }
     }
 
-    pub const fn new(host_port: u16, container_port: u16) -> Self {
+    pub const fn new(forwarding_port: u16, container_port: u16) -> Self {
         Self {
-            host_port,
+            forwarding_port,
             container_port,
         }
     }
 
     pub const fn is_identity_mapping(&self) -> bool {
-        self.host_port == self.container_port
+        self.forwarding_port == self.container_port
     }
 }
 
 impl fmt::Display for SharedServicePort {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.is_identity_mapping() {
-            write!(f, "{}", self.host_port)
+            write!(f, "{}", self.forwarding_port)
         } else {
-            write!(f, "{}:{}", self.host_port, self.container_port)
+            write!(f, "{}:{}", self.forwarding_port, self.container_port)
         }
     }
 }

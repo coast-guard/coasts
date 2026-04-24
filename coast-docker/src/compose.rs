@@ -216,7 +216,7 @@ pub fn generate_shared_service_override(
                 let port = service
                     .ports
                     .first()
-                    .map(|port| port.host_port)
+                    .map(|port| port.forwarding_port)
                     .unwrap_or(5432);
                 let db_name = format!("{instance_name}_{project_name}");
 

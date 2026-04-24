@@ -1316,6 +1316,30 @@ async fn restore_instance_tunnels(
     forward_and_log_tunnels(&connection, &tunnel_pairs, &inst.name).await;
 }
 
+/// Phase 28 daemon-startup hook for the host socat supervisor.
+/// Reconciles every persisted SSG service against its host socat,
+/// logging errors instead of failing daemon boot. See DESIGN.md
+/// section 24.4 for the rationale.
+async fn restore_host_socats(state: &Arc<server::AppState>) {
+    match handlers::ssg::host_socat::reconcile_all(state).await {
+        Ok(reconciled) if !reconciled.is_empty() => {
+            tracing::info!(
+                count = reconciled.len(),
+                services = ?reconciled,
+                "restore: host socat supervisor reconciled SSG services"
+            );
+        }
+        Ok(_) => {}
+        Err(err) => {
+            tracing::warn!(
+                error = %err,
+                "restore: host socat reconcile_all failed; consumers may see \
+                 ECONNREFUSED on shared services until the next ssg run/start"
+            );
+        }
+    }
+}
+
 /// Re-establish SSH port tunnels for remote instances after daemon restart.
 async fn restore_remote_tunnels(
     state: &Arc<server::AppState>,
@@ -1938,10 +1962,17 @@ async fn restore_running_state(state: &Arc<server::AppState>) {
     // restarts (e.g. Docker Desktop auto-restart after a host reboot):
     //   - /workspace bind mount
     //   - inner docker0 alias IPs + socat proxies for shared services
+    //   - Phase 28: per-(project, service, container_port) host
+    //     socats so consumer in-DinD socats keep resolving
+    //     `host.docker.internal:<virtual_port>` to the SSG's current
+    //     dyn port. We reconcile BEFORE the in-DinD proxies replay so
+    //     the host endpoint is already listening when the consumer's
+    //     socat reconnects.
     // These are independent of remote restore and must run even when
     // remote restoration is slow / unreachable.
     if state.docker.is_some() {
         restore_workspace_mounts(state, &active_instances).await;
+        restore_host_socats(state).await;
         restore_shared_service_proxies(state, &active_instances).await;
     }
 

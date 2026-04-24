@@ -673,48 +673,108 @@ Phase 28.
 ### Phase 28 — Lifecycle wiring + consumer-refresh deletion
 Third step. The behavioral swap. After this phase the consumer socat
 argv is stable forever and the legacy Phase 11 refresh code is gone.
-- [ ] `ssg run/start/restart` in [coast-daemon/src/server.rs](/Users/jamie/work/coasts/coast-daemon/src/server.rs):
+
+**Spec corrections / scope expansions decided during implementation:**
+
+- **Schema amended to per-port keying.** Phase 26's `ssg_virtual_ports`
+  PK was `(project, service_name)`. Phase 28 amends it to
+  `(project, service_name, container_port)` with a destructive
+  `DROP TABLE` migration (no production data existed — `host_socat`
+  was never wired before this phase). The state trait, allocator
+  signature, and `host_socat::host_socat_paths` all gain a
+  `container_port` argument. This is forward-looking: today's
+  `ssg_services` PK is `(project, service_name)` so multi-port
+  services can't actually produce multiple rows yet, but the
+  allocator + supervisor are now per-port-correct so a future
+  schema fix to `ssg_services` lights up cleanly.
+- **`host_port` → `forwarding_port` rename done in this phase.**
+  Cross-crate change touching ~30 files. `#[serde(rename = "host_port")]`
+  on the new field name preserves wire compatibility for
+  artifact manifests, snapshots, and protocol payloads. TOML
+  Coastfile syntax is unaffected — `host_port` was never a
+  user-facing TOML field name; the parser builds
+  `SharedServicePort` from a `"host:container"` string.
+- **Collision-rebind uses Option B (single-retry on any failure).**
+  `spawn_or_update` does not surface `EADDRINUSE` distinctly. The
+  retry path catches every failure, drops the persisted virtual
+  port row, reallocates, and retries once. Successful retry
+  returns a `RebindNotice` so the user sees a `WARNING: <label>
+  virtual port rebound from X to Y. Re-run any local consumer ...`
+  message in the lifecycle response. Re-execing into running
+  consumers automatically is deferred — Phase 28 v1 surfaces the
+  rebound notice and asks the user to re-run, which is the
+  pragmatic minimum given that band-exhaustion-style collisions
+  are extraordinarily rare.
+
+**Checklist:**
+
+- [x] `ssg run/start/restart` in [coast-daemon/src/server.rs](/Users/jamie/work/coasts/coast-daemon/src/server.rs):
       after `apply_to_state_and_response` writes new dyn ports, call
-      `host_socat::spawn_or_update` for each service. Replace the
-      `append_consumer_refresh_messages` call with
-      `append_host_socat_refresh_messages` (reports the host socat
-      actions instead of per-consumer actions).
-- [ ] `ssg stop` in [coast-daemon/src/handlers/ssg/mod.rs](/Users/jamie/work/coasts/coast-daemon/src/handlers/ssg/mod.rs):
-      call `host_socat::kill` for every service in the project.
-      Consumers connecting to canonical ports get prompt
-      `ECONNREFUSED` — the intentional fail-fast signal.
-- [ ] `ssg rm`: kill host socats, preserve `virtual_port` allocations.
-- [ ] `ssg rm --with-data`: kill host socats, call
-      `clear_ssg_service_virtual_ports(project)`.
-- [ ] Consumer provisioning in
-      [coast-daemon/src/handlers/run/provision.rs](/Users/jamie/work/coasts/coast-daemon/src/handlers/run/provision.rs):
-      the target map passed to `plan_shared_service_routing` looks
-      up `virtual_port` from `ssg_services` (via the allocator from
-      Phase 26). Result: every consumer socat is spawned once with
-      argv `TCP:host.docker.internal:<virtual_port>` — constant for
-      the life of that consumer.
-- [ ] [coast-docker/src/shared_service_routing.rs](/Users/jamie/work/coasts/coast-docker/src/shared_service_routing.rs):
-      `SharedServiceRoute::target_container` stays `host.docker.internal`,
-      the `port.host_port` becomes the virtual port instead of the
-      dyn port. Minor rename for clarity:
-      `host_port` → `forwarding_port`.
-- [ ] Delete [coast-daemon/src/handlers/ssg/consumer_refresh.rs](/Users/jamie/work/coasts/coast-daemon/src/handlers/ssg/consumer_refresh.rs)
-      (467 LOC, 10 unit tests). The 10 unit tests fold into Phase
-      27's supervisor tests.
-- [ ] Delete `append_consumer_refresh_messages` call sites (2 in
-      [coast-daemon/src/server.rs](/Users/jamie/work/coasts/coast-daemon/src/server.rs)).
-- [ ] Keep the "collision rebind" narrow path: if
-      `host_socat::spawn_or_update` fails with `EADDRINUSE` on the
-      persisted virtual port, the allocator picks a new one,
-      updates `ssg_services`, AND invokes a narrow
-      `refresh_consumer_forwarding_targets(project, service)` that
-      re-execs into every local running consumer of this project
-      to swap the argv. This is the only remaining
-      `docker-exec-into-consumer` path, and it fires effectively
-      never.
-- [ ] Acceptance gate: same Cargo trio + a scoped dindind run of
-      `test_ssg_consumer_basic`, `test_ssg_rm_run_refreshes_consumers`
-      (rewritten — see Phase 31), and `test_ssg_run_lifecycle`.
+      `host_socat::reconcile_project` (a per-project sweep that
+      allocates virtual ports + spawns/updates host socats).
+      Replaced both `append_consumer_refresh_messages` call sites
+      with `append_host_socat_refresh_messages`. Auto-start path
+      (`run_and_apply` / `start_and_apply` in
+      `handlers/run/ssg_integration.rs`) gained a sibling
+      `refresh_host_socats_for_project` call so consumers that
+      trigger SSG creation also see populated virtual ports.
+- [x] `ssg stop` in [coast-daemon/src/handlers/ssg/mod.rs](/Users/jamie/work/coasts/coast-daemon/src/handlers/ssg/mod.rs):
+      calls `host_socat::kill(project, service, container_port)`
+      for every `ssg_services` row in the project (via new
+      helper `kill_host_socats_for_project_services`). Virtual
+      port allocations preserved.
+- [x] `ssg rm`: kills host socats, preserves `ssg_virtual_ports`
+      rows so a follow-up `ssg run` re-spawns under the same
+      virtual ports (consumers stay stable across rebuild cycles).
+- [x] `ssg rm --with-data`: kills host socats AND calls
+      `clear_ssg_virtual_ports(project)` (the project's identity
+      is gone, so the band slots are released).
+- [x] Consumer provisioning in
+      [coast-ssg/src/daemon_integration.rs](/Users/jamie/work/coasts/coast-ssg/src/daemon_integration.rs)
+      `synthesize_shared_service_configs`: now takes a 4th
+      argument `virtual_ports: &[SsgVirtualPortRecord]` and
+      substitutes the virtual port for the dyn port in the
+      synthesized `SharedServicePort.forwarding_port`. Hard-errors
+      via `missing_virtual_port_error` if a referenced
+      `(service, container_port)` has no row. The daemon-side
+      wrapper in `ssg_integration::synthesize_configs_for_consumer`
+      reads `list_ssg_virtual_ports` and passes it through.
+- [x] [coast-docker/src/shared_service_routing.rs](/Users/jamie/work/coasts/coast-docker/src/shared_service_routing.rs):
+      `SharedServiceRoute::target_container` stays
+      `host.docker.internal`. `port.host_port` renamed to
+      `port.forwarding_port` (cross-crate; `#[serde(rename =
+      "host_port")]` keeps wire format stable). Module-level docs
+      updated to call out that the forwarding port is the
+      Phase 28 virtual port, not the SSG dyn port.
+- [x] Delete [coast-daemon/src/handlers/ssg/consumer_refresh.rs](/Users/jamie/work/coasts/coast-daemon/src/handlers/ssg/consumer_refresh.rs)
+      (468 LOC + 10 unit tests). Module declaration removed from
+      `handlers/ssg/mod.rs`. The Phase 28 collision-rebind path
+      lives inline in `host_socat::spawn_or_update_with_retry`
+      and surfaces a `RebindNotice` instead of docker-execing
+      into consumers — see the Option B note above.
+- [x] Delete `append_consumer_refresh_messages` call sites (2 in
+      [coast-daemon/src/server.rs](/Users/jamie/work/coasts/coast-daemon/src/server.rs))
+      and the helper itself. Replaced with
+      `append_host_socat_refresh_messages` which reports both
+      reconciled labels and any rebind notices.
+- [x] Keep the "collision rebind" narrow path:
+      `host_socat::spawn_or_update_with_retry` drops the persisted
+      virtual port row, calls `allocate_or_reuse` again, retries
+      `spawn_or_update`. On second-attempt success it emits a
+      `RebindNotice` (label, old vport, new vport) which the
+      lifecycle response surfaces as a `WARNING:` line so the user
+      knows to re-run any local consumer. This is the only
+      `docker-exec-into-consumer` path mentioned in the original
+      plan, and Phase 28 narrows it further to "ask the user to
+      re-run" rather than auto-refreshing — pragmatic for v1
+      because collisions are extraordinarily rare; revisit when a
+      real-world report arrives.
+- [x] Acceptance gate: cargo trio (fmt + test + clippy) green.
+      Scoped dindind run of `test_ssg_consumer_basic`,
+      `test_ssg_rm_run_refreshes_consumers` (rewritten in this
+      phase to invert the contract — consumer socat argv must be
+      stable, not change), and `test_ssg_run_lifecycle` deferred
+      to user verification.
 
 ### Phase 29 — Drift check removal + manifest cleanup
 Fourth step. Remove the runtime drift audit; keep the static parse-

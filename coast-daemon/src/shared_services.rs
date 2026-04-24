@@ -173,7 +173,7 @@ pub fn build_shared_container_config(
     let ports: Vec<String> = config
         .ports
         .iter()
-        .map(|port| format!("{}:{}", port.host_port, port.container_port))
+        .map(|port| format!("{}:{}", port.forwarding_port, port.container_port))
         .collect();
 
     let mut labels = HashMap::new();
@@ -911,7 +911,7 @@ mod tests {
             name: "postgres".to_string(),
             image: "postgres:16".to_string(),
             ports: vec![SharedServicePort {
-                host_port: 61234,
+                forwarding_port: 61234,
                 container_port: 5432,
             }],
             volumes: vec![],

@@ -1262,12 +1262,17 @@ async fn run_streaming_run(
                     // checkout") are appended to the response so the
                     // CLI surfaces them.
                     append_checkout_respawn_messages(project, state, &mut resp).await;
-                    // Phase 11: with the SSG's own host checkouts
-                    // respawned, refresh every local running
-                    // consumer coast's in-dind socat forwarders so
-                    // they point at the fresh dynamic ports. See
-                    // `coast-ssg/DESIGN.md §17-38`.
-                    append_consumer_refresh_messages(state, &mut resp).await;
+                    // Phase 28: with fresh dyn ports in
+                    // ssg_services, allocate (or reuse) each
+                    // service's stable virtual port and start /
+                    // refresh the host socat that forwards
+                    // virtual_port → host.docker.internal:<dyn>. The
+                    // virtual port stays the same across SSG
+                    // rebuilds, so consumer in-DinD socats never
+                    // need re-execing — replaces the Phase 11
+                    // refresh entirely. See
+                    // `coast-ssg/DESIGN.md §24`.
+                    append_host_socat_refresh_messages(project, state, &mut resp).await;
                     Response::Ssg(resp)
                 }
                 Err(e) => Response::Error(ErrorResponse {
@@ -1372,13 +1377,14 @@ async fn run_streaming_start_or_restart(
                     // existing ports; `restart` may allocate new
                     // ones. Either way this is the correct moment.
                     append_checkout_respawn_messages(project, state, &mut resp).await;
-                    // Phase 11: refresh consumer socat forwarders
-                    // against the current ssg_services rows. No-op
-                    // when no local running consumer references the
-                    // SSG, and idempotent when dynamic ports did not
-                    // change (the proxy script kills old PIDs before
-                    // re-spawning).
-                    append_consumer_refresh_messages(state, &mut resp).await;
+                    // Phase 28: spawn / update the per-service host
+                    // socats so the stable virtual ports keep
+                    // forwarding to whatever dyn port `start` /
+                    // `restart` resolved. Idempotent when ports did
+                    // not change (`spawn_or_update` short-circuits
+                    // on matching argv). See
+                    // `coast-ssg/DESIGN.md §24`.
+                    append_host_socat_refresh_messages(project, state, &mut resp).await;
                     Response::Ssg(resp)
                 }
                 Err(e) => Response::Error(ErrorResponse {
@@ -1412,29 +1418,62 @@ async fn append_checkout_respawn_messages(
     }
 }
 
-/// Phase 11: refresh consumer socat forwarders after an SSG
-/// lifecycle verb, then append a single-line summary of the
-/// refreshed instances to the response message. No-op when zero
-/// local running consumers reference the SSG. See
-/// `coast-ssg/DESIGN.md §17-38`.
-async fn append_consumer_refresh_messages(
+/// Phase 28: bring up (or refresh) the per-service host socats for
+/// `project` after an SSG lifecycle verb writes fresh dyn ports.
+/// Each surviving virtual port keeps forwarding to the new dyn
+/// port, so any local-running consumer's in-DinD socat continues to
+/// resolve `host.docker.internal:<virtual_port>` → SSG without ever
+/// being re-execed. See `coast-ssg/DESIGN.md §24`.
+///
+/// Appends a single-line `"Refreshed host socats for: <labels>."`
+/// summary to the response so the CLI surfaces the result. No-op
+/// (no message change) when the project has no `ssg_services`
+/// rows. Allocator errors are logged at `warn!` and swallowed —
+/// the SSG itself is already up at this point, so the host socat
+/// failure is a degraded-but-non-fatal mode.
+async fn append_host_socat_refresh_messages(
+    project: &str,
     state: &Arc<AppState>,
     resp: &mut coast_core::protocol::SsgResponse,
 ) {
-    let refreshed =
-        crate::handlers::ssg::consumer_refresh::refresh_consumer_proxies_after_lifecycle(state)
-            .await;
-    if refreshed.is_empty() {
+    use crate::handlers::ssg::host_socat;
+    use crate::handlers::ssg::virtual_port_allocator::AllocatorConfig;
+
+    let cfg = AllocatorConfig::from_env();
+    let report = match host_socat::reconcile_project(state, project, &cfg).await {
+        Ok(v) => v,
+        Err(err) => {
+            tracing::warn!(
+                project = %project,
+                error = %err,
+                "host socat reconcile_project failed; consumers may see ECONNREFUSED on \
+                 shared services until the next ssg run/start/restart"
+            );
+            return;
+        }
+    };
+    if report.reconciled.is_empty() {
         return;
     }
-    let line = format!(
-        "Refreshed shared-service proxies for: {}.",
-        refreshed.join(", ")
-    );
+    let mut lines = vec![format!(
+        "Refreshed host socats for: {}.",
+        report.reconciled.join(", ")
+    )];
+    // Phase 28 collision-rebind: surface any virtual-port reassignments
+    // so the user knows which running consumers must be re-run.
+    for notice in &report.rebound {
+        lines.push(format!(
+            "WARNING: {} virtual port rebound from {} to {} (an external process took \
+             the old port). Re-run any local consumer that was already running so its \
+             in-DinD socat targets the new port.",
+            notice.label, notice.old_virtual_port, notice.new_virtual_port
+        ));
+    }
+    let block = lines.join("\n");
     if resp.message.is_empty() {
-        resp.message = line;
+        resp.message = block;
     } else {
-        resp.message = format!("{}\n{}", resp.message, line);
+        resp.message = format!("{}\n{}", resp.message, block);
     }
 }
 

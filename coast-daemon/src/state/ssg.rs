@@ -62,8 +62,9 @@ fn row_to_virtual_port(row: &rusqlite::Row<'_>) -> rusqlite::Result<SsgVirtualPo
     Ok(SsgVirtualPortRecord {
         project: row.get(0)?,
         service_name: row.get(1)?,
-        port: row.get::<_, i64>(2)? as u16,
-        created_at: row.get(3)?,
+        container_port: row.get::<_, i64>(2)? as u16,
+        port: row.get::<_, i64>(3)? as u16,
+        created_at: row.get(4)?,
     })
 }
 
@@ -469,40 +470,61 @@ impl SsgStateExt for StateDb {
         Ok(out)
     }
 
-    // --- ssg_virtual_ports (Phase 26 / §24.5) ---
+    // --- ssg_virtual_ports (Phase 26 / §24.5; per-port keying — Phase 28) ---
 
-    #[instrument(level = "debug", skip(self), fields(project = %project, service = %service_name))]
-    fn get_ssg_virtual_port(&self, project: &str, service_name: &str) -> Result<Option<u16>> {
+    #[instrument(level = "debug", skip(self), fields(project = %project, service = %service_name, container_port = container_port))]
+    fn get_ssg_virtual_port(
+        &self,
+        project: &str,
+        service_name: &str,
+        container_port: u16,
+    ) -> Result<Option<u16>> {
         self.conn
             .query_row(
                 "SELECT port FROM ssg_virtual_ports
-                 WHERE project = ?1 AND service_name = ?2",
-                params![project, service_name],
+                 WHERE project = ?1 AND service_name = ?2 AND container_port = ?3",
+                params![project, service_name, container_port as i64],
                 |row| row.get::<_, i64>(0).map(|p| p as u16),
             )
             .optional()
             .map_err(|e| {
                 state_err(
-                    format!("failed to read ssg_virtual_port for '{project}/{service_name}': {e}"),
+                    format!(
+                        "failed to read ssg_virtual_port for \
+                         '{project}/{service_name}:{container_port}': {e}"
+                    ),
                     e,
                 )
             })
     }
 
-    #[instrument(level = "debug", skip(self), fields(project = %project, service = %service_name, port = port))]
-    fn upsert_ssg_virtual_port(&self, project: &str, service_name: &str, port: u16) -> Result<()> {
+    #[instrument(level = "debug", skip(self), fields(project = %project, service = %service_name, container_port = container_port, port = port))]
+    fn upsert_ssg_virtual_port(
+        &self,
+        project: &str,
+        service_name: &str,
+        container_port: u16,
+        port: u16,
+    ) -> Result<()> {
         let created_at = chrono::Utc::now().to_rfc3339();
         self.conn
             .execute(
                 "INSERT OR REPLACE INTO ssg_virtual_ports
-                   (project, service_name, port, created_at)
-                 VALUES (?1, ?2, ?3, ?4)",
-                params![project, service_name, port as i64, created_at],
+                   (project, service_name, container_port, port, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    project,
+                    service_name,
+                    container_port as i64,
+                    port as i64,
+                    created_at,
+                ],
             )
             .map_err(|e| {
                 state_err(
                     format!(
-                        "failed to upsert ssg_virtual_port for '{project}/{service_name}': {e}"
+                        "failed to upsert ssg_virtual_port for \
+                         '{project}/{service_name}:{container_port}': {e}"
                     ),
                     e,
                 )
@@ -516,10 +538,10 @@ impl SsgStateExt for StateDb {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT project, service_name, port, created_at
+                "SELECT project, service_name, container_port, port, created_at
                  FROM ssg_virtual_ports
                  WHERE project = ?1
-                 ORDER BY service_name ASC",
+                 ORDER BY service_name ASC, container_port ASC",
             )
             .map_err(|e| state_err(format!("failed to prepare list_ssg_virtual_ports: {e}"), e))?;
         let rows = stmt
@@ -544,6 +566,31 @@ impl SsgStateExt for StateDb {
             .map_err(|e| {
                 state_err(
                     format!("failed to clear ssg_virtual_ports for '{project}': {e}"),
+                    e,
+                )
+            })?;
+        Ok(())
+    }
+
+    #[instrument(level = "debug", skip(self), fields(project = %project, service = %service_name, container_port = container_port))]
+    fn clear_ssg_virtual_port_one(
+        &self,
+        project: &str,
+        service_name: &str,
+        container_port: u16,
+    ) -> Result<()> {
+        self.conn
+            .execute(
+                "DELETE FROM ssg_virtual_ports
+                 WHERE project = ?1 AND service_name = ?2 AND container_port = ?3",
+                params![project, service_name, container_port as i64],
+            )
+            .map_err(|e| {
+                state_err(
+                    format!(
+                        "failed to clear ssg_virtual_port for \
+                         '{project}/{service_name}:{container_port}': {e}"
+                    ),
                     e,
                 )
             })?;
@@ -1151,26 +1198,35 @@ mod tests {
         assert_eq!(out.build_id, "df5bddb5b7a39b11_20260422051132");
     }
 
-    // --- ssg_virtual_ports (Phase 26 / §24.5) ---
+    // --- ssg_virtual_ports (Phase 26 / §24.5; per-port keying — Phase 28) ---
 
     #[test]
     fn virtual_port_upsert_then_get_returns_port() {
         let db = db();
-        assert!(db.get_ssg_virtual_port(P, "postgres").unwrap().is_none());
+        assert!(db
+            .get_ssg_virtual_port(P, "postgres", 5432)
+            .unwrap()
+            .is_none());
 
-        db.upsert_ssg_virtual_port(P, "postgres", 42001).unwrap();
+        db.upsert_ssg_virtual_port(P, "postgres", 5432, 42001)
+            .unwrap();
 
-        let got = db.get_ssg_virtual_port(P, "postgres").unwrap();
+        let got = db.get_ssg_virtual_port(P, "postgres", 5432).unwrap();
         assert_eq!(got, Some(42001));
     }
 
     #[test]
-    fn virtual_port_upsert_replaces_by_project_and_service() {
+    fn virtual_port_upsert_replaces_by_project_service_and_container_port() {
         let db = db();
-        db.upsert_ssg_virtual_port(P, "postgres", 42001).unwrap();
-        db.upsert_ssg_virtual_port(P, "postgres", 42050).unwrap();
+        db.upsert_ssg_virtual_port(P, "postgres", 5432, 42001)
+            .unwrap();
+        db.upsert_ssg_virtual_port(P, "postgres", 5432, 42050)
+            .unwrap();
 
-        assert_eq!(db.get_ssg_virtual_port(P, "postgres").unwrap(), Some(42050));
+        assert_eq!(
+            db.get_ssg_virtual_port(P, "postgres", 5432).unwrap(),
+            Some(42050)
+        );
         // Only one row for this key.
         assert_eq!(db.list_ssg_virtual_ports(P).unwrap().len(), 1);
     }
@@ -1179,7 +1235,7 @@ mod tests {
     fn virtual_port_get_returns_none_when_unset() {
         let db = db();
         assert!(db
-            .get_ssg_virtual_port(P, "never-allocated")
+            .get_ssg_virtual_port(P, "never-allocated", 1234)
             .unwrap()
             .is_none());
     }
@@ -1187,9 +1243,11 @@ mod tests {
     #[test]
     fn virtual_port_list_returns_all_rows_for_project_sorted() {
         let db = db();
-        db.upsert_ssg_virtual_port(P, "redis", 42002).unwrap();
-        db.upsert_ssg_virtual_port(P, "postgres", 42001).unwrap();
-        db.upsert_ssg_virtual_port(P, "memcached", 42003).unwrap();
+        db.upsert_ssg_virtual_port(P, "redis", 6379, 42002).unwrap();
+        db.upsert_ssg_virtual_port(P, "postgres", 5432, 42001)
+            .unwrap();
+        db.upsert_ssg_virtual_port(P, "memcached", 11211, 42003)
+            .unwrap();
 
         let rows = db.list_ssg_virtual_ports(P).unwrap();
         let names: Vec<_> = rows.iter().map(|r| r.service_name.as_str()).collect();
@@ -1199,8 +1257,10 @@ mod tests {
     #[test]
     fn virtual_port_list_is_project_scoped() {
         let db = db();
-        db.upsert_ssg_virtual_port(P, "postgres", 42001).unwrap();
-        db.upsert_ssg_virtual_port(Q, "postgres", 42100).unwrap();
+        db.upsert_ssg_virtual_port(P, "postgres", 5432, 42001)
+            .unwrap();
+        db.upsert_ssg_virtual_port(Q, "postgres", 5432, 42100)
+            .unwrap();
 
         let p_rows = db.list_ssg_virtual_ports(P).unwrap();
         assert_eq!(p_rows.len(), 1);
@@ -1216,9 +1276,11 @@ mod tests {
     #[test]
     fn virtual_port_clear_drops_only_target_project() {
         let db = db();
-        db.upsert_ssg_virtual_port(P, "postgres", 42001).unwrap();
-        db.upsert_ssg_virtual_port(P, "redis", 42002).unwrap();
-        db.upsert_ssg_virtual_port(Q, "postgres", 42100).unwrap();
+        db.upsert_ssg_virtual_port(P, "postgres", 5432, 42001)
+            .unwrap();
+        db.upsert_ssg_virtual_port(P, "redis", 6379, 42002).unwrap();
+        db.upsert_ssg_virtual_port(Q, "postgres", 5432, 42100)
+            .unwrap();
 
         db.clear_ssg_virtual_ports(P).unwrap();
 
@@ -1237,11 +1299,61 @@ mod tests {
     #[test]
     fn virtual_port_distinct_services_within_project_store_separately() {
         let db = db();
-        db.upsert_ssg_virtual_port(P, "postgres", 42001).unwrap();
-        db.upsert_ssg_virtual_port(P, "redis", 42002).unwrap();
+        db.upsert_ssg_virtual_port(P, "postgres", 5432, 42001)
+            .unwrap();
+        db.upsert_ssg_virtual_port(P, "redis", 6379, 42002).unwrap();
 
-        assert_eq!(db.get_ssg_virtual_port(P, "postgres").unwrap(), Some(42001));
-        assert_eq!(db.get_ssg_virtual_port(P, "redis").unwrap(), Some(42002));
+        assert_eq!(
+            db.get_ssg_virtual_port(P, "postgres", 5432).unwrap(),
+            Some(42001)
+        );
+        assert_eq!(
+            db.get_ssg_virtual_port(P, "redis", 6379).unwrap(),
+            Some(42002)
+        );
         assert_eq!(db.list_ssg_virtual_ports(P).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn virtual_port_distinct_container_ports_within_one_service_store_separately() {
+        // Phase 28: a single service can declare multiple container
+        // ports (e.g. minio's 9000 + 9001). Each gets its own
+        // virtual-port row keyed by container_port.
+        let db = db();
+        db.upsert_ssg_virtual_port(P, "minio", 9000, 42010).unwrap();
+        db.upsert_ssg_virtual_port(P, "minio", 9001, 42011).unwrap();
+
+        assert_eq!(
+            db.get_ssg_virtual_port(P, "minio", 9000).unwrap(),
+            Some(42010)
+        );
+        assert_eq!(
+            db.get_ssg_virtual_port(P, "minio", 9001).unwrap(),
+            Some(42011)
+        );
+        let rows = db.list_ssg_virtual_ports(P).unwrap();
+        assert_eq!(rows.len(), 2);
+        // Sorted (service_name, container_port) ascending.
+        assert_eq!(rows[0].container_port, 9000);
+        assert_eq!(rows[1].container_port, 9001);
+    }
+
+    #[test]
+    fn virtual_port_clear_one_drops_only_target_row() {
+        // Phase 28 collision-rebind path: clearing one row leaves
+        // sibling ports for the same service intact.
+        let db = db();
+        db.upsert_ssg_virtual_port(P, "minio", 9000, 42010).unwrap();
+        db.upsert_ssg_virtual_port(P, "minio", 9001, 42011).unwrap();
+
+        db.clear_ssg_virtual_port_one(P, "minio", 9000).unwrap();
+
+        assert!(db.get_ssg_virtual_port(P, "minio", 9000).unwrap().is_none());
+        assert_eq!(
+            db.get_ssg_virtual_port(P, "minio", 9001).unwrap(),
+            Some(42011)
+        );
+        // Idempotent.
+        db.clear_ssg_virtual_port_one(P, "minio", 9000).unwrap();
     }
 }
