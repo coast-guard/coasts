@@ -884,10 +884,11 @@ image = "redis:${COAST_SSG_UNDEFINED_XYZ_123}"
         )
         .unwrap();
 
-        // The undefined var interpolates to empty string; the image
-        // becomes "redis:" which is a valid non-empty string so the
-        // parse succeeds. The warning records the undefined var.
-        assert_eq!(cf.services[0].image, "redis:");
+        // Preserve-on-miss: the undefined `${VAR}` is kept as literal
+        // text so shell-defined variables elsewhere survive. The image
+        // string here is nonsensical to Docker but Coast surfaces the
+        // warning so the user can spot it.
+        assert_eq!(cf.services[0].image, "redis:${COAST_SSG_UNDEFINED_XYZ_123}");
         assert_eq!(cf.interpolation_warnings.len(), 1);
         assert!(cf.interpolation_warnings[0].contains("COAST_SSG_UNDEFINED_XYZ_123"));
     }

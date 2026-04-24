@@ -1490,79 +1490,92 @@ fn test_port_health_changed_event_serialization() {
 // SSG protocol round-trip tests. See coast-ssg/DESIGN.md §7.
 // =========================================================================
 
+fn ssg_req(action: SsgAction) -> SsgRequest {
+    SsgRequest {
+        project: "test-proj".to_string(),
+        action,
+    }
+}
+
 #[test]
 fn test_ssg_request_build_roundtrip() {
-    roundtrip_request(Request::Ssg(SsgRequest::Build {
+    roundtrip_request(Request::Ssg(ssg_req(SsgAction::Build {
         file: Some(PathBuf::from("/home/user/Coastfile.shared_service_groups")),
         working_dir: Some(PathBuf::from("/home/user/project")),
         config: Some("[shared_services.pg]\nimage = \"postgres:16\"\n".to_string()),
-    }));
+    })));
 
     // Also round-trip the all-None variant since each field is Option.
-    roundtrip_request(Request::Ssg(SsgRequest::Build {
+    roundtrip_request(Request::Ssg(ssg_req(SsgAction::Build {
         file: None,
         working_dir: None,
         config: None,
-    }));
+    })));
 }
 
 #[test]
 fn test_ssg_request_simple_variants_roundtrip() {
-    for variant in [
-        SsgRequest::Run,
-        SsgRequest::Start,
-        SsgRequest::Restart,
-        SsgRequest::Ps,
-        SsgRequest::Ports,
+    for action in [
+        SsgAction::Run,
+        SsgAction::Start,
+        SsgAction::Restart,
+        SsgAction::Ps,
+        SsgAction::Ports,
     ] {
-        roundtrip_request(Request::Ssg(variant));
+        roundtrip_request(Request::Ssg(ssg_req(action)));
     }
 }
 
 #[test]
 fn test_ssg_request_stop_roundtrip() {
-    roundtrip_request(Request::Ssg(SsgRequest::Stop { force: false }));
-    roundtrip_request(Request::Ssg(SsgRequest::Stop { force: true }));
+    roundtrip_request(Request::Ssg(ssg_req(SsgAction::Stop { force: false })));
+    roundtrip_request(Request::Ssg(ssg_req(SsgAction::Stop { force: true })));
 }
 
 #[test]
 fn test_ssg_request_rm_roundtrip() {
-    roundtrip_request(Request::Ssg(SsgRequest::Rm {
+    roundtrip_request(Request::Ssg(ssg_req(SsgAction::Rm {
         with_data: false,
         force: false,
-    }));
-    roundtrip_request(Request::Ssg(SsgRequest::Rm {
+    })));
+    roundtrip_request(Request::Ssg(ssg_req(SsgAction::Rm {
         with_data: true,
         force: false,
-    }));
-    roundtrip_request(Request::Ssg(SsgRequest::Rm {
+    })));
+    roundtrip_request(Request::Ssg(ssg_req(SsgAction::Rm {
         with_data: false,
         force: true,
-    }));
-    roundtrip_request(Request::Ssg(SsgRequest::Rm {
+    })));
+    roundtrip_request(Request::Ssg(ssg_req(SsgAction::Rm {
         with_data: true,
         force: true,
-    }));
+    })));
 }
 
 #[test]
 fn test_ssg_request_stop_force_default_when_absent_in_json() {
-    // Older CLIs may send `{"type":"Ssg","ssg":{"action":"Stop"}}` without
-    // a `force` field. serde(default) must deserialize it as force=false.
-    let json = r#"{"type":"Ssg","action":"Stop"}"#;
+    // Older CLIs may send the Stop action without a `force` field.
+    // serde(default) must deserialize it as force=false.
+    let json = r#"{"type":"Ssg","project":"p","action":{"action":"Stop"}}"#;
     let req: Request = serde_json::from_str(json).expect("stop without force should parse");
     match req {
-        Request::Ssg(SsgRequest::Stop { force }) => assert!(!force),
+        Request::Ssg(SsgRequest {
+            action: SsgAction::Stop { force },
+            ..
+        }) => assert!(!force),
         other => panic!("expected Ssg::Stop, got {other:?}"),
     }
 }
 
 #[test]
 fn test_ssg_request_rm_force_default_when_absent_in_json() {
-    let json = r#"{"type":"Ssg","action":"Rm","with_data":true}"#;
+    let json = r#"{"type":"Ssg","project":"p","action":{"action":"Rm","with_data":true}}"#;
     let req: Request = serde_json::from_str(json).expect("rm without force should parse");
     match req {
-        Request::Ssg(SsgRequest::Rm { with_data, force }) => {
+        Request::Ssg(SsgRequest {
+            action: SsgAction::Rm { with_data, force },
+            ..
+        }) => {
             assert!(with_data);
             assert!(!force);
         }
@@ -1572,45 +1585,45 @@ fn test_ssg_request_rm_force_default_when_absent_in_json() {
 
 #[test]
 fn test_ssg_request_logs_and_exec_roundtrip() {
-    roundtrip_request(Request::Ssg(SsgRequest::Logs {
+    roundtrip_request(Request::Ssg(ssg_req(SsgAction::Logs {
         service: Some("postgres".to_string()),
         tail: Some(100),
         follow: true,
-    }));
-    roundtrip_request(Request::Ssg(SsgRequest::Logs {
+    })));
+    roundtrip_request(Request::Ssg(ssg_req(SsgAction::Logs {
         service: None,
         tail: None,
         follow: false,
-    }));
+    })));
 
-    roundtrip_request(Request::Ssg(SsgRequest::Exec {
+    roundtrip_request(Request::Ssg(ssg_req(SsgAction::Exec {
         service: Some("postgres".to_string()),
         command: vec!["psql".to_string(), "-U".to_string(), "coast".to_string()],
-    }));
-    roundtrip_request(Request::Ssg(SsgRequest::Exec {
+    })));
+    roundtrip_request(Request::Ssg(ssg_req(SsgAction::Exec {
         service: None,
         command: vec!["sh".to_string()],
-    }));
+    })));
 }
 
 #[test]
 fn test_ssg_request_checkout_uncheckout_roundtrip() {
-    roundtrip_request(Request::Ssg(SsgRequest::Checkout {
+    roundtrip_request(Request::Ssg(ssg_req(SsgAction::Checkout {
         service: Some("postgres".to_string()),
         all: false,
-    }));
-    roundtrip_request(Request::Ssg(SsgRequest::Checkout {
+    })));
+    roundtrip_request(Request::Ssg(ssg_req(SsgAction::Checkout {
         service: None,
         all: true,
-    }));
-    roundtrip_request(Request::Ssg(SsgRequest::Uncheckout {
+    })));
+    roundtrip_request(Request::Ssg(ssg_req(SsgAction::Uncheckout {
         service: Some("redis".to_string()),
         all: false,
-    }));
-    roundtrip_request(Request::Ssg(SsgRequest::Uncheckout {
+    })));
+    roundtrip_request(Request::Ssg(ssg_req(SsgAction::Uncheckout {
         service: None,
         all: true,
-    }));
+    })));
 }
 
 #[test]
@@ -1722,7 +1735,7 @@ fn test_ssg_response_roundtrip() {
 
 #[test]
 fn test_ssg_request_doctor_roundtrip() {
-    roundtrip_request(Request::Ssg(SsgRequest::Doctor));
+    roundtrip_request(Request::Ssg(ssg_req(SsgAction::Doctor)));
 }
 
 #[test]
@@ -1769,32 +1782,36 @@ fn test_ssg_response_findings_default_when_absent_in_json() {
 
 #[test]
 fn test_ssg_request_checkout_build_roundtrip() {
-    roundtrip_request(Request::Ssg(SsgRequest::CheckoutBuild {
+    roundtrip_request(Request::Ssg(SsgRequest {
         project: "my-consumer".to_string(),
-        build_id: "df5bddb5b7a39b11_20260422051132".to_string(),
+        action: SsgAction::CheckoutBuild {
+            build_id: "df5bddb5b7a39b11_20260422051132".to_string(),
+        },
     }));
 }
 
 #[test]
 fn test_ssg_request_uncheckout_build_roundtrip() {
-    roundtrip_request(Request::Ssg(SsgRequest::UncheckoutBuild {
+    roundtrip_request(Request::Ssg(SsgRequest {
         project: "my-consumer".to_string(),
+        action: SsgAction::UncheckoutBuild,
     }));
 }
 
 #[test]
 fn test_ssg_request_show_pin_roundtrip() {
-    roundtrip_request(Request::Ssg(SsgRequest::ShowPin {
+    roundtrip_request(Request::Ssg(SsgRequest {
         project: "my-consumer".to_string(),
+        action: SsgAction::ShowPin,
     }));
 }
 
-// --- Phase 15: SsgRequest::ImportHostVolume ---
+// --- Phase 15: SsgAction::ImportHostVolume ---
 
 #[test]
 fn test_ssg_request_import_host_volume_minimal_roundtrip() {
     // Snippet mode (no --apply, no Coastfile discovery overrides).
-    roundtrip_request(Request::Ssg(SsgRequest::ImportHostVolume {
+    roundtrip_request(Request::Ssg(ssg_req(SsgAction::ImportHostVolume {
         volume: "infra_pg_data".to_string(),
         service: "postgres".to_string(),
         mount: std::path::PathBuf::from("/var/lib/postgresql/data"),
@@ -1802,13 +1819,13 @@ fn test_ssg_request_import_host_volume_minimal_roundtrip() {
         working_dir: None,
         config: None,
         apply: false,
-    }));
+    })));
 }
 
 #[test]
 fn test_ssg_request_import_host_volume_all_fields_roundtrip() {
     // Apply mode with every discovery field populated.
-    roundtrip_request(Request::Ssg(SsgRequest::ImportHostVolume {
+    roundtrip_request(Request::Ssg(ssg_req(SsgAction::ImportHostVolume {
         volume: "legacy-pg".to_string(),
         service: "postgres".to_string(),
         mount: std::path::PathBuf::from("/var/lib/postgresql/data"),
@@ -1818,5 +1835,5 @@ fn test_ssg_request_import_host_volume_all_fields_roundtrip() {
         working_dir: Some(std::path::PathBuf::from("/proj")),
         config: Some("[ssg]\nruntime = \"dind\"\n".to_string()),
         apply: true,
-    }));
+    })));
 }

@@ -129,10 +129,13 @@ git commit -m "init" >/dev/null 2>&1
 BUILD_UNDEF=$("$COAST" build 2>&1)
 assert_contains "$BUILD_UNDEF" "Build complete" "build succeeds with undefined var"
 
-# The warning should appear somewhere (either in build output or warnings list)
-# The undefined var gets replaced with empty string, which may cause a
-# downstream warning or the package install to skip the empty entry.
-pass "Undefined variable handled gracefully"
+# Undefined variables are now PRESERVED as literal `${VAR}` text rather
+# than silently substituted to empty. The build may produce a downstream
+# warning or package-install quirk because apk doesn't recognize the
+# literal `${UNDEFINED_PACKAGE}` token — but the build itself should
+# complete so the warning surfaces instead of the whole flow failing
+# silently on a mangled value.
+pass "Undefined variable preserved as literal"
 
 rm -rf "$TMPDIR_TEST"
 

@@ -64,6 +64,7 @@ mod tests {
 
     fn svc(name: &str, container: u16, dynamic: u16) -> SsgServiceRecord {
         SsgServiceRecord {
+            project: "test-proj".to_string(),
             service_name: name.to_string(),
             container_port: container,
             dynamic_host_port: dynamic,

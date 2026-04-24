@@ -674,7 +674,10 @@ async fn dispatch_request_to_handler(
             (r, ok, base_metadata.clone())
         }
         Request::Ssg(ssg_req)
-            if matches!(ssg_req, coast_core::protocol::SsgRequest::Build { .. }) =>
+            if matches!(
+                ssg_req.action,
+                coast_core::protocol::SsgAction::Build { .. }
+            ) =>
         {
             let r = handle_ssg_build_streaming(ssg_req, state, writer).await;
             let ok = r.is_ok();
@@ -682,18 +685,26 @@ async fn dispatch_request_to_handler(
         }
         Request::Ssg(ssg_req)
             if matches!(
-                ssg_req,
-                coast_core::protocol::SsgRequest::Run
-                    | coast_core::protocol::SsgRequest::Start
-                    | coast_core::protocol::SsgRequest::Restart
+                ssg_req.action,
+                coast_core::protocol::SsgAction::Run
+                    | coast_core::protocol::SsgAction::Start
+                    | coast_core::protocol::SsgAction::Restart
             ) =>
         {
             let r = handle_ssg_lifecycle_streaming(ssg_req, state, writer).await;
             let ok = r.is_ok();
             (r, ok, base_metadata.clone())
         }
-        Request::Ssg(coast_core::protocol::SsgRequest::Logs { follow: true, .. }) => {
-            let r = handle_ssg_logs_streaming(request, state, writer).await;
+        Request::Ssg(ssg_req)
+            if matches!(
+                ssg_req.action,
+                coast_core::protocol::SsgAction::Logs { follow: true, .. }
+            ) =>
+        {
+            // Reconstruct `request` with the full enum variant; the
+            // streaming handler destructures internally. We already
+            // moved `ssg_req` above the match guard, so rebuild it.
+            let r = handle_ssg_logs_streaming(Request::Ssg(ssg_req), state, writer).await;
             let ok = r.is_ok();
             (r, ok, base_metadata.clone())
         }
@@ -1011,13 +1022,14 @@ async fn handle_ssg_build_streaming(
     state: &AppState,
     writer: &mut tokio::net::unix::OwnedWriteHalf,
 ) -> Result<()> {
-    let coast_core::protocol::SsgRequest::Build {
+    let coast_core::protocol::SsgRequest { project, action } = req;
+    let coast_core::protocol::SsgAction::Build {
         file,
         working_dir,
         config,
-    } = req
+    } = action
     else {
-        unreachable!("handle_ssg_build_streaming only handles SsgRequest::Build")
+        unreachable!("handle_ssg_build_streaming only handles SsgAction::Build")
     };
 
     let Some(_operation_guard) =
@@ -1039,6 +1051,7 @@ async fn handle_ssg_build_streaming(
     let (tx, mut rx) = tokio::sync::mpsc::channel::<BuildProgressEvent>(64);
 
     let inputs = coast_ssg::daemon_integration::SsgBuildInputs {
+        project,
         file,
         working_dir,
         config,
@@ -1112,13 +1125,30 @@ async fn handle_ssg_lifecycle_streaming(
 
     let _ssg_guard = state.ssg_mutex.lock().await;
 
-    let final_response = match req {
-        coast_core::protocol::SsgRequest::Run => run_streaming_run(state, &docker, writer).await,
-        coast_core::protocol::SsgRequest::Start => {
-            run_streaming_start_or_restart(state, &docker, writer, /*restart=*/ false).await
+    let coast_core::protocol::SsgRequest { project, action } = req;
+    let final_response = match action {
+        coast_core::protocol::SsgAction::Run => {
+            run_streaming_run(&project, state, &docker, writer).await
         }
-        coast_core::protocol::SsgRequest::Restart => {
-            run_streaming_start_or_restart(state, &docker, writer, /*restart=*/ true).await
+        coast_core::protocol::SsgAction::Start => {
+            run_streaming_start_or_restart(
+                &project,
+                state,
+                &docker,
+                writer,
+                /*restart=*/ false,
+            )
+            .await
+        }
+        coast_core::protocol::SsgAction::Restart => {
+            run_streaming_start_or_restart(
+                &project,
+                state,
+                &docker,
+                writer,
+                /*restart=*/ true,
+            )
+            .await
         }
         _ => unreachable!("handle_ssg_lifecycle_streaming only handles Run/Start/Restart"),
     };
@@ -1127,6 +1157,7 @@ async fn handle_ssg_lifecycle_streaming(
 }
 
 async fn run_streaming_run(
+    project: &str,
     state: &Arc<AppState>,
     docker: &bollard::Docker,
     writer: &mut tokio::net::unix::OwnedWriteHalf,
@@ -1156,6 +1187,7 @@ async fn run_streaming_run(
             let resp_or_err = {
                 let db = state.db.lock().await;
                 outcome.apply_to_state_and_response(
+                    project,
                     &*db,
                     "running",
                     format!("SSG running on build {build_id}"),
@@ -1169,7 +1201,7 @@ async fn run_streaming_run(
                     // ports. Messages (e.g. "dropped stale
                     // checkout") are appended to the response so the
                     // CLI surfaces them.
-                    append_checkout_respawn_messages(state, &mut resp).await;
+                    append_checkout_respawn_messages(project, state, &mut resp).await;
                     // Phase 11: with the SSG's own host checkouts
                     // respawned, refresh every local running
                     // consumer coast's in-dind socat forwarders so
@@ -1190,6 +1222,7 @@ async fn run_streaming_run(
 }
 
 async fn run_streaming_start_or_restart(
+    project: &str,
     state: &Arc<AppState>,
     docker: &bollard::Docker,
     writer: &mut tokio::net::unix::OwnedWriteHalf,
@@ -1198,8 +1231,8 @@ async fn run_streaming_start_or_restart(
     use coast_ssg::state::SsgStateExt;
     let prepared = {
         let db = state.db.lock().await;
-        match db.get_ssg() {
-            Ok(Some(record)) => match db.list_ssg_services() {
+        match db.get_ssg(project) {
+            Ok(Some(record)) => match db.list_ssg_services(project) {
                 Ok(services) => {
                     let plans: Vec<coast_ssg::runtime::ports::SsgServicePortPlan> = services
                         .into_iter()
@@ -1215,8 +1248,10 @@ async fn run_streaming_start_or_restart(
             },
             Ok(None) => {
                 return Response::Error(ErrorResponse {
-                    error: "SSG has not been created. Run `coast ssg run` to create and start it."
-                        .to_string(),
+                    error: format!(
+                        "SSG for project '{project}' has not been created. \
+                         Run `coast ssg run` to create and start it."
+                    ),
                 });
             }
             Err(e) => Err(e),
@@ -1264,8 +1299,11 @@ async fn run_streaming_start_or_restart(
             let build_id = outcome.build_id.clone();
             let resp_or_err = {
                 let db = state.db.lock().await;
-                outcome
-                    .apply_to_state_and_response(&*db, format!("SSG started on build {build_id}"))
+                outcome.apply_to_state_and_response(
+                    project,
+                    &*db,
+                    format!("SSG started on build {build_id}"),
+                )
             };
             match resp_or_err {
                 Ok(mut resp) => {
@@ -1273,7 +1311,7 @@ async fn run_streaming_start_or_restart(
                     // the refreshed dynamic ports. `start` keeps
                     // existing ports; `restart` may allocate new
                     // ones. Either way this is the correct moment.
-                    append_checkout_respawn_messages(state, &mut resp).await;
+                    append_checkout_respawn_messages(project, state, &mut resp).await;
                     // Phase 11: refresh consumer socat forwarders
                     // against the current ssg_services rows. No-op
                     // when no local running consumer references the
@@ -1298,10 +1336,12 @@ async fn run_streaming_start_or_restart(
 /// re-hydration step onto an existing `SsgResponse.message`. If there
 /// are no messages the response is returned unchanged.
 async fn append_checkout_respawn_messages(
+    project: &str,
     state: &Arc<AppState>,
     resp: &mut coast_core::protocol::SsgResponse,
 ) {
-    let messages = crate::handlers::ssg::checkout::respawn_checkouts_after_lifecycle(state).await;
+    let messages =
+        crate::handlers::ssg::checkout::respawn_checkouts_after_lifecycle(project, state).await;
     if messages.is_empty() {
         return;
     }
@@ -1351,13 +1391,17 @@ async fn handle_ssg_logs_streaming(
     state: &Arc<AppState>,
     writer: &mut tokio::net::unix::OwnedWriteHalf,
 ) -> Result<()> {
-    let Request::Ssg(coast_core::protocol::SsgRequest::Logs {
-        service,
-        tail,
-        follow,
+    let Request::Ssg(coast_core::protocol::SsgRequest {
+        project,
+        action:
+            coast_core::protocol::SsgAction::Logs {
+                service,
+                tail,
+                follow,
+            },
     }) = request
     else {
-        unreachable!("handle_ssg_logs_streaming only handles SsgRequest::Logs")
+        unreachable!("handle_ssg_logs_streaming only handles SsgAction::Logs")
     };
     debug_assert!(follow);
 
@@ -1367,11 +1411,14 @@ async fn handle_ssg_logs_streaming(
     // outlive the lock guard.
     let container_id = {
         let db = state.db.lock().await;
-        match db.get_ssg() {
+        match db.get_ssg(&project) {
             Ok(Some(r)) => r.container_id,
             Ok(None) => {
                 let resp = Response::Error(ErrorResponse {
-                    error: "SSG has not been created. Run `coast ssg run` first.".to_string(),
+                    error: format!(
+                        "SSG for project '{project}' has not been created. \
+                         Run `coast ssg run` first."
+                    ),
                 });
                 return write_response(writer, &resp).await;
             }
@@ -2220,17 +2267,28 @@ async fn dispatch_request(request: Request, state: &Arc<AppState>) -> Response {
         Request::Remote(req) => handlers::handle_remote(req, state).await,
         Request::IsSafeToUpdate(req) => handlers::handle_is_safe_to_update(req, state).await,
         Request::PrepareForUpdate(req) => handlers::handle_prepare_for_update(req, state).await,
-        Request::Ssg(coast_core::protocol::SsgRequest::Build { .. }) => {
+        Request::Ssg(ssg_req) => dispatch_ssg_request(ssg_req, state).await,
+    }
+}
+
+/// Non-streaming SSG dispatch. Extracted out of
+/// [`dispatch_request`] to keep its cognitive complexity under the
+/// clippy gate — the streaming variants (Build, Run, Start, Restart,
+/// Logs { follow: true }) are intercepted upstream in the top-level
+/// match; anything that reaches here is a blocking verb.
+async fn dispatch_ssg_request(
+    ssg_req: coast_core::protocol::SsgRequest,
+    state: &Arc<AppState>,
+) -> Response {
+    use coast_core::protocol::SsgAction;
+    match ssg_req.action {
+        SsgAction::Build { .. } => {
             unreachable!("ssg build requests handled by handle_ssg_build_streaming")
         }
-        Request::Ssg(
-            coast_core::protocol::SsgRequest::Run
-            | coast_core::protocol::SsgRequest::Start
-            | coast_core::protocol::SsgRequest::Restart,
-        ) => {
+        SsgAction::Run | SsgAction::Start | SsgAction::Restart => {
             unreachable!("ssg run/start/restart handled by handle_ssg_lifecycle_streaming")
         }
-        Request::Ssg(ssg_req) => match handlers::ssg::handle(state.clone(), ssg_req).await {
+        _ => match handlers::ssg::handle(state.clone(), ssg_req).await {
             Ok(resp) => Response::Ssg(resp),
             Err(e) => Response::Error(ErrorResponse {
                 error: e.to_string(),

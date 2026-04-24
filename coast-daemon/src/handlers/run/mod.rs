@@ -985,7 +985,9 @@ async fn synthesize_ssg_forwards(
 
     let services = {
         let db = state.db.lock().await;
-        db.list_ssg_services()?
+        // Per-project SSG (§23): the consumer coast routes to its
+        // own project's SSG services.
+        db.list_ssg_services(&cf.name)?
     };
 
     let forwards = coast_ssg::daemon_integration::synthesize_remote_forwards_for_consumer(

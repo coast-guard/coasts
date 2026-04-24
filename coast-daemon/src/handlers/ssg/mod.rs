@@ -43,7 +43,7 @@ pub mod pin;
 use std::sync::Arc;
 
 use coast_core::error::{CoastError, Result};
-use coast_core::protocol::{SsgRequest, SsgResponse};
+use coast_core::protocol::{SsgAction, SsgRequest, SsgResponse};
 use coast_ssg::state::{SsgRecord, SsgStateExt};
 
 use crate::server::AppState;
@@ -53,65 +53,68 @@ use crate::server::AppState;
 /// `Build`, `Run`, `Start`, `Restart`, and `Logs { follow: true }`
 /// never reach this handler — they are intercepted upstream.
 pub async fn handle(state: Arc<AppState>, req: SsgRequest) -> Result<SsgResponse> {
-    match req {
-        SsgRequest::Ps => {
+    let SsgRequest { project, action } = req;
+    match action {
+        SsgAction::Ps => {
             let db = state.db.lock().await;
-            coast_ssg::daemon_integration::ps_ssg(Some(&*db as &dyn SsgStateExt))
+            coast_ssg::daemon_integration::ps_ssg(&project, Some(&*db as &dyn SsgStateExt))
         }
-        SsgRequest::Ports => {
+        SsgAction::Ports => {
             let db = state.db.lock().await;
-            coast_ssg::daemon_integration::ports_ssg(&*db)
+            coast_ssg::daemon_integration::ports_ssg(&project, &*db)
         }
 
-        SsgRequest::Stop { force } => handle_stop(&state, force).await,
-        SsgRequest::Rm { with_data, force } => handle_rm(&state, with_data, force).await,
+        SsgAction::Stop { force } => handle_stop(&project, &state, force).await,
+        SsgAction::Rm { with_data, force } => {
+            handle_rm(&project, &state, with_data, force).await
+        }
 
-        SsgRequest::Logs {
+        SsgAction::Logs {
             service,
             tail,
             follow,
         } => {
             if follow {
                 unreachable!(
-                    "SsgRequest::Logs {{ follow: true }} handled by handle_ssg_logs_streaming"
+                    "SsgAction::Logs {{ follow: true }} handled by handle_ssg_logs_streaming"
                 )
             }
-            handle_logs(&state, service, tail).await
+            handle_logs(&project, &state, service, tail).await
         }
 
-        SsgRequest::Exec { service, command } => handle_exec(&state, service, command).await,
-
-        SsgRequest::Run => {
-            unreachable!("SsgRequest::Run handled by handle_ssg_lifecycle_streaming")
-        }
-        SsgRequest::Start => {
-            unreachable!("SsgRequest::Start handled by handle_ssg_lifecycle_streaming")
-        }
-        SsgRequest::Restart => {
-            unreachable!("SsgRequest::Restart handled by handle_ssg_lifecycle_streaming")
-        }
-        SsgRequest::Build { .. } => {
-            unreachable!("SsgRequest::Build handled by handle_ssg_build_streaming")
+        SsgAction::Exec { service, command } => {
+            handle_exec(&project, &state, service, command).await
         }
 
-        SsgRequest::Checkout { service, all } => {
-            checkout::handle_checkout(&state, service, all).await
+        SsgAction::Run => {
+            unreachable!("SsgAction::Run handled by handle_ssg_lifecycle_streaming")
         }
-        SsgRequest::Uncheckout { service, all } => {
-            checkout::handle_uncheckout(&state, service, all).await
+        SsgAction::Start => {
+            unreachable!("SsgAction::Start handled by handle_ssg_lifecycle_streaming")
+        }
+        SsgAction::Restart => {
+            unreachable!("SsgAction::Restart handled by handle_ssg_lifecycle_streaming")
+        }
+        SsgAction::Build { .. } => {
+            unreachable!("SsgAction::Build handled by handle_ssg_build_streaming")
         }
 
-        SsgRequest::Doctor => doctor::handle_doctor(&state).await,
+        SsgAction::Checkout { service, all } => {
+            checkout::handle_checkout(&project, &state, service, all).await
+        }
+        SsgAction::Uncheckout { service, all } => {
+            checkout::handle_uncheckout(&project, &state, service, all).await
+        }
 
-        SsgRequest::CheckoutBuild { project, build_id } => {
+        SsgAction::Doctor => doctor::handle_doctor(&project, &state).await,
+
+        SsgAction::CheckoutBuild { build_id } => {
             pin::handle_checkout_build(&state, project, build_id).await
         }
-        SsgRequest::UncheckoutBuild { project } => {
-            pin::handle_uncheckout_build(&state, project).await
-        }
-        SsgRequest::ShowPin { project } => pin::handle_show_pin(&state, project).await,
+        SsgAction::UncheckoutBuild => pin::handle_uncheckout_build(&state, project).await,
+        SsgAction::ShowPin => pin::handle_show_pin(&state, project).await,
 
-        SsgRequest::ImportHostVolume {
+        SsgAction::ImportHostVolume {
             volume,
             service,
             mount,
@@ -121,6 +124,7 @@ pub async fn handle(state: Arc<AppState>, req: SsgRequest) -> Result<SsgResponse
             apply,
         } => {
             host_volume_import::handle_import_host_volume(
+                &project,
                 &state,
                 host_volume_import::ImportHostVolumeArgs {
                     volume,
@@ -137,7 +141,11 @@ pub async fn handle(state: Arc<AppState>, req: SsgRequest) -> Result<SsgResponse
     }
 }
 
-async fn handle_stop(state: &Arc<AppState>, force: bool) -> Result<SsgResponse> {
+async fn handle_stop(
+    project: &str,
+    state: &Arc<AppState>,
+    force: bool,
+) -> Result<SsgResponse> {
     let docker = state
         .docker
         .as_ref()
@@ -146,10 +154,10 @@ async fn handle_stop(state: &Arc<AppState>, force: bool) -> Result<SsgResponse> 
 
     let record = {
         let db = state.db.lock().await;
-        db.get_ssg()?
+        db.get_ssg(project)?
     };
     let Some(record) = record else {
-        return Ok(build_stop_response_missing_record());
+        return Ok(build_stop_response_missing_record(project));
     };
 
     // Phase 4.5 gate: refuse to stop while remote shadow coasts are
@@ -164,24 +172,30 @@ async fn handle_stop(state: &Arc<AppState>, force: bool) -> Result<SsgResponse> 
     {
         let db = state.db.lock().await;
         db.upsert_ssg(
+            project,
             "stopped",
             record.container_id.as_deref(),
             record.build_id.as_deref(),
         )?;
-        for svc in db.list_ssg_services()? {
-            db.update_ssg_service_status(&svc.service_name, "stopped")?;
+        for svc in db.list_ssg_services(project)? {
+            db.update_ssg_service_status(project, &svc.service_name, "stopped")?;
         }
     }
 
     // Phase 6: preserve `ssg_port_checkouts` rows but null their
     // socat_pid columns and kill the live socats. Next `run / start`
     // re-spawns against the new dynamic ports.
-    checkout::kill_active_checkout_socats_preserve_rows(state).await;
+    checkout::kill_active_checkout_socats_preserve_rows(project, state).await;
 
     Ok(build_stop_response_success())
 }
 
-async fn handle_rm(state: &Arc<AppState>, with_data: bool, force: bool) -> Result<SsgResponse> {
+async fn handle_rm(
+    project: &str,
+    state: &Arc<AppState>,
+    with_data: bool,
+    force: bool,
+) -> Result<SsgResponse> {
     let docker = state
         .docker
         .as_ref()
@@ -190,10 +204,10 @@ async fn handle_rm(state: &Arc<AppState>, with_data: bool, force: bool) -> Resul
 
     let record = {
         let db = state.db.lock().await;
-        db.get_ssg()?
+        db.get_ssg(project)?
     };
     let Some(record) = record else {
-        return Ok(build_rm_response_missing_record());
+        return Ok(build_rm_response_missing_record(project));
     };
 
     enforce_shadow_gate_and_maybe_tear_down(state, force, "remove").await?;
@@ -202,19 +216,20 @@ async fn handle_rm(state: &Arc<AppState>, with_data: bool, force: bool) -> Resul
     // first means if the subsequent Docker rm fails and the user
     // retries, we don't end up with dangling checkout rows pointing
     // at a partially-removed SSG.
-    checkout::kill_and_clear_all_checkouts(state).await;
+    checkout::kill_and_clear_all_checkouts(project, state).await;
 
     let ops = coast_ssg::docker_ops::BollardSsgDockerOps::new(docker.clone());
     coast_ssg::daemon_integration::rm_ssg(&ops, &record, with_data).await?;
 
     let db = state.db.lock().await;
-    db.clear_ssg()?;
-    db.clear_ssg_services()?;
+    db.clear_ssg(project)?;
+    db.clear_ssg_services(project)?;
 
     Ok(build_rm_response_success(with_data))
 }
 
 async fn handle_logs(
+    project: &str,
     state: &Arc<AppState>,
     service: Option<String>,
     tail: Option<u32>,
@@ -224,7 +239,7 @@ async fn handle_logs(
         .as_ref()
         .ok_or_else(|| CoastError::docker("Docker is unavailable; cannot tail SSG logs."))?;
 
-    let record = fetch_required_record(state).await?;
+    let record = fetch_required_record(project, state).await?;
     let ops = coast_ssg::docker_ops::BollardSsgDockerOps::new(docker.clone());
     let text = coast_ssg::daemon_integration::logs_ssg(&ops, &record, service, tail).await?;
 
@@ -238,6 +253,7 @@ async fn handle_logs(
 }
 
 async fn handle_exec(
+    project: &str,
     state: &Arc<AppState>,
     service: Option<String>,
     command: Vec<String>,
@@ -247,7 +263,7 @@ async fn handle_exec(
         .as_ref()
         .ok_or_else(|| CoastError::docker("Docker is unavailable; cannot exec against the SSG."))?;
 
-    let record = fetch_required_record(state).await?;
+    let record = fetch_required_record(project, state).await?;
     let ops = coast_ssg::docker_ops::BollardSsgDockerOps::new(docker.clone());
     let text = coast_ssg::daemon_integration::exec_ssg(&ops, &record, service, command).await?;
 
@@ -260,10 +276,13 @@ async fn handle_exec(
     })
 }
 
-async fn fetch_required_record(state: &Arc<AppState>) -> Result<SsgRecord> {
+async fn fetch_required_record(project: &str, state: &Arc<AppState>) -> Result<SsgRecord> {
     let db = state.db.lock().await;
-    db.get_ssg()?.ok_or_else(|| {
-        CoastError::coastfile("SSG has not been created. Run `coast ssg run` first.")
+    db.get_ssg(project)?.ok_or_else(|| {
+        CoastError::coastfile(format!(
+            "SSG for project '{project}' has not been created. \
+             Run `coast ssg run` first."
+        ))
     })
 }
 
@@ -427,9 +446,9 @@ pub(crate) fn kill_ssh_tunnel_pid(pid: u32) {
 // shaping (these functions). The pure halves are fully unit-tested.
 
 /// Response for `coast ssg stop` when no SSG record exists.
-fn build_stop_response_missing_record() -> SsgResponse {
+fn build_stop_response_missing_record(project: &str) -> SsgResponse {
     SsgResponse {
-        message: "SSG has not been created. Nothing to stop.".to_string(),
+        message: format!("SSG for project '{project}' has not been created. Nothing to stop."),
         status: None,
         services: Vec::new(),
         ports: Vec::new(),
@@ -449,9 +468,11 @@ fn build_stop_response_success() -> SsgResponse {
 }
 
 /// Response for `coast ssg rm` when no SSG record exists.
-fn build_rm_response_missing_record() -> SsgResponse {
+fn build_rm_response_missing_record(project: &str) -> SsgResponse {
     SsgResponse {
-        message: "SSG has not been created. Nothing to remove.".to_string(),
+        message: format!(
+            "SSG for project '{project}' has not been created. Nothing to remove."
+        ),
         status: None,
         services: Vec::new(),
         ports: Vec::new(),
@@ -578,8 +599,11 @@ name = "consumer"
 
     #[test]
     fn stop_response_missing_record_has_nothing_to_stop_message() {
-        let r = build_stop_response_missing_record();
-        assert_eq!(r.message, "SSG has not been created. Nothing to stop.");
+        let r = build_stop_response_missing_record("test-proj");
+        assert_eq!(
+            r.message,
+            "SSG for project 'test-proj' has not been created. Nothing to stop."
+        );
         assert!(r.status.is_none());
         assert!(r.services.is_empty());
         assert!(r.ports.is_empty());
@@ -595,8 +619,11 @@ name = "consumer"
 
     #[test]
     fn rm_response_missing_record_has_nothing_to_remove_message() {
-        let r = build_rm_response_missing_record();
-        assert_eq!(r.message, "SSG has not been created. Nothing to remove.");
+        let r = build_rm_response_missing_record("test-proj");
+        assert_eq!(
+            r.message,
+            "SSG for project 'test-proj' has not been created. Nothing to remove."
+        );
         assert!(r.status.is_none());
     }
 

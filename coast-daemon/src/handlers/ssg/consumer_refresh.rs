@@ -58,6 +58,10 @@ struct ConsumerToRefresh {
 /// references. Returns the list of `project/instance` strings that
 /// were successfully refreshed, which callers append to the lifecycle
 /// response message. Failures are logged but never propagated.
+///
+/// Per-project SSG (§23): each consumer's `ssg_services` lookup is
+/// scoped to that consumer's own project, so this function is safe
+/// to call after any project's SSG lifecycle verb.
 pub(crate) async fn refresh_consumer_proxies_after_lifecycle(state: &Arc<AppState>) -> Vec<String> {
     let Some(docker) = state.docker.as_ref() else {
         return Vec::new();
@@ -68,11 +72,19 @@ pub(crate) async fn refresh_consumer_proxies_after_lifecycle(state: &Arc<AppStat
         _ => return Vec::new(),
     };
 
-    let Some((manifest, services)) = load_refresh_inputs(state).await else {
-        return Vec::new();
+    let manifest = match load_latest_ssg_manifest() {
+        Ok(Some(m)) => m,
+        Ok(None) => {
+            info!("consumer refresh: no active SSG build; skipping");
+            return Vec::new();
+        }
+        Err(err) => {
+            warn!(error = %err, "consumer refresh: failed to load SSG manifest; skipping");
+            return Vec::new();
+        }
     };
 
-    apply_refresh_to_each(&docker, &consumers, &manifest, &services).await
+    apply_refresh_to_each(state, &docker, &consumers, &manifest).await
 }
 
 async fn gather_eligible_consumers(state: &Arc<AppState>) -> Option<Vec<ConsumerToRefresh>> {
@@ -85,51 +97,35 @@ async fn gather_eligible_consumers(state: &Arc<AppState>) -> Option<Vec<Consumer
     }
 }
 
-/// Load the shared "snapshot" inputs that every consumer refresh in
-/// this cycle consumes: the active SSG manifest and the current
-/// `ssg_services` rows. Returns `None` when any read fails or no SSG
-/// build exists (logs and lets the caller short-circuit).
-async fn load_refresh_inputs(
-    state: &Arc<AppState>,
-) -> Option<(
-    coast_ssg::build::artifact::SsgManifest,
-    Vec<coast_ssg::state::SsgServiceRecord>,
-)> {
-    let services = {
-        use coast_ssg::state::SsgStateExt;
-        let db = state.db.lock().await;
-        match db.list_ssg_services() {
-            Ok(services) => services,
-            Err(err) => {
-                warn!(error = %err, "consumer refresh: failed to read ssg_services; skipping");
-                return None;
-            }
-        }
-    };
-    let manifest = match load_latest_ssg_manifest() {
-        Ok(Some(m)) => m,
-        Ok(None) => {
-            info!("consumer refresh: no active SSG build; skipping");
-            return None;
-        }
-        Err(err) => {
-            warn!(error = %err, "consumer refresh: failed to load SSG manifest; skipping");
-            return None;
-        }
-    };
-    Some((manifest, services))
-}
-
 async fn apply_refresh_to_each(
+    state: &Arc<AppState>,
     docker: &bollard::Docker,
     consumers: &[ConsumerToRefresh],
     manifest: &coast_ssg::build::artifact::SsgManifest,
-    services: &[coast_ssg::state::SsgServiceRecord],
 ) -> Vec<String> {
     let mut refreshed = Vec::with_capacity(consumers.len());
     for consumer in consumers {
         let label = format!("{}/{}", consumer.project, consumer.name);
-        match refresh_one(docker, consumer, manifest, services).await {
+
+        // Per-project lookup (§23): consumers route into their own
+        // project's SSG, so the services list is scoped by project.
+        let services = {
+            use coast_ssg::state::SsgStateExt;
+            let db = state.db.lock().await;
+            match db.list_ssg_services(&consumer.project) {
+                Ok(s) => s,
+                Err(err) => {
+                    warn!(
+                        consumer = %label,
+                        error = %err,
+                        "consumer refresh: failed to read ssg_services for project; skipping",
+                    );
+                    continue;
+                }
+            }
+        };
+
+        match refresh_one(docker, consumer, manifest, &services).await {
             Ok(()) => {
                 info!(consumer = %label, "consumer refresh: proxies updated for new SSG ports");
                 refreshed.push(label);

@@ -1,16 +1,20 @@
 //! SSG state: record types + extension trait for `StateDb`.
 //!
-//! Phase: ssg-phase-2. See `DESIGN.md §8`.
+//! Phase: ssg-phase-20 (per-project correction; see `DESIGN.md §23`).
 //!
-//! Three tables land in the daemon's SQLite state DB via migration in
+//! Four tables land in the daemon's SQLite state DB via migration in
 //! `coast-daemon/src/state/mod.rs`:
 //!
-//! - `ssg` — singleton row keyed by `id = 1` (enforced by `CHECK`).
-//!   Tracks the outer DinD container and its backing build.
-//! - `ssg_services` — per-service rows keyed by `service_name`, written
-//!   on `coast ssg run` once dynamic host ports are allocated.
+//! - `ssg` — keyed by `project TEXT PRIMARY KEY`. One row per project
+//!   that has run `coast ssg build`/`run`. Tracks the outer DinD
+//!   container and its backing build.
+//! - `ssg_services` — per-service rows keyed by `(project, service_name)`,
+//!   written on `coast ssg run` once dynamic host ports are allocated.
 //! - `ssg_port_checkouts` — Phase 6. Rows written when the user maps a
 //!   canonical host port to an SSG service via `coast ssg checkout`.
+//!   Keyed by `(project, canonical_port)`.
+//! - `ssg_consumer_pins` — Phase 16 consumer-side build pin. Keyed by
+//!   consumer project name (unchanged).
 //!
 //! This module exposes an [`SsgStateExt`] trait that
 //! `coast_daemon::state::StateDb` implements (in
@@ -19,9 +23,15 @@
 
 use coast_core::error::Result;
 
-/// Singleton `ssg` row. `CHECK (id = 1)` guarantees one-per-host.
+/// `ssg` row for a single project's Shared Service Group.
+///
+/// Primary key is the consumer project name (Phase 20). Multiple
+/// rows coexist when multiple projects each have their own SSG.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SsgRecord {
+    /// The consumer project name. Matches the `[coast] name` in the
+    /// project's main Coastfile.
+    pub project: String,
     pub container_id: Option<String>,
     /// One of: `created`, `running`, `stopped`.
     pub status: String,
@@ -32,6 +42,8 @@ pub struct SsgRecord {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SsgServiceRecord {
+    /// The consumer project name that owns this SSG service.
+    pub project: String,
     pub service_name: String,
     pub container_port: u16,
     pub dynamic_host_port: u16,
@@ -40,6 +52,9 @@ pub struct SsgServiceRecord {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SsgPortCheckoutRecord {
+    /// The consumer project name that owns the SSG service whose
+    /// canonical port is checked out to the host.
+    pub project: String,
     pub canonical_port: u16,
     pub service_name: String,
     pub socat_pid: Option<i32>,
@@ -75,47 +90,64 @@ pub struct SsgConsumerPinRecord {
 /// state at the start of an operation, perform all Docker work, then
 /// apply writes at the end (see `coast-daemon/src/handlers/ssg.rs`).
 pub trait SsgStateExt {
-    // --- ssg singleton ---
+    // --- ssg (per-project) ---
 
-    /// Upsert the singleton row (replaces by `id = 1`).
+    /// Upsert the row for `project` (replaces by project name).
     fn upsert_ssg(
         &self,
+        project: &str,
         status: &str,
         container_id: Option<&str>,
         build_id: Option<&str>,
     ) -> Result<()>;
 
-    /// Read the singleton row, or `None` if never populated.
-    fn get_ssg(&self) -> Result<Option<SsgRecord>>;
+    /// Read the row for `project`, or `None` if never populated.
+    fn get_ssg(&self, project: &str) -> Result<Option<SsgRecord>>;
 
-    /// Delete the singleton row. Idempotent.
-    fn clear_ssg(&self) -> Result<()>;
+    /// Delete the row for `project`. Idempotent.
+    fn clear_ssg(&self, project: &str) -> Result<()>;
+
+    /// List every SSG row, ordered alphabetically by project.
+    /// Used by `coast ssg ls` and for cross-project audits.
+    fn list_ssgs(&self) -> Result<Vec<SsgRecord>>;
 
     // --- ssg_services ---
 
-    /// Insert (or replace by `service_name`) a service row.
+    /// Insert (or replace by `(project, service_name)`) a service row.
     fn upsert_ssg_service(&self, rec: &SsgServiceRecord) -> Result<()>;
 
-    /// List every service row, ordered alphabetically by name.
-    fn list_ssg_services(&self) -> Result<Vec<SsgServiceRecord>>;
+    /// List every service row for `project`, ordered alphabetically by name.
+    fn list_ssg_services(&self, project: &str) -> Result<Vec<SsgServiceRecord>>;
 
-    /// Update the status column for one service.
-    fn update_ssg_service_status(&self, name: &str, status: &str) -> Result<()>;
+    /// Update the status column for one service under `project`.
+    fn update_ssg_service_status(
+        &self,
+        project: &str,
+        name: &str,
+        status: &str,
+    ) -> Result<()>;
 
-    /// Remove every `ssg_services` row. Used when the SSG is removed or
-    /// rebuilt from scratch.
-    fn clear_ssg_services(&self) -> Result<()>;
+    /// Remove every `ssg_services` row for `project`. Used when the
+    /// project's SSG is removed or rebuilt from scratch.
+    fn clear_ssg_services(&self, project: &str) -> Result<()>;
 
     // --- ssg_port_checkouts ---
 
-    /// Insert (or replace by `canonical_port`) a checkout row.
+    /// Insert (or replace by `(project, canonical_port)`) a checkout row.
     fn upsert_ssg_port_checkout(&self, rec: &SsgPortCheckoutRecord) -> Result<()>;
 
-    /// List every checkout row, ordered by `canonical_port` ascending.
-    fn list_ssg_port_checkouts(&self) -> Result<Vec<SsgPortCheckoutRecord>>;
+    /// List every checkout row for `project`, ordered by `canonical_port` ascending.
+    fn list_ssg_port_checkouts(
+        &self,
+        project: &str,
+    ) -> Result<Vec<SsgPortCheckoutRecord>>;
 
-    /// Delete the checkout row for `canonical_port`, if any. Idempotent.
-    fn delete_ssg_port_checkout(&self, canonical_port: u16) -> Result<()>;
+    /// Delete the checkout row for `(project, canonical_port)`, if any. Idempotent.
+    fn delete_ssg_port_checkout(
+        &self,
+        project: &str,
+        canonical_port: u16,
+    ) -> Result<()>;
 
     /// Update just the `socat_pid` column for a checkout row (Phase
     /// 6). Used by `coast ssg stop` to null the PID after killing the
@@ -123,14 +155,15 @@ pub trait SsgStateExt {
     /// the fresh PID after re-spawning against a new dynamic port.
     fn update_ssg_port_checkout_socat_pid(
         &self,
+        project: &str,
         canonical_port: u16,
         socat_pid: Option<i32>,
     ) -> Result<()>;
 
-    /// Delete every checkout row. Phase 6 uses this from
-    /// `coast ssg rm` (destructive — user explicitly removed the
-    /// SSG, so stale checkouts must go).
-    fn clear_ssg_port_checkouts(&self) -> Result<()>;
+    /// Delete every checkout row for `project`. Phase 6 uses this
+    /// from `coast ssg rm` (destructive — user explicitly removed
+    /// the SSG, so stale checkouts must go).
+    fn clear_ssg_port_checkouts(&self, project: &str) -> Result<()>;
 
     // --- ssg_consumer_pins (Phase 16) ---
 

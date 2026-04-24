@@ -1,37 +1,47 @@
-//! Protocol types for the Shared Service Group singleton.
+//! Protocol types for per-project Shared Service Groups.
 //!
-//! Phase: ssg-phase-1. See `coast-ssg/DESIGN.md §7` for the full CLI
-//! surface these map to and `§9` for lifecycle semantics.
+//! Phase: ssg-phase-20 (per-project correction). See
+//! `coast-ssg/DESIGN.md §23`.
 //!
-//! Mirrors the shape of [`super::secret_shared::SharedRequest`] /
-//! [`super::secret_shared::SharedResponse`] — `#[serde(tag = "action")]`
-//! tagged unions with `#[ts(export)]` for TypeScript client generation.
-//!
-//! No runtime handler is wired in this commit (phase 1 part 3/3). The
-//! daemon dispatcher returns a structured "not yet implemented" error
-//! until phase 2 lands the real handler.
+//! Every SSG request carries the consumer `project` name (from the
+//! sibling `Coastfile`'s `[coast] name`) at the top level so the
+//! daemon can route to the correct per-project SSG. The per-verb
+//! payload lives in [`SsgAction`].
 
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-/// Request to manage the singleton Shared Service Group.
+/// Request to manage a project's Shared Service Group.
+///
+/// `project` is the consumer project name (from `[coast].name` in the
+/// sibling `Coastfile`). The daemon looks up state in the `ssg` /
+/// `ssg_services` / `ssg_port_checkouts` tables filtered by this
+/// project (`coast-ssg/DESIGN.md §23`).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SsgRequest {
+    pub project: String,
+    pub action: SsgAction,
+}
+
+/// Per-verb payload for [`SsgRequest`].
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 #[serde(tag = "action")]
-pub enum SsgRequest {
+pub enum SsgAction {
     /// Build the SSG from `Coastfile.shared_service_groups`.
     Build {
         file: Option<PathBuf>,
         working_dir: Option<PathBuf>,
         config: Option<String>,
     },
-    /// Create and start the singleton DinD container for the first time.
+    /// Create and start the project's SSG DinD container for the first time.
     Run,
-    /// Start an existing but stopped SSG.
+    /// Start an existing but stopped SSG for this project.
     Start,
-    /// Stop the SSG (its inner services stop with it).
+    /// Stop the project's SSG (its inner services stop with it).
     ///
     /// When `force = true`, proceed even if remote shadow coasts are
     /// currently consuming the SSG. The daemon tears down the reverse
@@ -44,15 +54,16 @@ pub enum SsgRequest {
     },
     /// Stop + start.
     Restart,
-    /// Remove the SSG container. `with_data = true` also removes inner
-    /// named volumes. `force = true` proceeds even if remote shadow
-    /// coasts are consuming the SSG (same semantics as `Stop.force`).
+    /// Remove the project's SSG container. `with_data = true` also
+    /// removes inner named volumes. `force = true` proceeds even if
+    /// remote shadow coasts are consuming the SSG (same semantics as
+    /// `Stop.force`).
     Rm {
         with_data: bool,
         #[serde(default)]
         force: bool,
     },
-    /// Show SSG container status and per-service status.
+    /// Show SSG container status and per-service status for this project.
     Ps,
     /// Logs from the outer DinD container or a specific inner service.
     Logs {
@@ -83,26 +94,18 @@ pub enum SsgRequest {
     /// image's expected value (e.g. postgres expects 999:999).
     /// Does not modify anything. See `coast-ssg/DESIGN.md §10.5`.
     Doctor,
-    /// Pin the consumer coast in `project` to a specific SSG
-    /// `build_id`. Drift checks and auto-start honor the pin. See
-    /// `DESIGN.md §17-9` (SETTLED — Phase 16).
+    /// Pin this project's consumer coast to a specific SSG `build_id`.
+    /// Drift checks and auto-start honor the pin. See `DESIGN.md §17-9`
+    /// (SETTLED — Phase 16). The project comes from `SsgRequest.project`.
     CheckoutBuild {
-        /// Consumer project name (from `[coast].name`).
-        project: String,
-        /// SSG build id to pin to. Must resolve to an on-disk
-        /// build dir with a `manifest.json`; validated at pin time.
+        /// SSG build id to pin to. Must resolve to an on-disk build
+        /// dir with a `manifest.json`; validated at pin time.
         build_id: String,
     },
-    /// Clear the SSG build pin for `project`. Idempotent.
-    UncheckoutBuild {
-        /// Consumer project name (from `[coast].name`).
-        project: String,
-    },
-    /// Show the current SSG build pin for `project` (if any).
-    ShowPin {
-        /// Consumer project name (from `[coast].name`).
-        project: String,
-    },
+    /// Clear the SSG build pin for this project. Idempotent.
+    UncheckoutBuild,
+    /// Show the current SSG build pin for this project (if any).
+    ShowPin,
     /// Zero-copy migration helper: resolve a host Docker named
     /// volume's mountpoint and emit (or apply) the equivalent SSG
     /// Coastfile bind-mount entry. See `DESIGN.md §10.7`.

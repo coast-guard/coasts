@@ -165,9 +165,9 @@ impl StateDb {
                     created_at TEXT NOT NULL
                 );
 
-                -- Shared Service Group (SSG) singleton. See coast-ssg/DESIGN.md §8.
+                -- Shared Service Groups (SSG). Per-project (see coast-ssg/DESIGN.md §23).
                 CREATE TABLE IF NOT EXISTS ssg (
-                    id              INTEGER PRIMARY KEY CHECK (id = 1),
+                    project         TEXT PRIMARY KEY,
                     container_id    TEXT,
                     status          TEXT NOT NULL,
                     build_id        TEXT,
@@ -175,17 +175,21 @@ impl StateDb {
                 );
 
                 CREATE TABLE IF NOT EXISTS ssg_services (
-                    service_name        TEXT PRIMARY KEY,
+                    project             TEXT NOT NULL,
+                    service_name        TEXT NOT NULL,
                     container_port      INTEGER NOT NULL,
                     dynamic_host_port   INTEGER NOT NULL,
-                    status              TEXT NOT NULL
+                    status              TEXT NOT NULL,
+                    PRIMARY KEY (project, service_name)
                 );
 
                 CREATE TABLE IF NOT EXISTS ssg_port_checkouts (
-                    canonical_port  INTEGER PRIMARY KEY,
+                    project         TEXT NOT NULL,
+                    canonical_port  INTEGER NOT NULL,
                     service_name    TEXT NOT NULL,
                     socat_pid       INTEGER,
-                    created_at      TEXT NOT NULL
+                    created_at      TEXT NOT NULL,
+                    PRIMARY KEY (project, canonical_port)
                 );
 
                 CREATE TABLE IF NOT EXISTS ssg_consumer_pins (
@@ -221,7 +225,67 @@ impl StateDb {
         self.migrate_add_remote_host()?;
         self.migrate_add_remote_dynamic_port()?;
         self.migrate_add_remote_arch()?;
+        self.migrate_ssg_per_project()?;
 
+        Ok(())
+    }
+
+    /// Migration: flip the SSG tables from the singleton-per-host schema
+    /// (`ssg.id INTEGER PRIMARY KEY CHECK (id = 1)`) to the per-project
+    /// schema (`ssg.project TEXT PRIMARY KEY`). See
+    /// `coast-ssg/DESIGN.md §23` for the full correction narrative.
+    ///
+    /// Pre-launch, so existing singleton rows are dropped wholesale;
+    /// running coasts that referenced the old SSG must be stopped and
+    /// restarted after upgrade. The runbook in Phase 18.5 handles the
+    /// one-shot cleanup.
+    fn migrate_ssg_per_project(&self) -> Result<()> {
+        // `SELECT id FROM ssg LIMIT 0` succeeds iff the old schema is
+        // in place. The new schema uses `project` instead.
+        let has_old_id = self
+            .conn
+            .prepare("SELECT id FROM ssg LIMIT 0")
+            .is_ok();
+        if has_old_id {
+            self.conn
+                .execute_batch(
+                    "DROP TABLE IF EXISTS ssg;
+                     DROP TABLE IF EXISTS ssg_services;
+                     DROP TABLE IF EXISTS ssg_port_checkouts;
+                     CREATE TABLE ssg (
+                         project         TEXT PRIMARY KEY,
+                         container_id    TEXT,
+                         status          TEXT NOT NULL,
+                         build_id        TEXT,
+                         created_at      TEXT NOT NULL
+                     );
+                     CREATE TABLE ssg_services (
+                         project             TEXT NOT NULL,
+                         service_name        TEXT NOT NULL,
+                         container_port      INTEGER NOT NULL,
+                         dynamic_host_port   INTEGER NOT NULL,
+                         status              TEXT NOT NULL,
+                         PRIMARY KEY (project, service_name)
+                     );
+                     CREATE TABLE ssg_port_checkouts (
+                         project         TEXT NOT NULL,
+                         canonical_port  INTEGER NOT NULL,
+                         service_name    TEXT NOT NULL,
+                         socat_pid       INTEGER,
+                         created_at      TEXT NOT NULL,
+                         PRIMARY KEY (project, canonical_port)
+                     );",
+                )
+                .map_err(|e| CoastError::State {
+                    message: format!(
+                        "failed to migrate ssg tables to per-project schema: {e}"
+                    ),
+                    source: Some(Box::new(e)),
+                })?;
+            debug!(
+                "migrated ssg tables from singleton to per-project schema (pre-launch wipe)"
+            );
+        }
         Ok(())
     }
 

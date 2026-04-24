@@ -14,8 +14,8 @@ use clap::{Args, Subcommand};
 use colored::Colorize;
 
 use coast_core::protocol::{
-    BuildProgressEvent, Request, Response, SsgDoctorFinding, SsgPortInfo, SsgRequest, SsgResponse,
-    SsgServiceInfo,
+    BuildProgressEvent, Request, Response, SsgAction as ProtoSsgAction, SsgDoctorFinding,
+    SsgPortInfo, SsgRequest, SsgResponse, SsgServiceInfo,
 };
 
 /// Arguments for `coast ssg`.
@@ -254,33 +254,144 @@ pub async fn execute(args: &SsgArgs, cli_working_dir: &Option<PathBuf>) -> Resul
             file,
             working_dir,
             config,
+        } => dispatch_build(file, working_dir, config, args.silent, cli_working_dir).await,
+        SsgAction::ImportHostVolume {
+            volume,
+            service,
+            mount,
+            file,
+            working_dir,
+            config,
+            apply,
         } => {
-            // Subcommand-level `--working-dir` wins; fall back to the
-            // global `coast --working-dir` flag so `coast --working-dir
-            // <dir> ssg build` works (DESIGN.md §5).
-            let resolved_working_dir = working_dir.clone().or_else(|| cli_working_dir.clone());
-            execute_build(
-                file.clone(),
-                resolved_working_dir,
-                config.clone(),
+            dispatch_import_host_volume(
+                volume,
+                service,
+                mount,
+                file,
+                working_dir,
+                config,
+                *apply,
                 args.silent,
+                cli_working_dir,
             )
             .await
         }
-        SsgAction::Ps => execute_ps(args.silent).await,
-        SsgAction::Run => execute_lifecycle(SsgRequest::Run, "Run", args.silent).await,
-        SsgAction::Start => execute_lifecycle(SsgRequest::Start, "Start", args.silent).await,
-        SsgAction::Restart => execute_lifecycle(SsgRequest::Restart, "Restart", args.silent).await,
+        SsgAction::CheckoutBuild { .. }
+        | SsgAction::UncheckoutBuild { .. }
+        | SsgAction::ShowPin { .. } => {
+            execute_pin_action(&args.action, args.silent, cli_working_dir).await
+        }
+        other => dispatch_simple_or_lifecycle(other, args.silent, cli_working_dir).await,
+    }
+}
+
+/// `coast ssg build` — resolves project from the SSG Coastfile's
+/// directory (which also contains the sibling `Coastfile`).
+async fn dispatch_build(
+    file: &Option<PathBuf>,
+    working_dir: &Option<PathBuf>,
+    config: &Option<String>,
+    silent: bool,
+    cli_working_dir: &Option<PathBuf>,
+) -> Result<()> {
+    // Subcommand-level `--working-dir` wins; fall back to the global
+    // `coast --working-dir` flag so `coast --working-dir <dir> ssg
+    // build` works (DESIGN.md §5).
+    let resolved_working_dir = working_dir.clone().or_else(|| cli_working_dir.clone());
+    // Per-project SSG (§23): project comes from the sibling
+    // `Coastfile`'s `[coast].name` in the SSG Coastfile's dir.
+    let project = resolve_consumer_project(&None, &resolved_working_dir, &None)?;
+    execute_build(
+        project,
+        file.clone(),
+        resolved_working_dir,
+        config.clone(),
+        silent,
+    )
+    .await
+}
+
+/// `coast ssg import-host-volume` — resolves project the same way as
+/// `build` since they share the same `--working-dir` / `-f` /
+/// `--config` discovery triplet.
+#[allow(clippy::too_many_arguments)]
+async fn dispatch_import_host_volume(
+    volume: &str,
+    service: &str,
+    mount: &std::path::Path,
+    file: &Option<PathBuf>,
+    working_dir: &Option<PathBuf>,
+    config: &Option<String>,
+    apply: bool,
+    silent: bool,
+    cli_working_dir: &Option<PathBuf>,
+) -> Result<()> {
+    let resolved_working_dir = working_dir.clone().or_else(|| cli_working_dir.clone());
+    let project = resolve_consumer_project(&None, &resolved_working_dir, &None)?;
+    execute_simple(
+        SsgRequest {
+            project,
+            action: ProtoSsgAction::ImportHostVolume {
+                volume: volume.to_string(),
+                service: service.to_string(),
+                mount: mount.to_path_buf(),
+                file: file.clone(),
+                working_dir: resolved_working_dir,
+                config: config.clone(),
+                apply,
+            },
+        },
+        silent,
+    )
+    .await
+}
+
+/// Dispatcher for every non-build, non-import, non-pin verb. Each
+/// resolves the project from cwd once and then forwards to either
+/// `execute_lifecycle` (Run/Start/Restart, streams progress) or
+/// `execute_simple` (everything else).
+async fn dispatch_simple_or_lifecycle(
+    action: &SsgAction,
+    silent: bool,
+    cli_working_dir: &Option<PathBuf>,
+) -> Result<()> {
+    let project = resolve_consumer_project(&None, cli_working_dir, &None)?;
+    match action {
+        SsgAction::Ps => execute_ps(project, silent).await,
+        SsgAction::Ports => execute_ports(project, silent).await,
+        SsgAction::Doctor => execute_doctor(project, silent).await,
+        SsgAction::Run => {
+            execute_lifecycle(wrap(project, ProtoSsgAction::Run), "Run", silent).await
+        }
+        SsgAction::Start => {
+            execute_lifecycle(wrap(project, ProtoSsgAction::Start), "Start", silent).await
+        }
+        SsgAction::Restart => {
+            execute_lifecycle(
+                wrap(project, ProtoSsgAction::Restart),
+                "Restart",
+                silent,
+            )
+            .await
+        }
         SsgAction::Stop { force } => {
-            execute_simple(SsgRequest::Stop { force: *force }, args.silent).await
+            execute_simple(
+                wrap(project, ProtoSsgAction::Stop { force: *force }),
+                silent,
+            )
+            .await
         }
         SsgAction::Rm { with_data, force } => {
             execute_simple(
-                SsgRequest::Rm {
-                    with_data: *with_data,
-                    force: *force,
-                },
-                args.silent,
+                wrap(
+                    project,
+                    ProtoSsgAction::Rm {
+                        with_data: *with_data,
+                        force: *force,
+                    },
+                ),
+                silent,
             )
             .await
         }
@@ -290,30 +401,35 @@ pub async fn execute(args: &SsgArgs, cli_working_dir: &Option<PathBuf>) -> Resul
             follow,
         } => {
             if *follow {
-                execute_logs_follow(service.clone(), *tail).await
+                execute_logs_follow(project, service.clone(), *tail).await
             } else {
                 execute_simple(
-                    SsgRequest::Logs {
-                        service: service.clone(),
-                        tail: *tail,
-                        follow: false,
-                    },
-                    args.silent,
+                    wrap(
+                        project,
+                        ProtoSsgAction::Logs {
+                            service: service.clone(),
+                            tail: *tail,
+                            follow: false,
+                        },
+                    ),
+                    silent,
                 )
                 .await
             }
         }
         SsgAction::Exec { service, command } => {
             execute_simple(
-                SsgRequest::Exec {
-                    service: service.clone(),
-                    command: command.clone(),
-                },
-                args.silent,
+                wrap(
+                    project,
+                    ProtoSsgAction::Exec {
+                        service: service.clone(),
+                        command: command.clone(),
+                    },
+                ),
+                silent,
             )
             .await
         }
-        SsgAction::Ports => execute_ports(args.silent).await,
         SsgAction::Checkout {
             service,
             service_flag,
@@ -321,11 +437,14 @@ pub async fn execute(args: &SsgArgs, cli_working_dir: &Option<PathBuf>) -> Resul
         } => {
             let resolved = resolve_checkout_service(service, service_flag, *all)?;
             execute_simple(
-                SsgRequest::Checkout {
-                    service: resolved,
-                    all: *all,
-                },
-                args.silent,
+                wrap(
+                    project,
+                    ProtoSsgAction::Checkout {
+                        service: resolved,
+                        all: *all,
+                    },
+                ),
+                silent,
             )
             .await
         }
@@ -336,50 +455,30 @@ pub async fn execute(args: &SsgArgs, cli_working_dir: &Option<PathBuf>) -> Resul
         } => {
             let resolved = resolve_checkout_service(service, service_flag, *all)?;
             execute_simple(
-                SsgRequest::Uncheckout {
-                    service: resolved,
-                    all: *all,
-                },
-                args.silent,
+                wrap(
+                    project,
+                    ProtoSsgAction::Uncheckout {
+                        service: resolved,
+                        all: *all,
+                    },
+                ),
+                silent,
             )
             .await
         }
-        SsgAction::Doctor => execute_doctor(args.silent).await,
-        SsgAction::CheckoutBuild { .. }
+        SsgAction::Build { .. }
+        | SsgAction::ImportHostVolume { .. }
+        | SsgAction::CheckoutBuild { .. }
         | SsgAction::UncheckoutBuild { .. }
         | SsgAction::ShowPin { .. } => {
-            execute_pin_action(&args.action, args.silent, cli_working_dir).await
-        }
-        SsgAction::ImportHostVolume {
-            volume,
-            service,
-            mount,
-            file,
-            working_dir,
-            config,
-            apply,
-        } => {
-            // Global `coast --working-dir <dir>` is threaded into the
-            // subcommand field by clap (flag is `global = true`); we
-            // also fall back to it explicitly so `coast --working-dir
-            // <dir> ssg import-host-volume ...` works without the
-            // subcommand repeating the flag.
-            let resolved_working_dir = working_dir.clone().or_else(|| cli_working_dir.clone());
-            execute_simple(
-                SsgRequest::ImportHostVolume {
-                    volume: volume.clone(),
-                    service: service.clone(),
-                    mount: mount.clone(),
-                    file: file.clone(),
-                    working_dir: resolved_working_dir,
-                    config: config.clone(),
-                    apply: *apply,
-                },
-                args.silent,
-            )
-            .await
+            unreachable!("dispatch_simple_or_lifecycle only handles non-build/non-pin verbs")
         }
     }
+}
+
+/// Shorthand: `SsgRequest { project, action }` constructor.
+fn wrap(project: String, action: ProtoSsgAction) -> SsgRequest {
+    SsgRequest { project, action }
 }
 
 /// Dispatch for the Phase 16 pinning verbs. Extracted out of
@@ -402,9 +501,11 @@ async fn execute_pin_action(
             let resolved_working_dir = working_dir.clone().or_else(|| cli_working_dir.clone());
             let resolved_project = resolve_consumer_project(project, &resolved_working_dir, file)?;
             execute_simple(
-                SsgRequest::CheckoutBuild {
+                SsgRequest {
                     project: resolved_project,
-                    build_id: build_id.clone(),
+                    action: ProtoSsgAction::CheckoutBuild {
+                        build_id: build_id.clone(),
+                    },
                 },
                 silent,
             )
@@ -418,8 +519,9 @@ async fn execute_pin_action(
             let resolved_working_dir = working_dir.clone().or_else(|| cli_working_dir.clone());
             let resolved_project = resolve_consumer_project(project, &resolved_working_dir, file)?;
             execute_simple(
-                SsgRequest::UncheckoutBuild {
+                SsgRequest {
                     project: resolved_project,
+                    action: ProtoSsgAction::UncheckoutBuild,
                 },
                 silent,
             )
@@ -433,8 +535,9 @@ async fn execute_pin_action(
             let resolved_working_dir = working_dir.clone().or_else(|| cli_working_dir.clone());
             let resolved_project = resolve_consumer_project(project, &resolved_working_dir, file)?;
             execute_simple(
-                SsgRequest::ShowPin {
+                SsgRequest {
                     project: resolved_project,
+                    action: ProtoSsgAction::ShowPin,
                 },
                 silent,
             )
@@ -655,15 +758,19 @@ compose = "docker-compose.yml"
 }
 
 async fn execute_build(
+    project: String,
     file: Option<PathBuf>,
     working_dir: Option<PathBuf>,
     config: Option<String>,
     silent: bool,
 ) -> Result<()> {
-    let request = Request::Ssg(SsgRequest::Build {
-        file,
-        working_dir,
-        config,
+    let request = Request::Ssg(SsgRequest {
+        project,
+        action: ProtoSsgAction::Build {
+            file,
+            working_dir,
+            config,
+        },
     });
 
     let response = super::send_build_request(request, |event| {
@@ -686,8 +793,12 @@ async fn execute_build(
     }
 }
 
-async fn execute_ps(silent: bool) -> Result<()> {
-    let response = super::send_request(Request::Ssg(SsgRequest::Ps)).await?;
+async fn execute_ps(project: String, silent: bool) -> Result<()> {
+    let response = super::send_request(Request::Ssg(SsgRequest {
+        project,
+        action: ProtoSsgAction::Ps,
+    }))
+    .await?;
     match response {
         Response::Ssg(resp) => {
             if !silent {
@@ -734,8 +845,12 @@ async fn execute_simple(req: SsgRequest, silent: bool) -> Result<()> {
     }
 }
 
-async fn execute_ports(silent: bool) -> Result<()> {
-    let response = super::send_request(Request::Ssg(SsgRequest::Ports)).await?;
+async fn execute_ports(project: String, silent: bool) -> Result<()> {
+    let response = super::send_request(Request::Ssg(SsgRequest {
+        project,
+        action: ProtoSsgAction::Ports,
+    }))
+    .await?;
     match response {
         Response::Ssg(resp) => {
             if !silent {
@@ -752,11 +867,18 @@ async fn execute_ports(silent: bool) -> Result<()> {
     }
 }
 
-async fn execute_logs_follow(service: Option<String>, tail: Option<u32>) -> Result<()> {
-    let request = Request::Ssg(SsgRequest::Logs {
-        service,
-        tail,
-        follow: true,
+async fn execute_logs_follow(
+    project: String,
+    service: Option<String>,
+    tail: Option<u32>,
+) -> Result<()> {
+    let request = Request::Ssg(SsgRequest {
+        project,
+        action: ProtoSsgAction::Logs {
+            service,
+            tail,
+            follow: true,
+        },
     });
     super::stream_ssg_log_chunks(request, |chunk| {
         println!("{chunk}");
@@ -764,8 +886,12 @@ async fn execute_logs_follow(service: Option<String>, tail: Option<u32>) -> Resu
     .await
 }
 
-async fn execute_doctor(silent: bool) -> Result<()> {
-    let response = super::send_request(Request::Ssg(SsgRequest::Doctor)).await?;
+async fn execute_doctor(project: String, silent: bool) -> Result<()> {
+    let response = super::send_request(Request::Ssg(SsgRequest {
+        project,
+        action: ProtoSsgAction::Doctor,
+    }))
+    .await?;
     match response {
         Response::Ssg(resp) => {
             if !silent {

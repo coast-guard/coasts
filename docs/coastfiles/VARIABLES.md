@@ -35,13 +35,22 @@ If `PROJECT_NAME` is set in the environment, its value is used. If not, `my-app`
 
 ## Undefined Variables
 
-When a variable is referenced without a default and is not set in the environment, it is replaced with an empty string. Coast emits a warning during the build so you know which variables were missing:
+When a variable is referenced without a default and is not set in the environment, Coast **preserves the literal `${VAR}` text** and emits a warning:
 
 ```
-warning: undefined environment variable 'DB_HOST' replaced with empty string
+warning: undefined environment variable 'DB_HOST' preserved as literal '${DB_HOST}'; use '${DB_HOST:-}' for explicit empty, or '$${DB_HOST}' to escape entirely
 ```
 
-This behavior lets builds proceed even when optional variables are absent, while making it visible that something may be misconfigured.
+Preserving the reference (instead of silently replacing it with an empty string) keeps shell commands like `ARCH=$(uname -m) && curl .../linux-${ARCH}.tar.gz` working — the Dockerfile's shell can still expand `${ARCH}` at build time even though Coast never set it.
+
+If you actually want an empty substitution when the variable is missing, use the explicit empty default:
+
+```toml
+[coast]
+name = "${PROJECT_NAME:-}"   # "" when PROJECT_NAME is unset
+```
+
+If you want the literal `${VAR}` text without any warning, escape it with `$${VAR}` (see [Escaping](#escaping) below).
 
 ## Escaping
 

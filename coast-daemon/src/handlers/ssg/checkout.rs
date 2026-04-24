@@ -67,6 +67,7 @@ enum ClearTarget {
 }
 
 pub(super) async fn handle_checkout(
+    project: &str,
     state: &Arc<AppState>,
     service: Option<String>,
     all: bool,
@@ -76,8 +77,8 @@ pub(super) async fn handle_checkout(
 
     let (services, existing_checkouts) = {
         let db = state.db.lock().await;
-        let services = db.list_ssg_services()?;
-        let checkouts = db.list_ssg_port_checkouts()?;
+        let services = db.list_ssg_services(project)?;
+        let checkouts = db.list_ssg_port_checkouts(project)?;
         (services, checkouts)
     };
     let plans = plan_checkouts(&services, &target)?;
@@ -102,8 +103,11 @@ pub(super) async fn handle_checkout(
             }
         }
 
-        // 1. Find any coast-side holder.
-        let holder = find_coast_holder(state, plan.canonical_port).await?;
+        // 1. Find any coast-side holder (scoped to this project's
+        // checkouts; cross-project host-port collisions surface as
+        // "unknown host process" in step 2 since we don't touch
+        // another project's rows).
+        let holder = find_coast_holder(project, state, plan.canonical_port).await?;
 
         // 2. Reject non-coast strangers (only if we haven't already
         //    identified a known holder to displace).
@@ -125,7 +129,7 @@ pub(super) async fn handle_checkout(
 
         // 3. Displace if needed.
         if let Some(holder) = holder {
-            displace_coast_holder(state, &holder).await?;
+            displace_coast_holder(project, state, &holder).await?;
             warnings.push(format!(
                 "Displaced {} from canonical port {}. Run `coast checkout <instance>` if you \
                  want to re-bind it later.",
@@ -137,6 +141,7 @@ pub(super) async fn handle_checkout(
         let pid = spawn_checkout_socat(plan)?;
         let db = state.db.lock().await;
         db.upsert_ssg_port_checkout(&SsgPortCheckoutRecord {
+            project: project.to_string(),
             canonical_port: plan.canonical_port,
             service_name: plan.service_name.clone(),
             socat_pid: Some(pid as i32),
@@ -156,6 +161,7 @@ pub(super) async fn handle_checkout(
 }
 
 pub(super) async fn handle_uncheckout(
+    project: &str,
     state: &Arc<AppState>,
     service: Option<String>,
     all: bool,
@@ -165,7 +171,7 @@ pub(super) async fn handle_uncheckout(
 
     let existing = {
         let db = state.db.lock().await;
-        db.list_ssg_port_checkouts()?
+        db.list_ssg_port_checkouts(project)?
     };
     if existing.is_empty() {
         return Ok(SsgResponse {
@@ -195,7 +201,7 @@ pub(super) async fn handle_uncheckout(
             }
         }
         let db = state.db.lock().await;
-        db.delete_ssg_port_checkout(row.canonical_port)?;
+        db.delete_ssg_port_checkout(project, row.canonical_port)?;
     }
 
     let names: Vec<String> = to_remove
@@ -271,6 +277,7 @@ fn normalize_target(service: Option<String>, all: bool) -> Result<SsgCheckoutTar
 /// Consult `port_allocations` and `ssg_port_checkouts` for any
 /// existing coast-side owner of `canonical_port`.
 async fn find_coast_holder(
+    project: &str,
     state: &Arc<AppState>,
     canonical_port: u16,
 ) -> Result<Option<CoastHolder>> {
@@ -278,7 +285,7 @@ async fn find_coast_holder(
         let db = state.db.lock().await;
         let alloc = db.find_port_allocation_holding_canonical(canonical_port)?;
         let previous = db
-            .list_ssg_port_checkouts()?
+            .list_ssg_port_checkouts(project)?
             .into_iter()
             .find(|c| c.canonical_port == canonical_port && c.socat_pid.is_some());
         (alloc, previous)
@@ -333,7 +340,11 @@ async fn find_coast_holder(
     Ok(None)
 }
 
-async fn displace_coast_holder(state: &Arc<AppState>, holder: &CoastHolder) -> Result<()> {
+async fn displace_coast_holder(
+    ssg_project: &str,
+    state: &Arc<AppState>,
+    holder: &CoastHolder,
+) -> Result<()> {
     if let Err(err) = port_manager::kill_socat(holder.socat_pid) {
         // Warn but proceed; the socat may already have died.
         warn!(
@@ -355,7 +366,7 @@ async fn displace_coast_holder(state: &Arc<AppState>, holder: &CoastHolder) -> R
         }
         ClearTarget::SsgCheckout { canonical_port } => {
             let db = state.db.lock().await;
-            db.delete_ssg_port_checkout(*canonical_port)?;
+            db.delete_ssg_port_checkout(ssg_project, *canonical_port)?;
         }
     }
     info!(
@@ -451,10 +462,13 @@ fn permission_denied_error(canonical_port: u16) -> CoastError {
 /// Kill every active checkout socat and null its `socat_pid` column.
 /// Used from `handle_stop`: preserves the `ssg_port_checkouts` rows so
 /// `ssg run` / `start` can re-spawn against the new dynamic ports.
-pub(super) async fn kill_active_checkout_socats_preserve_rows(state: &Arc<AppState>) {
+pub(super) async fn kill_active_checkout_socats_preserve_rows(
+    project: &str,
+    state: &Arc<AppState>,
+) {
     let rows = {
         let db = state.db.lock().await;
-        match db.list_ssg_port_checkouts() {
+        match db.list_ssg_port_checkouts(project) {
             Ok(rows) => rows,
             Err(err) => {
                 warn!(error = %err, "stop: failed to list ssg_port_checkouts; skipping socat teardown");
@@ -474,7 +488,9 @@ pub(super) async fn kill_active_checkout_socats_preserve_rows(state: &Arc<AppSta
             }
         }
         let db = state.db.lock().await;
-        if let Err(err) = db.update_ssg_port_checkout_socat_pid(row.canonical_port, None) {
+        if let Err(err) =
+            db.update_ssg_port_checkout_socat_pid(project, row.canonical_port, None)
+        {
             warn!(
                 canonical = row.canonical_port,
                 error = %err,
@@ -486,10 +502,10 @@ pub(super) async fn kill_active_checkout_socats_preserve_rows(state: &Arc<AppSta
 
 /// Kill every checkout socat AND delete all `ssg_port_checkouts` rows.
 /// Used from `handle_rm` (destructive remove).
-pub(super) async fn kill_and_clear_all_checkouts(state: &Arc<AppState>) {
+pub(super) async fn kill_and_clear_all_checkouts(project: &str, state: &Arc<AppState>) {
     let rows = {
         let db = state.db.lock().await;
-        match db.list_ssg_port_checkouts() {
+        match db.list_ssg_port_checkouts(project) {
             Ok(rows) => rows,
             Err(err) => {
                 warn!(error = %err, "rm: failed to list ssg_port_checkouts; skipping socat teardown");
@@ -510,7 +526,7 @@ pub(super) async fn kill_and_clear_all_checkouts(state: &Arc<AppState>) {
         }
     }
     let db = state.db.lock().await;
-    if let Err(err) = db.clear_ssg_port_checkouts() {
+    if let Err(err) = db.clear_ssg_port_checkouts(project) {
         warn!(error = %err, "rm: failed to clear ssg_port_checkouts rows");
     }
 }
@@ -519,32 +535,36 @@ pub(super) async fn kill_and_clear_all_checkouts(state: &Arc<AppState>) {
 /// `ssg_services.dynamic_host_port`, dropping rows whose service has
 /// disappeared from the active build. Used from `handle_run` /
 /// `handle_start` / `handle_restart` / daemon-restart recovery.
-pub(crate) async fn respawn_checkouts_after_lifecycle(state: &Arc<AppState>) -> Vec<String> {
+pub(crate) async fn respawn_checkouts_after_lifecycle(
+    project: &str,
+    state: &Arc<AppState>,
+) -> Vec<String> {
     let mut messages = Vec::new();
-    let Some((rows, services)) = load_respawn_inputs(state).await else {
+    let Some((rows, services)) = load_respawn_inputs(project, state).await else {
         return messages;
     };
     for row in rows {
-        respawn_one_checkout(state, &row, &services, &mut messages).await;
+        respawn_one_checkout(project, state, &row, &services, &mut messages).await;
     }
     messages
 }
 
 async fn load_respawn_inputs(
+    project: &str,
     state: &Arc<AppState>,
 ) -> Option<(
     Vec<coast_ssg::state::SsgPortCheckoutRecord>,
     Vec<coast_ssg::state::SsgServiceRecord>,
 )> {
     let db = state.db.lock().await;
-    let rows = match db.list_ssg_port_checkouts() {
+    let rows = match db.list_ssg_port_checkouts(project) {
         Ok(rows) => rows,
         Err(err) => {
             warn!(error = %err, "respawn: failed to list ssg_port_checkouts; nothing to restore");
             return None;
         }
     };
-    let services = match db.list_ssg_services() {
+    let services = match db.list_ssg_services(project) {
         Ok(services) => services,
         Err(err) => {
             warn!(error = %err, "respawn: failed to list ssg_services; nothing to restore");
@@ -555,6 +575,7 @@ async fn load_respawn_inputs(
 }
 
 async fn respawn_one_checkout(
+    project: &str,
     state: &Arc<AppState>,
     row: &coast_ssg::state::SsgPortCheckoutRecord,
     services: &[coast_ssg::state::SsgServiceRecord],
@@ -564,7 +585,7 @@ async fn respawn_one_checkout(
         .iter()
         .find(|s| s.service_name == row.service_name && s.container_port == row.canonical_port);
     let Some(svc) = matching else {
-        drop_stale_checkout_row(state, row, messages).await;
+        drop_stale_checkout_row(project, state, row, messages).await;
         return;
     };
 
@@ -580,18 +601,19 @@ async fn respawn_one_checkout(
         dynamic_host_port: svc.dynamic_host_port,
     };
     match spawn_checkout_socat(&plan) {
-        Ok(pid) => record_respawn_success(state, &plan, pid).await,
-        Err(err) => record_respawn_failure(state, &plan, err, messages).await,
+        Ok(pid) => record_respawn_success(project, state, &plan, pid).await,
+        Err(err) => record_respawn_failure(project, state, &plan, err, messages).await,
     }
 }
 
 async fn drop_stale_checkout_row(
+    project: &str,
     state: &Arc<AppState>,
     row: &coast_ssg::state::SsgPortCheckoutRecord,
     messages: &mut Vec<String>,
 ) {
     let db = state.db.lock().await;
-    let _ = db.delete_ssg_port_checkout(row.canonical_port);
+    let _ = db.delete_ssg_port_checkout(project, row.canonical_port);
     messages.push(format!(
         "Dropping stale checkout for '{}' on canonical {}: service no longer in the \
          active SSG build.",
@@ -599,9 +621,16 @@ async fn drop_stale_checkout_row(
     ));
 }
 
-async fn record_respawn_success(state: &Arc<AppState>, plan: &SsgCheckoutPlan, pid: u32) {
+async fn record_respawn_success(
+    project: &str,
+    state: &Arc<AppState>,
+    plan: &SsgCheckoutPlan,
+    pid: u32,
+) {
     let db = state.db.lock().await;
-    if let Err(err) = db.update_ssg_port_checkout_socat_pid(plan.canonical_port, Some(pid as i32)) {
+    if let Err(err) =
+        db.update_ssg_port_checkout_socat_pid(project, plan.canonical_port, Some(pid as i32))
+    {
         warn!(
             canonical = plan.canonical_port,
             error = %err,
@@ -618,6 +647,7 @@ async fn record_respawn_success(state: &Arc<AppState>, plan: &SsgCheckoutPlan, p
 }
 
 async fn record_respawn_failure(
+    project: &str,
     state: &Arc<AppState>,
     plan: &SsgCheckoutPlan,
     err: CoastError,
@@ -628,7 +658,7 @@ async fn record_respawn_failure(
         plan.service_name, plan.canonical_port,
     ));
     let db = state.db.lock().await;
-    if let Err(err) = db.update_ssg_port_checkout_socat_pid(plan.canonical_port, None) {
+    if let Err(err) = db.update_ssg_port_checkout_socat_pid(project, plan.canonical_port, None) {
         warn!(
             canonical = plan.canonical_port,
             error = %err,
@@ -735,8 +765,11 @@ mod tests {
 
     // --- Phase 9 pure helpers for uncheckout ---
 
+    const TEST_PROJECT: &str = "test-proj";
+
     fn checkout_row(canonical: u16, service: &str) -> SsgPortCheckoutRecord {
         SsgPortCheckoutRecord {
+            project: TEST_PROJECT.to_string(),
             canonical_port: canonical,
             service_name: service.to_string(),
             socat_pid: None,
@@ -804,7 +837,9 @@ mod tests {
     #[tokio::test]
     async fn uncheckout_empty_table_says_nothing_to_uncheck_out() {
         let state = in_memory_app_state();
-        let resp = handle_uncheckout(&state, None, true).await.unwrap();
+        let resp = handle_uncheckout(TEST_PROJECT, &state, None, true)
+            .await
+            .unwrap();
         assert!(resp.message.contains("nothing to uncheck out"));
     }
 
@@ -819,13 +854,15 @@ mod tests {
                 .unwrap();
         }
 
-        let resp = handle_uncheckout(&state, None, true).await.unwrap();
+        let resp = handle_uncheckout(TEST_PROJECT, &state, None, true)
+            .await
+            .unwrap();
         assert!(resp.message.contains("SSG uncheckout complete"));
         assert!(resp.message.contains("postgres (5432)"));
         assert!(resp.message.contains("redis (6379)"));
 
         let db = state.db.lock().await;
-        assert!(db.list_ssg_port_checkouts().unwrap().is_empty());
+        assert!(db.list_ssg_port_checkouts(TEST_PROJECT).unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -839,14 +876,14 @@ mod tests {
                 .unwrap();
         }
 
-        let resp = handle_uncheckout(&state, Some("postgres".into()), false)
+        let resp = handle_uncheckout(TEST_PROJECT, &state, Some("postgres".into()), false)
             .await
             .unwrap();
         assert!(resp.message.contains("postgres (5432)"));
         assert!(!resp.message.contains("redis"));
 
         let db = state.db.lock().await;
-        let remaining = db.list_ssg_port_checkouts().unwrap();
+        let remaining = db.list_ssg_port_checkouts(TEST_PROJECT).unwrap();
         assert_eq!(remaining.len(), 1);
         assert_eq!(remaining[0].service_name, "redis");
     }
@@ -860,21 +897,23 @@ mod tests {
                 .unwrap();
         }
 
-        let resp = handle_uncheckout(&state, Some("nope".into()), false)
+        let resp = handle_uncheckout(TEST_PROJECT, &state, Some("nope".into()), false)
             .await
             .unwrap();
         assert!(resp.message.contains("No active SSG checkout"));
         assert!(resp.message.contains("'nope'"));
 
         let db = state.db.lock().await;
-        assert_eq!(db.list_ssg_port_checkouts().unwrap().len(), 1);
+        assert_eq!(db.list_ssg_port_checkouts(TEST_PROJECT).unwrap().len(), 1);
     }
 
     #[tokio::test]
     async fn uncheckout_invalid_target_errors() {
         let state = in_memory_app_state();
         // Neither --service nor --all.
-        let err = handle_uncheckout(&state, None, false).await.unwrap_err();
+        let err = handle_uncheckout(TEST_PROJECT, &state, None, false)
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("--service"));
         assert!(err.to_string().contains("--all"));
     }

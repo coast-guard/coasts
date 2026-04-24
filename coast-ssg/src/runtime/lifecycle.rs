@@ -89,14 +89,21 @@ impl SsgRunOutcome {
     /// all Docker work is complete.
     pub fn apply_to_state_and_response(
         &self,
+        project: &str,
         state: &dyn SsgStateExt,
         status: &str,
         message: String,
     ) -> Result<SsgResponse> {
-        state.upsert_ssg(status, Some(&self.container_id), Some(&self.build_id))?;
-        state.clear_ssg_services()?;
+        state.upsert_ssg(
+            project,
+            status,
+            Some(&self.container_id),
+            Some(&self.build_id),
+        )?;
+        state.clear_ssg_services(project)?;
         for plan in &self.port_plans {
             state.upsert_ssg_service(&SsgServiceRecord {
+                project: project.to_string(),
                 service_name: plan.service.clone(),
                 container_port: plan.container_port,
                 dynamic_host_port: plan.dynamic_host_port,
@@ -271,12 +278,18 @@ impl SsgStartOutcome {
     /// Apply post-start state writes and build the response.
     pub fn apply_to_state_and_response(
         &self,
+        project: &str,
         state: &dyn SsgStateExt,
         message: String,
     ) -> Result<SsgResponse> {
-        state.upsert_ssg("running", Some(&self.container_id), Some(&self.build_id))?;
-        for svc in state.list_ssg_services()? {
-            state.update_ssg_service_status(&svc.service_name, "running")?;
+        state.upsert_ssg(
+            project,
+            "running",
+            Some(&self.container_id),
+            Some(&self.build_id),
+        )?;
+        for svc in state.list_ssg_services(project)? {
+            state.update_ssg_service_status(project, &svc.service_name, "running")?;
         }
         Ok(build_response(
             &self.manifest,
@@ -513,10 +526,10 @@ pub async fn exec_ssg(
 /// true`; rows whose socat was torn down (e.g. after `coast ssg stop`)
 /// keep the row but set `socat_pid = null` and thus read `false`
 /// until the next `run` / `start` re-spawns them.
-pub fn ports_ssg(state: &dyn SsgStateExt) -> Result<SsgResponse> {
-    let services = state.list_ssg_services()?;
-    let record = state.get_ssg()?;
-    let checkouts = state.list_ssg_port_checkouts()?;
+pub fn ports_ssg(project: &str, state: &dyn SsgStateExt) -> Result<SsgResponse> {
+    let services = state.list_ssg_services(project)?;
+    let record = state.get_ssg(project)?;
+    let checkouts = state.list_ssg_port_checkouts(project)?;
 
     let ports: Vec<SsgPortInfo> = services
         .iter()
@@ -743,6 +756,7 @@ mod tests {
 
     fn sample_record(status: &str, cid: Option<&str>) -> SsgRecord {
         SsgRecord {
+            project: "test-proj".to_string(),
             status: status.to_string(),
             container_id: cid.map(str::to_string),
             build_id: Some("b_test".to_string()),

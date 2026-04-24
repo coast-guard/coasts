@@ -1955,8 +1955,23 @@ async fn restore_running_state(state: &Arc<server::AppState>) {
     // when the daemon exits; rows in `ssg_port_checkouts` survive).
     // If the SSG itself is stopped, respawn is a no-op — rows' PIDs
     // will be null and the next `ssg run/start` kicks the respawn
-    // off via the lifecycle hook.
-    let _messages = handlers::ssg::checkout::respawn_checkouts_after_lifecycle(state).await;
+    // off via the lifecycle hook. Per-project SSG (§23): iterate
+    // every known project's SSG row and respawn its own checkouts.
+    let ssg_projects: Vec<String> = {
+        use coast_ssg::state::SsgStateExt;
+        let db = state.db.lock().await;
+        match db.list_ssgs() {
+            Ok(rows) => rows.into_iter().map(|r| r.project).collect(),
+            Err(err) => {
+                tracing::warn!(error = %err, "restore: failed to list SSG rows; skipping checkout respawn");
+                Vec::new()
+            }
+        }
+    };
+    for project in ssg_projects {
+        let _messages =
+            handlers::ssg::checkout::respawn_checkouts_after_lifecycle(&project, state).await;
+    }
 
     // Restore worktree mounts and mutagen sessions for remote instances.
     restore_remote_worktrees(state, &active_instances).await;

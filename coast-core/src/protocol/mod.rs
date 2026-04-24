@@ -115,7 +115,7 @@ pub enum Request {
     IsSafeToUpdate(UpdateSafetyRequest),
     /// Drain mutating work and prepare the daemon for self-update.
     PrepareForUpdate(PrepareForUpdateRequest),
-    /// Manage the singleton Shared Service Group.
+    /// Manage a project's Shared Service Group.
     Ssg(SsgRequest),
 }
 

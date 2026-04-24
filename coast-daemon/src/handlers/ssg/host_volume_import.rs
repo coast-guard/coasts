@@ -32,6 +32,7 @@ pub(super) struct ImportHostVolumeArgs {
 }
 
 pub(super) async fn handle_import_host_volume(
+    _project: &str,
     state: &std::sync::Arc<AppState>,
     args: ImportHostVolumeArgs,
 ) -> Result<SsgResponse> {

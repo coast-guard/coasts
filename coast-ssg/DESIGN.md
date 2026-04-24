@@ -85,6 +85,7 @@ These apply to every SSG PR without exception. Violations block merge.
 - [§20 Remote coasts with SSG](#20-remote-coasts-with-ssg)
 - [§21 Development approach](#21-development-approach)
 - [§22 Terminology cheat sheet](#22-terminology-cheat-sheet)
+- [§23 Post-v1 correction: per-project SSG](#23-post-v1-correction-per-project-ssg) — **READ THIS FIRST.** §§1-22 describe the original singleton-per-host model. That model was wrong. §23 is the current truth.
 
 ---
 
@@ -356,6 +357,92 @@ remote side. Replaces the Phase 4.5 gateway-IP design in §20. See
 - [x] Integration test `test_remote_multi_instance_independent_tunnels`
 - [x] `make lint`, `make test`, and full `integrated-examples/remote/test_*.sh` regression green
 
+### Phase 18.5 — Pre-correction disk reclamation (prerequisite for §23)
+One-shot host hygiene so Phases 19-25 have room to build, test, and
+spin up per-project SSGs. No code changes; runbook captured in
+`.cursor/plans/ssg-correction-per-project_*.plan.md`.
+- [x] Snapshot `df -h /` and `docker system df` before
+- [x] `coast-dev ssg rm --with-data --force` — drop the singleton SSG + inner volumes
+- [x] `docker system prune -a --volumes -f` — reclaim dangling images, unused volumes, build cache
+- [x] Gate: `df -h /` shows at least 20 GB free before proceeding to Phase 19
+
+### Phase 19 — DESIGN.md correction (no code, just doc)
+Documents the singleton-vs-per-project misunderstanding and rewrites
+the current-truth contract. Existing §§1-22 stay put as the historical
+record; §23 is the new current truth, with banner pointers inserted
+at every contradicting claim.
+- [x] Append §23 "Post-v1 correction: per-project SSG" at the end of DESIGN.md
+- [x] Banner pointers in §§2, 3, 4, 8, 11, 18, 19, 22 and the Addendum's "Out of scope" block citing §23
+- [x] TOC entry + Phase 19-25 checklist stubs in §0 (this commit)
+
+### Phase 20 — State schema: per-project SSG
+Drops the singleton SQL constraints and keys SSG state by project.
+Pre-launch, so existing singleton rows are wiped on daemon startup.
+Also elevated the `SsgRequest` protocol type to a `{project, action}`
+wrapper (the CLI resolves `project` from the sibling `Coastfile`'s
+`[coast].name`) so the per-project key reaches the daemon without a
+placeholder constant.
+- [x] Replace `id INTEGER PRIMARY KEY CHECK (id = 1)` with `project TEXT PRIMARY KEY` on `ssg`
+- [x] Add `project TEXT NOT NULL` to `ssg_services`; PK becomes `(project, service_name)`
+- [x] Add `project TEXT NOT NULL` to `ssg_port_checkouts`; PK becomes `(project, canonical_port)`
+- [x] Thread `project: &str` through every `SsgStateExt` method in `coast-ssg/src/state.rs`
+- [x] One-shot startup migration: `migrate_ssg_per_project()` DROPs + recreates the three SSG tables when the old `id INTEGER` column is detected
+- [x] Replace the "CHECK (id = 1) must reject id = 2" test with `two_projects_coexist_under_per_project_schema` + cross-project isolation tests on `ssg_services` and `ssg_port_checkouts`
+- [x] Wrap `SsgRequest` in a `{project, action}` struct; the CLI resolves `project` from cwd (`resolve_consumer_project`)
+- [x] `cargo build --workspace` green; `cargo test -p coast-daemon -p coast-ssg -p coast-core` green (2161 tests); `cargo clippy --workspace -- -D warnings` clean
+
+### Phase 21 — Naming helpers derive from project
+Flips `SSG_CONTAINER_NAME`, `SSG_COMPOSE_PROJECT`, and `INNER_VOLUME_LABEL_FILTER`
+from constants to pure functions of `project`. The single-line change
+to `DindConfigParams::new("coast", "ssg", ...)` is what makes Docker
+Desktop show `{project}-coasts/ssg` instead of `coast-coasts/ssg`.
+- [ ] `fn ssg_container_name(project: &str) -> String` returns `{project}-ssg`
+- [ ] `fn ssg_compose_project(project: &str) -> String`
+- [ ] `fn inner_volume_label_filter(project: &str) -> String`
+- [ ] `DindConfigParams::new("coast", "ssg", ...)` → `DindConfigParams::new(project, "ssg", ...)`
+- [ ] Update `auto_create_db` `-p "coast-ssg"` call sites to use the derived project compose label
+- [ ] Unit tests for naming functions and Docker label expectations
+
+### Phase 22 — CLI + lifecycle: resolve project from cwd
+Every `SsgRequest` variant grows `project: String`. The CLI resolves
+the current project from cwd (same path as `coast build/run`). New
+`coast ssg ls` lists all SSGs across projects.
+- [ ] Add `project: String` to every `SsgRequest` variant in `coast-core/src/protocol/ssg.rs`
+- [ ] CLI resolution helper reused from `coast build/run`
+- [ ] New `coast ssg ls` subcommand
+- [ ] Project-scoped error messages everywhere
+- [ ] Integration test: `coast ssg ps` in two different cwds shows different SSGs
+
+### Phase 23 — Consumer Coastfile + `from_group` scoped to own project
+Consumer `from_group = true` resolves ONLY against its own project's
+SSG. Missing = hard error (never falls back to another project's SSG).
+Auto-start logic (§11.1) becomes per-project.
+- [ ] `Coastfile.shared_service_groups` derives project from sibling `Coastfile`'s `[coast] name`
+- [ ] Optional explicit `[ssg] project = "..."` (validate match with sibling or error)
+- [ ] Consumer `from_group = true` resolver looks up only the consumer's own project's SSG
+- [ ] Hard-error message: `"service 'X' is declared from_group = true in project 'Y' but the SSG Coastfile.shared_service_groups for project 'Y' does not declare it"`
+- [ ] Delete cross-project sharing paths in `ensure_ready_for_consumer` and equivalents
+- [ ] Unit + integration tests
+
+### Phase 24 — Remote SSG per-(project, remote)
+Thread project through the Phase 18 reverse-tunnel resolution so
+remote coasts route to their OWN project's SSG dynamic port, not
+a global singleton.
+- [ ] `shared_service_forwards` project-aware lookup picks the right SSG service port
+- [ ] Per-(project, remote) SSG provisioning on coast-service
+- [ ] Regression: `test_remote_multi_instance_independent_tunnels` still green
+- [ ] New: `test_remote_two_projects_same_canonical_port_distinct_ssg`
+
+### Phase 25 — Integration test sweep
+Mechanical updates across 35 tests added between main and
+`jrs-add-shared-service-groups` to reflect per-project model.
+- [ ] Delete `integrated-examples/test_ssg_port_collision.sh` (premise no longer applies)
+- [ ] New `test_ssg_two_projects_same_canonical_port.sh`: two projects, each with own SSG, both using postgres:5432, no collision, each app talks to its OWN postgres
+- [ ] New `test_remote_two_projects_same_canonical_port_distinct_ssg.sh`: same idea, one remote VM
+- [ ] Update 32 existing SSG tests for container-name renames, project-scoped error messages, and cwd-based project resolution
+- [ ] `dindind/integration.yaml` registrations updated
+- [ ] `make test` + full `integrated-examples/**/test_*.sh` regression green
+
 ---
 
 ## 1. Problem
@@ -388,6 +475,11 @@ We want:
 
 ## 2. Terminology
 
+> **Superseded by §23.** The "singleton DinD" / "one SSG per host"
+> framing below is the original (wrong) model. Current truth: one SSG
+> per project, named `{project}-ssg`, keyed by the consumer project.
+> See §23 for the correction.
+
 - **SSG** — Shared Service Group. A singleton DinD container on the
   host that runs one or more shared services as nested containers.
 - **SSG service** — one named shared service inside the SSG (e.g. `postgres`).
@@ -403,6 +495,11 @@ We want:
   service via `[shared_services.<name>] from_group = true`.
 
 ## 3. Goals and non-goals
+
+> **Superseded by §23.** The v1 goals/non-goals below describe the
+> singleton-per-host design. Current truth: one SSG per project,
+> cross-project sharing removed as a goal, "multiple concurrent SSGs
+> on one host" removed as a non-goal. See §23.
 
 ### Goals
 
@@ -429,6 +526,12 @@ We want:
 - Auto-migrating existing inlined shared services to SSG.
 
 ## 4. High-level architecture
+
+> **Superseded by §23.** The diagram below shows the singleton
+> topology with two projects sharing one `coast-ssg` container. Under
+> the per-project correction, each project gets its own `{project}-ssg`
+> container (e.g. `cg-ssg`, `filemap-ssg`), and each project's
+> consumers route to their own project's SSG. See §23.
 
 ```text
 Host Docker daemon
@@ -797,6 +900,12 @@ Wired into `Request` / `Response` in `coast-core/src/protocol/mod.rs`.
 
 ## 8. Daemon state
 
+> **Superseded by §23.** The `CHECK (id = 1)` constraint and the
+> flat service / checkout PKs below are the singleton schema.
+> Phase 20 replaces `id` with `project TEXT PRIMARY KEY` and adds
+> `project` to the composite PK of `ssg_services` and
+> `ssg_port_checkouts`. See §23.
+
 New SQLite tables, added via migration in
 [`coast-daemon/src/state/mod.rs`](../coast-daemon/src/state/mod.rs).
 CRUD exposed as an `SsgStateExt` trait in `coast-ssg/src/state.rs`
@@ -1069,6 +1178,12 @@ place with a `.bak` backup (`--apply`). See §17-40 for the full
 set of design decisions.
 
 ## 11. Port plumbing (coast -> SSG)
+
+> **Superseded by §23.** The routing chain described below is
+> correct, but step 2 ("looks up `(container_port, dynamic_host_port)`
+> in `ssg_services`") becomes project-scoped under per-project SSGs:
+> the daemon resolves the consumer's own project's SSG services only.
+> Cross-project routing is explicitly rejected. See §23.
 
 Consumer coasts still believe their services are at canonical ports
 (`postgres:5432`). Flow at `coast run`:
@@ -2012,6 +2127,10 @@ tracks state across sessions.
   view for databases. Mitigation: label the SSG's inner compose
   project as `coast-ssg` consistently, and document that inner
   services are visible via `coast ssg ps`.
+  > **Superseded by §23.** The "mitigation" here is exactly the UX
+  > complaint that led to the per-project correction. Under §23 each
+  > project gets its own `{project}-coasts/ssg` group in Docker
+  > Desktop, so the per-project view is restored.
 - **Volume migration friction.** The biggest footgun for adopters.
   Mitigate with a docs recipe (§10.7), `coast ssg doctor` warnings,
   and a future `coast ssg import-host-volume`.
@@ -2021,6 +2140,13 @@ tracks state across sessions.
   [`coast-daemon/src/handlers/shared.rs::fetch_shared_services`](../coast-daemon/src/handlers/shared.rs).
 
 ## 19. Success criteria
+
+> **Superseded by §23.** The first bullet below encodes the cross-
+> project sharing model that is explicitly removed under the
+> per-project correction. Current success criterion: two *different*
+> projects, each with their own `Coastfile.shared_service_groups`,
+> both declaring postgres:5432, run concurrently with zero host-port
+> conflict and with their own isolated postgres containers. See §23.
 
 - A user can declare postgres + redis once in
   `Coastfile.shared_service_groups`, reference them from three different
@@ -2305,6 +2431,10 @@ Registered in their respective phases, not now:
 
 ## 22. Terminology cheat sheet
 
+> **Superseded by §23.** The "singleton DinD runtime" row below is
+> the original model; the current contract is one SSG per project,
+> named `{project}-ssg`. See §23.
+
 Pinned glossary for context-compacted sessions.
 
 | Term | Meaning |
@@ -2353,6 +2483,11 @@ future-but-scoped-for-this-round items DESIGN originally flagged
 
 ### Explicitly out of scope for this addendum
 
+> **First bullet below is explicitly overturned by §23.** Multiple
+> concurrent SSGs on one host (one per project) IS the current
+> design. The original rationale is preserved for historical context
+> but does not describe the current contract.
+
 - **Multiple concurrent SSGs on one host.** The singleton-per-host
   invariant is intentional (§3 non-goal, §2 terminology). Multiple
   *projects* already share the one SSG — that is the core value
@@ -2381,3 +2516,131 @@ execution order (least-coupled first):
 9. Phase 18 — symmetric remote shared-service routing, 2-3 days
    (land after Phase 17 so the shared-routing crate lift is the
    only large refactor in flight)
+
+---
+
+## 23. Post-v1 correction: per-project SSG
+
+This section documents a fundamental design miss caught during the
+`coastguard-platform` migration. §§1-22 describe a singleton SSG
+(one container per host, shared across all projects). The intent was
+always a per-project SSG (one container per project, isolated state
+and volumes). The confusion survived all the way through Phase 18.
+
+§§1-22 and the Addendum are preserved verbatim so the history of the
+decision is legible. Every claim in those sections that contradicts
+the per-project model now carries a `Superseded by §23` banner.
+**This section is the current truth.**
+
+### 23.1 What was built vs what was intended
+
+| Aspect | What §§1-22 built (singleton) | What was intended (per-project) |
+|---|---|---|
+| Container on the host | One `coast-ssg` DinD, system-wide | One `{project}-ssg` DinD per project (e.g. `cg-ssg`, `filemap-ssg`) |
+| Docker Desktop group | `coast-coasts/ssg` (single global group) | `{project}-coasts/ssg` (same group as the project's own coasts) |
+| State schema | `ssg(id INTEGER PRIMARY KEY CHECK (id = 1))` | `ssg(project TEXT PRIMARY KEY)` |
+| Consumer routing | `from_group = true` resolves against the single global SSG | `from_group = true` resolves against the consumer's own project's SSG |
+| Cross-project sharing | Core feature: two projects reference the same postgres | Explicitly removed: each project has its own postgres |
+| Data isolation | Single DB instance shared across projects (projects create distinct databases inside it) | Each project's postgres is isolated; same canonical port, different containers |
+| `Coastfile.shared_service_groups` | One per host (whichever `ssg build` ran last wins) | One per project, keyed by the sibling `Coastfile`'s `[coast] name` |
+| `coast ssg <verb>` | Global operations | Operate on the project resolved from cwd (like `coast build`/`coast run`) |
+| Remote SSGs | Non-goal; local singleton only | Per-`(project, remote)` pair; each project's remote coasts route to that project's SSG |
+
+### 23.2 Why the singleton model is wrong
+
+Three concrete failures, in order of visibility:
+
+1. **Docker Desktop UX regression.** The singleton shows up as
+   `coast-coasts/ssg`, divorced from the project's own compose group
+   (`cg-coasts`, `filemap-coasts`, etc.). Users looking at Docker
+   Desktop cannot tell which project's databases they're staring at.
+   §18 Risks called this out as an "accepted tradeoff." It should not
+   have been accepted.
+2. **Volume ownership is project-local, but the SSG is not.** The
+   inline shared-services model uses named volumes like
+   `cg_postgres_data`. Those names encode the project. The SSG takes
+   those same volumes but moves them into a global container — the
+   project prefix becomes meaningless, and the volume's
+   `com.docker.compose.project` label points at `coast-ssg`, not at
+   the project that owns the data.
+3. **No isolation for divergent project needs.** If project A wants
+   postgres:15 and project B wants postgres:16, the singleton forces
+   them to either coexist as distinct service names (`postgres15`,
+   `postgres16`) or to coordinate image selection globally. Neither
+   is the right answer for independent projects.
+
+The root cause of the miss was conflating two different problems:
+
+- *Host-port collisions* — two projects both trying to bind the
+  host's port 5432. Solvable with dynamic host ports alone.
+- *Cross-project database sharing* — two projects wanting to talk to
+  the same postgres data. A feature, but one nobody asked for.
+
+The singleton design solved both at once, assuming the second
+followed automatically from the first. It doesn't. Dynamic host ports
+plus per-project SSGs solve the collision problem without forcing
+data sharing. Data sharing is a distinct (future) feature that, if
+needed at all, should be an opt-in between two independently running
+SSGs — not a baked-in global default.
+
+### 23.3 Corrected contract
+
+1. **One SSG per project**, keyed by the consumer project's
+   `[coast] name` (from the sibling `Coastfile`).
+2. **Container name**: `{project}-ssg` (e.g. `cg-ssg`).
+3. **Compose-project label** on the outer SSG DinD: `{project}-coasts`,
+   producing the Docker Desktop group `{project}-coasts/ssg`. This
+   drops the SSG into the same visual group as the project's coasts.
+4. **`Coastfile.shared_service_groups`** is per-project. Located
+   next to the consumer `Coastfile`. Project inferred from the sibling
+   Coastfile's `[coast] name`, or stated explicitly via
+   `[ssg] project = "..."` (must match sibling if both present).
+5. **Consumer routing** for `[shared_services.<name>] from_group = true`:
+   looks up ONLY the consumer's own project's SSG. Missing SSG or
+   missing service name = hard error with a project-scoped message.
+   Never falls through to another project's SSG.
+6. **`coast ssg <verb>`** resolves the current project from cwd using
+   the same helper as `coast build`/`coast run`. Every daemon request
+   carries a `project: String`. A new `coast ssg ls` lists every SSG
+   across projects.
+7. **Remote SSGs** follow the same per-project model: one SSG per
+   `(project, remote)` pair. The Phase 18 symmetric reverse-tunnel
+   plumbing already keys its state by `(project, instance)`, so this
+   is mainly threading the project key through the port resolution
+   step.
+8. **Port allocation** stays dynamic. Each SSG gets its own
+   `allocate_dynamic_port` call; collisions between two running SSGs
+   are impossible because each picks a distinct free port.
+9. **Volumes** stay as declared in the SSG Coastfile. They are now
+   owned by `{project}-ssg`'s compose project label, matching the
+   project's other coasts in Docker Desktop.
+10. **Cross-project sharing is not supported.** Two projects that
+    need shared data must coordinate at the application layer (e.g.
+    explicit network setup between their SSGs) or, in a future
+    revision, via an explicit opt-in syntax. §1 Motivation #3 ("no
+    cross-project sharing") stops being a problem worth solving.
+
+### 23.4 Migration posture
+
+Pre-launch. No users. No on-disk data migration. When the Phase 20
+schema change lands, the daemon wipes the old singleton rows from
+`ssg`, `ssg_services`, and `ssg_port_checkouts` on startup. Running
+coasts that reference the old SSG must be stopped and rerun under the
+new code. Phase 18.5 of the correction runbook handles the one-shot
+cleanup.
+
+### 23.5 Sections superseded by §23 (quick reference)
+
+| Section | What it still gets right | What §23 changes |
+|---|---|---|
+| §1 Motivation | Pain #1 (host-port collisions), #2 (Docker Desktop sprawl), #4 (`auto_create_db` project-bound) are still real pain points; solved by §23. | Pain #3 ("no cross-project sharing") is no longer a problem worth solving. |
+| §2 Terminology | Definitions of SSG, SSG service, SSG Coastfile, canonical port, SSG host port, consumer coast. | "singleton" → "per-project"; one SSG per host → one per project. |
+| §3 Goals / Non-goals | Goals 2-6 + non-goals 2-4. | Goal "One SSG per host" flips to "One SSG per project". Non-goal "Multiple concurrent SSGs on one host" is dropped (it's now the design). |
+| §4 High-level architecture | The alias-IP + socat + dynamic-port routing chain. | Diagram: `coast-ssg` → `{project}-ssg`; two projects get two SSGs, not one shared one. |
+| §8 Daemon state | Table columns for `container_id`, `build_id`, dynamic ports; the `ssg_consumer_pins` table is already project-keyed and stays. | `ssg.id INTEGER PRIMARY KEY CHECK (id = 1)` → `ssg.project TEXT PRIMARY KEY`; `ssg_services` and `ssg_port_checkouts` grow `project` column in the composite PK. |
+| §11 Port plumbing | The full alias-IP + socat + `host.docker.internal` chain is unchanged. | Step 2 lookup is scoped to the consumer's own project's SSG. |
+| §18 Risks | Hidden port collisions, volume migration friction, state drift all still apply. | "Docker Desktop UX regression" bullet is obsolete — the correction restores the per-project view. |
+| §19 Success criteria | Criteria 2-5 stand. | Criterion 1 (three projects sharing one SSG) is replaced with "two projects, each with own SSG, same canonical port, no host-port conflict, data isolation maintained." |
+| §20 Remote coasts with SSG | Phase 18 symmetric routing, `(project, instance)`-keyed state, `auto_create_db` locality. | Phase 24 threads project through the SSG port resolution so each remote coast routes to its own project's SSG. |
+| §22 Terminology cheat sheet | Every row except "SSG" is still correct. | "SSG — Shared Service Group — the singleton DinD runtime" → "...the per-project DinD runtime, one per consumer project". |
+| Addendum "Out of scope" | "Remote-resident SSG" bullet stands (still future work). | "Multiple concurrent SSGs on one host" bullet is explicitly overturned — that IS the design under §23. |

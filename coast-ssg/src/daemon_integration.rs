@@ -29,9 +29,13 @@ use crate::paths;
 use crate::runtime::compose_synth::synth_inner_compose;
 
 /// Inputs for a `coast ssg build` request (mirrors
-/// [`coast_core::protocol::SsgRequest::Build`]).
+/// [`coast_core::protocol::SsgAction::Build`]).
 #[derive(Debug, Clone)]
 pub struct SsgBuildInputs {
+    /// Consumer project name (from the sibling Coastfile's
+    /// `[coast].name`). Per-project SSGs key all state by this
+    /// value (`coast-ssg/DESIGN.md §23`).
+    pub project: String,
     pub file: Option<PathBuf>,
     pub working_dir: Option<PathBuf>,
     pub config: Option<String>,
@@ -242,7 +246,10 @@ pub async fn build_ssg(
 /// built configuration. When `state` is `None`, falls back to the
 /// manifest-only view (`dynamic_host_port = 0`, `status = "built"`)
 /// used by pre-Phase-9 callers.
-pub fn ps_ssg(state: Option<&dyn crate::state::SsgStateExt>) -> Result<SsgResponse> {
+pub fn ps_ssg(
+    project: &str,
+    state: Option<&dyn crate::state::SsgStateExt>,
+) -> Result<SsgResponse> {
     let Some((build_id, manifest)) = load_latest_ssg_manifest_with_id()? else {
         return Ok(SsgResponse {
             message: "No SSG build found. Run `coast ssg build` first.".to_string(),
@@ -259,8 +266,8 @@ pub fn ps_ssg(state: Option<&dyn crate::state::SsgStateExt>) -> Result<SsgRespon
         Vec<SsgPortInfo>,
     ) = match state {
         Some(db) => {
-            let ssg_status = db.get_ssg()?.map(|r| r.status);
-            let services = db.list_ssg_services()?;
+            let ssg_status = db.get_ssg(project)?.map(|r| r.status);
+            let services = db.list_ssg_services(project)?;
             let ports: Vec<SsgPortInfo> = services
                 .iter()
                 .map(|s| SsgPortInfo {
@@ -594,6 +601,7 @@ mod tests {
 
     fn sample_record(service: &str, container_port: u16, dynamic: u16) -> SsgServiceRecord {
         SsgServiceRecord {
+            project: "test-proj".to_string(),
             service_name: service.to_string(),
             container_port,
             dynamic_host_port: dynamic,

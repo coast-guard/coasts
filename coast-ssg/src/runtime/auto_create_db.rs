@@ -150,6 +150,7 @@ mod tests {
 
     fn sample_record(cid: Option<&str>) -> SsgRecord {
         SsgRecord {
+            project: "test-proj".to_string(),
             status: "running".to_string(),
             container_id: cid.map(str::to_string),
             build_id: Some("b_test".to_string()),

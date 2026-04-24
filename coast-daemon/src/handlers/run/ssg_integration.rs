@@ -110,9 +110,10 @@ pub async fn ensure_ready_for_consumer(
     let _ssg_guard = state.ssg_mutex.lock().await;
 
     // Read the current SSG record with the state lock held briefly.
+    // Per-project SSG (§23): scoped to the consumer's own project.
     let record = {
         let db = state.db.lock().await;
-        db.get_ssg()?
+        db.get_ssg(project)?
     };
 
     // DESIGN.md §11.1 says "Emit `CoastEvent::SsgStarting` /
@@ -135,12 +136,14 @@ pub async fn ensure_ready_for_consumer(
 
     let outcome = match record {
         None => DispatchOutcome::Created(
-            run_and_apply(state, &docker, pinned_build_id.as_deref(), progress).await?,
+            run_and_apply(project, state, &docker, pinned_build_id.as_deref(), progress).await?,
         ),
         Some(r) if r.status == "running" => DispatchOutcome::AlreadyRunning(
             r.build_id.clone().unwrap_or_else(|| "unknown".to_string()),
         ),
-        Some(r) => DispatchOutcome::Started(start_and_apply(state, &docker, r, progress).await?),
+        Some(r) => DispatchOutcome::Started(
+            start_and_apply(project, state, &docker, r, progress).await?,
+        ),
     };
 
     let build_id = outcome.build_id().to_string();
@@ -190,6 +193,7 @@ impl DispatchOutcome {
 }
 
 async fn run_and_apply(
+    project: &str,
     state: &AppState,
     docker: &bollard::Docker,
     pinned_build_id: Option<&str>,
@@ -217,6 +221,7 @@ async fn run_and_apply(
     let build_id = outcome.build_id.clone();
     let db = state.db.lock().await;
     let _ = outcome.apply_to_state_and_response(
+        project,
         &*db,
         "running",
         format!("SSG running on build {build_id}"),
@@ -225,6 +230,7 @@ async fn run_and_apply(
 }
 
 async fn start_and_apply(
+    project: &str,
     state: &AppState,
     docker: &bollard::Docker,
     record: coast_ssg::state::SsgRecord,
@@ -234,7 +240,7 @@ async fn start_and_apply(
     // can re-publish them on the outer DinD.
     let plans: Vec<SsgServicePortPlan> = {
         let db = state.db.lock().await;
-        db.list_ssg_services()?
+        db.list_ssg_services(project)?
             .into_iter()
             .map(|s| SsgServicePortPlan {
                 service: s.service_name,
@@ -265,8 +271,11 @@ async fn start_and_apply(
 
     let build_id = outcome.build_id.clone();
     let db = state.db.lock().await;
-    let _ =
-        outcome.apply_to_state_and_response(&*db, format!("SSG started on build {build_id}"))?;
+    let _ = outcome.apply_to_state_and_response(
+        project,
+        &*db,
+        format!("SSG started on build {build_id}"),
+    )?;
     Ok(build_id)
 }
 
@@ -342,7 +351,8 @@ pub async fn synthesize_configs_for_consumer(
 
     let services = {
         let db = state.db.lock().await;
-        db.list_ssg_services()?
+        // Per-project SSG (§23): look up the consumer's own project.
+        db.list_ssg_services(&coastfile.name)?
     };
 
     coast_ssg::daemon_integration::synthesize_shared_service_configs(

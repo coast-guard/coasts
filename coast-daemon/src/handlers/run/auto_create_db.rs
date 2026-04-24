@@ -102,7 +102,7 @@ pub(super) async fn run_auto_create_dbs(
 
     for svc in services {
         let dispatch = classify_service_for_auto_create_db(svc, shared_service_targets);
-        dispatch_one(docker, state, &runtime, svc, dispatch, &db_name).await?;
+        dispatch_one(project, docker, state, &runtime, svc, dispatch, &db_name).await?;
     }
 
     Ok(())
@@ -111,6 +111,7 @@ pub(super) async fn run_auto_create_dbs(
 /// Dispatch one pre-classified service. Extracted to keep
 /// `run_auto_create_dbs`'s cognitive complexity under the clippy gate.
 async fn dispatch_one(
+    project: &str,
     docker: &Docker,
     state: &AppState,
     runtime: &DindRuntime,
@@ -134,7 +135,7 @@ async fn dispatch_one(
         let command = build_create_db_command(svc, db_name);
         match dispatch {
             AutoCreateDbDispatch::Ssg => {
-                exec_in_ssg_service(docker, state, &svc.name, command).await?;
+                exec_in_ssg_service(project, docker, state, &svc.name, command).await?;
             }
             AutoCreateDbDispatch::Inline(ref host) => {
                 exec_in_host_container(runtime, host, &svc.name, command).await?;
@@ -174,8 +175,9 @@ fn build_create_db_command(svc: &SharedServiceConfig, db_name: &str) -> Vec<Stri
     create_db_command(db_type, db_name)
 }
 
-/// Nested exec into an SSG inner service via the singleton DinD.
+/// Nested exec into an SSG inner service via the per-project DinD.
 async fn exec_in_ssg_service(
+    project: &str,
     docker: &Docker,
     state: &AppState,
     service_name: &str,
@@ -183,14 +185,14 @@ async fn exec_in_ssg_service(
 ) -> Result<()> {
     let record = {
         let db = state.db.lock().await;
-        db.get_ssg()?
+        db.get_ssg(project)?
     };
     let Some(record) = record else {
-        return Err(CoastError::state(
-            "auto_create_db requested on an SSG-backed service but no SSG is registered. \
-             This should not happen — `ensure_ready_for_consumer` runs earlier in the \
-             provision pipeline.",
-        ));
+        return Err(CoastError::state(format!(
+            "auto_create_db requested on an SSG-backed service but no SSG is registered \
+             for project '{project}'. This should not happen — `ensure_ready_for_consumer` \
+             runs earlier in the provision pipeline."
+        )));
     };
 
     let ops = coast_ssg::docker_ops::BollardSsgDockerOps::new(docker.clone());

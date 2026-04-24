@@ -29,7 +29,7 @@ use crate::server::AppState;
 
 /// Dispatch target for `SsgRequest::Doctor`. Loads the active SSG
 /// manifest, stats every host bind mount, and returns findings.
-pub async fn handle_doctor(_state: &Arc<AppState>) -> Result<SsgResponse> {
+pub async fn handle_doctor(_project: &str, _state: &Arc<AppState>) -> Result<SsgResponse> {
     let manifest = load_latest_ssg_manifest_with_id()?;
     Ok(build_doctor_response(manifest, real_stat))
 }
