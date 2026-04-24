@@ -47,6 +47,14 @@ pub(super) struct RawSsgSection {
     /// Fragments themselves cannot use `extends` / `includes`.
     #[serde(default)]
     pub includes: Option<Vec<String>>,
+    /// Phase 23: optional explicit project name. When set, must
+    /// match the sibling `Coastfile`'s `[coast] name` (cross-check
+    /// happens at the daemon layer where both Coastfiles are in
+    /// scope — the parser only enforces that when the field is
+    /// present it is a non-empty string). See `coast-ssg/DESIGN.md
+    /// §23`.
+    #[serde(default)]
+    pub project: Option<String>,
 }
 
 /// `[unset]` block — list named `shared_services` entries to drop

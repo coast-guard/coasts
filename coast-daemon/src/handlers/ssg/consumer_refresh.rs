@@ -72,19 +72,11 @@ pub(crate) async fn refresh_consumer_proxies_after_lifecycle(state: &Arc<AppStat
         _ => return Vec::new(),
     };
 
-    let manifest = match load_latest_ssg_manifest() {
-        Ok(Some(m)) => m,
-        Ok(None) => {
-            info!("consumer refresh: no active SSG build; skipping");
-            return Vec::new();
-        }
-        Err(err) => {
-            warn!(error = %err, "consumer refresh: failed to load SSG manifest; skipping");
-            return Vec::new();
-        }
-    };
-
-    apply_refresh_to_each(state, &docker, &consumers, &manifest).await
+    // Phase 23: each consumer reads its own project's SSG manifest.
+    // Previously a single global `latest` manifest was loaded up
+    // front and applied to every consumer; that leaked across
+    // projects.
+    apply_refresh_to_each(state, &docker, &consumers).await
 }
 
 async fn gather_eligible_consumers(state: &Arc<AppState>) -> Option<Vec<ConsumerToRefresh>> {
@@ -101,45 +93,85 @@ async fn apply_refresh_to_each(
     state: &Arc<AppState>,
     docker: &bollard::Docker,
     consumers: &[ConsumerToRefresh],
-    manifest: &coast_ssg::build::artifact::SsgManifest,
 ) -> Vec<String> {
     let mut refreshed = Vec::with_capacity(consumers.len());
     for consumer in consumers {
-        let label = format!("{}/{}", consumer.project, consumer.name);
-
-        // Per-project lookup (§23): consumers route into their own
-        // project's SSG, so the services list is scoped by project.
-        let services = {
-            use coast_ssg::state::SsgStateExt;
-            let db = state.db.lock().await;
-            match db.list_ssg_services(&consumer.project) {
-                Ok(s) => s,
-                Err(err) => {
-                    warn!(
-                        consumer = %label,
-                        error = %err,
-                        "consumer refresh: failed to read ssg_services for project; skipping",
-                    );
-                    continue;
-                }
-            }
-        };
-
-        match refresh_one(docker, consumer, manifest, &services).await {
-            Ok(()) => {
-                info!(consumer = %label, "consumer refresh: proxies updated for new SSG ports");
-                refreshed.push(label);
-            }
-            Err(err) => {
-                warn!(
-                    consumer = %label,
-                    error = %err,
-                    "consumer refresh: failed; leaving old proxies in place",
-                );
-            }
+        if let Some(label) = refresh_one_consumer(state, docker, consumer).await {
+            refreshed.push(label);
         }
     }
     refreshed
+}
+
+/// Refresh a single consumer. Returns the successfully-refreshed
+/// `project/instance` label when the refresh succeeded, `None`
+/// otherwise (all failure modes are logged and swallowed — callers
+/// never see an error from consumer refresh).
+async fn refresh_one_consumer(
+    state: &Arc<AppState>,
+    docker: &bollard::Docker,
+    consumer: &ConsumerToRefresh,
+) -> Option<String> {
+    let label = format!("{}/{}", consumer.project, consumer.name);
+    let (manifest, services) = resolve_consumer_ssg(state, consumer, &label).await?;
+    execute_refresh(docker, consumer, &manifest, &services, &label).await
+}
+
+/// Resolve the manifest + services for a consumer, or log-and-skip.
+/// Per-project lookup (§23): consumers route into their own project's
+/// SSG, so both the manifest and the `ssg_services` list are scoped
+/// by this consumer's project.
+async fn resolve_consumer_ssg(
+    state: &Arc<AppState>,
+    consumer: &ConsumerToRefresh,
+    label: &str,
+) -> Option<(
+    coast_ssg::build::artifact::SsgManifest,
+    Vec<coast_ssg::state::SsgServiceRecord>,
+)> {
+    match load_project_ssg_for_consumer(state, consumer).await {
+        Ok(Some(pair)) => Some(pair),
+        Ok(None) => {
+            info!(
+                consumer = %label,
+                "consumer refresh: no SSG build for project; skipping",
+            );
+            None
+        }
+        Err(err) => {
+            warn!(
+                consumer = %label,
+                error = %err,
+                "consumer refresh: failed to load per-project SSG manifest; skipping",
+            );
+            None
+        }
+    }
+}
+
+/// Call `refresh_one` and log the outcome. Returns `Some(label)` on
+/// success so the caller can append it to the refreshed list.
+async fn execute_refresh(
+    docker: &bollard::Docker,
+    consumer: &ConsumerToRefresh,
+    manifest: &coast_ssg::build::artifact::SsgManifest,
+    services: &[coast_ssg::state::SsgServiceRecord],
+    label: &str,
+) -> Option<String> {
+    match refresh_one(docker, consumer, manifest, services).await {
+        Ok(()) => {
+            info!(consumer = %label, "consumer refresh: proxies updated for new SSG ports");
+            Some(label.to_string())
+        }
+        Err(err) => {
+            warn!(
+                consumer = %label,
+                error = %err,
+                "consumer refresh: failed; leaving old proxies in place",
+            );
+            None
+        }
+    }
 }
 
 /// Enumerate local running consumers whose artifact Coastfile carries
@@ -216,12 +248,54 @@ fn load_artifact_coastfile(path: &Path) -> Option<Coastfile> {
     }
 }
 
-fn load_latest_ssg_manifest(
-) -> coast_core::error::Result<Option<coast_ssg::build::artifact::SsgManifest>> {
-    match coast_ssg::daemon_integration::load_latest_ssg_manifest_with_id()? {
-        Some((_, manifest)) => Ok(Some(manifest)),
-        None => Ok(None),
-    }
+/// Resolve `(manifest, services)` for a consumer's own project's
+/// SSG. Returns `Ok(None)` when the project has no `ssg build` in
+/// state — the caller skips this consumer. Errors on state or
+/// filesystem access failures (the caller logs and skips).
+async fn load_project_ssg_for_consumer(
+    state: &Arc<AppState>,
+    consumer: &ConsumerToRefresh,
+) -> coast_core::error::Result<
+    Option<(
+        coast_ssg::build::artifact::SsgManifest,
+        Vec<coast_ssg::state::SsgServiceRecord>,
+    )>,
+> {
+    use coast_ssg::state::SsgStateExt;
+
+    let (build_id, services) = {
+        let db = state.db.lock().await;
+        let pin = db.get_ssg_consumer_pin(&consumer.project)?;
+        let latest = db
+            .get_ssg(&consumer.project)?
+            .and_then(|r| r.latest_build_id);
+        let services = db.list_ssg_services(&consumer.project)?;
+        (pin.map(|p| p.build_id).or(latest), services)
+    };
+    let Some(build_id) = build_id else {
+        return Ok(None);
+    };
+
+    let build_dir = coast_ssg::paths::ssg_build_dir(&build_id)?;
+    let manifest_path = build_dir.join("manifest.json");
+    let content = std::fs::read_to_string(&manifest_path).map_err(|e| {
+        coast_core::error::CoastError::Io {
+            message: format!(
+                "failed to read SSG manifest '{}': {e}",
+                manifest_path.display()
+            ),
+            path: manifest_path.clone(),
+            source: Some(e),
+        }
+    })?;
+    let manifest: coast_ssg::build::artifact::SsgManifest = serde_json::from_str(&content)
+        .map_err(|e| {
+            coast_core::error::CoastError::artifact(format!(
+                "failed to parse SSG manifest '{}': {e}",
+                manifest_path.display()
+            ))
+        })?;
+    Ok(Some((manifest, services)))
 }
 
 async fn refresh_one(

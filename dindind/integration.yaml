@@ -524,3 +524,9 @@ tests:
     script: integrated-examples/test_ssg_per_project_isolation.sh
     timeout: 600
     note: "two projects with their own `Coastfile.shared_service_groups` run concurrent postgres SSGs as `{project}-ssg` containers; `ssg ps` is cwd-scoped; `ssg ls` is cross-project; per-project `ssg rm` is isolated (DESIGN §23, Phase 22)"
+
+  # --- Shared Service Groups (coast-ssg) — Phase 23 (consumer resolver + `from_group`) ---
+  test_ssg_per_project_build_isolation:
+    script: integrated-examples/test_ssg_per_project_build_isolation.sh
+    timeout: 600
+    note: "project A's `ssg build` is invisible to project B's consumer; `coast build` in B hard-errors naming project B instead of silently picking up A's build via the old global `latest` symlink (DESIGN §23, Phase 23)"

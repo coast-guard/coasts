@@ -1072,7 +1072,10 @@ async fn handle_ssg_build_streaming(
     let handler: std::pin::Pin<
         Box<
             dyn std::future::Future<
-                    Output = std::result::Result<coast_core::protocol::SsgResponse, CoastError>,
+                    Output = std::result::Result<
+                        coast_ssg::daemon_integration::SsgBuildOutcome,
+                        CoastError,
+                    >,
                 > + Send,
         >,
     > = Box::pin(async move {
@@ -1084,7 +1087,34 @@ async fn handle_ssg_build_streaming(
         forward_streaming_progress(handler, &mut rx, writer, Response::SsgProgress).await;
 
     let final_response = match build_result {
-        Ok(resp) => Response::Ssg(resp),
+        Ok(outcome) => {
+            // Phase 23: record the new build as the project's
+            // latest. This is what replaces the global
+            // `~/.coast/ssg/latest` fallback on the consumer side.
+            // Doing the state write here (not inside `build_ssg`)
+            // keeps the async closure state-free and lets us reuse
+            // the same `SsgStateExt` handle the daemon already holds.
+            {
+                use coast_ssg::state::SsgStateExt;
+                let db = state.db.lock().await;
+                if let Err(err) =
+                    db.set_latest_build_id(&outcome.project, &outcome.build_id)
+                {
+                    // Surface the failure via the final response
+                    // rather than swallowing it — consumers would
+                    // otherwise hit "no SSG build for project".
+                    Response::Error(ErrorResponse {
+                        error: format!(
+                            "build succeeded but failed to record \
+                             latest_build_id for project '{}': {err}",
+                            outcome.project,
+                        ),
+                    })
+                } else {
+                    Response::Ssg(outcome.response)
+                }
+            }
+        }
         Err(e) => Response::Error(ErrorResponse {
             error: e.to_string(),
         }),
@@ -1162,10 +1192,45 @@ async fn run_streaming_run(
     docker: &bollard::Docker,
     writer: &mut tokio::net::unix::OwnedWriteHalf,
 ) -> Response {
+    // Phase 23: resolve the project's build BEFORE spawning the
+    // async build pipeline. `pin > ssg.latest_build_id > error`.
+    // No global `~/.coast/ssg/latest` fallback.
+    let resolved_build_id = {
+        use coast_ssg::state::SsgStateExt;
+        let db = state.db.lock().await;
+        let pin = match db.get_ssg_consumer_pin(project) {
+            Ok(p) => p,
+            Err(e) => {
+                return Response::Error(ErrorResponse {
+                    error: e.to_string(),
+                });
+            }
+        };
+        let latest = match db.get_ssg(project) {
+            Ok(rec) => rec.and_then(|r| r.latest_build_id),
+            Err(e) => {
+                return Response::Error(ErrorResponse {
+                    error: e.to_string(),
+                });
+            }
+        };
+        pin.map(|p| p.build_id).or(latest)
+    };
+    let Some(resolved_build_id) = resolved_build_id else {
+        return Response::Error(ErrorResponse {
+            error: format!(
+                "no SSG build found for project '{project}'. Run \
+                 `coast ssg build` in the directory containing your \
+                 Coastfile.shared_service_groups."
+            ),
+        });
+    };
+
     let (tx, mut rx) = tokio::sync::mpsc::channel::<BuildProgressEvent>(64);
 
     let docker_clone = docker.clone();
     let project_for_task = project.to_string();
+    let build_id_for_task = resolved_build_id.clone();
     let handler: std::pin::Pin<
         Box<
             dyn std::future::Future<
@@ -1177,7 +1242,13 @@ async fn run_streaming_run(
         >,
     > = Box::pin(async move {
         let ops = coast_ssg::docker_ops::BollardSsgDockerOps::new(docker_clone);
-        coast_ssg::daemon_integration::run_ssg(&project_for_task, &ops, tx).await
+        coast_ssg::daemon_integration::run_ssg_with_build_id(
+            &project_for_task,
+            &ops,
+            Some(&build_id_for_task),
+            tx,
+        )
+        .await
     });
 
     let result = forward_streaming_progress(handler, &mut rx, writer, Response::SsgProgress).await;

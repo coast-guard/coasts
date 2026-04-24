@@ -32,7 +32,8 @@ fn row_to_ssg(row: &rusqlite::Row<'_>) -> rusqlite::Result<SsgRecord> {
         container_id: row.get(1)?,
         status: row.get(2)?,
         build_id: row.get(3)?,
-        created_at: row.get(4)?,
+        latest_build_id: row.get(4)?,
+        created_at: row.get(5)?,
     })
 }
 
@@ -66,10 +67,18 @@ impl SsgStateExt for StateDb {
         build_id: Option<&str>,
     ) -> Result<()> {
         let created_at = chrono::Utc::now().to_rfc3339();
+        // Phase 23: INSERT OR REPLACE would wipe `latest_build_id`
+        // because it's not in the column list here. Use an explicit
+        // UPSERT that preserves the column when updating.
         self.conn
             .execute(
-                "INSERT OR REPLACE INTO ssg (project, container_id, status, build_id, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                "INSERT INTO ssg (project, container_id, status, build_id, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(project) DO UPDATE SET
+                     container_id = excluded.container_id,
+                     status = excluded.status,
+                     build_id = excluded.build_id,
+                     created_at = excluded.created_at",
                 params![project, container_id, status, build_id, created_at],
             )
             .map_err(|e| state_err(format!("failed to upsert ssg row for '{project}': {e}"), e))?;
@@ -81,7 +90,7 @@ impl SsgStateExt for StateDb {
     fn get_ssg(&self, project: &str) -> Result<Option<SsgRecord>> {
         self.conn
             .query_row(
-                "SELECT project, container_id, status, build_id, created_at
+                "SELECT project, container_id, status, build_id, latest_build_id, created_at
                  FROM ssg WHERE project = ?1",
                 params![project],
                 row_to_ssg,
@@ -103,11 +112,39 @@ impl SsgStateExt for StateDb {
     }
 
     #[instrument(skip(self))]
+    fn set_latest_build_id(&self, project: &str, build_id: &str) -> Result<()> {
+        let created_at = chrono::Utc::now().to_rfc3339();
+        // Phase 23: creates a row with `status = "built"` when absent;
+        // when the row exists, only `latest_build_id` is touched —
+        // `container_id`, `build_id`, `status`, `created_at` stay
+        // put so a running SSG keeps running after a rebuild. See
+        // `coast-ssg/DESIGN.md §23`.
+        self.conn
+            .execute(
+                "INSERT INTO ssg (project, status, build_id, latest_build_id, created_at)
+                 VALUES (?1, 'built', NULL, ?2, ?3)
+                 ON CONFLICT(project) DO UPDATE SET
+                     latest_build_id = excluded.latest_build_id",
+                params![project, build_id, created_at],
+            )
+            .map_err(|e| {
+                state_err(
+                    format!(
+                        "failed to set latest_build_id for project '{project}' to '{build_id}': {e}"
+                    ),
+                    e,
+                )
+            })?;
+        debug!(project, build_id, "set ssg.latest_build_id");
+        Ok(())
+    }
+
+    #[instrument(skip(self))]
     fn list_ssgs(&self) -> Result<Vec<SsgRecord>> {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT project, container_id, status, build_id, created_at
+                "SELECT project, container_id, status, build_id, latest_build_id, created_at
                  FROM ssg
                  ORDER BY project ASC",
             )
@@ -508,6 +545,88 @@ mod tests {
         db.clear_ssg(P).unwrap();
         assert!(db.get_ssg(P).unwrap().is_none());
         assert!(db.get_ssg(Q).unwrap().is_some());
+    }
+
+    // --- Phase 23: set_latest_build_id ---
+
+    #[test]
+    fn set_latest_build_id_creates_row_with_built_status() {
+        let db = db();
+        assert!(db.get_ssg(P).unwrap().is_none());
+
+        db.set_latest_build_id(P, "b_new_20260424").unwrap();
+
+        let rec = db.get_ssg(P).unwrap().expect("row should exist");
+        assert_eq!(rec.project, P);
+        assert_eq!(rec.status, "built");
+        assert!(
+            rec.container_id.is_none(),
+            "no container until ssg run",
+        );
+        assert!(
+            rec.build_id.is_none(),
+            "no running-build until ssg run",
+        );
+        assert_eq!(rec.latest_build_id.as_deref(), Some("b_new_20260424"));
+        assert!(!rec.created_at.is_empty());
+    }
+
+    #[test]
+    fn set_latest_build_id_preserves_running_state() {
+        // Regression for DESIGN §23: when `ssg build` fires while the
+        // SSG is running, only `latest_build_id` updates — the running
+        // container's state is left untouched.
+        let db = db();
+        db.upsert_ssg(P, "running", Some("cid-abc"), Some("b_old"))
+            .unwrap();
+        db.set_latest_build_id(P, "b_new").unwrap();
+
+        let rec = db.get_ssg(P).unwrap().unwrap();
+        assert_eq!(rec.status, "running");
+        assert_eq!(rec.container_id.as_deref(), Some("cid-abc"));
+        assert_eq!(rec.build_id.as_deref(), Some("b_old"));
+        assert_eq!(rec.latest_build_id.as_deref(), Some("b_new"));
+    }
+
+    #[test]
+    fn set_latest_build_id_is_idempotent_and_allows_overwrites() {
+        let db = db();
+        db.set_latest_build_id(P, "b_one").unwrap();
+        db.set_latest_build_id(P, "b_two").unwrap();
+        let rec = db.get_ssg(P).unwrap().unwrap();
+        assert_eq!(rec.latest_build_id.as_deref(), Some("b_two"));
+    }
+
+    #[test]
+    fn set_latest_build_id_scoped_by_project() {
+        let db = db();
+        db.set_latest_build_id(P, "b_p").unwrap();
+        db.set_latest_build_id(Q, "b_q").unwrap();
+
+        assert_eq!(
+            db.get_ssg(P).unwrap().unwrap().latest_build_id.as_deref(),
+            Some("b_p"),
+        );
+        assert_eq!(
+            db.get_ssg(Q).unwrap().unwrap().latest_build_id.as_deref(),
+            Some("b_q"),
+        );
+    }
+
+    #[test]
+    fn upsert_ssg_preserves_latest_build_id() {
+        // Ensure Phase 20's upsert_ssg (now using explicit UPSERT with
+        // named columns) doesn't accidentally clear latest_build_id
+        // when a running ssg row is updated.
+        let db = db();
+        db.set_latest_build_id(P, "b_latest").unwrap();
+        db.upsert_ssg(P, "running", Some("cid-1"), Some("b_latest"))
+            .unwrap();
+
+        let rec = db.get_ssg(P).unwrap().unwrap();
+        assert_eq!(rec.status, "running");
+        assert_eq!(rec.container_id.as_deref(), Some("cid-1"));
+        assert_eq!(rec.latest_build_id.as_deref(), Some("b_latest"));
     }
 
     // --- ssg_services ---

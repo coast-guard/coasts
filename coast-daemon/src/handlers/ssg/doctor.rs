@@ -6,11 +6,11 @@
 //!
 //! The pure evaluator lives in `coast-ssg` and returns findings
 //! given a manifest and a stat closure. This module is the I/O
-//! adapter: it reads the active manifest via
-//! `coast_ssg::daemon_integration::load_latest_ssg_manifest_with_id`
-//! and supplies a real-fs stat closure built on
-//! `std::fs::metadata` + `std::os::unix::fs::MetadataExt`. No writes,
-//! no Docker calls, no auto-fix.
+//! adapter: it reads the project's SSG manifest from state
+//! (Phase 23: `ssg_consumer_pins` > `ssg.latest_build_id`, no global
+//! `~/.coast/ssg/latest` fallback) and supplies a real-fs stat
+//! closure built on `std::fs::metadata` + `std::os::unix::fs::MetadataExt`.
+//! No writes, no Docker calls, no auto-fix.
 //!
 //! Absent the Unix `MetadataExt`, we still build and compile on
 //! non-Unix targets but every path stats as `Missing` there — the
@@ -22,16 +22,52 @@ use std::sync::Arc;
 use coast_core::error::Result;
 use coast_core::protocol::SsgResponse;
 use coast_ssg::build::artifact::SsgManifest;
-use coast_ssg::daemon_integration::load_latest_ssg_manifest_with_id;
 use coast_ssg::doctor::{evaluate_doctor, StatResult};
 
 use crate::server::AppState;
 
-/// Dispatch target for `SsgRequest::Doctor`. Loads the active SSG
+/// Dispatch target for `SsgAction::Doctor`. Loads the project's SSG
 /// manifest, stats every host bind mount, and returns findings.
-pub async fn handle_doctor(_project: &str, _state: &Arc<AppState>) -> Result<SsgResponse> {
-    let manifest = load_latest_ssg_manifest_with_id()?;
+pub async fn handle_doctor(project: &str, state: &Arc<AppState>) -> Result<SsgResponse> {
+    let manifest = load_project_ssg_manifest(project, state).await?;
     Ok(build_doctor_response(manifest, real_stat))
+}
+
+async fn load_project_ssg_manifest(
+    project: &str,
+    state: &Arc<AppState>,
+) -> Result<Option<(String, SsgManifest)>> {
+    use coast_ssg::state::SsgStateExt;
+
+    let build_id = {
+        let db = state.db.lock().await;
+        let pin = db.get_ssg_consumer_pin(project)?;
+        let latest = db.get_ssg(project)?.and_then(|r| r.latest_build_id);
+        pin.map(|p| p.build_id).or(latest)
+    };
+    let Some(build_id) = build_id else {
+        return Ok(None);
+    };
+
+    let build_dir = coast_ssg::paths::ssg_build_dir(&build_id)?;
+    let manifest_path = build_dir.join("manifest.json");
+    let content = std::fs::read_to_string(&manifest_path).map_err(|e| {
+        coast_core::error::CoastError::Io {
+            message: format!(
+                "failed to read SSG manifest '{}': {e}",
+                manifest_path.display()
+            ),
+            path: manifest_path.clone(),
+            source: Some(e),
+        }
+    })?;
+    let manifest: SsgManifest = serde_json::from_str(&content).map_err(|e| {
+        coast_core::error::CoastError::artifact(format!(
+            "failed to parse SSG manifest '{}': {e}",
+            manifest_path.display()
+        ))
+    })?;
+    Ok(Some((build_id, manifest)))
 }
 
 /// Pure response shaper for `coast ssg doctor`. Decoupled from

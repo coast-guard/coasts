@@ -85,12 +85,19 @@ pub async fn ensure_ready_for_consumer(
         None => None,
     };
 
-    // Precondition: an SSG build must exist. DESIGN.md §11.1 specifies
-    // the verbatim error the user sees when it doesn't.
-    // With a valid pin, that check is already satisfied (the pin
-    // points at a dir we just verified). Without a pin, require
-    // `latest` to resolve.
-    if pinned_build_id.is_none() && coast_ssg::paths::resolve_latest_build_id().is_none() {
+    // Phase 23: resolve the effective build for this consumer. If
+    // the project has no pin, fall back to the project's own
+    // `latest_build_id` (set by `coast ssg build`). No global
+    // `~/.coast/ssg/latest` symlink fallback — that used to leak
+    // another project's build into this project's consumer.
+    let resolved_build_id: Option<String> = match pinned_build_id {
+        Some(id) => Some(id),
+        None => {
+            let db = state.db.lock().await;
+            db.get_ssg(project)?.and_then(|r| r.latest_build_id)
+        }
+    };
+    if resolved_build_id.is_none() {
         return Err(missing_ssg_build_error(project, &referenced_service_names));
     }
 
@@ -136,7 +143,11 @@ pub async fn ensure_ready_for_consumer(
 
     let outcome = match record {
         None => DispatchOutcome::Created(
-            run_and_apply(project, state, &docker, pinned_build_id.as_deref(), progress).await?,
+            // Phase 23: pass the pin-or-project-latest build id.
+            // `run_and_apply` no longer falls back to a global
+            // symlink if this is `None`.
+            run_and_apply(project, state, &docker, resolved_build_id.as_deref(), progress)
+                .await?,
         ),
         Some(r) if r.status == "running" => DispatchOutcome::AlreadyRunning(
             r.build_id.clone().unwrap_or_else(|| "unknown".to_string()),
@@ -327,12 +338,24 @@ pub async fn synthesize_configs_for_consumer(
         return Ok(Vec::new());
     }
 
-    let build_id = coast_ssg::paths::resolve_latest_build_id().ok_or_else(|| {
-        CoastError::coastfile(
-            "no active SSG build found while synthesizing consumer shared services. \
-             Run `coast ssg build` in the directory containing your \
+    // Phase 23: resolve the project's active build from state (pin
+    // overrides the project's own `latest_build_id`). No global
+    // `~/.coast/ssg/latest` fallback — that leaked another project's
+    // build into this consumer.
+    let (build_id, services) = {
+        let db = state.db.lock().await;
+        let pin = db.get_ssg_consumer_pin(&coastfile.name)?;
+        let latest = db.get_ssg(&coastfile.name)?.and_then(|r| r.latest_build_id);
+        let services = db.list_ssg_services(&coastfile.name)?;
+        (pin.map(|p| p.build_id).or(latest), services)
+    };
+    let build_id = build_id.ok_or_else(|| {
+        CoastError::coastfile(format!(
+            "no SSG build found for project '{project}' while synthesizing consumer shared \
+             services. Run `coast ssg build` in the directory containing the project's \
              Coastfile.shared_service_groups.",
-        )
+            project = coastfile.name,
+        ))
     })?;
     let build_dir = coast_ssg::paths::ssg_build_dir(&build_id)?;
     let manifest_path = build_dir.join("manifest.json");
@@ -353,12 +376,6 @@ pub async fn synthesize_configs_for_consumer(
             ))
         })?;
 
-    let services = {
-        let db = state.db.lock().await;
-        // Per-project SSG (§23): look up the consumer's own project.
-        db.list_ssg_services(&coastfile.name)?
-    };
-
     coast_ssg::daemon_integration::synthesize_shared_service_configs(
         coastfile, &manifest, &services,
     )
@@ -378,10 +395,13 @@ fn missing_ssg_build_error(project: &str, referenced_services: &[String]) -> Coa
             .collect();
         format!("shared services {}", names.join(", "))
     };
+    // Phase 23: name the project in both directions — what references
+    // the group AND whose SSG build is missing. Before per-project
+    // SSGs, the wording was ambiguous about whose build to run.
     CoastError::coastfile(format!(
         "Project '{project}' references {service_list} from the Shared Service Group, \
-         but no SSG build exists. Run `coast ssg build` in the directory containing your \
-         Coastfile.shared_service_groups."
+         but no SSG build exists for project '{project}'. Run `coast ssg build` in the \
+         directory containing the project's Coastfile.shared_service_groups."
     ))
 }
 
@@ -427,11 +447,16 @@ pub async fn validate_ssg_drift(
 ) -> Result<()> {
     // Phase 16: the "active" manifest is either the pinned build or
     // `latest`, depending on whether the consumer's project has a pin
-    // in `ssg_consumer_pins`. Read the pin once here and hand the
-    // resolution closure to the inner helper.
-    let pin = {
+    // in `ssg_consumer_pins`. Phase 23: `latest` is now the project's
+    // own `ssg.latest_build_id` — no global fallback. Read both state
+    // entries once here and hand the resolution closure to the inner
+    // helper.
+    let (pin, project_latest) = {
+        use coast_ssg::state::SsgStateExt;
         let db = state.db.lock().await;
-        db.get_ssg_consumer_pin(project)?
+        let pin = db.get_ssg_consumer_pin(project)?;
+        let latest = db.get_ssg(project)?.and_then(|r| r.latest_build_id);
+        (pin, latest)
     };
     let loader_pin = pin.map(|p| coast_ssg::runtime::pinning::PinRecord {
         project: p.project,
@@ -439,12 +464,15 @@ pub async fn validate_ssg_drift(
     });
     validate_ssg_drift_with_loader(coastfile, manifest_path, progress, move || {
         // Returns `Ok(Some(manifest))` on hit, `Ok(None)` when no
-        // pin + no latest (fall through to existing
+        // pin + no project-latest (fall through to existing
         // `drift_missing_ssg_error`), or propagates a hard error
         // when a pin is set but its build dir is missing
         // (pin-pruned, per §17-41 SETTLED).
-        coast_ssg::runtime::pinning::resolve_effective_manifest(loader_pin.as_ref())
-            .map(|opt| opt.map(|(_, manifest)| manifest))
+        coast_ssg::runtime::pinning::resolve_effective_manifest(
+            loader_pin.as_ref(),
+            project_latest.as_deref(),
+        )
+        .map(|opt| opt.map(|(_, manifest)| manifest))
     })
 }
 
@@ -695,9 +723,11 @@ name = "consumer"
 
     #[tokio::test]
     async fn ensure_ready_for_consumer_errors_when_no_ssg_build_exists() {
-        // Point COAST_HOME at an empty tempdir so
-        // `coast_ssg::paths::resolve_latest_build_id()` returns None
-        // regardless of the developer's real ~/.coast.
+        // Phase 23: with no row in `ssg.latest_build_id` for the
+        // project, the resolver must hard-error rather than fall
+        // through to another project's build or a global symlink.
+        // COAST_HOME is still pointed at an empty tempdir to keep
+        // any downstream artifact reads pointed at a hermetic root.
         let _guard = COAST_HOME_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -746,8 +776,9 @@ name = "consumer"
         assert!(result.is_empty());
     }
 
-    /// Write a minimal SSG artifact tree at `$root/ssg/` so
-    /// `coast_ssg::paths::resolve_latest_build_id()` finds it.
+    /// Write a minimal SSG artifact tree at `$root/ssg/` so the
+    /// consumer resolver can load the manifest on disk after the
+    /// caller seeds `ssg.latest_build_id` in state for the project.
     fn seed_ssg_build(root: &Path, build_id: &str, services: &[(&str, &str)]) {
         let ssg_home = root.join("ssg");
         let build_dir = ssg_home.join("builds").join(build_id);
@@ -796,6 +827,14 @@ name = "consumer"
         );
 
         let db = crate::state::StateDb::open_in_memory().unwrap();
+        // Phase 23: seed the project's `latest_build_id` so the
+        // resolver doesn't short-circuit on "no SSG build for
+        // project" before reaching the Docker-availability check.
+        {
+            use coast_ssg::state::SsgStateExt;
+            db.set_latest_build_id("my-app", "b9_20260420000000")
+                .unwrap();
+        }
         let state = crate::server::AppState::new_for_testing(db);
 
         let coastfile = coastfile_with_group_refs(&["postgres"]);

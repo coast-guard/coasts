@@ -540,17 +540,27 @@ async fn trigger_remote_build(
 
 /// Phase 7: compute the `ssg` drift block for a just-downloaded
 /// remote artifact. Reads the artifact's `coastfile.toml`, and if it
-/// has `shared_service_group_refs`, snapshots the LOCAL SSG's latest
-/// build + image refs.
+/// has `shared_service_group_refs`, snapshots that PROJECT's LOCAL
+/// SSG build + image refs.
 ///
 /// Returns `None` when the artifact has no coastfile, the coastfile
-/// has no SSG refs, or no local SSG build exists. All three are
-/// non-errors — the run-side drift check handles each gracefully.
+/// has no SSG refs, or the consumer's project has no local SSG build
+/// in state. All three are non-errors — the run-side drift check
+/// handles each gracefully.
+///
+/// Phase 23: resolves the SSG build id from per-project state
+/// (`ssg_consumer_pins` > `ssg.latest_build_id`). Callers thread the
+/// id in via `project_ssg_build_id` so this helper stays synchronous
+/// and state-free. The global `~/.coast/ssg/latest` symlink is no
+/// longer consulted — it leaked across projects.
 ///
 /// `coast-service` never writes this block (it's SSG-agnostic); this
 /// helper is the local seam that injects it after download. See
 /// `coast-ssg/DESIGN.md §17-24`.
-fn phase7_ssg_block_for_artifact(artifact_dir: &std::path::Path) -> Option<serde_json::Value> {
+fn phase7_ssg_block_for_artifact(
+    artifact_dir: &std::path::Path,
+    project_ssg_build_id: Option<&str>,
+) -> Option<serde_json::Value> {
     let coastfile_path = artifact_dir.join("coastfile.toml");
     if !coastfile_path.exists() {
         return None;
@@ -560,8 +570,8 @@ fn phase7_ssg_block_for_artifact(artifact_dir: &std::path::Path) -> Option<serde
         return None;
     }
 
-    let build_id = coast_ssg::paths::resolve_latest_build_id()?;
-    let build_dir = coast_ssg::paths::ssg_build_dir(&build_id).ok()?;
+    let build_id = project_ssg_build_id?;
+    let build_dir = coast_ssg::paths::ssg_build_dir(build_id).ok()?;
     let manifest_contents = std::fs::read_to_string(build_dir.join("manifest.json")).ok()?;
     let active: coast_ssg::build::artifact::SsgManifest =
         serde_json::from_str(&manifest_contents).ok()?;
@@ -592,6 +602,11 @@ pub(crate) async fn download_remote_artifact(
     remote_config: &coast_core::types::RemoteConnection,
     local_project_root: &std::path::Path,
     has_sudo: bool,
+    // Phase 23: the consumer's per-project SSG build id resolved by
+    // the caller. Pass `None` when the consumer has no SSG build yet
+    // or references no SSG services — the drift block is then
+    // omitted from the manifest, which is a non-error.
+    project_ssg_build_id: Option<&str>,
 ) -> Result<String> {
     let remote_artifact_path = build_response.artifact_path.display().to_string();
     let build_id = build_response
@@ -620,7 +635,9 @@ pub(crate) async fn download_remote_artifact(
                 // write the `ssg` drift block. Inject it locally so
                 // `coast run --type remote` sees the same drift shape
                 // as local builds. See `coast-ssg/DESIGN.md §17-24`.
-                if let Some(block) = phase7_ssg_block_for_artifact(&local_artifact_dir) {
+                if let Some(block) =
+                    phase7_ssg_block_for_artifact(&local_artifact_dir, project_ssg_build_id)
+                {
                     manifest["ssg"] = block;
                 }
                 let _ = std::fs::write(
@@ -959,9 +976,19 @@ async fn synthesize_ssg_forwards(
         return Ok((Vec::new(), Vec::new()));
     }
 
-    let Some(build_id) = coast_ssg::paths::resolve_latest_build_id() else {
-        // ensure_ready_for_consumer would have errored already; this
-        // is a defensive guard for tests / race conditions.
+    // Phase 23: resolve per-project (pin > ssg.latest_build_id). No
+    // global symlink fallback — that leaked builds across projects.
+    let (build_id, services) = {
+        let db = state.db.lock().await;
+        let pin = db.get_ssg_consumer_pin(&cf.name)?;
+        let latest = db.get_ssg(&cf.name)?.and_then(|r| r.latest_build_id);
+        let services = db.list_ssg_services(&cf.name)?;
+        (pin.map(|p| p.build_id).or(latest), services)
+    };
+    let Some(build_id) = build_id else {
+        // ensure_ready_for_consumer would have errored already when
+        // the project has no SSG; this is a defensive guard for
+        // tests / race conditions.
         return Ok((Vec::new(), Vec::new()));
     };
     let build_dir = coast_ssg::paths::ssg_build_dir(&build_id)?;
@@ -983,13 +1010,6 @@ async fn synthesize_ssg_forwards(
             ))
         })?;
 
-    let services = {
-        let db = state.db.lock().await;
-        // Per-project SSG (§23): the consumer coast routes to its
-        // own project's SSG services.
-        db.list_ssg_services(&cf.name)?
-    };
-
     let forwards = coast_ssg::daemon_integration::synthesize_remote_forwards_for_consumer(
         cf, &manifest, &services,
     )?;
@@ -1006,6 +1026,10 @@ async fn remote_build_and_provision(
     service_home: &str,
     progress: &tokio::sync::mpsc::Sender<BuildProgressEvent>,
     total_steps: u32,
+    // Phase 23: the consumer's per-project SSG build id, already
+    // resolved by the caller from state. Threaded through to
+    // `download_remote_artifact` for the drift-block snapshot.
+    project_ssg_build_id: Option<&str>,
 ) -> Result<(coast_core::protocol::RunResponse, String)> {
     emit(
         progress,
@@ -1050,6 +1074,7 @@ async fn remote_build_and_provision(
         remote_config,
         code_path,
         client.has_sudo,
+        project_ssg_build_id,
     )
     .await?;
 
@@ -1197,6 +1222,17 @@ async fn handle_remote_run(
         BuildProgressEvent::done("Syncing project source", "ok"),
     );
 
+    // Phase 23: resolve this project's SSG build id for the
+    // drift-block snapshot written into the downloaded artifact's
+    // manifest. No global `~/.coast/ssg/latest` fallback.
+    let project_ssg_build_id: Option<String> = {
+        use coast_ssg::state::SsgStateExt;
+        let db = state.db.lock().await;
+        let pin = db.get_ssg_consumer_pin(&req.project)?;
+        let latest = db.get_ssg(&req.project)?.and_then(|r| r.latest_build_id);
+        pin.map(|p| p.build_id).or(latest)
+    };
+
     // --- Steps 8-10: Build, download, provision ---
     let (remote_response, remote_build_id) = remote_build_and_provision(
         &req,
@@ -1207,6 +1243,7 @@ async fn handle_remote_run(
         &service_home,
         progress,
         total_steps,
+        project_ssg_build_id.as_deref(),
     )
     .await?;
 
@@ -1796,7 +1833,7 @@ mod tests {
     fn phase7_block_is_none_when_artifact_has_no_coastfile() {
         let tmp = tempfile::tempdir().unwrap();
         // artifact_dir exists but contains no coastfile.toml.
-        assert!(phase7_ssg_block_for_artifact(tmp.path()).is_none());
+        assert!(phase7_ssg_block_for_artifact(tmp.path(), None).is_none());
     }
 
     #[test]
@@ -1812,7 +1849,31 @@ compose = "./docker-compose.yml"
         )
         .unwrap();
         with_phase7_coast_home(|_home| {
-            assert!(phase7_ssg_block_for_artifact(tmp.path()).is_none());
+            assert!(phase7_ssg_block_for_artifact(tmp.path(), Some("irrelevant")).is_none());
+        });
+    }
+
+    #[test]
+    fn phase7_block_is_none_when_project_has_no_ssg_build() {
+        // Phase 23: no global `~/.coast/ssg/latest` fallback. When
+        // the caller passes `None` for the project's SSG build id,
+        // the block must be omitted regardless of what's in the
+        // artifact's coastfile.
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("coastfile.toml"),
+            r#"
+[coast]
+name = "consumer"
+compose = "./docker-compose.yml"
+
+[shared_services.postgres]
+from_group = true
+"#,
+        )
+        .unwrap();
+        with_phase7_coast_home(|_home| {
+            assert!(phase7_ssg_block_for_artifact(tmp.path(), None).is_none());
         });
     }
 }

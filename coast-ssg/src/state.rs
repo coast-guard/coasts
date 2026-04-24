@@ -33,9 +33,23 @@ pub struct SsgRecord {
     /// project's main Coastfile.
     pub project: String,
     pub container_id: Option<String>,
-    /// One of: `created`, `running`, `stopped`.
+    /// One of: `built`, `created`, `running`, `stopped`.
+    ///
+    /// Phase 23 introduces `built`: set by `ssg build` when creating
+    /// the row before a container has ever been started. Gets
+    /// overwritten on the first `ssg run`.
     pub status: String,
+    /// The build the running container was started on. `None` until
+    /// the first `ssg run`; set by `ssg run`/`start`. Distinct from
+    /// [`latest_build_id`] which tracks the most recent `ssg build`.
     pub build_id: Option<String>,
+    /// Phase 23: most recent `ssg build` output for this project.
+    ///
+    /// Written by `coast ssg build`; read by the consumer resolver
+    /// (`ensure_ready_for_consumer`) in place of the global
+    /// `~/.coast/ssg/latest` symlink. `None` before the first
+    /// `ssg build`. See `coast-ssg/DESIGN.md §23`.
+    pub latest_build_id: Option<String>,
     /// RFC 3339 timestamp (chrono `to_rfc3339()`).
     pub created_at: String,
 }
@@ -110,6 +124,15 @@ pub trait SsgStateExt {
     /// List every SSG row, ordered alphabetically by project.
     /// Used by `coast ssg ls` and for cross-project audits.
     fn list_ssgs(&self) -> Result<Vec<SsgRecord>>;
+
+    /// Phase 23: set the project's `latest_build_id` to the given
+    /// value. Used by `coast ssg build` to record the just-produced
+    /// artifact. Creates the row with `status = "built"` when absent;
+    /// when the row already exists (e.g. SSG is running), only the
+    /// `latest_build_id` column is updated — `container_id`,
+    /// `build_id`, `status`, and `created_at` are preserved so a
+    /// running SSG stays running even after a rebuild.
+    fn set_latest_build_id(&self, project: &str, build_id: &str) -> Result<()>;
 
     // --- ssg_services ---
 

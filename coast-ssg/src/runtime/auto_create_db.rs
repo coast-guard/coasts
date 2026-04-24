@@ -158,6 +158,7 @@ mod tests {
             status: "running".to_string(),
             container_id: cid.map(str::to_string),
             build_id: Some("b_test".to_string()),
+            latest_build_id: Some("b_test".to_string()),
             created_at: "2026-04-20T00:00:00Z".to_string(),
         }
     }

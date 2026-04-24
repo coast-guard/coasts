@@ -128,9 +128,9 @@ impl SsgRunOutcome {
 
 // --- run -------------------------------------------------------------------
 
-/// Create the SSG singleton DinD, wait for the inner daemon, load
-/// cached images, and run `docker compose up -d` on the active build's
-/// compose file.
+/// Create the project's SSG DinD, wait for the inner daemon, load
+/// cached images, and run `docker compose up -d` on the active
+/// build's compose file.
 ///
 /// Does NOT touch the daemon's state DB — the caller is responsible
 /// for writing [`SsgRunOutcome`] into state (typically via
@@ -139,25 +139,20 @@ impl SsgRunOutcome {
 ///
 /// Preconditions:
 ///
-/// - An SSG build exists (`~/.coast/ssg/latest` resolves).
-/// - No SSG container is currently running — the caller is expected to
-///   check and either short-circuit or error out.
-pub async fn run_ssg(
-    project: &str,
-    ops: &dyn SsgDockerOps,
-    progress: Sender<BuildProgressEvent>,
-) -> Result<SsgRunOutcome> {
-    run_ssg_with_build_id(project, ops, None, progress).await
-}
-
-/// Same as [`run_ssg`] but boots the SSG from an explicit `build_id`
-/// instead of resolving `~/.coast/ssg/latest`.
+/// - A specific `build_id` for `project` has been resolved by the
+///   caller (from a pin or `ssg.latest_build_id`).
+/// - No SSG container for `project` is currently running — the caller
+///   is expected to check and either short-circuit or error out.
 ///
-/// Phase 16: when a consumer project has a pin in
-/// `ssg_consumer_pins`, `ensure_ready_for_consumer` calls this with
-/// the pinned id so the SSG auto-starts on the pinned build rather
-/// than `latest`. When `build_id` is `None`, behavior matches
-/// [`run_ssg`] exactly.
+/// Phase 23: callers MUST pre-resolve the build id from the daemon
+/// state (`ssg_consumer_pins` > `ssg.latest_build_id`). There is no
+/// global `~/.coast/ssg/latest` fallback any more — that used to
+/// leak another project's build into this project's runtime. When
+/// `build_id` is `None` the function hard-errors immediately.
+///
+/// Phase 16 pinning continues to work through the caller:
+/// `ensure_ready_for_consumer` passes the pinned id when present,
+/// else the project's own `latest_build_id` from state.
 pub async fn run_ssg_with_build_id(
     project: &str,
     ops: &dyn SsgDockerOps,
@@ -166,14 +161,15 @@ pub async fn run_ssg_with_build_id(
 ) -> Result<SsgRunOutcome> {
     emit(&progress, "Preparing SSG", 1, RUN_STEPS).await;
 
-    let build_id = match build_id {
-        Some(id) => id.to_string(),
-        None => paths::resolve_latest_build_id().ok_or_else(|| {
-            CoastError::coastfile(
-                "no SSG build found. Run `coast ssg build` before `coast ssg run`.",
-            )
-        })?,
-    };
+    let build_id = build_id
+        .ok_or_else(|| {
+            CoastError::coastfile(format!(
+                "no SSG build found for project '{project}'. Run `coast ssg build` in \
+                 the directory containing the project's Coastfile.shared_service_groups \
+                 before `coast ssg run`."
+            ))
+        })?
+        .to_string();
     let build_dir = paths::ssg_build_dir(&build_id)?;
     let manifest = read_manifest(&build_dir)?;
     let coastfile = load_coastfile(&build_dir)?;
@@ -788,6 +784,7 @@ mod tests {
             status: status.to_string(),
             container_id: cid.map(str::to_string),
             build_id: Some("b_test".to_string()),
+            latest_build_id: Some("b_test".to_string()),
             created_at: "2026-04-20T00:00:00Z".to_string(),
         }
     }

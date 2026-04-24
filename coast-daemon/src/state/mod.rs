@@ -166,12 +166,18 @@ impl StateDb {
                 );
 
                 -- Shared Service Groups (SSG). Per-project (see coast-ssg/DESIGN.md §23).
+                -- `build_id`: the build the running container was started on
+                -- (set by `ssg run`/`start`; NULL before first run).
+                -- `latest_build_id`: the most recent `ssg build` output for
+                -- this project (set by `ssg build`). Consumers route via
+                -- pin > latest_build_id > hard-error — no global fallback.
                 CREATE TABLE IF NOT EXISTS ssg (
-                    project         TEXT PRIMARY KEY,
-                    container_id    TEXT,
-                    status          TEXT NOT NULL,
-                    build_id        TEXT,
-                    created_at      TEXT NOT NULL
+                    project           TEXT PRIMARY KEY,
+                    container_id      TEXT,
+                    status            TEXT NOT NULL,
+                    build_id          TEXT,
+                    latest_build_id   TEXT,
+                    created_at        TEXT NOT NULL
                 );
 
                 CREATE TABLE IF NOT EXISTS ssg_services (
@@ -226,7 +232,28 @@ impl StateDb {
         self.migrate_add_remote_dynamic_port()?;
         self.migrate_add_remote_arch()?;
         self.migrate_ssg_per_project()?;
+        self.migrate_add_ssg_latest_build_id()?;
 
+        Ok(())
+    }
+
+    /// Migration: add `latest_build_id TEXT` column to `ssg` for
+    /// per-project build tracking (coast-ssg/DESIGN.md §23, Phase 23).
+    /// Populated by `coast ssg build`; read by the consumer resolver
+    /// instead of the global `~/.coast/ssg/latest` symlink.
+    fn migrate_add_ssg_latest_build_id(&self) -> Result<()> {
+        let has_column = self
+            .conn
+            .prepare("SELECT latest_build_id FROM ssg LIMIT 0")
+            .is_ok();
+        if !has_column {
+            self.conn
+                .execute_batch("ALTER TABLE ssg ADD COLUMN latest_build_id TEXT;")
+                .map_err(|e| CoastError::State {
+                    message: format!("failed to add ssg.latest_build_id column: {e}"),
+                    source: Some(Box::new(e)),
+                })?;
+        }
         Ok(())
     }
 
@@ -253,11 +280,12 @@ impl StateDb {
                      DROP TABLE IF EXISTS ssg_services;
                      DROP TABLE IF EXISTS ssg_port_checkouts;
                      CREATE TABLE ssg (
-                         project         TEXT PRIMARY KEY,
-                         container_id    TEXT,
-                         status          TEXT NOT NULL,
-                         build_id        TEXT,
-                         created_at      TEXT NOT NULL
+                         project           TEXT PRIMARY KEY,
+                         container_id      TEXT,
+                         status            TEXT NOT NULL,
+                         build_id          TEXT,
+                         latest_build_id   TEXT,
+                         created_at        TEXT NOT NULL
                      );
                      CREATE TABLE ssg_services (
                          project             TEXT NOT NULL,

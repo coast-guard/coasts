@@ -50,6 +50,13 @@ pub struct SsgCoastfile {
 pub struct SsgSection {
     /// Container runtime. Defaults to [`RuntimeType::Dind`] when unset.
     pub runtime: RuntimeType,
+    /// Phase 23: optional explicit project name from `[ssg] project = "..."`.
+    ///
+    /// When set, the daemon cross-checks it against the sibling
+    /// `Coastfile`'s `[coast] name` at build time and hard-errors
+    /// on mismatch. When unset, the project name is inferred from
+    /// the sibling Coastfile. See `coast-ssg/DESIGN.md §23`.
+    pub project: Option<String>,
 }
 
 /// A single `[shared_services.<name>]` entry after validation.
@@ -295,6 +302,7 @@ impl SsgCoastfile {
                 runtime: Some(cf.section.runtime.as_str().to_string()),
                 extends: None,
                 includes: None,
+                project: cf.section.project.clone(),
             },
             shared_services,
             unset: None,
@@ -358,7 +366,25 @@ impl SsgCoastfile {
             })?,
             None => RuntimeType::Dind,
         };
-        Ok(SsgSection { runtime })
+        // Phase 23: validate that when `[ssg] project = "..."` is
+        // explicitly set, it is a non-empty, non-whitespace string.
+        // The cross-check against the sibling Coastfile's [coast].name
+        // happens at the daemon layer.
+        let project = match raw.project.as_deref() {
+            Some(value) => {
+                let trimmed = value.trim();
+                if trimmed.is_empty() {
+                    return Err(CoastError::coastfile(
+                        "ssg.project: must be a non-empty project name when set; \
+                         omit the field entirely to infer from the sibling Coastfile's \
+                         [coast].name.",
+                    ));
+                }
+                Some(trimmed.to_string())
+            }
+            None => None,
+        };
+        Ok(SsgSection { runtime, project })
     }
 
     fn build_shared_service(
@@ -421,6 +447,9 @@ impl SsgCoastfile {
             "runtime = {}\n",
             toml_quote(self.section.runtime.as_str())
         ));
+        if let Some(ref project) = self.section.project {
+            out.push_str(&format!("project = {}\n", toml_quote(project)));
+        }
 
         for svc in &self.services {
             out.push('\n');
@@ -706,6 +735,10 @@ image = "postgres:16"
         .unwrap();
 
         assert_eq!(cf.section.runtime, RuntimeType::Dind);
+        // Phase 23: without explicit `[ssg] project`, the parser
+        // leaves the field None. The daemon infers the project from
+        // the sibling Coastfile.
+        assert!(cf.section.project.is_none());
         assert_eq!(cf.services.len(), 1);
         let svc = &cf.services[0];
         assert_eq!(svc.name, "postgres");
@@ -715,6 +748,108 @@ image = "postgres:16"
         assert!(svc.env.is_empty());
         assert!(!svc.auto_create_db);
         assert_eq!(cf.project_root, Path::new("/tmp/ssg-test"));
+    }
+
+    // -----------------------------------------------------------
+    // Phase 23: explicit `[ssg] project = "..."`
+    // -----------------------------------------------------------
+
+    #[test]
+    fn parses_explicit_ssg_project() {
+        let cf = parse(
+            r#"
+[ssg]
+project = "cg"
+
+[shared_services.postgres]
+image = "postgres:16"
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(cf.section.project.as_deref(), Some("cg"));
+    }
+
+    #[test]
+    fn parses_explicit_ssg_project_trims_whitespace() {
+        let cf = parse(
+            r#"
+[ssg]
+project = "  cg  "
+
+[shared_services.postgres]
+image = "postgres:16"
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(cf.section.project.as_deref(), Some("cg"));
+    }
+
+    #[test]
+    fn rejects_empty_ssg_project() {
+        assert_parse_err_contains(
+            r#"
+[ssg]
+project = ""
+
+[shared_services.postgres]
+image = "postgres:16"
+"#,
+            "ssg.project",
+        );
+    }
+
+    #[test]
+    fn rejects_whitespace_only_ssg_project() {
+        assert_parse_err_contains(
+            r#"
+[ssg]
+project = "   "
+
+[shared_services.postgres]
+image = "postgres:16"
+"#,
+            "ssg.project",
+        );
+    }
+
+    #[test]
+    fn standalone_toml_round_trips_explicit_ssg_project() {
+        let original = parse(
+            r#"
+[ssg]
+runtime = "dind"
+project = "cg"
+
+[shared_services.postgres]
+image = "postgres:16"
+"#,
+        )
+        .unwrap();
+
+        let serialized = original.to_standalone_toml();
+        let reparsed = parse(&serialized).unwrap();
+
+        assert_eq!(reparsed.section.project.as_deref(), Some("cg"));
+        assert_eq!(reparsed.services.len(), original.services.len());
+    }
+
+    #[test]
+    fn standalone_toml_omits_ssg_project_when_unset() {
+        let cf = parse(
+            r#"
+[shared_services.postgres]
+image = "postgres:16"
+"#,
+        )
+        .unwrap();
+
+        let serialized = cf.to_standalone_toml();
+        assert!(
+            !serialized.contains("project ="),
+            "unexpected `project =` in standalone toml when input had no explicit project: {serialized}"
+        );
     }
 
     #[test]

@@ -123,7 +123,7 @@ pub async fn build_ssg(
     ops: &dyn SsgDockerOps,
     pinned_build_ids: std::collections::HashSet<String>,
     progress: Sender<BuildProgressEvent>,
-) -> Result<SsgResponse> {
+) -> Result<SsgBuildOutcome> {
     // --- Step 1: parse ---
     let (cf, _raw) = {
         let _ = progress
@@ -135,6 +135,20 @@ pub async fn build_ssg(
             .await;
         parsed
     };
+
+    // Phase 23: cross-check explicit `[ssg] project = "..."` against
+    // the consumer project resolved by the CLI (from the sibling
+    // `Coastfile`'s `[coast] name`). Mismatch is a hard error.
+    if let Some(ref explicit) = cf.section.project {
+        if explicit != &inputs.project {
+            return Err(CoastError::coastfile(format!(
+                "Coastfile.shared_service_groups declares [ssg] project = '{explicit}' but the \
+                 sibling Coastfile's [coast] name = '{cli_project}'. Either remove the explicit \
+                 [ssg] project field (project is inferred from the sibling Coastfile) or align them.",
+                cli_project = inputs.project,
+            )));
+        }
+    }
 
     let total = total_steps(cf.services.len());
 
@@ -232,13 +246,34 @@ pub async fn build_ssg(
         ))
         .await;
 
-    Ok(build_response_from_manifest(
-        &manifest,
-        format!("Build complete: {build_id}"),
-    ))
+    Ok(SsgBuildOutcome {
+        response: build_response_from_manifest(
+            &manifest,
+            format!("Build complete: {build_id}"),
+        ),
+        project: inputs.project.clone(),
+        build_id,
+    })
 }
 
-/// Read the active SSG build manifest and return service metadata.
+/// Result of a successful `build_ssg`. The caller applies the
+/// per-project state write (`SsgStateExt::set_latest_build_id`) to
+/// flip the consumer's default build to this one — we return the
+/// pair out so the async build closure can stay state-free (it runs
+/// inside a `Box<dyn Future + Send>` and can't hold `&dyn
+/// SsgStateExt` across awaits).
+#[derive(Debug, Clone)]
+pub struct SsgBuildOutcome {
+    /// The user-facing response (message / manifest / ports).
+    pub response: SsgResponse,
+    /// Consumer project name the build belongs to.
+    pub project: String,
+    /// Build id produced by this build. Caller writes it to
+    /// `ssg.latest_build_id` for `project`.
+    pub build_id: String,
+}
+
+/// Read the project's SSG build manifest and return service metadata.
 ///
 /// When `state` is `Some`, merges live runtime data from
 /// `ssg_services` so callers see actual dynamic host ports and
@@ -246,13 +281,22 @@ pub async fn build_ssg(
 /// built configuration. When `state` is `None`, falls back to the
 /// manifest-only view (`dynamic_host_port = 0`, `status = "built"`)
 /// used by pre-Phase-9 callers.
+///
+/// Phase 23: resolves the build id from the project's own state
+/// (`ssg_consumer_pins.build_id` > `ssg.latest_build_id`). No
+/// `~/.coast/ssg/latest` fallback — that leaked another project's
+/// build into this project's `ps`. Returns a short-circuit message
+/// when no state is available or no build exists for the project.
 pub fn ps_ssg(
     project: &str,
     state: Option<&dyn crate::state::SsgStateExt>,
 ) -> Result<SsgResponse> {
-    let Some((build_id, manifest)) = load_latest_ssg_manifest_with_id()? else {
+    let Some(db) = state else {
+        // Without state we can't scope to a project; return an empty
+        // ps response. (Call sites under the daemon always supply
+        // state; this branch exists for test harnesses.)
         return Ok(SsgResponse {
-            message: "No SSG build found. Run `coast ssg build` first.".to_string(),
+            message: format!("No SSG build for project '{project}'."),
             status: None,
             services: Vec::new(),
             ports: Vec::new(),
@@ -261,27 +305,55 @@ pub fn ps_ssg(
         });
     };
 
-    let (container_status, service_rows, ports): (
-        Option<String>,
-        Vec<crate::state::SsgServiceRecord>,
-        Vec<SsgPortInfo>,
-    ) = match state {
-        Some(db) => {
-            let ssg_status = db.get_ssg(project)?.map(|r| r.status);
-            let services = db.list_ssg_services(project)?;
-            let ports: Vec<SsgPortInfo> = services
-                .iter()
-                .map(|s| SsgPortInfo {
-                    service: s.service_name.clone(),
-                    canonical_port: s.container_port,
-                    dynamic_host_port: s.dynamic_host_port,
-                    checked_out: false,
-                })
-                .collect();
-            (ssg_status, services, ports)
-        }
-        None => (None, Vec::new(), Vec::new()),
+    let ssg_record = db.get_ssg(project)?;
+    let pinned_build_id = db.get_ssg_consumer_pin(project)?.map(|p| p.build_id);
+    let latest_build_id = ssg_record.as_ref().and_then(|r| r.latest_build_id.clone());
+    let build_id = pinned_build_id.or(latest_build_id);
+
+    let Some(build_id) = build_id else {
+        return Ok(SsgResponse {
+            message: format!(
+                "No SSG build for project '{project}'. Run `coast ssg build` in the \
+                 directory containing the project's Coastfile.shared_service_groups."
+            ),
+            status: None,
+            services: Vec::new(),
+            ports: Vec::new(),
+            findings: Vec::new(),
+            listings: Vec::new(),
+        });
     };
+
+    let build_dir = paths::ssg_build_dir(&build_id)?;
+    let manifest_path = build_dir.join("manifest.json");
+    let manifest_contents =
+        std::fs::read_to_string(&manifest_path).map_err(|e| CoastError::Io {
+            message: format!(
+                "failed to read SSG manifest '{}': {e}",
+                manifest_path.display()
+            ),
+            path: manifest_path.clone(),
+            source: Some(e),
+        })?;
+    let manifest: build_artifact::SsgManifest =
+        serde_json::from_str(&manifest_contents).map_err(|e| {
+            CoastError::artifact(format!(
+                "failed to parse SSG manifest '{}': {e}",
+                manifest_path.display()
+            ))
+        })?;
+
+    let container_status = ssg_record.as_ref().map(|r| r.status.clone());
+    let service_rows = db.list_ssg_services(project)?;
+    let ports: Vec<SsgPortInfo> = service_rows
+        .iter()
+        .map(|s| SsgPortInfo {
+            service: s.service_name.clone(),
+            canonical_port: s.container_port,
+            dynamic_host_port: s.dynamic_host_port,
+            checked_out: false,
+        })
+        .collect();
 
     let services: Vec<SsgServiceInfo> = manifest
         .services
@@ -317,32 +389,6 @@ pub fn ps_ssg(
     })
 }
 
-/// Load the active SSG build's `(build_id, manifest)` or `None` when
-/// no build exists. Shared helper for any daemon handler that wants
-/// to read the artifact without reimplementing the disk-read dance.
-pub fn load_latest_ssg_manifest_with_id() -> Result<Option<(String, build_artifact::SsgManifest)>> {
-    let Some(build_id) = paths::resolve_latest_build_id() else {
-        return Ok(None);
-    };
-    let build_dir = paths::ssg_build_dir(&build_id)?;
-    let manifest_path = build_dir.join("manifest.json");
-    let content = std::fs::read_to_string(&manifest_path).map_err(|e| CoastError::Io {
-        message: format!(
-            "failed to read SSG manifest '{}': {e}",
-            manifest_path.display()
-        ),
-        path: manifest_path.clone(),
-        source: Some(e),
-    })?;
-    let manifest: build_artifact::SsgManifest = serde_json::from_str(&content).map_err(|e| {
-        CoastError::artifact(format!(
-            "failed to parse SSG manifest '{}': {e}",
-            manifest_path.display()
-        ))
-    })?;
-    Ok(Some((build_id, manifest)))
-}
-
 // --- Phase 3 runtime wrappers ----------------------------------------------
 //
 // Re-exports the types callers need. Lifecycle functions are intentionally
@@ -353,8 +399,8 @@ pub fn load_latest_ssg_manifest_with_id() -> Result<Option<(String, build_artifa
 // apply writes afterwards.
 
 pub use crate::runtime::lifecycle::{
-    exec_ssg, logs_ssg, ports_ssg, restart_ssg, rm_ssg, run_ssg, run_ssg_with_build_id, start_ssg,
-    stop_ssg, SsgRunOutcome, SsgStartOutcome, SsgStopOutcome,
+    exec_ssg, logs_ssg, ports_ssg, restart_ssg, rm_ssg, run_ssg_with_build_id, start_ssg, stop_ssg,
+    SsgRunOutcome, SsgStartOutcome, SsgStopOutcome,
 };
 
 // --- Phase 15: host-volume import orchestrator ------------------------------
@@ -438,7 +484,9 @@ pub fn synthesize_shared_service_configs(
             .services
             .iter()
             .find(|s| s.name == consumer_ref.name)
-            .ok_or_else(|| missing_ssg_service_error(&consumer_ref.name, manifest))?;
+            .ok_or_else(|| {
+                missing_ssg_service_error(&consumer_ref.name, &coastfile.name, manifest)
+            })?;
 
         let ports: Vec<coast_core::types::SharedServicePort> = services
             .iter()
@@ -502,7 +550,9 @@ pub fn synthesize_remote_forwards_for_consumer(
             .services
             .iter()
             .find(|s| s.name == consumer_ref.name)
-            .ok_or_else(|| missing_ssg_service_error(&consumer_ref.name, manifest))?;
+            .ok_or_else(|| {
+                missing_ssg_service_error(&consumer_ref.name, &coastfile.name, manifest)
+            })?;
 
         for svc in services
             .iter()
@@ -523,19 +573,24 @@ pub fn synthesize_remote_forwards_for_consumer(
 
 fn missing_ssg_service_error(
     referenced_name: &str,
+    project: &str,
     manifest: &build_artifact::SsgManifest,
 ) -> CoastError {
     let mut available: Vec<&str> = manifest.services.iter().map(|s| s.name.as_str()).collect();
     available.sort();
     let available_list = if available.is_empty() {
-        "(the active SSG has no services)".to_string()
+        "(none)".to_string()
     } else {
         format!("[{}]", available.join(", "))
     };
+    // Phase 23 wording: lead with the project context so it's
+    // unambiguous which Coastfile.shared_service_groups needs the
+    // service. See `coast-ssg/DESIGN.md §23.3`.
     CoastError::coastfile(format!(
-        "Consumer references SSG service '{referenced_name}' which does not exist in the active \
-         SSG build {build_id}. Available services: {available_list}.",
-        build_id = manifest.build_id,
+        "service '{referenced_name}' is declared `from_group = true` in project '{project}' but \
+         the SSG Coastfile.shared_service_groups for project '{project}' does not declare it. \
+         Available services: {available_list}. Run `coast ssg build` in the project's \
+         Coastfile.shared_service_groups directory to (re)declare it."
     ))
 }
 
@@ -672,6 +727,9 @@ mod tests {
 
     #[test]
     fn synthesize_missing_service_errors_with_available_list() {
+        // Phase 23 wording: leads with "service 'X' is declared
+        // from_group = true in project 'Y' but ... does not declare
+        // it." See `coast-ssg/DESIGN.md §23.3`.
         let cf = coastfile_with_refs(vec![simple_ref("mongo")]);
         let manifest = sample_manifest(vec![
             ("postgres", "postgres:16-alpine", vec![5432], false),
@@ -681,24 +739,37 @@ mod tests {
         let err = synthesize_shared_service_configs(&cf, &manifest, &services).unwrap_err();
         let message = err.to_string();
         assert!(
-            message.contains("Consumer references SSG service 'mongo'"),
+            message.contains("service 'mongo' is declared `from_group = true`"),
             "unexpected message: {message}"
         );
-        assert!(message.contains("does not exist"));
-        assert!(message.contains("b1_20260420000000"));
+        assert!(
+            message.contains("in project 'consumer'"),
+            "must name project in both directions; got: {message}"
+        );
+        assert!(
+            message.contains("does not declare it"),
+            "must explain missing declaration; got: {message}"
+        );
         assert!(
             message.contains("[postgres, redis]"),
             "available list missing or unsorted: {message}"
+        );
+        assert!(
+            message.contains("coast ssg build"),
+            "error must direct user to `coast ssg build`; got: {message}"
         );
     }
 
     #[test]
     fn synthesize_missing_service_handles_empty_manifest() {
+        // Phase 23 wording: "Available services: (none)." when the
+        // project's SSG is empty (vs the old "(the active SSG has
+        // no services)" wording).
         let cf = coastfile_with_refs(vec![simple_ref("mongo")]);
         let manifest = sample_manifest(vec![]);
         let err = synthesize_shared_service_configs(&cf, &manifest, &[]).unwrap_err();
         let message = err.to_string();
-        assert!(message.contains("the active SSG has no services"));
+        assert!(message.contains("Available services: (none)"));
     }
 
     #[test]
@@ -839,6 +910,9 @@ mod tests {
 
     #[test]
     fn synthesize_remote_forwards_missing_service_errors_with_available_list() {
+        // Phase 23 wording: same "is declared from_group = true in
+        // project 'Y'" sentence as the local path — the remote path
+        // shares the same error formatter.
         let cf = coastfile_with_refs(vec![simple_ref("mongo")]);
         let manifest = sample_manifest(vec![
             ("postgres", "postgres:16-alpine", vec![5432], false),
@@ -847,7 +921,14 @@ mod tests {
         let services = vec![sample_record("postgres", 5432, 60001)];
         let err = synthesize_remote_forwards_for_consumer(&cf, &manifest, &services).unwrap_err();
         let message = err.to_string();
-        assert!(message.contains("Consumer references SSG service 'mongo'"));
+        assert!(
+            message.contains("service 'mongo' is declared `from_group = true`"),
+            "unexpected message: {message}"
+        );
+        assert!(
+            message.contains("in project 'consumer'"),
+            "must name project; got: {message}"
+        );
         assert!(message.contains("[postgres, redis]"));
     }
 }

@@ -423,12 +423,12 @@ incidentally in Phase 20 (protocol wrapper + CLI resolution); Phase
 Consumer `from_group = true` resolves ONLY against its own project's
 SSG. Missing = hard error (never falls back to another project's SSG).
 Auto-start logic (§11.1) becomes per-project.
-- [ ] `Coastfile.shared_service_groups` derives project from sibling `Coastfile`'s `[coast] name`
-- [ ] Optional explicit `[ssg] project = "..."` (validate match with sibling or error)
-- [ ] Consumer `from_group = true` resolver looks up only the consumer's own project's SSG
-- [ ] Hard-error message: `"service 'X' is declared from_group = true in project 'Y' but the SSG Coastfile.shared_service_groups for project 'Y' does not declare it"`
-- [ ] Delete cross-project sharing paths in `ensure_ready_for_consumer` and equivalents
-- [ ] Unit + integration tests
+- [x] `Coastfile.shared_service_groups` derives project from sibling `Coastfile`'s `[coast] name`
+- [x] Optional explicit `[ssg] project = "..."` (validate match with sibling or error)
+- [x] Consumer `from_group = true` resolver looks up only the consumer's own project's SSG
+- [x] Hard-error message: `"service 'X' is declared from_group = true in project 'Y' but the SSG Coastfile.shared_service_groups for project 'Y' does not declare it"`
+- [x] Delete cross-project sharing paths in `ensure_ready_for_consumer` and equivalents
+- [x] Unit + integration tests
 
 ### Phase 24 — Remote SSG per-(project, remote)
 Thread project through the Phase 18 reverse-tunnel resolution so
