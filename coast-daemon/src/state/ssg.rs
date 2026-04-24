@@ -15,6 +15,7 @@ use tracing::{debug, instrument};
 use coast_core::error::{CoastError, Result};
 use coast_ssg::state::{
     SsgConsumerPinRecord, SsgPortCheckoutRecord, SsgRecord, SsgServiceRecord, SsgStateExt,
+    SsgVirtualPortRecord,
 };
 
 use super::StateDb;
@@ -54,6 +55,15 @@ fn row_to_checkout(row: &rusqlite::Row<'_>) -> rusqlite::Result<SsgPortCheckoutR
         service_name: row.get(2)?,
         socat_pid: row.get(3)?,
         created_at: row.get(4)?,
+    })
+}
+
+fn row_to_virtual_port(row: &rusqlite::Row<'_>) -> rusqlite::Result<SsgVirtualPortRecord> {
+    Ok(SsgVirtualPortRecord {
+        project: row.get(0)?,
+        service_name: row.get(1)?,
+        port: row.get::<_, i64>(2)? as u16,
+        created_at: row.get(3)?,
     })
 }
 
@@ -455,6 +465,118 @@ impl SsgStateExt for StateDb {
             out.push(
                 row.map_err(|e| state_err(format!("row parse in list_ssg_consumer_pins: {e}"), e))?,
             );
+        }
+        Ok(out)
+    }
+
+    // --- ssg_virtual_ports (Phase 26 / §24.5) ---
+
+    #[instrument(level = "debug", skip(self), fields(project = %project, service = %service_name))]
+    fn get_ssg_virtual_port(&self, project: &str, service_name: &str) -> Result<Option<u16>> {
+        self.conn
+            .query_row(
+                "SELECT port FROM ssg_virtual_ports
+                 WHERE project = ?1 AND service_name = ?2",
+                params![project, service_name],
+                |row| row.get::<_, i64>(0).map(|p| p as u16),
+            )
+            .optional()
+            .map_err(|e| {
+                state_err(
+                    format!("failed to read ssg_virtual_port for '{project}/{service_name}': {e}"),
+                    e,
+                )
+            })
+    }
+
+    #[instrument(level = "debug", skip(self), fields(project = %project, service = %service_name, port = port))]
+    fn upsert_ssg_virtual_port(&self, project: &str, service_name: &str, port: u16) -> Result<()> {
+        let created_at = chrono::Utc::now().to_rfc3339();
+        self.conn
+            .execute(
+                "INSERT OR REPLACE INTO ssg_virtual_ports
+                   (project, service_name, port, created_at)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![project, service_name, port as i64, created_at],
+            )
+            .map_err(|e| {
+                state_err(
+                    format!(
+                        "failed to upsert ssg_virtual_port for '{project}/{service_name}': {e}"
+                    ),
+                    e,
+                )
+            })?;
+        debug!("upserted ssg_virtual_port");
+        Ok(())
+    }
+
+    #[instrument(level = "debug", skip(self), fields(project = %project))]
+    fn list_ssg_virtual_ports(&self, project: &str) -> Result<Vec<SsgVirtualPortRecord>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT project, service_name, port, created_at
+                 FROM ssg_virtual_ports
+                 WHERE project = ?1
+                 ORDER BY service_name ASC",
+            )
+            .map_err(|e| state_err(format!("failed to prepare list_ssg_virtual_ports: {e}"), e))?;
+        let rows = stmt
+            .query_map(params![project], row_to_virtual_port)
+            .map_err(|e| state_err(format!("failed to list ssg_virtual_ports: {e}"), e))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(
+                row.map_err(|e| state_err(format!("row parse in list_ssg_virtual_ports: {e}"), e))?,
+            );
+        }
+        Ok(out)
+    }
+
+    #[instrument(level = "debug", skip(self), fields(project = %project))]
+    fn clear_ssg_virtual_ports(&self, project: &str) -> Result<()> {
+        self.conn
+            .execute(
+                "DELETE FROM ssg_virtual_ports WHERE project = ?1",
+                params![project],
+            )
+            .map_err(|e| {
+                state_err(
+                    format!("failed to clear ssg_virtual_ports for '{project}': {e}"),
+                    e,
+                )
+            })?;
+        Ok(())
+    }
+
+    #[instrument(level = "debug", skip(self))]
+    fn list_all_ssg_virtual_port_numbers(&self) -> Result<Vec<u16>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT port FROM ssg_virtual_ports")
+            .map_err(|e| {
+                state_err(
+                    format!("failed to prepare list_all_ssg_virtual_port_numbers: {e}"),
+                    e,
+                )
+            })?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, i64>(0).map(|p| p as u16))
+            .map_err(|e| {
+                state_err(
+                    format!("failed to list all ssg_virtual_port numbers: {e}"),
+                    e,
+                )
+            })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row.map_err(|e| {
+                state_err(
+                    format!("row parse in list_all_ssg_virtual_port_numbers: {e}"),
+                    e,
+                )
+            })?);
         }
         Ok(out)
     }
@@ -1027,5 +1149,99 @@ mod tests {
             .unwrap();
         let out = db.get_ssg_consumer_pin("proj").unwrap().unwrap();
         assert_eq!(out.build_id, "df5bddb5b7a39b11_20260422051132");
+    }
+
+    // --- ssg_virtual_ports (Phase 26 / §24.5) ---
+
+    #[test]
+    fn virtual_port_upsert_then_get_returns_port() {
+        let db = db();
+        assert!(db.get_ssg_virtual_port(P, "postgres").unwrap().is_none());
+
+        db.upsert_ssg_virtual_port(P, "postgres", 42001).unwrap();
+
+        let got = db.get_ssg_virtual_port(P, "postgres").unwrap();
+        assert_eq!(got, Some(42001));
+    }
+
+    #[test]
+    fn virtual_port_upsert_replaces_by_project_and_service() {
+        let db = db();
+        db.upsert_ssg_virtual_port(P, "postgres", 42001).unwrap();
+        db.upsert_ssg_virtual_port(P, "postgres", 42050).unwrap();
+
+        assert_eq!(db.get_ssg_virtual_port(P, "postgres").unwrap(), Some(42050));
+        // Only one row for this key.
+        assert_eq!(db.list_ssg_virtual_ports(P).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn virtual_port_get_returns_none_when_unset() {
+        let db = db();
+        assert!(db
+            .get_ssg_virtual_port(P, "never-allocated")
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn virtual_port_list_returns_all_rows_for_project_sorted() {
+        let db = db();
+        db.upsert_ssg_virtual_port(P, "redis", 42002).unwrap();
+        db.upsert_ssg_virtual_port(P, "postgres", 42001).unwrap();
+        db.upsert_ssg_virtual_port(P, "memcached", 42003).unwrap();
+
+        let rows = db.list_ssg_virtual_ports(P).unwrap();
+        let names: Vec<_> = rows.iter().map(|r| r.service_name.as_str()).collect();
+        assert_eq!(names, vec!["memcached", "postgres", "redis"]);
+    }
+
+    #[test]
+    fn virtual_port_list_is_project_scoped() {
+        let db = db();
+        db.upsert_ssg_virtual_port(P, "postgres", 42001).unwrap();
+        db.upsert_ssg_virtual_port(Q, "postgres", 42100).unwrap();
+
+        let p_rows = db.list_ssg_virtual_ports(P).unwrap();
+        assert_eq!(p_rows.len(), 1);
+        assert_eq!(p_rows[0].project, P);
+        assert_eq!(p_rows[0].port, 42001);
+
+        let q_rows = db.list_ssg_virtual_ports(Q).unwrap();
+        assert_eq!(q_rows.len(), 1);
+        assert_eq!(q_rows[0].project, Q);
+        assert_eq!(q_rows[0].port, 42100);
+    }
+
+    #[test]
+    fn virtual_port_clear_drops_only_target_project() {
+        let db = db();
+        db.upsert_ssg_virtual_port(P, "postgres", 42001).unwrap();
+        db.upsert_ssg_virtual_port(P, "redis", 42002).unwrap();
+        db.upsert_ssg_virtual_port(Q, "postgres", 42100).unwrap();
+
+        db.clear_ssg_virtual_ports(P).unwrap();
+
+        assert!(db.list_ssg_virtual_ports(P).unwrap().is_empty());
+        assert_eq!(db.list_ssg_virtual_ports(Q).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn virtual_port_clear_is_idempotent_on_empty_table() {
+        let db = db();
+        db.clear_ssg_virtual_ports(P).unwrap();
+        db.clear_ssg_virtual_ports(P).unwrap();
+        assert!(db.list_ssg_virtual_ports(P).unwrap().is_empty());
+    }
+
+    #[test]
+    fn virtual_port_distinct_services_within_project_store_separately() {
+        let db = db();
+        db.upsert_ssg_virtual_port(P, "postgres", 42001).unwrap();
+        db.upsert_ssg_virtual_port(P, "redis", 42002).unwrap();
+
+        assert_eq!(db.get_ssg_virtual_port(P, "postgres").unwrap(), Some(42001));
+        assert_eq!(db.get_ssg_virtual_port(P, "redis").unwrap(), Some(42002));
+        assert_eq!(db.list_ssg_virtual_ports(P).unwrap().len(), 2);
     }
 }

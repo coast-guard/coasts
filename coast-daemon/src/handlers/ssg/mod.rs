@@ -30,6 +30,11 @@ pub mod doctor;
 // `coast-ssg/DESIGN.md §0 Phase 11` + `§17-38 SETTLED`.
 pub(crate) mod consumer_refresh;
 
+// ssg-phase-26 (§24.5): stable virtual-port allocator. Unused in
+// Phase 26 itself — Phase 27 wires the host socat supervisor against
+// it, Phase 28 threads it into consumer provisioning.
+pub(crate) mod virtual_port_allocator;
+
 // ssg-phase-15: `coast ssg import-host-volume` — zero-copy migration
 // of existing host Docker named volumes into SSG bind-mount entries.
 // See `coast-ssg/DESIGN.md §10.7`.

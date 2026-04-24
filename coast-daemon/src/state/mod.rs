@@ -233,7 +233,36 @@ impl StateDb {
         self.migrate_add_remote_arch()?;
         self.migrate_ssg_per_project()?;
         self.migrate_add_ssg_latest_build_id()?;
+        self.migrate_add_ssg_virtual_ports_table()?;
 
+        Ok(())
+    }
+
+    /// Migration: create the `ssg_virtual_ports` table that holds
+    /// the host-owned, stable-per-`(project, service_name)` virtual
+    /// port the consumer socat forwards to. See
+    /// `coast-ssg/DESIGN.md §24.5` for the allocation contract.
+    ///
+    /// Kept separate from `ssg_services` because the latter is
+    /// wiped-and-reinserted on every `ssg run`
+    /// (`lifecycle.rs::apply_to_state_and_response`); virtual ports
+    /// are identity-scoped state and must survive lifecycle writes.
+    /// Same design as `ssg_consumer_pins` vs. `ssg`.
+    fn migrate_add_ssg_virtual_ports_table(&self) -> Result<()> {
+        self.conn
+            .execute_batch(
+                "CREATE TABLE IF NOT EXISTS ssg_virtual_ports (
+                    project      TEXT NOT NULL,
+                    service_name TEXT NOT NULL,
+                    port         INTEGER NOT NULL,
+                    created_at   TEXT NOT NULL,
+                    PRIMARY KEY (project, service_name)
+                );",
+            )
+            .map_err(|e| CoastError::State {
+                message: format!("failed to create ssg_virtual_ports table: {e}"),
+                source: Some(Box::new(e)),
+            })?;
         Ok(())
     }
 

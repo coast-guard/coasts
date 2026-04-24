@@ -90,6 +90,27 @@ pub struct SsgConsumerPinRecord {
     pub created_at: String,
 }
 
+/// Phase 26 (§24.5): host-owned virtual port for an SSG service.
+///
+/// Stable per `(project, service_name)` — allocated once (by
+/// `virtual_port_allocator::allocate_or_reuse`) and preserved across
+/// `ssg build`/`rm`/`run` cycles. Dropped only on `ssg rm
+/// --with-data` (data + identity both gone).
+///
+/// Lives in its own `ssg_virtual_ports` table — NOT on
+/// `ssg_services`, because the latter is wiped-and-reinserted on
+/// every `ssg run` by `lifecycle.rs::apply_to_state_and_response`.
+/// Same identity-vs-lifecycle-scope split as `ssg_consumer_pins`
+/// vs. `ssg`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SsgVirtualPortRecord {
+    pub project: String,
+    pub service_name: String,
+    pub port: u16,
+    /// RFC 3339 timestamp.
+    pub created_at: String,
+}
+
 /// Typed CRUD for the SSG state tables.
 ///
 /// Implemented on `coast_daemon::state::StateDb` in
@@ -192,4 +213,33 @@ pub trait SsgStateExt {
     /// by `auto_prune_preserving` to enumerate build_ids that must
     /// survive a prune pass.
     fn list_ssg_consumer_pins(&self) -> Result<Vec<SsgConsumerPinRecord>>;
+
+    // --- ssg_virtual_ports (Phase 26 / §24.5) ---
+
+    /// Read the persisted virtual port for `(project, service_name)`,
+    /// or `None` if never allocated. Used by the allocator's reuse
+    /// path and by Phase 28 consumer provisioning to look up the
+    /// forwarding target.
+    fn get_ssg_virtual_port(&self, project: &str, service_name: &str) -> Result<Option<u16>>;
+
+    /// Insert (or replace by `(project, service_name)`) a virtual-port
+    /// row. Replace semantics are appropriate because the allocator
+    /// may re-bind to a new port after a collision-recovery pass.
+    fn upsert_ssg_virtual_port(&self, project: &str, service_name: &str, port: u16) -> Result<()>;
+
+    /// List every virtual-port row for `project`, ordered by
+    /// `service_name`. Also used by the allocator to avoid reusing a
+    /// port that is already held by another service on the same host.
+    fn list_ssg_virtual_ports(&self, project: &str) -> Result<Vec<SsgVirtualPortRecord>>;
+
+    /// Delete every virtual-port row for `project`. Called by
+    /// `ssg rm --with-data` — identity is gone, let the ports be
+    /// re-used. Idempotent.
+    fn clear_ssg_virtual_ports(&self, project: &str) -> Result<()>;
+
+    /// Return the set of virtual ports already assigned to ANY
+    /// `(project, service_name)` pair. Used by the allocator to
+    /// avoid handing the same virtual port to two services across
+    /// different projects. Unordered.
+    fn list_all_ssg_virtual_port_numbers(&self) -> Result<Vec<u16>>;
 }
