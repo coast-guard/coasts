@@ -50,6 +50,7 @@ pub(super) async fn handle_checkout_build(
         services: Vec::new(),
         ports: Vec::new(),
         findings: Vec::new(),
+        listings: Vec::new(),
     })
 }
 
@@ -82,6 +83,7 @@ pub(super) async fn handle_uncheckout_build(
         services: Vec::new(),
         ports: Vec::new(),
         findings: Vec::new(),
+        listings: Vec::new(),
     })
 }
 
@@ -115,6 +117,7 @@ pub(super) async fn handle_show_pin(state: &Arc<AppState>, project: String) -> R
         services: Vec::new(),
         ports: Vec::new(),
         findings: Vec::new(),
+        listings: Vec::new(),
     })
 }
 

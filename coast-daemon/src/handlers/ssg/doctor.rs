@@ -51,6 +51,7 @@ where
             services: Vec::new(),
             ports: Vec::new(),
             findings: Vec::new(),
+            listings: Vec::new(),
         };
     };
 
@@ -77,6 +78,7 @@ where
         services: Vec::new(),
         ports: Vec::new(),
         findings,
+        listings: Vec::new(),
     }
 }
 

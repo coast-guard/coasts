@@ -43,7 +43,7 @@ pub mod pin;
 use std::sync::Arc;
 
 use coast_core::error::{CoastError, Result};
-use coast_core::protocol::{SsgAction, SsgRequest, SsgResponse};
+use coast_core::protocol::{SsgAction, SsgListing, SsgRequest, SsgResponse};
 use coast_ssg::state::{SsgRecord, SsgStateExt};
 
 use crate::server::AppState;
@@ -138,7 +138,58 @@ pub async fn handle(state: Arc<AppState>, req: SsgRequest) -> Result<SsgResponse
             )
             .await
         }
+
+        // Cross-project verb: ignore `project` (CLI sends empty string).
+        // See `coast-ssg/DESIGN.md §23` — Phase 22.
+        SsgAction::Ls => handle_ls(&state).await,
     }
+}
+
+/// `coast ssg ls` — list every per-project SSG known to the daemon.
+///
+/// Cross-project: enumerates every row in the `ssg` table and folds
+/// in a per-project service count from `ssg_services`. Returns an
+/// empty `listings` vec when no project has run `coast ssg run` yet.
+async fn handle_ls(state: &Arc<AppState>) -> Result<SsgResponse> {
+    let (rows, listings) = {
+        let db = state.db.lock().await;
+        let rows = db.list_ssgs()?;
+        let mut listings: Vec<SsgListing> = Vec::with_capacity(rows.len());
+        for rec in &rows {
+            let svc_count = match db.list_ssg_services(&rec.project) {
+                Ok(list) => list.len() as u32,
+                Err(_) => 0,
+            };
+            listings.push(SsgListing {
+                project: rec.project.clone(),
+                status: rec.status.clone(),
+                build_id: rec.build_id.clone(),
+                container_id: rec.container_id.clone(),
+                service_count: svc_count,
+                created_at: rec.created_at.clone(),
+            });
+        }
+        (rows, listings)
+    };
+
+    let message = if rows.is_empty() {
+        "No SSGs registered. Run `coast ssg run` from a project to create one.".to_string()
+    } else {
+        format!(
+            "{} SSG(s) across {} project(s).",
+            rows.len(),
+            rows.len()
+        )
+    };
+
+    Ok(SsgResponse {
+        message,
+        status: None,
+        services: Vec::new(),
+        ports: Vec::new(),
+        findings: Vec::new(),
+        listings,
+    })
 }
 
 async fn handle_stop(
@@ -249,6 +300,7 @@ async fn handle_logs(
         services: Vec::new(),
         ports: Vec::new(),
         findings: Vec::new(),
+        listings: Vec::new(),
     })
 }
 
@@ -273,6 +325,7 @@ async fn handle_exec(
         services: Vec::new(),
         ports: Vec::new(),
         findings: Vec::new(),
+        listings: Vec::new(),
     })
 }
 
@@ -453,6 +506,7 @@ fn build_stop_response_missing_record(project: &str) -> SsgResponse {
         services: Vec::new(),
         ports: Vec::new(),
         findings: Vec::new(),
+        listings: Vec::new(),
     }
 }
 
@@ -464,6 +518,7 @@ fn build_stop_response_success() -> SsgResponse {
         services: Vec::new(),
         ports: Vec::new(),
         findings: Vec::new(),
+        listings: Vec::new(),
     }
 }
 
@@ -477,6 +532,7 @@ fn build_rm_response_missing_record(project: &str) -> SsgResponse {
         services: Vec::new(),
         ports: Vec::new(),
         findings: Vec::new(),
+        listings: Vec::new(),
     }
 }
 
@@ -489,6 +545,7 @@ fn build_rm_response_success(with_data: bool) -> SsgResponse {
         services: Vec::new(),
         ports: Vec::new(),
         findings: Vec::new(),
+        listings: Vec::new(),
     }
 }
 

@@ -582,6 +582,7 @@ pub fn ports_ssg(project: &str, state: &dyn SsgStateExt) -> Result<SsgResponse> 
         services: Vec::new(),
         ports,
         findings: Vec::new(),
+        listings: Vec::new(),
     })
 }
 
@@ -751,6 +752,7 @@ fn build_response(
         services: service_infos,
         ports,
         findings: Vec::new(),
+        listings: Vec::new(),
     }
 }
 

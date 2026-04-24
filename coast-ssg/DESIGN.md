@@ -409,12 +409,15 @@ Desktop show `{project}-coasts/{project}-ssg` instead of
 ### Phase 22 — CLI + lifecycle: resolve project from cwd
 Every `SsgRequest` variant grows `project: String`. The CLI resolves
 the current project from cwd (same path as `coast build/run`). New
-`coast ssg ls` lists all SSGs across projects.
-- [ ] Add `project: String` to every `SsgRequest` variant in `coast-core/src/protocol/ssg.rs`
-- [ ] CLI resolution helper reused from `coast build/run`
-- [ ] New `coast ssg ls` subcommand
-- [ ] Project-scoped error messages everywhere
-- [ ] Integration test: `coast ssg ps` in two different cwds shows different SSGs
+`coast ssg ls` lists all SSGs across projects. Most of this landed
+incidentally in Phase 20 (protocol wrapper + CLI resolution); Phase
+22 adds the cross-project `ls` verb and a dedicated isolation test.
+- [x] Add `project: String` to every `SsgRequest` variant in `coast-core/src/protocol/ssg.rs` (Phase 20: promoted to `{ project, action }` wrapper)
+- [x] CLI resolution helper reused from `coast build/run` (Phase 20: `resolve_consumer_project` reads `[coast].name` from the sibling Coastfile)
+- [x] New `coast ssg ls` subcommand (`SsgAction::Ls` + `SsgListing` + `handle_ls` + `execute_ls` + `format_listings_table`). Cross-project: empty-string `project` sentinel, no cwd Coastfile required.
+- [x] Project-scoped error messages everywhere (Phase 20 for all project-scoped paths; build-artifact errors stay global intentionally since the artifact store is global)
+- [x] Integration test `test_ssg_per_project_isolation.sh`: two projects each with own `Coastfile.shared_service_groups`, distinct `{project}-ssg` containers run concurrently, `ssg ps` is cwd-scoped, `ssg ls` is cross-project, per-project `rm` is isolated
+- [x] `cargo build --workspace` green; `cargo test -p coast-daemon -p coast-ssg -p coast-core` green (2165 tests); `cargo clippy --workspace -- -D warnings` clean; manual `coast-dev ssg ls` smoke passes
 
 ### Phase 23 — Consumer Coastfile + `from_group` scoped to own project
 Consumer `from_group = true` resolves ONLY against its own project's

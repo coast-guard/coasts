@@ -1721,6 +1721,7 @@ fn test_ssg_response_roundtrip() {
             },
         ],
         findings: vec![],
+        listings: vec![],
     }));
 
     // Minimal response (only message set) — defaulted fields must round-trip.
@@ -1730,12 +1731,73 @@ fn test_ssg_response_roundtrip() {
         services: vec![],
         ports: vec![],
         findings: vec![],
+        listings: vec![],
     }));
 }
 
 #[test]
 fn test_ssg_request_doctor_roundtrip() {
     roundtrip_request(Request::Ssg(ssg_req(SsgAction::Doctor)));
+}
+
+// --- Phase 22: SsgAction::Ls + SsgListing ---
+
+#[test]
+fn test_ssg_request_ls_roundtrip() {
+    // `Ls` is cross-project — the enclosing request carries an
+    // empty-string project that the daemon handler ignores.
+    roundtrip_request(Request::Ssg(SsgRequest {
+        project: String::new(),
+        action: SsgAction::Ls,
+    }));
+}
+
+#[test]
+fn test_ssg_listings_response_roundtrip() {
+    roundtrip_response(Response::Ssg(SsgResponse {
+        message: "2 SSG(s) across 2 project(s).".to_string(),
+        listings: vec![
+            SsgListing {
+                project: "cg".to_string(),
+                status: "running".to_string(),
+                build_id: Some("abc_20260423225356".to_string()),
+                container_id: Some("cid-cg".to_string()),
+                service_count: 2,
+                created_at: "2026-04-23T22:53:56+00:00".to_string(),
+            },
+            SsgListing {
+                project: "filemap".to_string(),
+                status: "stopped".to_string(),
+                build_id: Some("def_20260422051132".to_string()),
+                container_id: None,
+                service_count: 1,
+                created_at: "2026-04-22T05:11:32+00:00".to_string(),
+            },
+        ],
+        ..Default::default()
+    }));
+
+    // Round-trip the empty-listings case.
+    roundtrip_response(Response::Ssg(SsgResponse {
+        message: "No SSGs running.".to_string(),
+        listings: vec![],
+        ..Default::default()
+    }));
+}
+
+#[test]
+fn test_ssg_response_listings_default_when_absent_in_json() {
+    // Older daemons won't serialize `listings`; `#[serde(default)]`
+    // must deserialize an empty vec so new clients stay forward-compat.
+    let json = r#"{"type":"Ssg","message":"ok"}"#;
+    let resp: Response = serde_json::from_str(json).expect("legacy SsgResponse should parse");
+    match resp {
+        Response::Ssg(r) => {
+            assert_eq!(r.message, "ok");
+            assert!(r.listings.is_empty());
+        }
+        other => panic!("expected Response::Ssg, got {other:?}"),
+    }
 }
 
 #[test]
@@ -1759,6 +1821,7 @@ fn test_ssg_doctor_findings_response_roundtrip() {
                 message: "Owner matches 999:999.".to_string(),
             },
         ],
+        listings: vec![],
     }));
 }
 

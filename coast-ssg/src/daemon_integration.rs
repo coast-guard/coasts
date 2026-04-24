@@ -257,6 +257,7 @@ pub fn ps_ssg(
             services: Vec::new(),
             ports: Vec::new(),
             findings: Vec::new(),
+            listings: Vec::new(),
         });
     };
 
@@ -312,6 +313,7 @@ pub fn ps_ssg(
         services,
         ports,
         findings: Vec::new(),
+        listings: Vec::new(),
     })
 }
 
@@ -878,5 +880,6 @@ fn build_response_from_manifest(
         services,
         ports: Vec::new(),
         findings: Vec::new(),
+        listings: Vec::new(),
     }
 }

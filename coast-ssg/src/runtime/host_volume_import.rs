@@ -128,6 +128,7 @@ pub fn run_import(inputs: HostVolumeImportInputs) -> Result<SsgResponse> {
             services: Vec::new(),
             ports: Vec::new(),
             findings: Vec::new(),
+            listings: Vec::new(),
         })
     }
 }
@@ -344,6 +345,7 @@ fn apply_to_disk(
         services: Vec::new(),
         ports: Vec::new(),
         findings: Vec::new(),
+        listings: Vec::new(),
     })
 }
 

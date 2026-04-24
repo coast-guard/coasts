@@ -106,6 +106,11 @@ pub enum SsgAction {
     UncheckoutBuild,
     /// Show the current SSG build pin for this project (if any).
     ShowPin,
+    /// List every per-project SSG known to the daemon. Cross-project
+    /// verb: the `project` field on the enclosing [`SsgRequest`] is
+    /// ignored (CLI sends an empty string). See `coast-ssg/DESIGN.md
+    /// §23` — Phase 22.
+    Ls,
     /// Zero-copy migration helper: resolve a host Docker named
     /// volume's mountpoint and emit (or apply) the equivalent SSG
     /// Coastfile bind-mount entry. See `DESIGN.md §10.7`.
@@ -146,6 +151,10 @@ pub struct SsgResponse {
     /// verb. `#[serde(default)]` keeps older clients forward-compatible.
     #[serde(default)]
     pub findings: Vec<SsgDoctorFinding>,
+    /// Rows produced by `coast ssg ls`. Empty for every other verb.
+    /// See `coast-ssg/DESIGN.md §23` — Phase 22.
+    #[serde(default)]
+    pub listings: Vec<SsgListing>,
 }
 
 /// One finding emitted by `coast ssg doctor`.
@@ -183,6 +192,30 @@ pub struct SsgPortInfo {
     pub canonical_port: u16,
     pub dynamic_host_port: u16,
     pub checked_out: bool,
+}
+
+/// One row in the `coast ssg ls` output — metadata for a single
+/// project's SSG. See `coast-ssg/DESIGN.md §23` (per-project SSG)
+/// and Phase 22.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SsgListing {
+    /// Consumer project name (`[coast].name` from the project's Coastfile).
+    pub project: String,
+    /// One of: `created`, `running`, `stopped`. Matches the `status`
+    /// column of the `ssg` row for this project.
+    pub status: String,
+    /// The build id the SSG is currently wired to, if any.
+    #[serde(default)]
+    pub build_id: Option<String>,
+    /// The outer DinD container id, if the SSG has been run at least once.
+    #[serde(default)]
+    pub container_id: Option<String>,
+    /// Number of inner services registered for this project in
+    /// `ssg_services`. Zero when the SSG has never been run.
+    pub service_count: u32,
+    /// RFC 3339 timestamp (chrono `to_rfc3339()`) of the `ssg` row.
+    pub created_at: String,
 }
 
 /// Streaming chunk of log output for `coast ssg logs --follow`.

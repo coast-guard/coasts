@@ -518,3 +518,9 @@ tests:
     script: integrated-examples/test_ssg_coastfile_inheritance.sh
     timeout: 600
     note: "Coastfile.shared_service_groups [ssg] extends/includes: parent merged into child, child wins on conflict, flattened artifact, [unset] removes, cycle detection hard-errors (DESIGN §17 SETTLED #42)"
+
+  # --- Shared Service Groups (coast-ssg) — Phase 22 (per-project SSG + `ssg ls`) ---
+  test_ssg_per_project_isolation:
+    script: integrated-examples/test_ssg_per_project_isolation.sh
+    timeout: 600
+    note: "two projects with their own `Coastfile.shared_service_groups` run concurrent postgres SSGs as `{project}-ssg` containers; `ssg ps` is cwd-scoped; `ssg ls` is cross-project; per-project `ssg rm` is isolated (DESIGN §23, Phase 22)"

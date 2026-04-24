@@ -180,6 +180,7 @@ pub(super) async fn handle_uncheckout(
             services: Vec::new(),
             ports: Vec::new(),
             findings: Vec::new(),
+            listings: Vec::new(),
         });
     }
 
@@ -214,6 +215,7 @@ pub(super) async fn handle_uncheckout(
         services: Vec::new(),
         ports: Vec::new(),
         findings: Vec::new(),
+        listings: Vec::new(),
     })
 }
 
@@ -253,6 +255,7 @@ fn build_uncheckout_none_matching_response(target: &SsgCheckoutTarget) -> SsgRes
         services: Vec::new(),
         ports: Vec::new(),
         findings: Vec::new(),
+        listings: Vec::new(),
     }
 }
 
@@ -432,6 +435,7 @@ fn build_checkout_response(
         services: Vec::new(),
         ports,
         findings: Vec::new(),
+        listings: Vec::new(),
     }
 }
 

@@ -524,6 +524,7 @@ pub fn request_command_name(req: &Request) -> String {
             SsgAction::UncheckoutBuild => "ssg/uncheckout-build",
             SsgAction::ShowPin => "ssg/show-pin",
             SsgAction::ImportHostVolume { .. } => "ssg/import-host-volume",
+            SsgAction::Ls => "ssg/ls",
         }
         .into(),
     }

@@ -15,7 +15,7 @@ use colored::Colorize;
 
 use coast_core::protocol::{
     BuildProgressEvent, Request, Response, SsgAction as ProtoSsgAction, SsgDoctorFinding,
-    SsgPortInfo, SsgRequest, SsgResponse, SsgServiceInfo,
+    SsgListing, SsgPortInfo, SsgRequest, SsgResponse, SsgServiceInfo,
 };
 
 /// Arguments for `coast ssg`.
@@ -120,6 +120,13 @@ pub enum SsgAction {
     },
     /// Show the per-service dynamic host port mapping.
     Ports,
+    /// List every per-project SSG known to the daemon.
+    ///
+    /// Cross-project command: runs from any cwd, does NOT require a
+    /// Coastfile. Prints one row per known SSG with project, status,
+    /// build id, container id, and service count. See
+    /// `coast-ssg/DESIGN.md §23` — Phase 22.
+    Ls,
     /// Bind the canonical host port of an SSG service (or all of them)
     /// via a socat forwarder so host-side callers (psql from the host,
     /// Coastguard previews, MCPs) can reach the service at its
@@ -282,6 +289,9 @@ pub async fn execute(args: &SsgArgs, cli_working_dir: &Option<PathBuf>) -> Resul
         | SsgAction::ShowPin { .. } => {
             execute_pin_action(&args.action, args.silent, cli_working_dir).await
         }
+        // Cross-project: no `resolve_consumer_project` call, no cwd
+        // Coastfile required. Daemon handler ignores `req.project`.
+        SsgAction::Ls => execute_ls(args.silent).await,
         other => dispatch_simple_or_lifecycle(other, args.silent, cli_working_dir).await,
     }
 }
@@ -470,8 +480,11 @@ async fn dispatch_simple_or_lifecycle(
         | SsgAction::ImportHostVolume { .. }
         | SsgAction::CheckoutBuild { .. }
         | SsgAction::UncheckoutBuild { .. }
-        | SsgAction::ShowPin { .. } => {
-            unreachable!("dispatch_simple_or_lifecycle only handles non-build/non-pin verbs")
+        | SsgAction::ShowPin { .. }
+        | SsgAction::Ls => {
+            unreachable!(
+                "dispatch_simple_or_lifecycle only handles non-build/non-pin/non-ls verbs"
+            )
         }
     }
 }
@@ -886,6 +899,31 @@ async fn execute_logs_follow(
     .await
 }
 
+async fn execute_ls(silent: bool) -> Result<()> {
+    // `Ls` is cross-project: the daemon handler ignores `req.project`,
+    // so an empty-string placeholder is fine and lets the command run
+    // from any cwd (no Coastfile required).
+    let response = super::send_request(Request::Ssg(SsgRequest {
+        project: String::new(),
+        action: ProtoSsgAction::Ls,
+    }))
+    .await?;
+    match response {
+        Response::Ssg(resp) => {
+            if !silent {
+                println!("{}", resp.message);
+                if !resp.listings.is_empty() {
+                    println!();
+                    println!("{}", format_listings_table(&resp.listings));
+                }
+            }
+            Ok(())
+        }
+        Response::Error(e) => bail!("{}", e.error),
+        other => bail!("unexpected response from daemon: {other:?}"),
+    }
+}
+
 async fn execute_doctor(project: String, silent: bool) -> Result<()> {
     let response = super::send_request(Request::Ssg(SsgRequest {
         project,
@@ -1072,4 +1110,51 @@ fn format_ports_table(ports: &[SsgPortInfo]) -> String {
         ));
     }
     lines.join("\n")
+}
+
+/// Phase 22 — render the `coast ssg ls` listings. One row per
+/// per-project SSG known to the daemon.
+fn format_listings_table(listings: &[SsgListing]) -> String {
+    let mut lines = Vec::with_capacity(listings.len() + 1);
+    lines.push(format!(
+        "  {:<20} {:<10} {:<32} {:<14} {:<8}  {}",
+        "PROJECT".bold(),
+        "STATUS".bold(),
+        "BUILD".bold(),
+        "CONTAINER".bold(),
+        "SERVICES".bold(),
+        "CREATED".bold(),
+    ));
+    for row in listings {
+        // Build and container id columns are opaque — truncate the
+        // hash prefix to the first 12 chars so the row stays readable
+        // without losing the identifying prefix.
+        let build = row
+            .build_id
+            .as_deref()
+            .map(truncate_for_table)
+            .unwrap_or_else(|| "-".to_string());
+        let container = row
+            .container_id
+            .as_deref()
+            .map(truncate_for_table)
+            .unwrap_or_else(|| "-".to_string());
+        lines.push(format!(
+            "  {:<20} {:<10} {:<32} {:<14} {:<8}  {}",
+            row.project, row.status, build, container, row.service_count, row.created_at,
+        ));
+    }
+    lines.join("\n")
+}
+
+/// Truncate an opaque id (build id, container id) to a short prefix
+/// that's still distinctive for visual scanning but fits in a table
+/// column. Full ids remain available in the JSON protocol.
+fn truncate_for_table(value: &str) -> String {
+    const MAX: usize = 30;
+    if value.len() <= MAX {
+        value.to_string()
+    } else {
+        format!("{}...", &value[..MAX.saturating_sub(3)])
+    }
 }

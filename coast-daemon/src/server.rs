@@ -1524,6 +1524,7 @@ async fn handle_ssg_logs_streaming(
         services: Vec::new(),
         ports: Vec::new(),
         findings: Vec::new(),
+        listings: Vec::new(),
     });
     write_response(writer, &final_resp).await
 }
