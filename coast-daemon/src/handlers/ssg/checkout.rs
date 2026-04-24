@@ -492,9 +492,7 @@ pub(super) async fn kill_active_checkout_socats_preserve_rows(
             }
         }
         let db = state.db.lock().await;
-        if let Err(err) =
-            db.update_ssg_port_checkout_socat_pid(project, row.canonical_port, None)
-        {
+        if let Err(err) = db.update_ssg_port_checkout_socat_pid(project, row.canonical_port, None) {
             warn!(
                 canonical = row.canonical_port,
                 error = %err,

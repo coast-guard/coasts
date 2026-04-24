@@ -322,9 +322,7 @@ async fn dispatch_import_host_volume(
         apply,
     } = action
     else {
-        unreachable!(
-            "dispatch_import_host_volume is only called with SsgAction::ImportHostVolume"
-        )
+        unreachable!("dispatch_import_host_volume is only called with SsgAction::ImportHostVolume")
     };
     let resolved_working_dir = working_dir.clone().or_else(|| cli_working_dir.clone());
     let project = resolve_consumer_project(&None, &resolved_working_dir, &None)?;
@@ -367,12 +365,7 @@ async fn dispatch_simple_or_lifecycle(
             execute_lifecycle(wrap(project, ProtoSsgAction::Start), "Start", silent).await
         }
         SsgAction::Restart => {
-            execute_lifecycle(
-                wrap(project, ProtoSsgAction::Restart),
-                "Restart",
-                silent,
-            )
-            .await
+            execute_lifecycle(wrap(project, ProtoSsgAction::Restart), "Restart", silent).await
         }
         SsgAction::Stop { force } => {
             execute_simple(
@@ -471,9 +464,7 @@ async fn dispatch_simple_or_lifecycle(
         | SsgAction::UncheckoutBuild { .. }
         | SsgAction::ShowPin { .. }
         | SsgAction::Ls => {
-            unreachable!(
-                "dispatch_simple_or_lifecycle only handles non-build/non-pin/non-ls verbs"
-            )
+            unreachable!("dispatch_simple_or_lifecycle only handles non-build/non-pin/non-ls verbs")
         }
     }
 }

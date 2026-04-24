@@ -192,9 +192,15 @@ pub async fn run_ssg_with_build_id(
         source: Some(e),
     })?;
 
-    let container_id =
-        create_ssg_container(project, ops, &build_dir, &cache_dir, &coastfile, &port_plans)
-            .await?;
+    let container_id = create_ssg_container(
+        project,
+        ops,
+        &build_dir,
+        &cache_dir,
+        &coastfile,
+        &port_plans,
+    )
+    .await?;
     done(&progress, "Creating SSG container", &container_id).await;
 
     // --- start container ---

@@ -269,10 +269,7 @@ impl StateDb {
     fn migrate_ssg_per_project(&self) -> Result<()> {
         // `SELECT id FROM ssg LIMIT 0` succeeds iff the old schema is
         // in place. The new schema uses `project` instead.
-        let has_old_id = self
-            .conn
-            .prepare("SELECT id FROM ssg LIMIT 0")
-            .is_ok();
+        let has_old_id = self.conn.prepare("SELECT id FROM ssg LIMIT 0").is_ok();
         if has_old_id {
             self.conn
                 .execute_batch(
@@ -305,14 +302,10 @@ impl StateDb {
                      );",
                 )
                 .map_err(|e| CoastError::State {
-                    message: format!(
-                        "failed to migrate ssg tables to per-project schema: {e}"
-                    ),
+                    message: format!("failed to migrate ssg tables to per-project schema: {e}"),
                     source: Some(Box::new(e)),
                 })?;
-            debug!(
-                "migrated ssg tables from singleton to per-project schema (pre-launch wipe)"
-            );
+            debug!("migrated ssg tables from singleton to per-project schema (pre-launch wipe)");
         }
         Ok(())
     }

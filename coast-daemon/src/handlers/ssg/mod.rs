@@ -65,9 +65,7 @@ pub async fn handle(state: Arc<AppState>, req: SsgRequest) -> Result<SsgResponse
         }
 
         SsgAction::Stop { force } => handle_stop(&project, &state, force).await,
-        SsgAction::Rm { with_data, force } => {
-            handle_rm(&project, &state, with_data, force).await
-        }
+        SsgAction::Rm { with_data, force } => handle_rm(&project, &state, with_data, force).await,
 
         SsgAction::Logs {
             service,
@@ -175,11 +173,7 @@ async fn handle_ls(state: &Arc<AppState>) -> Result<SsgResponse> {
     let message = if rows.is_empty() {
         "No SSGs registered. Run `coast ssg run` from a project to create one.".to_string()
     } else {
-        format!(
-            "{} SSG(s) across {} project(s).",
-            rows.len(),
-            rows.len()
-        )
+        format!("{} SSG(s) across {} project(s).", rows.len(), rows.len())
     };
 
     Ok(SsgResponse {
@@ -192,11 +186,7 @@ async fn handle_ls(state: &Arc<AppState>) -> Result<SsgResponse> {
     })
 }
 
-async fn handle_stop(
-    project: &str,
-    state: &Arc<AppState>,
-    force: bool,
-) -> Result<SsgResponse> {
+async fn handle_stop(project: &str, state: &Arc<AppState>, force: bool) -> Result<SsgResponse> {
     let docker = state
         .docker
         .as_ref()
@@ -525,9 +515,7 @@ fn build_stop_response_success() -> SsgResponse {
 /// Response for `coast ssg rm` when no SSG record exists.
 fn build_rm_response_missing_record(project: &str) -> SsgResponse {
     SsgResponse {
-        message: format!(
-            "SSG for project '{project}' has not been created. Nothing to remove."
-        ),
+        message: format!("SSG for project '{project}' has not been created. Nothing to remove."),
         status: None,
         services: Vec::new(),
         ports: Vec::new(),

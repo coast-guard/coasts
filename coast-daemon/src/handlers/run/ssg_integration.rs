@@ -146,15 +146,21 @@ pub async fn ensure_ready_for_consumer(
             // Phase 23: pass the pin-or-project-latest build id.
             // `run_and_apply` no longer falls back to a global
             // symlink if this is `None`.
-            run_and_apply(project, state, &docker, resolved_build_id.as_deref(), progress)
-                .await?,
+            run_and_apply(
+                project,
+                state,
+                &docker,
+                resolved_build_id.as_deref(),
+                progress,
+            )
+            .await?,
         ),
         Some(r) if r.status == "running" => DispatchOutcome::AlreadyRunning(
             r.build_id.clone().unwrap_or_else(|| "unknown".to_string()),
         ),
-        Some(r) => DispatchOutcome::Started(
-            start_and_apply(project, state, &docker, r, progress).await?,
-        ),
+        Some(r) => {
+            DispatchOutcome::Started(start_and_apply(project, state, &docker, r, progress).await?)
+        }
     };
 
     let build_id = outcome.build_id().to_string();

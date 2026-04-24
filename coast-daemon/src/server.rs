@@ -1097,9 +1097,7 @@ async fn handle_ssg_build_streaming(
             {
                 use coast_ssg::state::SsgStateExt;
                 let db = state.db.lock().await;
-                if let Err(err) =
-                    db.set_latest_build_id(&outcome.project, &outcome.build_id)
-                {
+                if let Err(err) = db.set_latest_build_id(&outcome.project, &outcome.build_id) {
                     // Surface the failure via the final response
                     // rather than swallowing it — consumers would
                     // otherwise hit "no SSG build for project".
@@ -1162,23 +1160,13 @@ async fn handle_ssg_lifecycle_streaming(
         }
         coast_core::protocol::SsgAction::Start => {
             run_streaming_start_or_restart(
-                &project,
-                state,
-                &docker,
-                writer,
-                /*restart=*/ false,
+                &project, state, &docker, writer, /*restart=*/ false,
             )
             .await
         }
         coast_core::protocol::SsgAction::Restart => {
-            run_streaming_start_or_restart(
-                &project,
-                state,
-                &docker,
-                writer,
-                /*restart=*/ true,
-            )
-            .await
+            run_streaming_start_or_restart(&project, state, &docker, writer, /*restart=*/ true)
+                .await
         }
         _ => unreachable!("handle_ssg_lifecycle_streaming only handles Run/Start/Restart"),
     };
@@ -1512,8 +1500,7 @@ async fn handle_ssg_logs_streaming(
     let tail_value = tail.unwrap_or(200).to_string();
 
     let mut cmd = tokio::process::Command::new("docker");
-    let inner_compose_project =
-        coast_ssg::runtime::lifecycle::ssg_compose_project(&project);
+    let inner_compose_project = coast_ssg::runtime::lifecycle::ssg_compose_project(&project);
     match service {
         Some(ref svc) => {
             cmd.args([

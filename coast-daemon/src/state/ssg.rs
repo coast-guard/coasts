@@ -102,10 +102,7 @@ impl SsgStateExt for StateDb {
     #[instrument(skip(self))]
     fn clear_ssg(&self, project: &str) -> Result<()> {
         self.conn
-            .execute(
-                "DELETE FROM ssg WHERE project = ?1",
-                params![project],
-            )
+            .execute("DELETE FROM ssg WHERE project = ?1", params![project])
             .map_err(|e| state_err(format!("failed to clear ssg row for '{project}': {e}"), e))?;
         debug!(project, "cleared ssg row");
         Ok(())
@@ -154,9 +151,7 @@ impl SsgStateExt for StateDb {
             .map_err(|e| state_err(format!("failed to list ssgs: {e}"), e))?;
         let mut out = Vec::new();
         for row in rows {
-            out.push(
-                row.map_err(|e| state_err(format!("failed to read ssg row: {e}"), e))?,
-            );
+            out.push(row.map_err(|e| state_err(format!("failed to read ssg row: {e}"), e))?);
         }
         Ok(out)
     }
@@ -214,12 +209,7 @@ impl SsgStateExt for StateDb {
     }
 
     #[instrument(skip(self))]
-    fn update_ssg_service_status(
-        &self,
-        project: &str,
-        name: &str,
-        status: &str,
-    ) -> Result<()> {
+    fn update_ssg_service_status(&self, project: &str, name: &str, status: &str) -> Result<()> {
         let changed = self
             .conn
             .execute(
@@ -228,9 +218,7 @@ impl SsgStateExt for StateDb {
             )
             .map_err(|e| {
                 state_err(
-                    format!(
-                        "failed to update ssg service '{project}/{name}' status: {e}"
-                    ),
+                    format!("failed to update ssg service '{project}/{name}' status: {e}"),
                     e,
                 )
             })?;
@@ -291,10 +279,7 @@ impl SsgStateExt for StateDb {
     }
 
     #[instrument(skip(self))]
-    fn list_ssg_port_checkouts(
-        &self,
-        project: &str,
-    ) -> Result<Vec<SsgPortCheckoutRecord>> {
+    fn list_ssg_port_checkouts(&self, project: &str) -> Result<Vec<SsgPortCheckoutRecord>> {
         let mut stmt = self
             .conn
             .prepare(
@@ -324,11 +309,7 @@ impl SsgStateExt for StateDb {
     }
 
     #[instrument(skip(self))]
-    fn delete_ssg_port_checkout(
-        &self,
-        project: &str,
-        canonical_port: u16,
-    ) -> Result<()> {
+    fn delete_ssg_port_checkout(&self, project: &str, canonical_port: u16) -> Result<()> {
         self.conn
             .execute(
                 "DELETE FROM ssg_port_checkouts
@@ -525,8 +506,10 @@ mod tests {
         // Under the old schema, a second insert failed the CHECK.
         // Under the per-project schema, both must coexist.
         let db = db();
-        db.upsert_ssg(P, "running", Some("cid-a"), Some("b1")).unwrap();
-        db.upsert_ssg(Q, "running", Some("cid-b"), Some("b2")).unwrap();
+        db.upsert_ssg(P, "running", Some("cid-a"), Some("b1"))
+            .unwrap();
+        db.upsert_ssg(Q, "running", Some("cid-b"), Some("b2"))
+            .unwrap();
 
         let a = db.get_ssg(P).unwrap().unwrap();
         let b = db.get_ssg(Q).unwrap().unwrap();
@@ -559,14 +542,8 @@ mod tests {
         let rec = db.get_ssg(P).unwrap().expect("row should exist");
         assert_eq!(rec.project, P);
         assert_eq!(rec.status, "built");
-        assert!(
-            rec.container_id.is_none(),
-            "no container until ssg run",
-        );
-        assert!(
-            rec.build_id.is_none(),
-            "no running-build until ssg run",
-        );
+        assert!(rec.container_id.is_none(), "no container until ssg run",);
+        assert!(rec.build_id.is_none(), "no running-build until ssg run",);
         assert_eq!(rec.latest_build_id.as_deref(), Some("b_new_20260424"));
         assert!(!rec.created_at.is_empty());
     }
@@ -648,7 +625,8 @@ mod tests {
 
         db.upsert_ssg_service(&svc(P, "postgres", 5432, 54201))
             .unwrap();
-        db.upsert_ssg_service(&svc(P, "redis", 6379, 54202)).unwrap();
+        db.upsert_ssg_service(&svc(P, "redis", 6379, 54202))
+            .unwrap();
 
         let listed = db.list_ssg_services(P).unwrap();
         assert_eq!(listed.len(), 2);
@@ -659,7 +637,8 @@ mod tests {
         assert_eq!(listed[1].service_name, "redis");
 
         // Update status.
-        db.update_ssg_service_status(P, "postgres", "stopped").unwrap();
+        db.update_ssg_service_status(P, "postgres", "stopped")
+            .unwrap();
         let rec = db
             .list_ssg_services(P)
             .unwrap()
@@ -805,7 +784,8 @@ mod tests {
             .unwrap();
 
         // Null the PID (as stop would do).
-        db.update_ssg_port_checkout_socat_pid(P, 5432, None).unwrap();
+        db.update_ssg_port_checkout_socat_pid(P, 5432, None)
+            .unwrap();
         let rec = db
             .list_ssg_port_checkouts(P)
             .unwrap()
@@ -889,8 +869,10 @@ mod tests {
     #[test]
     fn list_ssg_services_orders_alphabetically_with_many_rows() {
         let db = db();
-        db.upsert_ssg_service(&svc(P, "redis", 6379, 54202)).unwrap();
-        db.upsert_ssg_service(&svc(P, "mongo", 27017, 54203)).unwrap();
+        db.upsert_ssg_service(&svc(P, "redis", 6379, 54202))
+            .unwrap();
+        db.upsert_ssg_service(&svc(P, "mongo", 27017, 54203))
+            .unwrap();
         db.upsert_ssg_service(&svc(P, "postgres", 5432, 54201))
             .unwrap();
         db.upsert_ssg_service(&svc(P, "clickhouse", 9000, 54204))

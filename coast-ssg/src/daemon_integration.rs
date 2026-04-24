@@ -247,10 +247,7 @@ pub async fn build_ssg(
         .await;
 
     Ok(SsgBuildOutcome {
-        response: build_response_from_manifest(
-            &manifest,
-            format!("Build complete: {build_id}"),
-        ),
+        response: build_response_from_manifest(&manifest, format!("Build complete: {build_id}")),
         project: inputs.project.clone(),
         build_id,
     })
@@ -287,10 +284,7 @@ pub struct SsgBuildOutcome {
 /// `~/.coast/ssg/latest` fallback — that leaked another project's
 /// build into this project's `ps`. Returns a short-circuit message
 /// when no state is available or no build exists for the project.
-pub fn ps_ssg(
-    project: &str,
-    state: Option<&dyn crate::state::SsgStateExt>,
-) -> Result<SsgResponse> {
+pub fn ps_ssg(project: &str, state: Option<&dyn crate::state::SsgStateExt>) -> Result<SsgResponse> {
     let Some(db) = state else {
         // Without state we can't scope to a project; return an empty
         // ps response. (Call sites under the daemon always supply

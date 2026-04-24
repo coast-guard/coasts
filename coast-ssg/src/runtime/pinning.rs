@@ -222,7 +222,11 @@ mod tests {
         with_coast_home(|root| {
             // Build exists on disk but the caller says this project
             // has no latest build (no row in `ssg.latest_build_id`).
-            write_build(root, "b_other_project", &minimal_manifest("b_other_project"));
+            write_build(
+                root,
+                "b_other_project",
+                &minimal_manifest("b_other_project"),
+            );
             // A global `latest` symlink is meaningless here and must
             // NOT be used — that leak is the Phase 23 regression.
             flip_latest(root, "b_other_project");

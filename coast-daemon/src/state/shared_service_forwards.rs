@@ -397,14 +397,8 @@ mod tests {
         // the reverse pairs are distinct (no leak across projects
         // even though the remote VM, instance name, and canonical
         // service port are all identical).
-        let pairs_a: Vec<(u16, u16)> = a
-            .iter()
-            .map(|r| (r.remote_port, r.local_port))
-            .collect();
-        let pairs_b: Vec<(u16, u16)> = b
-            .iter()
-            .map(|r| (r.remote_port, r.local_port))
-            .collect();
+        let pairs_a: Vec<(u16, u16)> = a.iter().map(|r| (r.remote_port, r.local_port)).collect();
+        let pairs_b: Vec<(u16, u16)> = b.iter().map(|r| (r.remote_port, r.local_port)).collect();
         assert_eq!(pairs_a, vec![(55001, 60001)]);
         assert_eq!(pairs_b, vec![(55002, 60002)]);
 

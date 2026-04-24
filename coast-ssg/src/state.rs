@@ -143,12 +143,7 @@ pub trait SsgStateExt {
     fn list_ssg_services(&self, project: &str) -> Result<Vec<SsgServiceRecord>>;
 
     /// Update the status column for one service under `project`.
-    fn update_ssg_service_status(
-        &self,
-        project: &str,
-        name: &str,
-        status: &str,
-    ) -> Result<()>;
+    fn update_ssg_service_status(&self, project: &str, name: &str, status: &str) -> Result<()>;
 
     /// Remove every `ssg_services` row for `project`. Used when the
     /// project's SSG is removed or rebuilt from scratch.
@@ -160,17 +155,10 @@ pub trait SsgStateExt {
     fn upsert_ssg_port_checkout(&self, rec: &SsgPortCheckoutRecord) -> Result<()>;
 
     /// List every checkout row for `project`, ordered by `canonical_port` ascending.
-    fn list_ssg_port_checkouts(
-        &self,
-        project: &str,
-    ) -> Result<Vec<SsgPortCheckoutRecord>>;
+    fn list_ssg_port_checkouts(&self, project: &str) -> Result<Vec<SsgPortCheckoutRecord>>;
 
     /// Delete the checkout row for `(project, canonical_port)`, if any. Idempotent.
-    fn delete_ssg_port_checkout(
-        &self,
-        project: &str,
-        canonical_port: u16,
-    ) -> Result<()>;
+    fn delete_ssg_port_checkout(&self, project: &str, canonical_port: u16) -> Result<()>;
 
     /// Update just the `socat_pid` column for a checkout row (Phase
     /// 6). Used by `coast ssg stop` to null the PID after killing the

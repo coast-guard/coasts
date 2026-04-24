@@ -51,16 +51,15 @@ async fn load_project_ssg_manifest(
 
     let build_dir = coast_ssg::paths::ssg_build_dir(&build_id)?;
     let manifest_path = build_dir.join("manifest.json");
-    let content = std::fs::read_to_string(&manifest_path).map_err(|e| {
-        coast_core::error::CoastError::Io {
+    let content =
+        std::fs::read_to_string(&manifest_path).map_err(|e| coast_core::error::CoastError::Io {
             message: format!(
                 "failed to read SSG manifest '{}': {e}",
                 manifest_path.display()
             ),
             path: manifest_path.clone(),
             source: Some(e),
-        }
-    })?;
+        })?;
     let manifest: SsgManifest = serde_json::from_str(&content).map_err(|e| {
         coast_core::error::CoastError::artifact(format!(
             "failed to parse SSG manifest '{}': {e}",
