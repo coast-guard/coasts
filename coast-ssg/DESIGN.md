@@ -434,10 +434,11 @@ Auto-start logic (§11.1) becomes per-project.
 Thread project through the Phase 18 reverse-tunnel resolution so
 remote coasts route to their OWN project's SSG dynamic port, not
 a global singleton.
-- [ ] `shared_service_forwards` project-aware lookup picks the right SSG service port
-- [ ] Per-(project, remote) SSG provisioning on coast-service
-- [ ] Regression: `test_remote_multi_instance_independent_tunnels` still green
-- [ ] New: `test_remote_two_projects_same_canonical_port_distinct_ssg`
+- [x] `shared_service_forwards` project-aware lookup picks the right SSG service port (already keyed by Phase 18; Phase 24 adds explicit multi-project regression tests)
+- [x] Per-(project, remote) SSG provisioning on coast-service (coast-service remains SSG-agnostic per §20.1/§20.7; `remote_shared_forwards` already keyed by `(project, instance)`; the LOCAL daemon is where the per-project SSG dynamic port is resolved via `rewrite_reverse_tunnel_pairs`)
+- [x] Removed `restored_hosts` host-keyed skip in `restore_shared_service_tunnels` — was a latent cross-project leak on daemon restart under Phase 24's multi-project-on-shared-remote contract
+- [x] Regression: `test_remote_multi_instance_independent_tunnels` still green (dedup removal only restores MORE tunnels; no test asserted on the skip)
+- [x] New: `test_remote_two_projects_same_canonical_port_distinct_ssg` — two projects (pg15 vs pg16), each own SSG, both consumers on one remote VM, daemon-restart leg exercises dedup fix
 
 ### Phase 25 — Integration test sweep
 Mechanical updates across 35 tests added between main and

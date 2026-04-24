@@ -153,4 +153,40 @@ mod tests {
         let pairs = rewrite_reverse_tunnel_pairs(&forwards, &services);
         assert_eq!(pairs, vec![(61040, 60002), (61041, 60001), (61042, 7777)]);
     }
+
+    /// Phase 24 invariant: the caller (`synthesize_ssg_forwards`)
+    /// only passes in `ssg_services` for the consumer's own project,
+    /// so even when a *different* project owns the same `(name,
+    /// port)` tuple at a different dynamic host port, the rewriter
+    /// cannot see or route to it. Each project's forward resolves
+    /// against its own slice.
+    #[test]
+    fn caller_scoping_isolates_same_name_port_across_projects() {
+        let forwards = vec![fwd("postgres", 5432, 61050)];
+
+        // Pretend we are project A: caller hands us A's services.
+        let services_a = vec![svc("postgres", 5432, 60001)];
+        let pairs_a = rewrite_reverse_tunnel_pairs(&forwards, &services_a);
+        assert_eq!(pairs_a, vec![(61050, 60001)]);
+
+        // Pretend we are project B: caller hands us B's services.
+        // Same canonical (name, port), different dynamic host port.
+        let services_b = vec![svc("postgres", 5432, 60002)];
+        let pairs_b = rewrite_reverse_tunnel_pairs(&forwards, &services_b);
+        assert_eq!(pairs_b, vec![(61050, 60002)]);
+
+        // If the caller accidentally merged both projects' services
+        // into a single slice, the rewriter would route to the
+        // first match (a source of latent cross-project bugs).
+        // Keeping this assertion ensures the *caller contract* is
+        // the enforcement mechanism: `synthesize_ssg_forwards` must
+        // filter by `cf.name` before reaching this helper.
+        let merged = vec![svc("postgres", 5432, 60001), svc("postgres", 5432, 60002)];
+        let pairs_merged = rewrite_reverse_tunnel_pairs(&forwards, &merged);
+        assert_eq!(
+            pairs_merged,
+            vec![(61050, 60001)],
+            "documented behavior: first match wins; callers MUST pre-filter by project"
+        );
+    }
 }

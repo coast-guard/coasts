@@ -339,6 +339,10 @@ tests:
   test_remote_mixed_inline_and_ssg_no_collision:
     script: integrated-examples/remote/test_remote_mixed_inline_and_ssg_no_collision.sh
     timeout: 300
+  test_remote_two_projects_same_canonical_port_distinct_ssg:
+    script: integrated-examples/remote/test_remote_two_projects_same_canonical_port_distinct_ssg.sh
+    timeout: 600
+    note: "Phase 24: two projects with own SSGs (pg15 vs pg16) + one shared remote; each consumer's tunnel routes to its own project's SSG dynamic port; daemon-restart leg proves the `restored_hosts` host-keyed skip was correctly removed (DESIGN §23.3 item 7, Phase 24)"
   test_remote_port_recovery_after_restart:
     script: integrated-examples/remote/test_remote_port_recovery_after_restart.sh
     timeout: 300

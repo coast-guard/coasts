@@ -204,6 +204,33 @@ mod tests {
         db
     }
 
+    /// Phase 24 harness: seed two projects that each own a
+    /// same-named instance `dev-1`, pointed at the same remote host.
+    /// Emulates the contract that `restore_shared_service_tunnels`
+    /// now has to honor: every `(project, instance)` on a shared
+    /// remote owns its own forward rows.
+    fn fresh_multi_project_db() -> StateDb {
+        let db = StateDb::open_in_memory().unwrap();
+        for project in ["proj-a", "proj-b"] {
+            db.insert_instance(&CoastInstance {
+                name: "dev-1".to_string(),
+                project: project.to_string(),
+                status: InstanceStatus::Running,
+                branch: None,
+                commit_sha: None,
+                container_id: None,
+                runtime: RuntimeType::Dind,
+                created_at: chrono::Utc::now(),
+                worktree_name: None,
+                build_id: None,
+                coastfile_type: None,
+                remote_host: Some("shared-vm".to_string()),
+            })
+            .unwrap();
+        }
+        db
+    }
+
     fn sample_record(instance: &str, service: &str, port: u16) -> SharedServiceForwardRecord {
         // Stay well within u16 when computing the derived ports so
         // tests with canonical ports like 6379 don't overflow.
@@ -324,5 +351,106 @@ mod tests {
             .list_shared_service_forwards_for_instance("p", "i1")
             .unwrap()
             .is_empty());
+    }
+
+    // --- Phase 24: multi-project, shared-remote lookups ---
+
+    #[test]
+    fn multi_project_same_remote_lookups_scope_to_project() {
+        // Phase 24: two projects each have a `dev-1` instance on the
+        // same remote VM and each declares a `postgres:5432` forward.
+        // `restore_tunnels_for_instance` MUST retrieve each project's
+        // own pair without cross-contamination — this is what replaces
+        // the old `restored_hosts` host-keyed skip.
+        let db = fresh_multi_project_db();
+        let rec_a = SharedServiceForwardRecord {
+            project: "proj-a".to_string(),
+            instance: "dev-1".to_string(),
+            service_name: "postgres".to_string(),
+            port: 5432,
+            local_port: 60001,
+            remote_port: 55001,
+        };
+        let rec_b = SharedServiceForwardRecord {
+            project: "proj-b".to_string(),
+            instance: "dev-1".to_string(),
+            service_name: "postgres".to_string(),
+            port: 5432,
+            local_port: 60002,
+            remote_port: 55002,
+        };
+        db.upsert_shared_service_forward(&rec_a).unwrap();
+        db.upsert_shared_service_forward(&rec_b).unwrap();
+
+        // Same `(instance, service, port)` across projects must not
+        // collide on the composite PK.
+        let a = db
+            .list_shared_service_forwards_for_instance("proj-a", "dev-1")
+            .unwrap();
+        let b = db
+            .list_shared_service_forwards_for_instance("proj-b", "dev-1")
+            .unwrap();
+        assert_eq!(a, vec![rec_a.clone()]);
+        assert_eq!(b, vec![rec_b.clone()]);
+
+        // Each project's local_port is its own SSG dynamic port, so
+        // the reverse pairs are distinct (no leak across projects
+        // even though the remote VM, instance name, and canonical
+        // service port are all identical).
+        let pairs_a: Vec<(u16, u16)> = a
+            .iter()
+            .map(|r| (r.remote_port, r.local_port))
+            .collect();
+        let pairs_b: Vec<(u16, u16)> = b
+            .iter()
+            .map(|r| (r.remote_port, r.local_port))
+            .collect();
+        assert_eq!(pairs_a, vec![(55001, 60001)]);
+        assert_eq!(pairs_b, vec![(55002, 60002)]);
+
+        // `list_all` returns every row so the daemon-restart walker
+        // can iterate them without a project-aware caller.
+        let all = db.list_all_shared_service_forwards().unwrap();
+        assert_eq!(all.len(), 2);
+    }
+
+    #[test]
+    fn multi_project_same_remote_delete_is_project_scoped() {
+        // Removing proj-a's `dev-1` forwards leaves proj-b's `dev-1`
+        // untouched — Phase 24 invariant for per-project teardown.
+        let db = fresh_multi_project_db();
+        db.upsert_shared_service_forward(&SharedServiceForwardRecord {
+            project: "proj-a".to_string(),
+            instance: "dev-1".to_string(),
+            service_name: "postgres".to_string(),
+            port: 5432,
+            local_port: 60001,
+            remote_port: 55001,
+        })
+        .unwrap();
+        db.upsert_shared_service_forward(&SharedServiceForwardRecord {
+            project: "proj-b".to_string(),
+            instance: "dev-1".to_string(),
+            service_name: "postgres".to_string(),
+            port: 5432,
+            local_port: 60002,
+            remote_port: 55002,
+        })
+        .unwrap();
+
+        let deleted = db
+            .delete_shared_service_forwards_for_instance("proj-a", "dev-1")
+            .unwrap();
+        assert_eq!(deleted, 1);
+        assert!(db
+            .list_shared_service_forwards_for_instance("proj-a", "dev-1")
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            db.list_shared_service_forwards_for_instance("proj-b", "dev-1")
+                .unwrap()
+                .len(),
+            1
+        );
     }
 }

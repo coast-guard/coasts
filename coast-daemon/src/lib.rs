@@ -1372,6 +1372,15 @@ pub fn shared_service_reverse_pairs(project: &str) -> Vec<(u16, u16)> {
 }
 
 /// Re-establish SSH reverse tunnels for shared services after daemon restart.
+///
+/// Phase 24: every instance gets its own `ssh -R` process because
+/// every instance owns distinct `remote_port`s (allocated once in
+/// `setup_shared_service_tunnels` per §18). A previous iteration
+/// deduped restoration by `user@host:port` — that was latent under
+/// Phase 18 (single project with multi-instance tests) but became a
+/// silent cross-project leak the moment two projects shared a remote
+/// VM, so the dedup has been removed. See `coast-ssg/DESIGN.md §23.3
+/// item 7` + Phase 24 plan.
 async fn restore_shared_service_tunnels(
     state: &Arc<server::AppState>,
     instances: &[coast_core::types::CoastInstance],
@@ -1390,10 +1399,8 @@ async fn restore_shared_service_tunnels(
         db.list_remotes().unwrap_or_default()
     };
 
-    let mut restored_hosts: std::collections::HashSet<String> = std::collections::HashSet::new();
-
     for inst in &remote_instances {
-        restore_tunnels_for_instance(state, inst, &remotes, &mut restored_hosts).await;
+        restore_tunnels_for_instance(state, inst, &remotes).await;
     }
 }
 
@@ -1434,12 +1441,16 @@ async fn restore_tunnels_for_instance(
     state: &Arc<server::AppState>,
     inst: &coast_core::types::CoastInstance,
     remotes: &[coast_core::types::RemoteEntry],
-    restored_hosts: &mut std::collections::HashSet<String>,
 ) {
     // Phase 18: read the persisted (remote_port, local_port) pairs from
     // the state DB. Allocation happened once in
     // `setup_shared_service_tunnels`; we replay without re-evaluating
     // SSG state or reallocating remote ports.
+    //
+    // Phase 24: no dedup by host. Every `(project, instance)` on the
+    // same remote VM owns distinct `remote_port`s, so each needs its
+    // own `ssh -R` process. Two projects sharing a remote now both
+    // get their tunnels restored.
     let reverse_pairs =
         shared_service_reverse_pairs_with_ssg(state.as_ref(), &inst.project, &inst.name).await;
     if reverse_pairs.is_empty() {
@@ -1461,16 +1472,6 @@ async fn restore_tunnels_for_instance(
         return;
     };
 
-    let host_key = format!("{}@{}:{}", entry.user, entry.host, entry.port);
-    if restored_hosts.contains(&host_key) {
-        tracing::info!(
-            instance = %inst.name,
-            host = %entry.host,
-            "shared service tunnels already restored for this remote, skipping"
-        );
-        return;
-    }
-
     let connection = coast_core::types::RemoteConnection::from_entry(
         entry,
         &coast_core::types::RemoteConfig {
@@ -1478,17 +1479,14 @@ async fn restore_tunnels_for_instance(
         },
     );
 
-    if create_reverse_tunnels(
+    let _ = create_reverse_tunnels(
         state,
         &connection,
         &reverse_pairs,
         &inst.project,
         &inst.name,
     )
-    .await
-    {
-        restored_hosts.insert(host_key);
-    }
+    .await;
 }
 
 async fn create_reverse_tunnels(
