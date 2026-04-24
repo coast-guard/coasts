@@ -619,15 +619,14 @@ mod tests {
     use super::*;
 
     use std::path::Path;
-    use std::sync::Mutex;
 
     use coast_core::coastfile::Coastfile;
 
-    /// Serialize tests that mutate the process-wide `COAST_HOME`
-    /// env var. Without this, concurrent tests race: one test seeds
-    /// an SSG build and another test that expects "no SSG build"
-    /// accidentally observes it.
-    static COAST_HOME_LOCK: Mutex<()> = Mutex::new(());
+    // Serialize tests that mutate the process-wide `COAST_HOME`
+    // env var via the crate-wide shared lock. Previously a
+    // file-local mutex, but that only serialised within this file
+    // and let concurrent tests in other files race.
+    use crate::test_support::coast_home_env_lock as COAST_HOME_LOCK_acquire;
 
     fn empty_coastfile() -> Coastfile {
         // Minimal TOML that parses to a Coastfile with no SSG refs.
@@ -747,9 +746,7 @@ name = "consumer"
         // through to another project's build or a global symlink.
         // COAST_HOME is still pointed at an empty tempdir to keep
         // any downstream artifact reads pointed at a hermetic root.
-        let _guard = COAST_HOME_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _guard = COAST_HOME_LOCK_acquire();
         let tmp = tempfile::tempdir().unwrap();
         let db = crate::state::StateDb::open_in_memory().unwrap();
         let state = crate::server::AppState::new_for_testing(db);
@@ -835,9 +832,7 @@ name = "consumer"
         // `state.docker` is None (test harness default). We should
         // surface a clear "Docker is unavailable" error rather than
         // panicking or progressing into the lock section.
-        let _guard = COAST_HOME_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _guard = COAST_HOME_LOCK_acquire();
         let tmp = tempfile::tempdir().unwrap();
         seed_ssg_build(
             tmp.path(),

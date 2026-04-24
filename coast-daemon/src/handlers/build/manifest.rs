@@ -250,15 +250,11 @@ async fn build_ssg_manifest_block(
 mod ssg_block_tests {
     use super::*;
     use std::path::Path;
-    use std::sync::Mutex;
-
-    /// Serialize tests that mutate COAST_HOME across files.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn with_coast_home<F: FnOnce(&Path)>(f: F) {
-        let guard = ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // Use the crate-wide shared lock so mutations here cannot
+        // race with COAST_HOME reads in tests living in other files.
+        let guard = crate::test_support::coast_home_env_lock();
         let tmp = tempfile::tempdir().unwrap();
         let prev = std::env::var_os("COAST_HOME");
         unsafe {

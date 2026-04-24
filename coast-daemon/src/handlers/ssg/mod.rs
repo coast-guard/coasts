@@ -35,6 +35,13 @@ pub(crate) mod consumer_refresh;
 // it, Phase 28 threads it into consumer provisioning.
 pub(crate) mod virtual_port_allocator;
 
+// ssg-phase-27 (§24): daemon-managed host socat supervisor. One
+// long-lived process per `(project, service_name)` pair, bound to
+// the stable virtual port from Phase 26, forwarding to the current
+// SSG dynamic port. Dormant in Phase 27 — Phase 28 wires it into
+// SSG lifecycle verbs and adds the daemon-start reconciliation.
+pub(crate) mod host_socat;
+
 // ssg-phase-15: `coast ssg import-host-volume` — zero-copy migration
 // of existing host Docker named volumes into SSG bind-mount entries.
 // See `coast-ssg/DESIGN.md §10.7`.

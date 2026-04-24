@@ -1025,12 +1025,7 @@ mod tests {
     use super::*;
     use crate::state::StateDb;
 
-    use std::sync::{Mutex, MutexGuard, OnceLock};
-
-    fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
+    use std::sync::MutexGuard;
 
     struct EnvGuard {
         key: &'static str,
@@ -1040,9 +1035,10 @@ mod tests {
 
     impl EnvGuard {
         fn set(key: &'static str, value: &std::path::Path) -> Self {
-            let _lock = env_lock()
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            // Use the crate-wide shared COAST_HOME lock — this file
+            // exclusively mutates `COAST_HOME`, and other files do
+            // too, so one shared lock is correct.
+            let _lock = crate::test_support::coast_home_env_lock();
             let previous = std::env::var(key).ok();
             std::env::set_var(key, value);
             Self {

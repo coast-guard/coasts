@@ -153,7 +153,7 @@ pub async fn handle(
 mod tests {
     use std::ffi::OsString;
     use std::path::{Path, PathBuf};
-    use std::sync::{Mutex, MutexGuard, OnceLock};
+    use std::sync::MutexGuard;
 
     use super::*;
     use crate::state::StateDb;
@@ -166,8 +166,6 @@ mod tests {
         let (tx, _rx) = tokio::sync::mpsc::channel(64);
         tx
     }
-
-    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
     struct HomeEnvGuard {
         _guard: MutexGuard<'static, ()>,
@@ -197,7 +195,7 @@ mod tests {
     }
 
     fn set_test_home(path: &Path) -> HomeEnvGuard {
-        let guard = ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
+        let guard = crate::test_support::coast_home_env_lock();
         std::fs::create_dir_all(path).unwrap();
         let previous_home = std::env::var_os("HOME");
         let previous_coast_home = std::env::var_os("COAST_HOME");
@@ -213,7 +211,7 @@ mod tests {
     }
 
     fn set_test_home_and_coast_home(home: &Path, coast_home: &Path) -> HomeEnvGuard {
-        let guard = ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
+        let guard = crate::test_support::coast_home_env_lock();
         std::fs::create_dir_all(home).unwrap();
         std::fs::create_dir_all(coast_home).unwrap();
         let previous_home = std::env::var_os("HOME");

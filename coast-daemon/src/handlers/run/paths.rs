@@ -31,16 +31,41 @@ pub(super) fn shared_caddy_pki_host_dir() -> PathBuf {
     active_coast_home().join("caddy").join("pki")
 }
 
+// --- host socat supervisor (Phase 27 / §24) ---
+//
+// Daemon-managed socat processes live on the host, one per
+// `(project, service_name)` SSG service. Pidfiles + logs go under
+// `<active_coast_home>/socats/`; the supervisor is in
+// `handlers/ssg/host_socat.rs`.
+
+/// Directory that holds `<project>--<service>.{pid,log}` files for
+/// the Phase 27 host socat supervisor. Automatically follows
+/// `COAST_HOME` — so `coastd` writes under `~/.coast/socats/` and
+/// `coastd-dev` under `~/.coast-dev/socats/`.
+pub(crate) fn host_socats_dir() -> PathBuf {
+    active_coast_home().join("socats")
+}
+
+/// Return `(pidfile, logfile)` paths for the host socat backing
+/// `(project, service_name)`. Uses `--` (double-dash) between the
+/// project and service so a project name that contains a single
+/// dash can't collide with a service name that starts with a dash.
+pub(crate) fn host_socat_paths(project: &str, service: &str) -> (PathBuf, PathBuf) {
+    let dir = host_socats_dir();
+    let stem = format!("{project}--{service}");
+    (
+        dir.join(format!("{stem}.pid")),
+        dir.join(format!("{stem}.log")),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, OnceLock};
-
-    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
     #[test]
     fn test_shared_caddy_pki_host_dir_uses_coast_home_env() {
-        let _guard = ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
+        let _guard = crate::test_support::coast_home_env_lock();
         let prev = std::env::var_os("COAST_HOME");
         unsafe {
             std::env::set_var("COAST_HOME", "/tmp/coast-dev-test-home");
@@ -57,7 +82,7 @@ mod tests {
 
     #[test]
     fn test_shared_caddy_pki_host_dir_differs_for_distinct_install_homes() {
-        let _guard = ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
+        let _guard = crate::test_support::coast_home_env_lock();
         let prev = std::env::var_os("COAST_HOME");
 
         unsafe {

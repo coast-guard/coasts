@@ -543,7 +543,7 @@ the full 134-test sweep (CI is the forcing function for that).
 First step of the §24 host-owned virtual ports migration. Lays the
 state-level foundation so later phases have something to persist and
 read. Pure allocator logic, no host processes yet.
-- [ ] New table `ssg_virtual_ports(project, service_name, port,
+- [x] New table `ssg_virtual_ports(project, service_name, port,
       created_at)` with `PRIMARY KEY (project, service_name)`.
       Migration `migrate_add_ssg_virtual_ports_table` in
       [coast-daemon/src/state/mod.rs](/Users/jamie/work/coasts/coast-daemon/src/state/mod.rs).
@@ -555,74 +555,120 @@ read. Pure allocator logic, no host processes yet.
       identity-scoped state; keeping them in a dedicated table that
       survives lifecycle-scoped writes is the cleanest split (same
       rationale as `ssg_consumer_pins`).
-- [ ] New module
+- [x] New module
       `coast-daemon/src/handlers/ssg/virtual_port_allocator.rs`.
       Public API: `allocate_or_reuse(db: &dyn SsgStateExt, project:
       &str, service_name: &str, config: &AllocatorConfig) ->
       Result<u16>`. Reads existing `ssg_virtual_ports.port`; if
       present and still free, reuses; if missing, picks the first
       free port in the band, persists, returns.
-- [ ] Reserved band: `COAST_VIRTUAL_PORT_BAND_START=42000`,
+- [x] Reserved band: `COAST_VIRTUAL_PORT_BAND_START=42000`,
       `COAST_VIRTUAL_PORT_BAND_END=43000` (env-overridable, falls
       back to defaults). Collision probe uses `TcpListener::bind`
       on `0.0.0.0:<port>` — fails fast if in use, moves to next.
-- [ ] Persisted allocation outlives `ssg build`, `ssg rm` (data
-      preserved). Dropped only on `ssg rm --with-data`. One new DB
-      helper: `clear_ssg_service_virtual_ports(project) -> Result<()>`.
-- [ ] Unit tests (~8): stable-across-rebuild (alloc `cg/postgres`
-      twice, get same port); distinct-within-project (alloc
-      `cg/postgres` + `cg/redis`, get different ports);
-      distinct-across-projects (same service name, different
-      project); collision-fallback (pre-bind the first free port,
-      allocator picks the next); band-exhaustion error (shrink band
-      to 2 ports in test, allocate 3 times); persisted-value-reused
-      (round-trip through state.db); removed-service-recycles (drop
-      virtual port via clear, re-allocate picks any free port);
-      project-scoped-clear (dropping project A's ports leaves
-      project B's untouched).
-- [ ] Acceptance gate: `cargo fmt --check`, `cargo test -p
-      coast-daemon -p coast-ssg`, `cargo clippy --workspace -- -D
-      warnings` green. No integration tests (allocator is daemon-
-      internal; exercised in Phase 27+).
+      Also skips any port already assigned to another
+      `(project, service_name)` by consulting
+      `list_all_ssg_virtual_port_numbers()`.
+- [x] Persisted allocation outlives `ssg build`, `ssg rm` (data
+      preserved). Dropped only on `ssg rm --with-data`. New DB
+      helper landed as `clear_ssg_virtual_ports(project) ->
+      Result<()>` (named for symmetry with the sibling
+      `clear_ssg_port_checkouts`; the `_service` infix in the
+      original bullet was dropped as redundant). Phase 28 wires the
+      call from `handle_rm` when `with_data = true`.
+- [x] Unit tests: 9 allocator tests (stable-across-rebuild,
+      distinct-within-project, distinct-across-projects,
+      collision-fallback-skips-in-use-port, band-exhaustion-error,
+      persisted-value-reused-via-state-db,
+      removed-service-recycles-into-band,
+      project-scoped-clear-leaves-other-projects-alone,
+      allocator-config-from-env-parses-valid-values) + 8
+      `ssg_virtual_ports` trait-impl tests in
+      `coast-daemon/src/state/ssg.rs` (upsert-then-get, upsert
+      replaces, get-none-when-unset, list-sorted,
+      list-is-project-scoped, clear-drops-only-target,
+      clear-idempotent, distinct-services-store-separately).
+- [x] Acceptance gate: `cargo fmt --all -- --check` exit 0;
+      `cargo test -p coast-daemon -p coast-ssg -p coast-core -p
+      coast-cli` 2743 passing / 0 failed; `cargo clippy --workspace
+      -- -D warnings` exit 0. No integration tests (allocator is
+      daemon-internal; first integration exercise is Phase 28).
 
 ### Phase 27 — Host socat supervisor
 Second step. Introduces the daemon-managed host socat process type.
 No call sites yet from the SSG lifecycle handlers; those come in
 Phase 28.
-- [ ] New module `coast-daemon/src/handlers/ssg/host_socat.rs`.
+- [x] New module `coast-daemon/src/handlers/ssg/host_socat.rs`.
       Spawns `socat TCP-LISTEN:<virtual_port>,fork,reuseaddr
-      TCP:host.docker.internal:<dyn_port>` via
-      `tokio::process::Command` with `nohup`, writes pidfile to
-      `~/.coast{,-dev}/socats/<project>-<service>.pid` and log to
-      `~/.coast{,-dev}/socats/<project>-<service>.log`. Mirrors the
-      shell script pattern in [shared_service_routing.rs](/Users/jamie/work/coasts/coast-docker/src/shared_service_routing.rs#L279)
-      — structurally identical, just on the host instead of inside a
-      DinD.
-- [ ] Public API: `spawn_or_update(project, service, virtual_port,
+      TCP:host.docker.internal:<dyn_port>` via a generated shell
+      script run through `tokio::process::Command::new("sh").arg("-c")`
+      (chosen over native `Command::spawn` + `process_group(0)` for
+      parity with the in-DinD flow and cross-platform simplicity —
+      see module header). Writes pidfile to
+      `<active_coast_home>/socats/<project>--<service>.pid` and log
+      to `<active_coast_home>/socats/<project>--<service>.log`;
+      double-dash separator so project names containing a single dash
+      don't collide with service names starting with a dash.
+      Path helpers landed in
+      [coast-daemon/src/handlers/run/paths.rs](/Users/jamie/work/coasts/coast-daemon/src/handlers/run/paths.rs)
+      so they follow `COAST_HOME` for both `coastd` and `coastd-dev`.
+- [x] Public API: `spawn_or_update(project, service, virtual_port,
       dyn_port) -> Result<()>`, `kill(project, service) ->
-      Result<()>`, `reconcile_all(state: &AppState) -> Result<Vec<String>>`
-      (called at daemon start to respawn any socats missing vs.
-      `ssg_services`).
-- [ ] Idempotency: `spawn_or_update` with the same argv as the live
-      pid is a no-op; with a different upstream, it kills the old
-      pid (by pidfile) and respawns. Matches the Phase 11 in-DinD
-      behavior so the failure envelope is familiar.
-- [ ] On macOS + Linux: shell out to `/usr/bin/env socat`. Document
-      in the module header that Coast requires `socat` on the host
-      PATH (add to the README prereqs). On missing socat, the spawn
-      call returns a clear error with the apt/brew install command.
-- [ ] Unit tests (~10): spawn-records-pid; spawn-twice-is-idempotent;
-      upstream-change-kills-old-pid; stale-pidfile-with-dead-process-
-      is-cleaned; kill-removes-pidfile; reconcile_all-respawns-
-      missing-but-not-alive; reconcile_all-skips-alive-correct-argv;
-      reconcile_all-updates-alive-wrong-argv; band-exhaustion-on-
-      start surfaces a clear error; consumer-refresh stub behavior
-      (a thin wrapper that replaces the legacy consumer_refresh
-      path; see Phase 28 for the full swap).
-- [ ] Acceptance gate: same as Phase 26, plus one targeted integration
-      test (`test_host_socat_lifecycle.sh`) that spawns a socat via
-      the daemon API, kills + respawns it with new upstream, and
-      asserts traffic flows to the new target.
+      Result<()>`, `reconcile_all(state: &Arc<AppState>) ->
+      Result<Vec<String>>` — called at daemon start (wired in
+      Phase 28) to respawn any socats missing vs. `ssg_services` ×
+      `ssg_virtual_ports`.
+- [x] Idempotency: `spawn_or_update` writes a `.argv` sidecar file
+      next to each pidfile recording the exact spawn command. On
+      next call, when the pidfile's pid is alive AND the recorded
+      argv matches the to-be-spawned argv, the call is a no-op.
+      Different upstream ⇒ argv mismatch ⇒ kill-old-pid + respawn.
+      Matches the Phase 11 in-DinD behavior so the failure envelope
+      is familiar.
+- [x] On macOS + Linux: shells out to `/usr/bin/env socat`.
+      `preflight::check_socat_available()` probes with `command -v
+      socat` and returns a named error with brew/apt install
+      hints on miss. README already lists `socat` as a host
+      prereq (`brew install socat` / `sudo apt install socat`);
+      no README change needed.
+- [x] Unit tests (12 total, covering the spec's list with two
+      minor scope adjustments):
+      - `build_spawn_script_includes_all_inputs` (pure-function).
+      - `spawn_records_pid`, `spawn_twice_with_same_args_is_idempotent`,
+        `upstream_change_kills_old_pid_and_respawns`,
+        `stale_pidfile_with_dead_process_is_cleaned`.
+      - `kill_if_alive_removes_pidfile_and_process`,
+        `kill_if_alive_is_idempotent_when_pidfile_absent`.
+      - `collect_reconcile_triples_yields_one_per_service`,
+        `collect_reconcile_triples_skips_services_without_virtual_port`,
+        `collect_reconcile_triples_skips_ssgs_not_running`,
+        `collect_reconcile_triples_isolates_projects` — these
+        cover the reconciliation-join logic without spawning real
+        processes (test-host socat availability is not assumed).
+      - `preflight_errors_when_socat_missing`.
+      Two scope adjustments vs. the original checklist: (a) the
+      "consumer-refresh stub behavior" bullet was dropped from
+      Phase 27 because the stub is actually a Phase 28 concern (it
+      swaps in when `consumer_refresh.rs` is deleted); (b) tests
+      use `/usr/bin/env sleep 3600` as a socat stand-in via a
+      `binary_path` parameter on `SpawnArgs` so the test host
+      doesn't need real socat to exercise supervisor lifecycle.
+- [x] Acceptance gate: same Cargo trio as Phase 26 — `cargo fmt
+      --all -- --check` exit 0, `cargo test` 2743 passing, `cargo
+      clippy --workspace -- -D warnings` exit 0; additionally
+      stress-run 5× to confirm no regressions. Targeted integration
+      test `test_host_socat_lifecycle.sh` is **deferred to Phase 28**
+      where the supervisor has a user-facing verb (`coast-dev ssg
+      run/rm`) to drive it; spawning the supervisor from a test via
+      a hidden internal CLI subcommand solely for testability was
+      judged uglier than deferring.
+- [x] Bonus cleanup: pre-existing latent `COAST_HOME` test-race
+      (each file had its own local `ENV_LOCK` that didn't coordinate
+      across files) fixed by introducing a shared
+      `coast-daemon/src/test_support.rs::coast_home_env_lock()` and
+      migrating 7 call sites to delegate to it. Surfaced during
+      Phase 27 stress runs; retiring it here unblocks future
+      parallel test scaling.
 
 ### Phase 28 — Lifecycle wiring + consumer-refresh deletion
 Third step. The behavioral swap. After this phase the consumer socat

@@ -1805,15 +1805,11 @@ mod tests {
 
     // --- Phase 7: phase7_ssg_block_for_artifact ---
     //
-    // Reuses the COAST_HOME env-lock pattern defined below to serialize
-    // with other tests that mutate the same env var.
-
-    static PHASE7_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    // Uses the crate-wide shared COAST_HOME lock so mutations here
+    // cannot race with reads in tests living in other files.
 
     fn with_phase7_coast_home<F: FnOnce(&std::path::Path)>(f: F) {
-        let guard = PHASE7_ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let guard = crate::test_support::coast_home_env_lock();
         let tmp = tempfile::tempdir().unwrap();
         let prev = std::env::var_os("COAST_HOME");
         unsafe {

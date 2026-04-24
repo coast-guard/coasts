@@ -32,6 +32,8 @@ pub mod server;
 mod shared_services;
 #[allow(dead_code)]
 mod state;
+#[cfg(test)]
+mod test_support;
 
 use server::AppState;
 use state::StateDb;
@@ -2438,12 +2440,10 @@ mod tests {
     // -----------------------------------------------------------------------
 
     /// Serializes tests that mutate COAST_HOME so they don't race.
+    /// Delegates to the crate-wide shared lock in `test_support` so
+    /// every site across the crate uses the SAME mutex.
     fn coast_home_env_lock() -> std::sync::MutexGuard<'static, ()> {
-        use std::sync::{Mutex, OnceLock};
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
+        crate::test_support::coast_home_env_lock()
     }
 
     fn with_coast_home<F, R>(home: &std::path::Path, f: F) -> R
