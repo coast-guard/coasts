@@ -17,6 +17,9 @@ set -euo pipefail
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/helpers.sh"
 
+# Phase 25: per-project SSG naming (§23) -- SSG container is `{project}-ssg`.
+SSG_PROJECT="coast-ssg-consumer-disable-auto-db"
+
 register_cleanup
 
 preflight_checks
@@ -30,16 +33,16 @@ clean_slate
 pass "Examples initialized"
 
 rm -rf "$HOME/.coast/ssg"
-docker rm -f coast-ssg 2>/dev/null || true
-docker volume ls -q --filter "name=coast-dind--coast--ssg" 2>/dev/null | xargs -r docker volume rm 2>/dev/null || true
+cleanup_project_ssgs "$SSG_PROJECT"
 
 start_daemon
 
 echo ""
 echo "=== Step 1: SSG up (auto_create_db = true on postgres) ==="
 
-cd "$PROJECTS_DIR/coast-ssg-auto-db"
-"$COAST" ssg build --working-dir "$PROJECTS_DIR/coast-ssg-auto-db" >/dev/null 2>&1
+# Phase 25.5: build SSG from the consumer's cwd (Phase 23 per-project).
+cd "$PROJECTS_DIR/coast-ssg-consumer-disable-auto-db"
+"$COAST" ssg build >/dev/null 2>&1
 "$COAST" ssg run >/dev/null 2>&1
 
 sleep 6

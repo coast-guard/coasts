@@ -19,6 +19,9 @@ set -euo pipefail
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/helpers.sh"
 
+# Phase 25: per-project SSG naming (§23) -- SSG container is `{project}-ssg`.
+SSG_PROJECT="coast-ssg-auto-db"
+
 register_cleanup
 
 preflight_checks
@@ -32,8 +35,7 @@ clean_slate
 pass "Examples initialized"
 
 rm -rf "$HOME/.coast/ssg"
-docker rm -f coast-ssg 2>/dev/null || true
-docker volume ls -q --filter "name=coast-dind--coast--ssg" 2>/dev/null | xargs -r docker volume rm 2>/dev/null || true
+cleanup_project_ssgs "$SSG_PROJECT"
 
 start_daemon
 

@@ -141,8 +141,17 @@ pub async fn ensure_ready_for_consumer(
         build_id: starting_build_id,
     });
 
-    let outcome = match record {
-        None => DispatchOutcome::Created(
+    // Phase 23: `set_latest_build_id` creates a row with
+    // `status = "built"` and `container_id = None` at `ssg build`
+    // time, before any container exists. Auto-start must treat that
+    // as "first run" (create container) and NOT as "restart an
+    // existing container" (start_and_apply requires a container_id).
+    let needs_initial_run = match &record {
+        None => true,
+        Some(r) => r.container_id.is_none(),
+    };
+    let outcome = if needs_initial_run {
+        DispatchOutcome::Created(
             // Phase 23: pass the pin-or-project-latest build id.
             // `run_and_apply` no longer falls back to a global
             // symlink if this is `None`.
@@ -154,11 +163,15 @@ pub async fn ensure_ready_for_consumer(
                 progress,
             )
             .await?,
-        ),
-        Some(r) if r.status == "running" => DispatchOutcome::AlreadyRunning(
-            r.build_id.clone().unwrap_or_else(|| "unknown".to_string()),
-        ),
-        Some(r) => {
+        )
+    } else {
+        // record is Some with a container_id; dispatch on status.
+        let r = record.expect("record is Some here");
+        if r.status == "running" {
+            DispatchOutcome::AlreadyRunning(
+                r.build_id.clone().unwrap_or_else(|| "unknown".to_string()),
+            )
+        } else {
             DispatchOutcome::Started(start_and_apply(project, state, &docker, r, progress).await?)
         }
     };

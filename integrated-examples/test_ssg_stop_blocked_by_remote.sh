@@ -12,6 +12,9 @@ set -euo pipefail
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/helpers.sh"
 
+# Phase 25: per-project SSG naming (§23) — SSG container is `{project}-ssg`.
+SSG_PROJECT="coast-ssg-consumer-remote"
+
 _ssg_remote_cleanup() {
     echo ""
     echo "--- Cleaning up ---"
@@ -27,7 +30,7 @@ _ssg_remote_cleanup() {
     pkill -f "ssh -N -R" 2>/dev/null || true
     rm -f ~/.coast/state.db ~/.coast/state.db-wal ~/.coast/state.db-shm
     rm -f ~/.coast/coastd.sock ~/.coast/coastd.pid
-    docker rm -f coast-ssg 2>/dev/null || true
+    cleanup_project_ssgs "$SSG_PROJECT"
     echo "Cleanup complete."
 }
 trap '_ssg_remote_cleanup' EXIT
@@ -40,8 +43,7 @@ echo "=== Setup ==="
 clean_slate
 
 rm -rf "$HOME/.coast/ssg"
-docker rm -f coast-ssg 2>/dev/null || true
-docker volume ls -q --filter "name=coast-dind--coast--ssg" 2>/dev/null | xargs -r docker volume rm 2>/dev/null || true
+cleanup_project_ssgs "$SSG_PROJECT"
 
 setup_localhost_ssh
 start_coast_service
@@ -54,8 +56,9 @@ start_daemon
 echo ""
 echo "=== Step 1: SSG build + run ==="
 
-cd "$PROJECTS_DIR/coast-ssg-minimal"
-"$COAST" ssg build --working-dir "$PROJECTS_DIR/coast-ssg-minimal" >/dev/null 2>&1
+# Phase 25.5: build SSG from the consumer's cwd (Phase 23 per-project).
+cd "$PROJECTS_DIR/coast-ssg-consumer-remote"
+"$COAST" ssg build >/dev/null 2>&1
 SSG_RUN_OUT=$("$COAST" ssg run 2>&1)
 assert_contains "$SSG_RUN_OUT" "SSG running" "ssg run succeeds"
 
@@ -65,8 +68,6 @@ echo ""
 echo "=== Step 2: register remote + run remote consumer ==="
 
 "$COAST" remote add test-remote "root@localhost" --key ~/.ssh/coast_test_key >/dev/null 2>&1
-
-cd "$PROJECTS_DIR/coast-ssg-consumer-remote"
 "$COAST" build 2>&1 >/dev/null
 "$COAST" build --type remote 2>&1 >/dev/null
 
@@ -104,8 +105,8 @@ fi
 echo ""
 echo "=== Step 4: SSG is still running (stop was correctly refused) ==="
 
-DOCKER_PS=$(docker ps --filter "name=^coast-ssg$" --format "{{.Names}}")
-assert_eq "$DOCKER_PS" "coast-ssg" "coast-ssg container is still running"
+DOCKER_PS=$(docker ps --filter "name=^${SSG_PROJECT}-ssg$" --format "{{.Names}}")
+assert_eq "$DOCKER_PS" "${SSG_PROJECT}-ssg" "${SSG_PROJECT}-ssg container is still running"
 
 PS_OUT=$("$COAST" ssg ps 2>&1)
 echo "$PS_OUT" | head -10

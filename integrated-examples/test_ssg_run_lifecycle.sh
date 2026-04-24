@@ -31,6 +31,9 @@ set -euo pipefail
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/helpers.sh"
 
+# Phase 25: per-project SSG naming (§23) — SSG container is `{project}-ssg`.
+SSG_PROJECT="coast-ssg-multi-service"
+
 register_cleanup
 
 preflight_checks
@@ -45,8 +48,7 @@ pass "Examples initialized"
 
 # Reset any prior SSG state from other runs.
 rm -rf "$HOME/.coast/ssg"
-docker rm -f coast-ssg 2>/dev/null || true
-docker volume ls -q --filter "name=coast-dind--coast--ssg" 2>/dev/null | xargs -r docker volume rm 2>/dev/null || true
+cleanup_project_ssgs "$SSG_PROJECT"
 
 cd "$PROJECTS_DIR/coast-ssg-multi-service"
 
@@ -79,8 +81,8 @@ assert_contains "$RUN_OUT" "Starting inner services" "run streams compose-up ste
 assert_contains "$RUN_OUT" "SSG running" "run reports success"
 
 # Outer container exists and is running.
-DOCKER_PS=$(docker ps --filter "name=^coast-ssg$" --format "{{.Names}}")
-assert_eq "$DOCKER_PS" "coast-ssg" "docker ps shows coast-ssg"
+DOCKER_PS=$(docker ps --filter "name=^${SSG_PROJECT}-ssg$" --format "{{.Names}}")
+assert_eq "$DOCKER_PS" "${SSG_PROJECT}-ssg" "docker ps shows ${SSG_PROJECT}-ssg"
 
 # ============================================================
 # Test 3: ps + ports after run
@@ -114,15 +116,15 @@ echo "$STOP_OUT"
 assert_contains "$STOP_OUT" "SSG stopped" "stop reports success"
 
 # Outer container is no longer in the "running" list.
-DOCKER_PS_RUNNING=$(docker ps --filter "name=^coast-ssg$" --format "{{.Names}}")
+DOCKER_PS_RUNNING=$(docker ps --filter "name=^${SSG_PROJECT}-ssg$" --format "{{.Names}}")
 if [ -n "$DOCKER_PS_RUNNING" ]; then
-    fail "coast-ssg still running after coast ssg stop"
+    fail "${SSG_PROJECT}-ssg still running after coast ssg stop"
 fi
-pass "coast-ssg is no longer running"
+pass "${SSG_PROJECT}-ssg is no longer running"
 
 # Container still exists in `docker ps -a` (we stopped, didn't remove).
-DOCKER_PS_ALL=$(docker ps -a --filter "name=^coast-ssg$" --format "{{.Names}}")
-assert_eq "$DOCKER_PS_ALL" "coast-ssg" "coast-ssg container preserved"
+DOCKER_PS_ALL=$(docker ps -a --filter "name=^${SSG_PROJECT}-ssg$" --format "{{.Names}}")
+assert_eq "$DOCKER_PS_ALL" "${SSG_PROJECT}-ssg" "${SSG_PROJECT}-ssg container preserved"
 
 # ============================================================
 # Test 5: start
@@ -135,8 +137,8 @@ START_OUT=$("$COAST" ssg start 2>&1)
 echo "$START_OUT"
 assert_contains "$START_OUT" "SSG started" "start reports success"
 
-DOCKER_PS=$(docker ps --filter "name=^coast-ssg$" --format "{{.Names}}")
-assert_eq "$DOCKER_PS" "coast-ssg" "coast-ssg running again after start"
+DOCKER_PS=$(docker ps --filter "name=^${SSG_PROJECT}-ssg$" --format "{{.Names}}")
+assert_eq "$DOCKER_PS" "${SSG_PROJECT}-ssg" "${SSG_PROJECT}-ssg running again after start"
 
 # ============================================================
 # Test 6: restart
@@ -149,8 +151,8 @@ RESTART_OUT=$("$COAST" ssg restart 2>&1)
 echo "$RESTART_OUT"
 assert_contains "$RESTART_OUT" "SSG started" "restart ends with start"
 
-DOCKER_PS=$(docker ps --filter "name=^coast-ssg$" --format "{{.Names}}")
-assert_eq "$DOCKER_PS" "coast-ssg" "coast-ssg running after restart"
+DOCKER_PS=$(docker ps --filter "name=^${SSG_PROJECT}-ssg$" --format "{{.Names}}")
+assert_eq "$DOCKER_PS" "${SSG_PROJECT}-ssg" "${SSG_PROJECT}-ssg running after restart"
 
 # ============================================================
 # Test 7: rm --with-data
@@ -164,11 +166,11 @@ echo "$RM_OUT"
 assert_contains "$RM_OUT" "SSG removed" "rm reports success"
 
 # Outer container is gone entirely.
-DOCKER_PS_ALL=$(docker ps -a --filter "name=^coast-ssg$" --format "{{.Names}}")
+DOCKER_PS_ALL=$(docker ps -a --filter "name=^${SSG_PROJECT}-ssg$" --format "{{.Names}}")
 if [ -n "$DOCKER_PS_ALL" ]; then
-    fail "coast-ssg container still exists after rm"
+    fail "${SSG_PROJECT}-ssg container still exists after rm"
 fi
-pass "coast-ssg container removed"
+pass "${SSG_PROJECT}-ssg container removed"
 
 # ssg ports returns the "nothing to show" message since state was cleared.
 POST_PORTS=$("$COAST" ssg ports 2>&1)

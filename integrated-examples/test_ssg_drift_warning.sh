@@ -18,6 +18,9 @@ set -euo pipefail
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/helpers.sh"
 
+# Phase 25: per-project SSG naming (§23) -- SSG container is `{project}-ssg`.
+SSG_PROJECT="coast-ssg-consumer-auto-db"
+
 register_cleanup
 
 preflight_checks
@@ -31,16 +34,16 @@ clean_slate
 pass "Examples initialized"
 
 rm -rf "$HOME/.coast/ssg"
-docker rm -f coast-ssg 2>/dev/null || true
-docker volume ls -q --filter "name=coast-dind--coast--ssg" 2>/dev/null | xargs -r docker volume rm 2>/dev/null || true
+cleanup_project_ssgs "$SSG_PROJECT"
 
 start_daemon
 
 echo ""
 echo "=== Step 1: SSG build A ==="
 
-cd "$PROJECTS_DIR/coast-ssg-auto-db"
-BUILD_A_OUT=$("$COAST" ssg build --working-dir "$PROJECTS_DIR/coast-ssg-auto-db" 2>&1)
+# Phase 25.5: build SSG from the consumer's cwd (Phase 23 per-project).
+cd "$PROJECTS_DIR/coast-ssg-consumer-auto-db"
+BUILD_A_OUT=$("$COAST" ssg build 2>&1)
 echo "$BUILD_A_OUT" | tail -8
 assert_contains "$BUILD_A_OUT" "Build complete" "SSG build A succeeds"
 
@@ -70,10 +73,11 @@ assert_eq "$RECORDED_ID" "$BUILD_A_ID" "consumer manifest recorded SSG build A"
 echo ""
 echo "=== Step 3: touch SSG Coastfile + rebuild — build B (same images, new id) ==="
 
-cd "$PROJECTS_DIR/coast-ssg-auto-db"
+# Phase 25.5: mutate the consumer's OWN SSG Coastfile + rebuild.
+cd "$PROJECTS_DIR/coast-ssg-consumer-auto-db"
 echo "" >> Coastfile.shared_service_groups
 echo "# phase7 drift warn test — forces new build id" >> Coastfile.shared_service_groups
-"$COAST" ssg build --working-dir "$PROJECTS_DIR/coast-ssg-auto-db" >/dev/null 2>&1
+"$COAST" ssg build >/dev/null 2>&1
 BUILD_B_ID=$(readlink "$HOME/.coast/ssg/latest" | xargs basename)
 echo "SSG build B id: $BUILD_B_ID"
 [ "$BUILD_A_ID" != "$BUILD_B_ID" ] || fail "expected distinct build ids (got $BUILD_A_ID twice)"

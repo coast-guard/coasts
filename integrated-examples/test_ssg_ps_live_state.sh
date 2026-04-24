@@ -16,6 +16,9 @@ set -euo pipefail
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/helpers.sh"
 
+# Phase 25: per-project SSG naming (§23) -- SSG container is `{project}-ssg`.
+SSG_PROJECT="coast-ssg-minimal"
+
 register_cleanup
 
 preflight_checks
@@ -29,15 +32,17 @@ clean_slate
 pass "Examples initialized"
 
 rm -rf "$HOME/.coast/ssg"
-docker rm -f coast-ssg 2>/dev/null || true
-docker volume ls -q --filter "name=coast-dind--coast--ssg" 2>/dev/null | xargs -r docker volume rm 2>/dev/null || true
+cleanup_project_ssgs "$SSG_PROJECT"
 
 start_daemon
 
 echo ""
 echo "=== Step 1: built but not run — ps shows status=built ==="
 
-"$COAST" ssg build --working-dir "$PROJECTS_DIR/coast-ssg-minimal" >/dev/null 2>&1
+# Phase 25: cd into the SSG fixture so subsequent `ssg run`/`ssg ps`
+# calls resolve the project via cwd (Phase 22 resolver).
+cd "$PROJECTS_DIR/coast-ssg-minimal"
+"$COAST" ssg build >/dev/null 2>&1
 
 PS_BUILT=$("$COAST" ssg ps 2>&1)
 echo "$PS_BUILT"

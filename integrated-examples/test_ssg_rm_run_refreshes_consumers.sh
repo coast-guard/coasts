@@ -22,6 +22,9 @@ set -euo pipefail
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/helpers.sh"
 
+# Phase 25: per-project SSG naming (§23) -- SSG container is `{project}-ssg`.
+SSG_PROJECT="coast-ssg-consumer-basic"
+
 register_cleanup
 
 preflight_checks
@@ -35,8 +38,7 @@ clean_slate
 pass "Examples initialized"
 
 rm -rf "$HOME/.coast/ssg"
-docker rm -f coast-ssg 2>/dev/null || true
-docker volume ls -q --filter "name=coast-dind--coast--ssg" 2>/dev/null | xargs -r docker volume rm 2>/dev/null || true
+cleanup_project_ssgs "$SSG_PROJECT"
 
 start_daemon
 
@@ -48,8 +50,9 @@ start_daemon
 echo ""
 echo "=== Step 1: first SSG run + consumer run ==="
 
-cd "$PROJECTS_DIR/coast-ssg-minimal"
-SSG_BUILD_OUT=$("$COAST" ssg build --working-dir "$PROJECTS_DIR/coast-ssg-minimal" 2>&1)
+# Phase 25.5: build SSG from the consumer's cwd (Phase 23 per-project).
+cd "$PROJECTS_DIR/coast-ssg-consumer-basic"
+SSG_BUILD_OUT=$("$COAST" ssg build 2>&1)
 assert_contains "$SSG_BUILD_OUT" "Build complete" "initial ssg build succeeds"
 
 SSG_RUN_OUT=$("$COAST" ssg run 2>&1)
@@ -89,9 +92,16 @@ assert_contains "$PSQL_BASELINE" "1" "baseline psql returns the row"
 echo ""
 echo "=== Step 3: ssg rm + ssg run to force fresh dyn port ==="
 
+# Phase 25.5: SSG is owned by the consumer's project, so stay in
+# the consumer's cwd for `ssg rm`/`ssg run`.
+cd "$PROJECTS_DIR/coast-ssg-consumer-basic"
+
 NEW_DYN=""
 for attempt in 1 2 3 4 5; do
     "$COAST" ssg rm --with-data >/dev/null 2>&1 || true
+    # Phase 23: `rm` clears the SSG state row; rebuild to repopulate
+    # `latest_build_id` before running again (no global fallback).
+    "$COAST" ssg build >/dev/null 2>&1
     SSG_RERUN_OUT=$("$COAST" ssg run 2>&1)
     assert_contains "$SSG_RERUN_OUT" "SSG running" "ssg rerun succeeds (attempt $attempt)"
     CANDIDATE=$("$COAST" ssg ports 2>&1 | awk '/^  postgres/ {print $3}')

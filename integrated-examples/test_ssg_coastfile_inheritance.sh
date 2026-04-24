@@ -21,6 +21,11 @@ set -euo pipefail
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/helpers.sh"
 
+# Phase 25: per-project SSG (§23) — the SSG container is `{project}-ssg`.
+# This test uses a mktemp WORKDIR with a bespoke Coastfile pair, so the
+# project name is chosen here rather than derived from a shared fixture.
+SSG_PROJECT="coast-ssg-inheritance"
+
 register_cleanup
 
 preflight_checks
@@ -31,13 +36,29 @@ echo "=== Setup ==="
 clean_slate
 
 rm -rf "$HOME/.coast/ssg"
-docker rm -f coast-ssg 2>/dev/null || true
-docker volume ls -q --filter "name=coast-dind--coast--ssg" 2>/dev/null | xargs -r docker volume rm 2>/dev/null || true
+cleanup_project_ssgs "$SSG_PROJECT"
 
 start_daemon
 
 WORKDIR="$(mktemp -d -t coast-ssg-phase17-XXXXXX)"
 trap 'rm -rf "$WORKDIR" "$CYCLE_DIR" 2>/dev/null || true; _do_cleanup' EXIT
+
+# Phase 25: sibling Coastfile in the mktemp workdir so the CLI's
+# `resolve_consumer_project` picks up the project name from cwd.
+# The compose file is a parser-pleaser; this test never runs `coast run`.
+cat > "$WORKDIR/Coastfile" <<EOF
+[coast]
+name = "$SSG_PROJECT"
+runtime = "dind"
+compose = "./docker-compose.yml"
+EOF
+
+cat > "$WORKDIR/docker-compose.yml" <<'EOF'
+services:
+  app:
+    image: alpine:3.19
+    command: ["sh", "-c", "sleep infinity"]
+EOF
 
 cat > "$WORKDIR/Coastfile.ssg-base" <<'EOF'
 [ssg]

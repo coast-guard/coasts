@@ -28,6 +28,12 @@ set -euo pipefail
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/helpers.sh"
 
+# Phase 25: per-project SSG naming (§23) — SSG container is `{project}-ssg`.
+# Under Phase 23's per-project contract, the consumer project owns its
+# own SSG. Build the SSG from the consumer's cwd so the auto-start
+# path resolves against this project.
+SSG_PROJECT="coast-ssg-consumer"
+
 register_cleanup
 
 preflight_checks
@@ -42,8 +48,7 @@ pass "Examples initialized"
 
 # Reset any prior SSG + consumer state from other runs.
 rm -rf "$HOME/.coast/ssg"
-docker rm -f coast-ssg 2>/dev/null || true
-docker volume ls -q --filter "name=coast-dind--coast--ssg" 2>/dev/null | xargs -r docker volume rm 2>/dev/null || true
+cleanup_project_ssgs "$SSG_PROJECT"
 
 start_daemon
 
@@ -55,17 +60,19 @@ start_daemon
 echo ""
 echo "=== Positive: SSG build exists, consumer run auto-starts it ==="
 
-cd "$PROJECTS_DIR/coast-ssg-minimal"
-# Pass --working-dir explicitly so the daemon resolves the SSG
-# Coastfile against this directory instead of its own cwd.
-BUILD_SSG_OUT=$("$COAST" ssg build --working-dir "$PROJECTS_DIR/coast-ssg-minimal" 2>&1)
+# Phase 25: build the SSG from the consumer's cwd so the SSG is
+# owned by the consumer's project (Phase 23 per-project contract).
+# The consumer fixture now carries its own Coastfile.shared_service_groups
+# that mirrors coast-ssg-minimal's postgres service.
+cd "$PROJECTS_DIR/coast-ssg-consumer"
+BUILD_SSG_OUT=$("$COAST" ssg build 2>&1)
 echo "$BUILD_SSG_OUT" | tail -5
 assert_contains "$BUILD_SSG_OUT" "Build complete" "coast ssg build succeeds"
 
 # Sanity: SSG is NOT running before the consumer run.
-DOCKER_PS_BEFORE=$(docker ps --filter "name=^coast-ssg$" --format "{{.Names}}")
+DOCKER_PS_BEFORE=$(docker ps --filter "name=^${SSG_PROJECT}-ssg$" --format "{{.Names}}")
 if [ -n "$DOCKER_PS_BEFORE" ]; then
-    fail "coast-ssg is already running before the consumer run (expected stopped state)"
+    fail "${SSG_PROJECT}-ssg is already running before the consumer run (expected stopped state)"
 fi
 pass "coast-ssg is not running before the consumer run"
 
@@ -75,8 +82,16 @@ echo "$BUILD_CONSUMER_OUT" | tail -10
 assert_contains "$BUILD_CONSUMER_OUT" "Build" "coast build on consumer succeeds"
 
 CLEANUP_INSTANCES+=("inst-a")
+set +e
 RUN_OUT=$("$COAST" run inst-a 2>&1)
+RUN_EXIT=$?
+set -e
 echo "$RUN_OUT" | tail -20
+if [ "$RUN_EXIT" -ne 0 ]; then
+    echo "--- coastd log tail ---"
+    tail -60 /tmp/coastd-test.log 2>/dev/null || true
+    fail "coast run exited non-zero ($RUN_EXIT) during auto-start"
+fi
 assert_contains "$RUN_OUT" "Ensure SSG ready" "run output shows the auto-start step"
 pass "consumer coast run triggered SSG auto-start"
 
@@ -104,8 +119,8 @@ if [ "$OUTER_OFFSET" -ge "$INNER_OFFSET" ]; then
 fi
 pass "SSG auto-start ordering: 'Ensure SSG ready' (byte $OUTER_OFFSET) precedes 'SSG:' inner event (byte $INNER_OFFSET)"
 
-DOCKER_PS_AFTER=$(docker ps --filter "name=^coast-ssg$" --format "{{.Names}}")
-assert_eq "$DOCKER_PS_AFTER" "coast-ssg" "coast-ssg container is running after consumer run"
+DOCKER_PS_AFTER=$(docker ps --filter "name=^${SSG_PROJECT}-ssg$" --format "{{.Names}}")
+assert_eq "$DOCKER_PS_AFTER" "${SSG_PROJECT}-ssg" "${SSG_PROJECT}-ssg container is running after consumer run"
 
 PS_SSG_OUT=$("$COAST" ssg ps 2>&1)
 echo "$PS_SSG_OUT"
@@ -130,7 +145,7 @@ echo "=== Negative A: no SSG build -> coast build hard-errors ==="
 # start from a truly clean slate.
 rm -rf "$HOME/.coast/ssg"
 rm -rf "$HOME/.coast/images/coast-ssg-consumer"
-docker rm -f coast-ssg 2>/dev/null || true
+cleanup_project_ssgs "$SSG_PROJECT"
 
 cd "$PROJECTS_DIR/coast-ssg-consumer"
 BUILD_NEG_OUT=$("$COAST" build 2>&1 || true)
@@ -153,15 +168,15 @@ echo ""
 echo "=== Negative B: stale consumer build + missing SSG -> drift error ==="
 
 # Rebuild the SSG + consumer so the consumer has a valid artifact
-# with an `ssg` block pointing at the active SSG.
-cd "$PROJECTS_DIR/coast-ssg-minimal"
-"$COAST" ssg build --working-dir "$PROJECTS_DIR/coast-ssg-minimal" >/dev/null 2>&1
+# with an `ssg` block pointing at the active SSG. Phase 25: build
+# SSG from the consumer's own cwd (per-project contract).
 cd "$PROJECTS_DIR/coast-ssg-consumer"
+"$COAST" ssg build >/dev/null 2>&1
 "$COAST" build >/dev/null 2>&1
 
 # Now wipe the SSG so the consumer has a stale reference.
 rm -rf "$HOME/.coast/ssg"
-docker rm -f coast-ssg 2>/dev/null || true
+cleanup_project_ssgs "$SSG_PROJECT"
 
 CLEANUP_INSTANCES+=("inst-b")
 NEG_OUT=$("$COAST" run inst-b 2>&1 || true)

@@ -406,10 +406,6 @@ tests:
     script: integrated-examples/test_ssg_consumer_missing_service.sh
     timeout: 600
     note: "coast run fails with clear error when consumer references a name not in the active SSG"
-  test_ssg_port_collision:
-    script: integrated-examples/test_ssg_port_collision.sh
-    timeout: 600
-    note: "two consumer instances share one SSG postgres without any host-port conflict on 5432"
 
   # --- Shared Service Groups (coast-ssg) — Phase 5 (auto_create_db + inject) ---
   test_ssg_auto_create_db:
@@ -528,6 +524,12 @@ tests:
     script: integrated-examples/test_ssg_per_project_isolation.sh
     timeout: 600
     note: "two projects with their own `Coastfile.shared_service_groups` run concurrent postgres SSGs as `{project}-ssg` containers; `ssg ps` is cwd-scoped; `ssg ls` is cross-project; per-project `ssg rm` is isolated (DESIGN §23, Phase 22)"
+
+  # --- Shared Service Groups (coast-ssg) — Phase 25 (local two-projects routing proof) ---
+  test_ssg_two_projects_same_canonical_port:
+    script: integrated-examples/test_ssg_two_projects_same_canonical_port.sh
+    timeout: 600
+    note: "Phase 25 local analogue of test_remote_two_projects_same_canonical_port_distinct_ssg: two projects each own SSG (pg15 vs pg16), both consumer coasts run locally against the same canonical postgres:5432; psql SHOW server_version confirms each consumer reaches its OWN project's postgres (DESIGN §23, Phase 25)"
 
   # --- Shared Service Groups (coast-ssg) — Phase 23 (consumer resolver + `from_group`) ---
   test_ssg_per_project_build_isolation:

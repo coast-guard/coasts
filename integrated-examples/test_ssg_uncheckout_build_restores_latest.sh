@@ -19,6 +19,9 @@ set -euo pipefail
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/helpers.sh"
 
+# Phase 25: per-project SSG naming (§23) -- SSG container is `{project}-ssg`.
+SSG_PROJECT="coast-ssg-consumer-auto-db"
+
 register_cleanup
 
 preflight_checks
@@ -32,16 +35,16 @@ clean_slate
 pass "Examples initialized"
 
 rm -rf "$HOME/.coast/ssg"
-docker rm -f coast-ssg 2>/dev/null || true
-docker volume ls -q --filter "name=coast-dind--coast--ssg" 2>/dev/null | xargs -r docker volume rm 2>/dev/null || true
+cleanup_project_ssgs "$SSG_PROJECT"
 
 start_daemon
 
 echo ""
 echo "=== Step 1: SSG build A (postgres:16-alpine) ==="
 
-cd "$PROJECTS_DIR/coast-ssg-auto-db"
-"$COAST" ssg build --working-dir "$PROJECTS_DIR/coast-ssg-auto-db" >/dev/null 2>&1
+# Phase 25.5: build SSG from the consumer's cwd (Phase 23 per-project).
+cd "$PROJECTS_DIR/coast-ssg-consumer-auto-db"
+"$COAST" ssg build >/dev/null 2>&1
 BUILD_A_ID=$(readlink "$HOME/.coast/ssg/latest" | xargs basename)
 echo "SSG build A id: $BUILD_A_ID"
 
@@ -60,11 +63,12 @@ echo "=== Step 3: pin consumer to A + rebuild SSG to B with postgres:17 ==="
 PIN_OUT=$("$COAST" ssg checkout-build "$BUILD_A_ID" 2>&1)
 assert_contains "$PIN_OUT" "Pinned project" "pin succeeds"
 
-cd "$PROJECTS_DIR/coast-ssg-auto-db"
+# Phase 25.5: mutate the consumer's OWN SSG Coastfile (Phase 23 per-project).
+cd "$PROJECTS_DIR/coast-ssg-consumer-auto-db"
 # Swap the postgres image ref to a DIFFERENT tag so build B has
 # materially changed image refs (hard-error territory for drift).
 sed -i.orig 's|postgres:16-alpine|postgres:17-alpine|g' Coastfile.shared_service_groups
-"$COAST" ssg build --working-dir "$PROJECTS_DIR/coast-ssg-auto-db" >/dev/null 2>&1 || {
+"$COAST" ssg build >/dev/null 2>&1 || {
     # Restore on error.
     mv Coastfile.shared_service_groups.orig Coastfile.shared_service_groups
     fail "SSG build B failed"
@@ -105,7 +109,7 @@ assert_contains "$RUN_UNPINNED_OUT" "SSG has changed since this coast was built"
     "drift hard-error surfaces after uncheckout"
 
 # Restore Coastfile to avoid polluting other tests.
-cd "$PROJECTS_DIR/coast-ssg-auto-db"
+cd "$PROJECTS_DIR/coast-ssg-consumer-auto-db"
 mv Coastfile.shared_service_groups.orig Coastfile.shared_service_groups 2>/dev/null || true
 
 "$COAST" ssg rm --with-data >/dev/null 2>&1 || true

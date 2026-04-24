@@ -24,6 +24,9 @@ set -euo pipefail
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/helpers.sh"
 
+# Phase 25: per-project SSG naming (§23) -- SSG container is `{project}-ssg`.
+SSG_PROJECT="coast-ssg-consumer-basic"
+
 register_cleanup
 
 preflight_checks
@@ -37,8 +40,7 @@ clean_slate
 pass "Examples initialized"
 
 rm -rf "$HOME/.coast/ssg"
-docker rm -f coast-ssg 2>/dev/null || true
-docker volume ls -q --filter "name=coast-dind--coast--ssg" 2>/dev/null | xargs -r docker volume rm 2>/dev/null || true
+cleanup_project_ssgs "$SSG_PROJECT"
 
 start_daemon
 
@@ -51,8 +53,10 @@ start_daemon
 echo ""
 echo "=== Step 1: SSG build + run ==="
 
-cd "$PROJECTS_DIR/coast-ssg-minimal"
-SSG_BUILD_OUT=$("$COAST" ssg build --working-dir "$PROJECTS_DIR/coast-ssg-minimal" 2>&1)
+# Phase 25.5: build SSG from the consumer's cwd so the SSG is
+# owned by the consumer's project (Phase 23 per-project contract).
+cd "$PROJECTS_DIR/coast-ssg-consumer-basic"
+SSG_BUILD_OUT=$("$COAST" ssg build 2>&1)
 echo "$SSG_BUILD_OUT" | tail -5
 assert_contains "$SSG_BUILD_OUT" "Build complete" "ssg build succeeds"
 

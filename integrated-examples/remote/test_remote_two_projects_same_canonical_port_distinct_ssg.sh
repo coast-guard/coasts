@@ -123,10 +123,17 @@ runtime = "dind"
 
 [shared_services.postgres]
 from_group = true
+COASTFILE_EOF
+
+    # Remote variant extends the base Coastfile and declares [remote]
+    # (naming convention: Coastfile.remote.toml + [coast] extends).
+    cat > "$dir/Coastfile.remote.toml" << COASTFILE_REMOTE_EOF
+[coast]
+extends = "Coastfile"
 
 [remote]
 workspace_sync = "rsync"
-COASTFILE_EOF
+COASTFILE_REMOTE_EOF
 
     # Per-project SSG: same canonical port (5432), different image.
     # Phase 24's whole point is that these don't collide because
@@ -140,6 +147,18 @@ image = "postgres:${pg_version}-alpine"
 ports = [5432]
 env = { POSTGRES_USER = "coast", POSTGRES_PASSWORD = "coast", POSTGRES_DB = "postgres" }
 SSG_EOF
+
+    # `coast run --type remote` needs a git repo (reads current
+    # branch for worktree/state metadata). Match the pattern used
+    # by the local equivalent test.
+    (
+        cd "$dir"
+        git init -b main >/dev/null 2>&1
+        git config user.name "Coast Test"
+        git config user.email "test@coasts.dev"
+        git add -A
+        git commit -m "initial $project_name fixture" >/dev/null 2>&1
+    )
 }
 
 make_project "$PROJ_A" "phase24-a" "15"
@@ -154,7 +173,16 @@ echo ""
 echo "=== Step 1: Build + run both SSGs ==="
 
 cd "$PROJ_A"
+set +e
 SSG_BUILD_A=$("$COAST" ssg build 2>&1)
+BUILD_A_EXIT=$?
+set -e
+echo "$SSG_BUILD_A" | tail -5
+if [ $BUILD_A_EXIT -ne 0 ]; then
+    echo "--- coastd log tail ---"
+    tail -40 /tmp/coastd-test.log 2>/dev/null || true
+    fail "phase24-a ssg build exited non-zero (exit=$BUILD_A_EXIT)"
+fi
 assert_contains "$SSG_BUILD_A" "Build complete" "phase24-a ssg build succeeds"
 SSG_RUN_A=$("$COAST" ssg run 2>&1)
 assert_contains "$SSG_RUN_A" "SSG running" "phase24-a ssg run succeeds"
@@ -313,11 +341,11 @@ wait_for_file_in_container() {
 # For each remote instance, the coast-service side starts a nested
 # DinD with the consumer's compose; we exec THROUGH that DinD to the
 # app container. Since both `dev-1` instances exist (different
-# projects), we identify them by the project label on the outer
-# `{instance}-{project}` container. coast-service names DinD
-# containers as `{project}-{instance}` (sourced from §18 naming).
-A_DIND="phase24-a-dev-1"
-B_DIND="phase24-b-dev-1"
+# projects), we identify them by the DinD container name — the
+# canonical naming is `{project}-coasts-{instance}`
+# (see coast-docker/src/runtime.rs::container_name).
+A_DIND="phase24-a-coasts-dev-1"
+B_DIND="phase24-b-coasts-dev-1"
 
 docker inspect "$A_DIND" >/dev/null 2>&1 \
     || fail "expected DinD container '$A_DIND' to exist on shared remote"

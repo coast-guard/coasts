@@ -16,6 +16,9 @@ set -euo pipefail
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/helpers.sh"
 
+# Phase 25: per-project SSG naming (§23) -- SSG container is `{project}-ssg`.
+SSG_PROJECT="coast-ssg-consumer-missing"
+
 register_cleanup
 
 preflight_checks
@@ -29,8 +32,7 @@ clean_slate
 pass "Examples initialized"
 
 rm -rf "$HOME/.coast/ssg"
-docker rm -f coast-ssg 2>/dev/null || true
-docker volume ls -q --filter "name=coast-dind--coast--ssg" 2>/dev/null | xargs -r docker volume rm 2>/dev/null || true
+cleanup_project_ssgs "$SSG_PROJECT"
 
 start_daemon
 
@@ -42,8 +44,12 @@ start_daemon
 echo ""
 echo "=== Step 1: SSG build + run (minimal = postgres only) ==="
 
-cd "$PROJECTS_DIR/coast-ssg-minimal"
-SSG_BUILD_OUT=$("$COAST" ssg build --working-dir "$PROJECTS_DIR/coast-ssg-minimal" 2>&1)
+# Phase 25: build SSG from the consumer's own cwd (Phase 23 per-project).
+# The consumer fixture carries its own Coastfile.shared_service_groups
+# that intentionally provides postgres but NOT nonexistent_svc — the
+# whole point of the test is asserting that reference fails at run time.
+cd "$PROJECTS_DIR/coast-ssg-consumer-missing"
+SSG_BUILD_OUT=$("$COAST" ssg build 2>&1)
 echo "$SSG_BUILD_OUT" | tail -5
 assert_contains "$SSG_BUILD_OUT" "Build complete" "ssg build succeeds"
 
@@ -85,8 +91,12 @@ pass "coast run exited non-zero"
 
 assert_contains "$RUN_OUT" "nonexistent_svc" \
     "error mentions the nonexistent service name"
-assert_contains "$RUN_OUT" "does not exist in the active SSG build" \
-    "error states that the service is missing from the active SSG build"
+# Phase 23 wording: `missing_ssg_service_error` now leads with the
+# project-scoped sentence. See `coast-ssg/src/daemon_integration.rs`.
+assert_contains "$RUN_OUT" "is declared \`from_group = true\`" \
+    "error explains the from_group = true declaration"
+assert_contains "$RUN_OUT" "does not declare it" \
+    "error states that the SSG Coastfile.shared_service_groups does not declare the service"
 assert_contains "$RUN_OUT" "Available services" \
     "error lists the actually-available SSG services"
 assert_contains "$RUN_OUT" "postgres" \

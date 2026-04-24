@@ -26,6 +26,9 @@ set -euo pipefail
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/helpers.sh"
 
+# Phase 25: per-project SSG naming (§23) — SSG container is `{project}-ssg`.
+SSG_PROJECT="coast-ssg-bind-mount"
+
 register_cleanup
 
 preflight_checks
@@ -40,8 +43,7 @@ pass "Examples initialized"
 
 # Reset any prior SSG state from other runs.
 rm -rf "$HOME/.coast/ssg"
-docker rm -f coast-ssg 2>/dev/null || true
-docker volume ls -q --filter "name=coast-dind--coast--ssg" 2>/dev/null | xargs -r docker volume rm 2>/dev/null || true
+cleanup_project_ssgs "$SSG_PROJECT"
 
 # Pick a host path that's reachable through the dindind test
 # container's persistent volume tree. `/tmp` would be a tmpfs inside
@@ -76,8 +78,8 @@ RUN_OUT=$("$COAST" ssg run 2>&1)
 echo "$RUN_OUT"
 assert_contains "$RUN_OUT" "SSG running" "run succeeds"
 
-DOCKER_PS=$(docker ps --filter "name=^coast-ssg$" --format "{{.Names}}")
-assert_eq "$DOCKER_PS" "coast-ssg" "coast-ssg container is running"
+DOCKER_PS=$(docker ps --filter "name=^${SSG_PROJECT}-ssg$" --format "{{.Names}}")
+assert_eq "$DOCKER_PS" "${SSG_PROJECT}-ssg" "${SSG_PROJECT}-ssg container is running"
 
 # Postgres needs time to initdb into the fresh bind directory.
 sleep 10
@@ -108,11 +110,11 @@ echo "=== Test 2: host vs outer DinD inode ==="
 HOST_INODE=$(stat -c %i "$MARKER_HOST_PATH" 2>/dev/null || stat -f %i "$MARKER_HOST_PATH")
 pass "host inode = $HOST_INODE"
 
-OUTER_INODE=$(docker exec coast-ssg stat -c %i "$MARKER_HOST_PATH")
+OUTER_INODE=$(docker exec "${SSG_PROJECT}-ssg" stat -c %i "$MARKER_HOST_PATH")
 OUTER_INODE=$(echo "$OUTER_INODE" | tr -d '\r' | tr -d '[:space:]')
 pass "outer DinD inode = $OUTER_INODE"
 
-assert_eq "$OUTER_INODE" "$HOST_INODE" "host bind visible with same inode inside coast-ssg"
+assert_eq "$OUTER_INODE" "$HOST_INODE" "host bind visible with same inode inside ${SSG_PROJECT}-ssg"
 
 # ============================================================
 # Test 3: inner postgres container sees the same inode
@@ -125,9 +127,11 @@ echo "=== Test 3: inner postgres inode (symmetric path, remapped to data dir) ==
 # the inner compose binds that path to /var/lib/postgresql/data. We
 # verify by statting the remapped inner path.
 
-INNER_INODE=$(docker exec coast-ssg docker compose \
+# Phase 25: container name and inner compose project label both
+# derive from SSG_PROJECT (§21 naming: `{project}-ssg`).
+INNER_INODE=$(docker exec "${SSG_PROJECT}-ssg" docker compose \
     -f /coast-artifact/compose.yml \
-    -p coast-ssg \
+    -p "${SSG_PROJECT}-ssg" \
     exec -T postgres stat -c %i "/var/lib/postgresql/data/$MARKER_NAME")
 INNER_INODE=$(echo "$INNER_INODE" | tr -d '\r' | tr -d '[:space:]')
 pass "inner postgres inode = $INNER_INODE"
@@ -136,10 +140,10 @@ assert_eq "$INNER_INODE" "$HOST_INODE" "inner postgres sees the same inode (symm
 
 # Double-check by reading PG_VERSION contents from all three places.
 HOST_CONTENT=$(cat "$MARKER_HOST_PATH" | tr -d '\n')
-OUTER_CONTENT=$(docker exec coast-ssg cat "$MARKER_HOST_PATH" | tr -d '\n')
-INNER_CONTENT=$(docker exec coast-ssg docker compose \
+OUTER_CONTENT=$(docker exec "${SSG_PROJECT}-ssg" cat "$MARKER_HOST_PATH" | tr -d '\n')
+INNER_CONTENT=$(docker exec "${SSG_PROJECT}-ssg" docker compose \
     -f /coast-artifact/compose.yml \
-    -p coast-ssg \
+    -p "${SSG_PROJECT}-ssg" \
     exec -T postgres cat "/var/lib/postgresql/data/$MARKER_NAME" | tr -d '\r' | tr -d '\n')
 
 assert_eq "$OUTER_CONTENT" "$HOST_CONTENT" "host + outer DinD see identical PG_VERSION contents"

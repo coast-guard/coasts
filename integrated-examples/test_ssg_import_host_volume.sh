@@ -60,6 +60,21 @@ echo "=== Test 1: snippet mode ==="
 WORKDIR="$(mktemp -d)"
 cp "$PROJECTS_DIR/coast-ssg-minimal/Coastfile.shared_service_groups" "$WORKDIR/"
 
+# Phase 23: import-host-volume resolves the project via the sibling
+# Coastfile, same as `ssg build`. Stamp a minimal one into the
+# scratch so resolution doesn't walk up to the dindind workspace.
+cat > "$WORKDIR/Coastfile" << 'IMPORT_TEST_COASTFILE_EOF'
+[coast]
+name = "coast-ssg-import-test"
+runtime = "dind"
+compose = "docker-compose.yml"
+IMPORT_TEST_COASTFILE_EOF
+cat > "$WORKDIR/docker-compose.yml" << 'IMPORT_TEST_COMPOSE_EOF'
+services:
+  app:
+    image: alpine:3
+IMPORT_TEST_COMPOSE_EOF
+
 SNIPPET=$("$COAST" ssg import-host-volume "$VOLUME_NAME" \
     --service postgres \
     --mount /var/lib/postgresql/data-new \

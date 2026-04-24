@@ -20,6 +20,10 @@ set -euo pipefail
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/helpers.sh"
 
+# Phase 25.5: per-project SSG (§23). SSG is owned by the consumer's
+# project; step 2 builds it from the consumer's own cwd.
+SSG_PROJECT="coast-ssg-consumer-basic"
+
 register_cleanup
 
 preflight_checks
@@ -63,9 +67,10 @@ pass "coast build exits non-zero when no SSG build exists"
 echo ""
 echo "=== Step 2: after coast ssg build, consumer build succeeds ==="
 
-"$COAST" ssg build --working-dir "$PROJECTS_DIR/coast-ssg-minimal" >/dev/null 2>&1
-
+# Phase 25.5: build SSG from the consumer's own cwd so the SSG is
+# owned by the consumer's project (Phase 23 per-project).
 cd "$PROJECTS_DIR/coast-ssg-consumer-basic"
+"$COAST" ssg build >/dev/null 2>&1
 BUILD_OUT2=$("$COAST" build 2>&1)
 echo "$BUILD_OUT2" | tail -10
 assert_contains "$BUILD_OUT2" "Build" "consumer build succeeds once SSG build exists"

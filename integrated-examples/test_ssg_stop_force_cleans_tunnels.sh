@@ -15,6 +15,11 @@ set -euo pipefail
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/helpers.sh"
 
+# Phase 25: per-project SSG naming (§23) — the SSG container is
+# `{project}-ssg`. Under Phase 23 per-project, the consumer project
+# owns its SSG, so the SSG is built from the consumer's cwd.
+SSG_PROJECT="coast-ssg-consumer-remote"
+
 _ssg_remote_cleanup() {
     echo ""
     echo "--- Cleaning up ---"
@@ -30,7 +35,7 @@ _ssg_remote_cleanup() {
     pkill -f "ssh -N -R" 2>/dev/null || true
     rm -f ~/.coast/state.db ~/.coast/state.db-wal ~/.coast/state.db-shm
     rm -f ~/.coast/coastd.sock ~/.coast/coastd.pid
-    docker rm -f coast-ssg 2>/dev/null || true
+    cleanup_project_ssgs "$SSG_PROJECT"
     echo "Cleanup complete."
 }
 trap '_ssg_remote_cleanup' EXIT
@@ -43,8 +48,7 @@ echo "=== Setup ==="
 clean_slate
 
 rm -rf "$HOME/.coast/ssg"
-docker rm -f coast-ssg 2>/dev/null || true
-docker volume ls -q --filter "name=coast-dind--coast--ssg" 2>/dev/null | xargs -r docker volume rm 2>/dev/null || true
+cleanup_project_ssgs "$SSG_PROJECT"
 
 setup_localhost_ssh
 start_coast_service
@@ -57,15 +61,16 @@ start_daemon
 echo ""
 echo "=== Step 1: SSG + remote consumer up ==="
 
-cd "$PROJECTS_DIR/coast-ssg-minimal"
-"$COAST" ssg build --working-dir "$PROJECTS_DIR/coast-ssg-minimal" >/dev/null 2>&1
+# Phase 25: build SSG from the consumer's cwd so the SSG is owned by
+# the consumer's project (Phase 23 per-project contract).
+cd "$PROJECTS_DIR/coast-ssg-consumer-remote"
+"$COAST" ssg build >/dev/null 2>&1
 "$COAST" ssg run >/dev/null 2>&1
 
 sleep 5
 
 "$COAST" remote add test-remote "root@localhost" --key ~/.ssh/coast_test_key >/dev/null 2>&1
 
-cd "$PROJECTS_DIR/coast-ssg-consumer-remote"
 "$COAST" build 2>&1 >/dev/null
 "$COAST" build --type remote 2>&1 >/dev/null
 
@@ -99,9 +104,9 @@ assert_contains "$STOP_OUT" "SSG stopped" "stop reported success"
 echo ""
 echo "=== Step 4: outer SSG container is gone ==="
 
-DOCKER_PS_RUNNING=$(docker ps --filter "name=^coast-ssg$" --format "{{.Names}}")
+DOCKER_PS_RUNNING=$(docker ps --filter "name=^${SSG_PROJECT}-ssg$" --format "{{.Names}}")
 if [ -n "$DOCKER_PS_RUNNING" ]; then
-    fail "coast-ssg container still running after --force stop"
+    fail "${SSG_PROJECT}-ssg container still running after --force stop"
 fi
 pass "coast-ssg container is no longer running"
 

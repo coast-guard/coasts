@@ -1816,6 +1816,26 @@ volumes = ["pg_data:/var/lib/postgresql/data"]
 env = { POSTGRES_PASSWORD = "coast" }
 SSG_MINIMAL_EOF
 
+    # Phase 25: sibling Coastfile so `coast ssg <verb>` can resolve
+    # the project name via `resolve_consumer_project` (Phase 22 cwd-
+    # based resolver). The SSG container name derives from `[coast].name`
+    # as `{name}-ssg` under the Phase 21 naming rule.
+    cat > "$dir/Coastfile" << 'SSG_MINIMAL_COASTFILE_EOF'
+[coast]
+name = "coast-ssg-minimal"
+runtime = "dind"
+compose = "./docker-compose.yml"
+SSG_MINIMAL_COASTFILE_EOF
+
+    # Stub compose file — required by the parser, but never run by
+    # these SSG-only tests (they invoke `coast ssg ...`, never `coast run`).
+    cat > "$dir/docker-compose.yml" << 'SSG_MINIMAL_COMPOSE_EOF'
+services:
+  app:
+    image: alpine:3.19
+    command: ["sh", "-c", "sleep infinity"]
+SSG_MINIMAL_COMPOSE_EOF
+
     cd "$dir"
     git init -b main
     git config user.name "Coast Dev"
@@ -1851,6 +1871,21 @@ env = { POSTGRES_PASSWORD = "coast" }
 image = "redis:7-alpine"
 ports = [6379]
 SSG_MULTI_EOF
+
+    # Phase 25: sibling Coastfile for cwd-based project resolution.
+    cat > "$dir/Coastfile" << 'SSG_MULTI_COASTFILE_EOF'
+[coast]
+name = "coast-ssg-multi-service"
+runtime = "dind"
+compose = "./docker-compose.yml"
+SSG_MULTI_COASTFILE_EOF
+
+    cat > "$dir/docker-compose.yml" << 'SSG_MULTI_COMPOSE_EOF'
+services:
+  app:
+    image: alpine:3.19
+    command: ["sh", "-c", "sleep infinity"]
+SSG_MULTI_COMPOSE_EOF
 
     cd "$dir"
     git init -b main
@@ -1899,6 +1934,21 @@ volumes = ["${host_root}/pg-data:/var/lib/postgresql/data"]
 env = { POSTGRES_PASSWORD = "coast" }
 SSG_BIND_EOF
 
+    # Phase 25: sibling Coastfile for cwd-based project resolution.
+    cat > "$dir/Coastfile" << 'SSG_BIND_COASTFILE_EOF'
+[coast]
+name = "coast-ssg-bind-mount"
+runtime = "dind"
+compose = "./docker-compose.yml"
+SSG_BIND_COASTFILE_EOF
+
+    cat > "$dir/docker-compose.yml" << 'SSG_BIND_COMPOSE_EOF'
+services:
+  app:
+    image: alpine:3.19
+    command: ["sh", "-c", "sleep infinity"]
+SSG_BIND_COMPOSE_EOF
+
     cd "$dir"
     git init -b main
     git config user.name "Coast Dev"
@@ -1934,6 +1984,21 @@ volumes = ["${host_root}/pg-data:/var/lib/postgresql/data"]
 env = { POSTGRES_PASSWORD = "coast" }
 SSG_DOCTOR_EOF
 
+    # Phase 25: sibling Coastfile for cwd-based project resolution.
+    cat > "$dir/Coastfile" << 'SSG_DOCTOR_COASTFILE_EOF'
+[coast]
+name = "coast-ssg-doctor"
+runtime = "dind"
+compose = "./docker-compose.yml"
+SSG_DOCTOR_COASTFILE_EOF
+
+    cat > "$dir/docker-compose.yml" << 'SSG_DOCTOR_COMPOSE_EOF'
+services:
+  app:
+    image: alpine:3.19
+    command: ["sh", "-c", "sleep infinity"]
+SSG_DOCTOR_COMPOSE_EOF
+
     cd "$dir"
     git init -b main
     git config user.name "Coast Dev"
@@ -1966,7 +2031,8 @@ setup_coast_ssg_consumer() {
     cat > "$dir/Coastfile" << 'SSG_CONSUMER_EOF'
 # coast-ssg-consumer: a regular coast that opts into the Shared Service
 # Group via `from_group = true`. Phase 3.5 auto-starts the SSG as part
-# of `coast run`. Phase 4 will wire the actual routing.
+# of `coast run`. Phase 4 wires the actual routing.
+# Phase 23: consumer's OWN project owns its SSG (see Coastfile.shared_service_groups below).
 
 [coast]
 name = "coast-ssg-consumer"
@@ -1975,6 +2041,22 @@ runtime = "dind"
 [shared_services.postgres]
 from_group = true
 SSG_CONSUMER_EOF
+
+    # Phase 25: under the Phase 23 per-project contract, every
+    # consumer that uses `from_group = true` must have its own SSG
+    # declared in its own project. The SSG shape matches what
+    # `coast-ssg-minimal` provides (one postgres), so the test's
+    # auto-start assertion still exercises the same routing path —
+    # just now scoped to this project.
+    cat > "$dir/Coastfile.shared_service_groups" << 'SSG_CONSUMER_SSG_EOF'
+[ssg]
+runtime = "dind"
+
+[shared_services.postgres]
+image = "postgres:16-alpine"
+ports = [5432]
+env = { POSTGRES_PASSWORD = "coast" }
+SSG_CONSUMER_SSG_EOF
 
     cd "$dir"
     git init -b main
@@ -2028,6 +2110,19 @@ services:
     environment:
       PGPASSWORD: "coast"
 SSG_BASIC_COMPOSE_EOF
+
+    # Phase 25.5: consumer's OWN SSG (Phase 23 per-project). Mirrors
+    # coast-ssg-minimal's single-postgres shape because that's what
+    # the paired tests used pre-Phase-23.
+    cat > "$dir/Coastfile.shared_service_groups" << 'SSG_BASIC_SSG_EOF'
+[ssg]
+runtime = "dind"
+
+[shared_services.postgres]
+image = "postgres:16-alpine"
+ports = [5432]
+env = { POSTGRES_PASSWORD = "coast" }
+SSG_BASIC_SSG_EOF
 
     cd "$dir"
     git init -b main
@@ -2127,6 +2222,21 @@ runtime = "dind"
 from_group = true
 SSG_MISSING_EOF
 
+    # Phase 25: consumer needs its OWN SSG (Phase 23 per-project model).
+    # This SSG intentionally does NOT declare `nonexistent_svc` — the
+    # whole point of the test is to assert `coast run` fails with
+    # "service 'nonexistent_svc' is declared from_group = true in project
+    # 'coast-ssg-consumer-missing' but the SSG does not declare it".
+    cat > "$dir/Coastfile.shared_service_groups" << 'SSG_MISSING_SSG_EOF'
+[ssg]
+runtime = "dind"
+
+[shared_services.postgres]
+image = "postgres:16-alpine"
+ports = [5432]
+env = { POSTGRES_PASSWORD = "coast" }
+SSG_MISSING_SSG_EOF
+
     cd "$dir"
     git init -b main
     git config user.name "Coast Dev"
@@ -2187,6 +2297,20 @@ services:
       PGPASSWORD: "coast"
 SSG_REMOTE_COMPOSE_EOF
 
+    # Phase 25: remote consumer's OWN SSG (Phase 23 per-project).
+    # The remote routing plumbing (§20) forwards this consumer's
+    # from_group references to the SSG of THIS project, tunneled
+    # from local host's {project}-ssg.
+    cat > "$dir/Coastfile.shared_service_groups" << 'SSG_REMOTE_SSG_EOF'
+[ssg]
+runtime = "dind"
+
+[shared_services.postgres]
+image = "postgres:16-alpine"
+ports = [5432]
+env = { POSTGRES_PASSWORD = "coast" }
+SSG_REMOTE_SSG_EOF
+
     cd "$dir"
     git init -b main
     git config user.name "Coast Dev"
@@ -2223,6 +2347,21 @@ volumes = ["pg_data:/var/lib/postgresql/data"]
 env = { POSTGRES_USER = "postgres", POSTGRES_PASSWORD = "dev" }
 auto_create_db = true
 SSG_AUTODB_EOF
+
+    # Phase 25: sibling Coastfile for cwd-based project resolution.
+    cat > "$dir/Coastfile" << 'SSG_AUTODB_COASTFILE_EOF'
+[coast]
+name = "coast-ssg-auto-db"
+runtime = "dind"
+compose = "./docker-compose.yml"
+SSG_AUTODB_COASTFILE_EOF
+
+    cat > "$dir/docker-compose.yml" << 'SSG_AUTODB_COMPOSE_EOF'
+services:
+  app:
+    image: alpine:3.19
+    command: ["sh", "-c", "sleep infinity"]
+SSG_AUTODB_COMPOSE_EOF
 
     cd "$dir"
     git init -b main
@@ -2266,6 +2405,21 @@ services:
     command: ["sh", "-c", "while true; do sleep 10; done"]
 SSG_CONSUMER_AUTODB_COMPOSE_EOF
 
+    # Phase 25.5: consumer's OWN SSG (Phase 23 per-project). Mirrors
+    # coast-ssg-auto-db's postgres-with-auto_create_db shape. Password
+    # "dev" matches the hardcoded creds the inject-env test expects.
+    cat > "$dir/Coastfile.shared_service_groups" << 'SSG_CONSUMER_AUTODB_SSG_EOF'
+[ssg]
+runtime = "dind"
+
+[shared_services.postgres]
+image = "postgres:16-alpine"
+ports = [5432]
+volumes = ["pg_data:/var/lib/postgresql/data"]
+env = { POSTGRES_USER = "postgres", POSTGRES_PASSWORD = "dev" }
+auto_create_db = true
+SSG_CONSUMER_AUTODB_SSG_EOF
+
     cd "$dir"
     git init -b main
     git config user.name "Coast Dev"
@@ -2308,6 +2462,21 @@ services:
     command: ["sh", "-c", "while true; do sleep 10; done"]
 SSG_CONSUMER_DISABLE_AUTODB_COMPOSE_EOF
 
+    # Phase 25.5: consumer's OWN SSG (Phase 23 per-project). Mirrors
+    # coast-ssg-auto-db; the CONSUMER Coastfile overrides auto_create_db
+    # back to false so the test can assert the override works.
+    cat > "$dir/Coastfile.shared_service_groups" << 'SSG_CONSUMER_DISABLE_AUTODB_SSG_EOF'
+[ssg]
+runtime = "dind"
+
+[shared_services.postgres]
+image = "postgres:16-alpine"
+ports = [5432]
+volumes = ["pg_data:/var/lib/postgresql/data"]
+env = { POSTGRES_USER = "postgres", POSTGRES_PASSWORD = "dev" }
+auto_create_db = true
+SSG_CONSUMER_DISABLE_AUTODB_SSG_EOF
+
     cd "$dir"
     git init -b main
     git config user.name "Coast Dev"
@@ -2348,6 +2517,21 @@ services:
     image: postgres:16-alpine
     command: ["sh", "-c", "while true; do sleep 10; done"]
 SSG_CONSUMER_INJECT_FILE_COMPOSE_EOF
+
+    # Phase 25.5: consumer's OWN SSG. Mirrors coast-ssg-auto-db because
+    # the inject-file test wires its DB URL secret from the same
+    # auto_create_db postgres shape.
+    cat > "$dir/Coastfile.shared_service_groups" << 'SSG_CONSUMER_INJECT_FILE_SSG_EOF'
+[ssg]
+runtime = "dind"
+
+[shared_services.postgres]
+image = "postgres:16-alpine"
+ports = [5432]
+volumes = ["pg_data:/var/lib/postgresql/data"]
+env = { POSTGRES_USER = "postgres", POSTGRES_PASSWORD = "dev" }
+auto_create_db = true
+SSG_CONSUMER_INJECT_FILE_SSG_EOF
 
     cd "$dir"
     git init -b main
@@ -2486,6 +2670,24 @@ services:
     image: alpine:3
     command: ["sh", "-c", "while true; do sleep 10; done"]
 CONS_MULTI_COMPOSE_EOF
+
+    # Phase 25.5: consumer's OWN SSG (Phase 23 per-project). Mirrors
+    # coast-ssg-multi-service's postgres + redis shape so the
+    # drift-missing-service test can rebuild the SSG without redis
+    # against this project and exercise the drift path.
+    cat > "$dir/Coastfile.shared_service_groups" << 'CONS_MULTI_SSG_EOF'
+[ssg]
+runtime = "dind"
+
+[shared_services.postgres]
+image = "postgres:16-alpine"
+ports = [5432]
+env = { POSTGRES_PASSWORD = "coast" }
+
+[shared_services.redis]
+image = "redis:7-alpine"
+ports = [6379]
+CONS_MULTI_SSG_EOF
 
     cd "$dir"
     git init -b main

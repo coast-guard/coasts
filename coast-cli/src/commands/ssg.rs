@@ -288,8 +288,15 @@ async fn dispatch_build(
 ) -> Result<()> {
     // Subcommand-level `--working-dir` wins; fall back to the global
     // `coast --working-dir` flag so `coast --working-dir <dir> ssg
-    // build` works (DESIGN.md §5).
-    let resolved_working_dir = working_dir.clone().or_else(|| cli_working_dir.clone());
+    // build` works (DESIGN.md §5). Phase 25: if neither flag is set,
+    // use the CLI process's cwd — this matches the Phase 22 cwd-based
+    // project-resolution contract and keeps the daemon from falling
+    // back to its own cwd (e.g. `/workspace` in dindind, where no
+    // `Coastfile.shared_service_groups` exists).
+    let resolved_working_dir = working_dir
+        .clone()
+        .or_else(|| cli_working_dir.clone())
+        .or_else(|| std::env::current_dir().ok());
     // Per-project SSG (§23): project comes from the sibling
     // `Coastfile`'s `[coast].name` in the SSG Coastfile's dir.
     let project = resolve_consumer_project(&None, &resolved_working_dir, &None)?;
@@ -324,7 +331,13 @@ async fn dispatch_import_host_volume(
     else {
         unreachable!("dispatch_import_host_volume is only called with SsgAction::ImportHostVolume")
     };
-    let resolved_working_dir = working_dir.clone().or_else(|| cli_working_dir.clone());
+    // Phase 25: fall back to the CLI process's cwd so the daemon
+    // doesn't resolve relative to its own cwd. See `dispatch_build`
+    // for the full rationale.
+    let resolved_working_dir = working_dir
+        .clone()
+        .or_else(|| cli_working_dir.clone())
+        .or_else(|| std::env::current_dir().ok());
     let project = resolve_consumer_project(&None, &resolved_working_dir, &None)?;
     execute_simple(
         SsgRequest {

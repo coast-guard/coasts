@@ -27,6 +27,9 @@ set -euo pipefail
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/helpers.sh"
 
+# Phase 25: per-project SSG naming (§23) -- SSG container is `{project}-ssg`.
+SSG_PROJECT="coast-ssg-doctor"
+
 register_cleanup
 
 preflight_checks
@@ -41,7 +44,7 @@ pass "Examples initialized"
 
 # Reset any prior SSG state from other runs.
 rm -rf "$HOME/.coast/ssg"
-docker rm -f coast-ssg 2>/dev/null || true
+cleanup_project_ssgs "$SSG_PROJECT"
 
 # Host root for the doctor fixture's bind mount. Same pattern as
 # test_ssg_bind_mount_symmetric.sh.

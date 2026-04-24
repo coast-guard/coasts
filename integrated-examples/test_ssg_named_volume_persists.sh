@@ -10,7 +10,7 @@
 #
 #   1. `coast ssg build && coast ssg run`
 #   2. Write a marker file under `/var/lib/postgresql/data/` via
-#      `docker exec coast-ssg docker compose ... exec postgres ...`.
+#      `docker exec "${SSG_PROJECT}-ssg" docker compose ... exec postgres ...`.
 #   3. `coast ssg stop && coast ssg start`.
 #   4. Read the marker back — content must match.
 #   5. As a negative control, `coast ssg rm --with-data` removes the
@@ -28,6 +28,9 @@ set -euo pipefail
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/helpers.sh"
 
+# Phase 25: per-project SSG naming (§23) -- SSG container is `{project}-ssg`.
+SSG_PROJECT="coast-ssg-minimal"
+
 register_cleanup
 
 preflight_checks
@@ -42,8 +45,7 @@ pass "Examples initialized"
 
 # Reset any prior SSG state from other runs.
 rm -rf "$HOME/.coast/ssg"
-docker rm -f coast-ssg 2>/dev/null || true
-docker volume ls -q --filter "name=coast-dind--coast--ssg" 2>/dev/null | xargs -r docker volume rm 2>/dev/null || true
+cleanup_project_ssgs "$SSG_PROJECT"
 
 cd "$PROJECTS_DIR/coast-ssg-minimal"
 
@@ -77,9 +79,9 @@ echo "=== Test 2: write marker into pg_data named volume ==="
 MARKER_CONTENT="named-vol-$(date +%s%N)"
 
 # Write the marker via `docker exec` chained into the inner container.
-docker exec coast-ssg docker compose \
+docker exec "${SSG_PROJECT}-ssg" docker compose \
     -f /coast-artifact/compose.yml \
-    -p coast-ssg \
+    -p "${SSG_PROJECT}-ssg" \
     exec -T postgres sh -c "echo '$MARKER_CONTENT' > /var/lib/postgresql/data/.coast-marker"
 
 pass "marker written into inner named volume"
@@ -99,9 +101,9 @@ assert_contains "$START_OUT" "SSG started" "start succeeds"
 
 sleep 5
 
-POST_MARKER=$(docker exec coast-ssg docker compose \
+POST_MARKER=$(docker exec "${SSG_PROJECT}-ssg" docker compose \
     -f /coast-artifact/compose.yml \
-    -p coast-ssg \
+    -p "${SSG_PROJECT}-ssg" \
     exec -T postgres cat /var/lib/postgresql/data/.coast-marker | tr -d '\r')
 
 assert_eq "$POST_MARKER" "$MARKER_CONTENT" "marker survives stop+start (named volume persists)"
@@ -116,13 +118,17 @@ echo "=== Test 4: rm --with-data clears inner volume ==="
 RM_OUT=$("$COAST" ssg rm --with-data 2>&1)
 assert_contains "$RM_OUT" "SSG removed" "rm reports success"
 
-# Re-run and check the marker is gone (fresh initdb).
+# Phase 23: `rm` clears the SSG state row entirely, so we must
+# rebuild before running again (no global `~/.coast/ssg/latest`
+# fallback exists anymore; every `ssg run` needs a per-project
+# `latest_build_id`).
+"$COAST" ssg build >/dev/null 2>&1
 "$COAST" ssg run >/dev/null 2>&1
 sleep 8
 
-if docker exec coast-ssg docker compose \
+if docker exec "${SSG_PROJECT}-ssg" docker compose \
     -f /coast-artifact/compose.yml \
-    -p coast-ssg \
+    -p "${SSG_PROJECT}-ssg" \
     exec -T postgres test -f /var/lib/postgresql/data/.coast-marker 2>/dev/null; then
     fail "marker still exists after rm --with-data (named volume was not cleared)"
 fi

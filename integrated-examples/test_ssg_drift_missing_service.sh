@@ -17,6 +17,9 @@ set -euo pipefail
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/helpers.sh"
 
+# Phase 25: per-project SSG naming (§23) -- SSG container is `{project}-ssg`.
+SSG_PROJECT="coast-ssg-consumer-multi"
+
 register_cleanup
 
 preflight_checks
@@ -30,16 +33,16 @@ clean_slate
 pass "Examples initialized"
 
 rm -rf "$HOME/.coast/ssg"
-docker rm -f coast-ssg 2>/dev/null || true
-docker volume ls -q --filter "name=coast-dind--coast--ssg" 2>/dev/null | xargs -r docker volume rm 2>/dev/null || true
+cleanup_project_ssgs "$SSG_PROJECT"
 
 start_daemon
 
 echo ""
 echo "=== Step 1: SSG build A with postgres + redis ==="
 
-cd "$PROJECTS_DIR/coast-ssg-multi-service"
-"$COAST" ssg build --working-dir "$PROJECTS_DIR/coast-ssg-multi-service" >/dev/null 2>&1
+# Phase 25.5: build SSG from the consumer's cwd (Phase 23 per-project).
+cd "$PROJECTS_DIR/coast-ssg-consumer-multi"
+"$COAST" ssg build >/dev/null 2>&1
 BUILD_A_ID=$(readlink "$HOME/.coast/ssg/latest" | xargs basename)
 echo "SSG build A id: $BUILD_A_ID"
 
@@ -68,7 +71,8 @@ assert_contains "$RECORDED_SERVICES" "redis" "consumer manifest records redis"
 echo ""
 echo "=== Step 3: rewrite SSG Coastfile WITHOUT redis + rebuild ==="
 
-cd "$PROJECTS_DIR/coast-ssg-multi-service"
+# Phase 25.5: rewrite the consumer's OWN SSG Coastfile (Phase 23 per-project).
+cd "$PROJECTS_DIR/coast-ssg-consumer-multi"
 cat > Coastfile.shared_service_groups << 'SSG_POSTGRES_ONLY_EOF'
 [ssg]
 runtime = "dind"
@@ -79,7 +83,7 @@ ports = [5432]
 env = { POSTGRES_PASSWORD = "coast" }
 SSG_POSTGRES_ONLY_EOF
 
-"$COAST" ssg build --working-dir "$PROJECTS_DIR/coast-ssg-multi-service" >/dev/null 2>&1
+"$COAST" ssg build >/dev/null 2>&1
 BUILD_B_ID=$(readlink "$HOME/.coast/ssg/latest" | xargs basename)
 echo "SSG build B id: $BUILD_B_ID"
 [ "$BUILD_A_ID" != "$BUILD_B_ID" ] || fail "expected distinct build ids"

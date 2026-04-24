@@ -440,15 +440,98 @@ a global singleton.
 - [x] Regression: `test_remote_multi_instance_independent_tunnels` still green (dedup removal only restores MORE tunnels; no test asserted on the skip)
 - [x] New: `test_remote_two_projects_same_canonical_port_distinct_ssg` — two projects (pg15 vs pg16), each own SSG, both consumers on one remote VM, daemon-restart leg exercises dedup fix
 
-### Phase 25 — Integration test sweep
-Mechanical updates across 35 tests added between main and
-`jrs-add-shared-service-groups` to reflect per-project model.
-- [ ] Delete `integrated-examples/test_ssg_port_collision.sh` (premise no longer applies)
-- [ ] New `test_ssg_two_projects_same_canonical_port.sh`: two projects, each with own SSG, both using postgres:5432, no collision, each app talks to its OWN postgres
-- [ ] New `test_remote_two_projects_same_canonical_port_distinct_ssg.sh`: same idea, one remote VM
-- [ ] Update 32 existing SSG tests for container-name renames, project-scoped error messages, and cwd-based project resolution
-- [ ] `dindind/integration.yaml` registrations updated
-- [ ] `make test` + full `integrated-examples/**/test_*.sh` regression green
+### Phase 25 — SSG test sweep (comprehensive edits, scoped verification)
+Comprehensive: every SSG-touching test updated for the per-project
+contract. Scoped: local verification is 8 targeted dindind runs, not
+the full 134-test sweep (CI is the forcing function for that).
+- [x] `integrated-examples/setup.sh`: added sibling `Coastfile` +
+      stub `docker-compose.yml` to the 5 SSG-only fixtures that
+      previously only wrote `Coastfile.shared_service_groups`
+      (`coast-ssg-minimal`, `coast-ssg-multi-service`,
+      `coast-ssg-bind-mount`, `coast-ssg-doctor`,
+      `coast-ssg-auto-db`). Prerequisite for every `coast ssg
+      <verb>` via the Phase 22 `resolve_consumer_project` cwd path.
+- [x] `integrated-examples/helpers.sh`: `clean_slate` now globs
+      `*-ssg` containers and `coast-dind--*--ssg` volumes instead
+      of the singleton literal; new `cleanup_project_ssgs
+      "<project>"` helper function collapses the 20+ per-test
+      defensive-cleanup stanzas into one-line calls.
+- [x] B-category (5 tests): hardcoded `name=^coast-ssg$` docker
+      filters and `docker inspect coast-ssg` literals rewritten to
+      `name=^${SSG_PROJECT}-ssg$` with an explicit fixture name at
+      the top of each test.
+- [x] C-category (1 test): `test_ssg_consumer_missing_service.sh`
+      assertions realigned with Phase 23's `missing_ssg_service_error`
+      wording (`is declared from_group = true in project`, `does
+      not declare it`).
+- [x] D-category (19 tests + the remote mixed test): per-test
+      `_cleanup()` traps use `cleanup_project_ssgs "$SSG_PROJECT"`
+      instead of the old `docker rm -f coast-ssg` + volume-ls
+      stanza. Fixture mappings: `coast-ssg-minimal`,
+      `coast-ssg-multi-service`, `coast-ssg-bind-mount`,
+      `coast-ssg-doctor`, `coast-ssg-auto-db`, and (for the
+      `extends` test) a mktemp-local `coast-ssg-inheritance`
+      project.
+- [x] cwd-resolution audit: every `$COAST ssg build`/`ssg run` call
+      resolves against an SSG-owning fixture (either `cd`
+      preceding, `--working-dir`, or mktemp workdir with a sibling
+      Coastfile). Two stragglers fixed: `test_ssg_ps_live_state.sh`
+      now `cd`s before the build; `test_ssg_rm_run_refreshes_consumers.sh`
+      returns to the SSG fixture cwd before its `ssg rm` + `ssg run`
+      retry loop.
+- [x] Deleted `test_ssg_port_collision.sh` (premise covered by
+      `test_ssg_consumer_basic`, per DESIGN §0 Phase 25 + user plan
+      review).
+- [x] New `test_ssg_two_projects_same_canonical_port.sh` — local
+      analogue of the Phase 24 remote test: two mktemp fixtures
+      (pg15 vs pg16), each own SSG + consumer, both postgres:5432,
+      each consumer reaches its OWN project's postgres, proved via
+      `psql SHOW server_version`.
+- [x] Phase 24's new `test_remote_two_projects_same_canonical_port_distinct_ssg`
+      ships the remote-side proof (landed in Phase 24; the DESIGN
+      §0 Phase 25 entry is retained here to record the dependency).
+- [x] `dindind/integration.yaml`: `test_ssg_port_collision`
+      deregistered; new local + remote two-projects tests
+      registered.
+- [x] Rustfmt catch-up: 14 uncommitted `cargo fmt --all` files
+      from the prior standalone task piggybacked into Phase 25's
+      commit so CI clears on the same HEAD.
+- [x] Local verification: `cargo fmt --all -- --check` +
+      `make run-dind-integration TEST=<name>` for 8 targeted tests
+      (3 acceptance + 4 B-category + 1 C-category).
+- [x] Phase 25.5 — integration test sweep backfill (all SSG-touching
+      dindind tests exercised locally, test debt closed):
+      - 5 consumer fixtures in `setup.sh` gained their own
+        `Coastfile.shared_service_groups` so per-project resolution
+        (Phase 23) has a build to point at (`coast-ssg-consumer-basic`,
+        `coast-ssg-consumer-auto-db`,
+        `coast-ssg-consumer-disable-auto-db`,
+        `coast-ssg-consumer-inject-file`, `coast-ssg-consumer-multi`).
+      - 15 consumer-paired tests rewired to build SSG from the
+        consumer's own cwd (SSG_PROJECT=<consumer>, dropped
+        `--working-dir` pointing at the SSG-only fixture).
+      - `test_ssg_auto_create_db` + `test_ssg_named_volume_persists`
+        replaced hardcoded `docker exec coast-ssg ... -p coast-ssg`
+        with `${SSG_PROJECT}-ssg` (container AND inner compose label
+        per the Phase 21 rename).
+      - `test_ssg_named_volume_persists` + `test_ssg_rm_run_refreshes_consumers`
+        now `ssg build` between `ssg rm --with-data` and `ssg run`
+        (Phase 23 `clear_ssg` removes `latest_build_id`, no global
+        fallback; this is the expected new contract).
+      - `test_ssg_import_host_volume` staged a minimal sibling
+        `Coastfile` in its mktemp so the CLI's project-resolution
+        doesn't walk up to the dindind workspace (`/workspace`).
+      - `test_remote_two_projects_same_canonical_port_distinct_ssg`:
+        split `[remote]` into `Coastfile.remote.toml` (parser now
+        enforces that), added `git init` to mktemp fixtures, and
+        corrected the DinD container-name expectation to the
+        canonical `{project}-coasts-{instance}` form.
+      - DinD runs locally: 2 Phase 24 remote tests + 9 self-contained
+        + 19 consumer-paired + 1 local-multi-project = **31 passing
+        dindind runs**, no Rust-layer regressions surfaced.
+- [~] Full `make run-dind-integration TEST=all` / full 134-test
+      sweep — deferred to CI (5h+ locally and disk-hostile; CI is
+      the forcing function).
 
 ---
 
