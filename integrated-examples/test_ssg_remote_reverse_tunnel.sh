@@ -1,20 +1,22 @@
 #!/usr/bin/env bash
 #
 # Integration test: remote coast reaches local SSG postgres via
-# reverse SSH tunnel (Phase 4.5, DESIGN.md §20).
+# reverse SSH tunnel (Phase 4.5, DESIGN.md §20; Phase 30 §24).
 #
 # Flow tested end-to-end:
 #
 #     remote app container (inside coast-service DinD)
 #       -> postgres:5432 (DNS via compose_rewrite extra_hosts)
 #       -> remote docker host-gateway
-#       -> reverse SSH tunnel (ssh -R 0.0.0.0:5432:localhost:<dyn>)
-#       -> local host :dynamic_host_port
-#       -> SSG DinD :dynamic_host_port -> inner postgres :5432
+#       -> reverse SSH tunnel (ssh -R 0.0.0.0:<vport>:localhost:<vport>)
+#       -> Phase 28 host socat on localhost:<vport>
+#       -> SSG DinD :<dyn> -> inner postgres :5432
 #
-# The key Phase 4.5 assertion is that the tunnel pair has a REWRITTEN
-# local side — `localhost:<dynamic>`, not `localhost:5432` — proving
-# `rewrite_reverse_tunnel_pairs` is wired into `setup_shared_service_tunnels`.
+# Phase 30: both sides of `ssh -R` are now the project's stable
+# VIRTUAL port, not a daemon-allocated remote dyn port + the SSG's
+# dyn port. The local leg terminates at the host socat instead of
+# directly at the SSG container, so an SSG rebuild is invisible to
+# the remote consumer.
 #
 # Uses the localhost-as-remote harness (`setup_localhost_ssh` +
 # `start_coast_service`).
@@ -125,17 +127,34 @@ assert_contains "$RUN_OUT" "Created coast instance" "remote run succeeds"
 sleep 5
 
 echo ""
-echo "=== Step 5: reverse tunnel uses SSG dynamic port on local side ==="
+echo "=== Step 5: reverse tunnel is symmetric on the project's virtual port ==="
 
-# Phase 18: the remote side of the reverse tunnel is a dynamic port
-# (not canonical 5432); the local side is still the SSG's dynamic
-# port because rewrite_reverse_tunnel_pairs still maps SSG forwards.
+# Phase 30: the SSG-backed reverse tunnel is now SYMMETRIC — both
+# sides of `ssh -R` are the project's stable virtual port. The
+# local leg terminates at the Phase 28 host socat (which forwards
+# to the SSG's current dyn port), so the SSG dyn port MUST NOT
+# show up in the ssh -R argv anymore. A regression to the dyn
+# port (e.g. someone reverts rewrite_reverse_tunnel_pairs) would
+# fail this assertion in the right place.
 PGREP_OUT=$(pgrep -af "ssh -N -R 0.0.0.0:" 2>&1 || true)
 echo "$PGREP_OUT"
-if ! echo "$PGREP_OUT" | grep -qE "ssh -N -R 0\.0\.0\.0:[0-9]+:localhost:$SSG_DYNAMIC"; then
-    fail "reverse ssh tunnel should bind a dynamic remote port and terminate at localhost:$SSG_DYNAMIC"
+
+# Find the project's reverse tunnel and pull both ports.
+TUNNEL_LINE=$(echo "$PGREP_OUT" | grep -oE "ssh -N -R 0\.0\.0\.0:[0-9]+:localhost:[0-9]+" | head -1)
+if [ -z "$TUNNEL_LINE" ]; then
+    fail "no reverse SSH tunnel matched 'ssh -N -R 0.0.0.0:<port>:localhost:<port>'"
 fi
-pass "reverse ssh tunnel targets SSG dynamic port ($SSG_DYNAMIC) locally (Phase 18)"
+REMOTE_LEG=$(echo "$TUNNEL_LINE" | awk -F: '{print $2}')
+LOCAL_LEG=$(echo "$TUNNEL_LINE" | awk -F: '{print $NF}')
+echo "  remote leg = $REMOTE_LEG, local leg = $LOCAL_LEG"
+
+if [ "$REMOTE_LEG" != "$LOCAL_LEG" ]; then
+    fail "Phase 30 violation: ssh -R is asymmetric (remote=$REMOTE_LEG, local=$LOCAL_LEG); SSG-backed tunnels must use the same virtual port on both sides"
+fi
+if [ "$LOCAL_LEG" = "$SSG_DYNAMIC" ]; then
+    fail "Phase 30 violation: ssh -R local leg is the SSG dyn port ($SSG_DYNAMIC); expected the host-socat virtual port"
+fi
+pass "reverse ssh tunnel is symmetric ($REMOTE_LEG:localhost:$LOCAL_LEG) and terminates at the host socat, not the SSG dyn port"
 
 echo ""
 echo "=== Step 6: app container inside remote coast reaches SSG postgres ==="

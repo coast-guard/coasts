@@ -234,7 +234,46 @@ impl StateDb {
         self.migrate_ssg_per_project()?;
         self.migrate_add_ssg_latest_build_id()?;
         self.migrate_add_ssg_virtual_ports_table()?;
+        self.migrate_add_ssg_shared_tunnels_table()?;
 
+        Ok(())
+    }
+
+    /// Migration: create the `ssg_shared_tunnels` table that tracks
+    /// the per-`(project, remote_host, service_name, container_port)`
+    /// reverse SSH tunnel shared by all consumer instances of a
+    /// project running on the same remote VM. See
+    /// `coast-ssg/DESIGN.md §24` (Phase 30).
+    ///
+    /// Phase 30 changed the remote-side reverse tunnel from "one ssh
+    /// -R per (instance, forward)" to "one ssh -R per (project,
+    /// remote_host) shared across instances". This row holds the
+    /// virtual port both sides of the `ssh -R` bind to, plus the
+    /// pid of the live ssh child so daemon restart can detect a
+    /// dead tunnel and respawn it.
+    ///
+    /// Kept separate from `shared_service_forwards` because the
+    /// latter is per-`(project, instance)` — Phase 30's coalescing
+    /// across instances of the same project is exactly what makes
+    /// this table necessary.
+    fn migrate_add_ssg_shared_tunnels_table(&self) -> Result<()> {
+        self.conn
+            .execute_batch(
+                "CREATE TABLE IF NOT EXISTS ssg_shared_tunnels (
+                    project        TEXT    NOT NULL,
+                    remote_host    TEXT    NOT NULL,
+                    service_name   TEXT    NOT NULL,
+                    container_port INTEGER NOT NULL,
+                    virtual_port   INTEGER NOT NULL,
+                    ssh_pid        INTEGER,
+                    created_at     TEXT    NOT NULL,
+                    PRIMARY KEY (project, remote_host, service_name, container_port)
+                );",
+            )
+            .map_err(|e| CoastError::State {
+                message: format!("failed to create ssg_shared_tunnels table: {e}"),
+                source: Some(Box::new(e)),
+            })?;
         Ok(())
     }
 

@@ -826,8 +826,31 @@ async fn setup_port_tunnels(
     local_port_mappings
 }
 
+/// Phase 30 helper: probe whether `pid` is currently a live process.
+/// Sends signal 0 (no-op) via `kill(2)`; returns true if the process
+/// exists and we have permission to signal it. Mirrors the same idea
+/// as `host_socat::pidfile::is_alive` so daemon-managed ssh children
+/// and host socats use the same liveness primitive.
+pub(crate) fn is_pid_alive(pid: i32) -> bool {
+    if pid <= 1 {
+        return false;
+    }
+    // Safety: signal 0 with kill(2) is purely a permission/existence
+    // probe — it never delivers a signal to the target.
+    unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+}
+
 /// Start shared services locally and set up SSH reverse tunnels so the
 /// remote DinD container can reach them.
+///
+/// Phase 30: the SSG-backed half of the forward list is now coalesced
+/// across instances of the same project on the same remote VM. Each
+/// `(project, remote_host, service, container_port)` tuple owns ONE
+/// shared `ssh -N -R <vport>:localhost:<vport>` process recorded in
+/// `ssg_shared_tunnels`. Subsequent instance runs reuse the live
+/// process; only the LAST instance's removal tears it down (see
+/// `teardown_ssg_shared_tunnels_if_last_instance`). Inline
+/// shared-service tunnels remain per-instance.
 async fn setup_shared_service_tunnels(
     cf: &coast_core::coastfile::Coastfile,
     req: &RunRequest,
@@ -858,7 +881,7 @@ async fn setup_shared_service_tunnels(
     }
 
     // Inline shared-service forwards (host-daemon containers).
-    let inline_forwards: Vec<coast_core::protocol::SharedServicePortForward> = cf
+    let mut inline_forwards: Vec<coast_core::protocol::SharedServicePortForward> = cf
         .shared_services
         .iter()
         .flat_map(|svc| {
@@ -873,24 +896,21 @@ async fn setup_shared_service_tunnels(
         .collect();
 
     // SSG-backed forwards (synthesized from the active SSG build).
-    // Read the manifest + ssg_services rows and let coast-ssg do the
-    // validation + synthesis. `ensure_ready_for_consumer` ran earlier
-    // in `handle_remote_run`, so the SSG is guaranteed to be up with
-    // `ssg_services` populated before we reach here.
-    let (ssg_forwards, ssg_services) = synthesize_ssg_forwards(cf, state).await?;
+    // `ensure_ready_for_consumer` ran earlier in `handle_remote_run`,
+    // so the SSG is guaranteed to be up with `ssg_services` populated
+    // and Phase 28's host_socat::reconcile_project has already
+    // allocated `ssg_virtual_ports` rows.
+    let (mut ssg_forwards, ssg_services) = synthesize_ssg_forwards(cf, state).await?;
 
-    let mut forwards = inline_forwards;
-    forwards.extend(ssg_forwards);
-
-    if forwards.is_empty() {
-        return Ok(forwards);
+    if inline_forwards.is_empty() && ssg_forwards.is_empty() {
+        return Ok(Vec::new());
     }
 
-    // Phase 18: allocate a unique dynamic `remote_port` per forward so
-    // concurrent consumer coasts on one remote VM never collide on a
-    // canonical port. See coast-ssg/DESIGN.md §20.2.
+    // Phase 18 (inline): allocate a unique dynamic `remote_port` per
+    // inline forward so concurrent consumer coasts on one remote VM
+    // never collide on a canonical port. See `coast-ssg/DESIGN.md §20.2`.
     let mut allocated: std::collections::HashSet<u16> = std::collections::HashSet::new();
-    for fwd in &mut forwards {
+    for fwd in &mut inline_forwards {
         let port =
             crate::port_manager::allocate_dynamic_port_excluding(&allocated).map_err(|e| {
                 coast_core::error::CoastError::port(format!(
@@ -902,17 +922,48 @@ async fn setup_shared_service_tunnels(
         fwd.remote_port = port;
     }
 
-    // Rewrite pairs: remote side = fwd.remote_port, local side =
-    // canonical for inline / SSG dynamic for from_group.
-    let reverse_pairs =
-        coast_ssg::remote_tunnel::rewrite_reverse_tunnel_pairs(&forwards, &ssg_services);
+    // Phase 30 (SSG): stamp each SSG forward's `remote_port` with the
+    // project's stable virtual port from `ssg_virtual_ports`. The
+    // virtual port is shared by all instances of `req.project` on
+    // `remote_config.host` — which is the whole point of Phase 30's
+    // tunnel coalescing. Hard-error if a virtual port is missing
+    // (means the SSG hasn't fully come up; the user should re-run
+    // `coast ssg run` first).
+    {
+        use coast_ssg::state::SsgStateExt;
+        let db = state.db.lock().await;
+        for fwd in &mut ssg_forwards {
+            let vport = db
+                .get_ssg_virtual_port(&req.project, &fwd.name, fwd.port)?
+                .ok_or_else(|| {
+                    coast_core::error::CoastError::port(format!(
+                        "SSG service '{name}' container port {port} has no virtual port \
+                         allocated for project '{project}'. Run `coast ssg run` in the \
+                         project to bring its host socat supervisor up first.",
+                        name = fwd.name,
+                        port = fwd.port,
+                        project = req.project,
+                    ))
+                })?;
+            fwd.remote_port = vport;
+        }
+    }
 
-    // Persist the (remote_port, local_port) pairs BEFORE spawning ssh so
-    // daemon-restart recovery (§20.5) can replay them even if we crash
-    // mid-spawn.
+    // Combined view for `rewrite_reverse_tunnel_pairs` and per-instance
+    // bookkeeping. `ssg_services` drives the per-pair branch inside
+    // the rewriter so we don't need to remember which forwards came
+    // from which list here.
+    let mut all_forwards = inline_forwards.clone();
+    all_forwards.extend(ssg_forwards.iter().cloned());
+    let reverse_pairs =
+        coast_ssg::remote_tunnel::rewrite_reverse_tunnel_pairs(&all_forwards, &ssg_services);
+
+    // Persist `shared_service_forwards` rows BEFORE spawning ssh so
+    // daemon-restart recovery (§20.5) can replay even if we crash
+    // mid-spawn. Both inline and SSG forwards persist here.
     {
         let db = state.db.lock().await;
-        for (fwd, (remote_port, local_port)) in forwards.iter().zip(reverse_pairs.iter()) {
+        for (fwd, (remote_port, local_port)) in all_forwards.iter().zip(reverse_pairs.iter()) {
             db.upsert_shared_service_forward(&crate::state::SharedServiceForwardRecord {
                 project: req.project.clone(),
                 instance: req.name.clone(),
@@ -924,34 +975,181 @@ async fn setup_shared_service_tunnels(
         }
     }
 
-    match super::remote::tunnel::reverse_forward_ports(remote_config, &reverse_pairs).await {
-        Ok(pids) => {
-            info!(
-                host = %remote_config.host,
-                tunnels = pids.len(),
-                "shared service reverse tunnels created"
-            );
-            if !pids.is_empty() {
-                let mut map = state.shared_service_tunnel_pids.lock().await;
-                map.insert((req.project.clone(), req.name.clone()), pids);
+    let inline_count = inline_forwards.len();
+    let inline_pairs: Vec<(u16, u16)> = reverse_pairs.iter().take(inline_count).copied().collect();
+    let ssg_pairs: Vec<(u16, u16)> = reverse_pairs.iter().skip(inline_count).copied().collect();
+
+    // --- Inline path: per-instance ssh -R, unchanged from Phase 18 ---
+    if !inline_pairs.is_empty() {
+        match super::remote::tunnel::reverse_forward_ports(remote_config, &inline_pairs).await {
+            Ok(pids) => {
+                info!(
+                    host = %remote_config.host,
+                    tunnels = pids.len(),
+                    "inline shared-service reverse tunnels created"
+                );
+                if !pids.is_empty() {
+                    let mut map = state.shared_service_tunnel_pids.lock().await;
+                    map.entry((req.project.clone(), req.name.clone()))
+                        .or_default()
+                        .extend(pids);
+                }
             }
-        }
-        Err(e) => {
-            // Phase 18: because every pair uses its own unique
-            // remote_port, a bind-already-in-use error now indicates a
-            // real collision with something outside Coast, not a
-            // cross-coast reuse. Log and continue rather than failing
-            // the run — the specific failing ports are already logged
-            // by reverse_forward_ports' per-port retry loop.
-            info!(
-                host = %remote_config.host,
-                error = %e,
-                "some shared-service reverse tunnels failed to bind; see earlier warnings"
-            );
+            Err(e) => {
+                // Phase 18: per-pair retry already logs specifics; we
+                // log+continue here so a single bad inline forward
+                // doesn't fail the whole run.
+                info!(
+                    host = %remote_config.host,
+                    error = %e,
+                    "some inline shared-service reverse tunnels failed; see earlier warnings"
+                );
+            }
         }
     }
 
-    Ok(forwards)
+    // --- SSG path: shared per (project, remote_host, service, container_port) ---
+    //
+    // For each SSG forward, decide whether to spawn or reuse:
+    //   - existing `ssg_shared_tunnels` row with a live PID → reuse
+    //     (no spawn, no per-instance pid bookkeeping — the tunnel
+    //     belongs to the project, not this specific instance).
+    //   - row missing OR PID dead → spawn `ssh -R` and persist the
+    //     fresh pid for the next sibling instance to reuse.
+    if !ssg_forwards.is_empty() {
+        spawn_or_reuse_ssg_shared_tunnels(req, state, remote_config, &ssg_forwards, &ssg_pairs)
+            .await?;
+    }
+
+    Ok(all_forwards)
+}
+
+/// Phase 30: for each SSG forward, either reuse the project's
+/// existing live ssh -R or spawn a new one and record its pid in
+/// `ssg_shared_tunnels`. Per-instance pid bookkeeping stays out of
+/// this path — the tunnel is owned by the project.
+async fn spawn_or_reuse_ssg_shared_tunnels(
+    req: &RunRequest,
+    state: &AppState,
+    remote_config: &coast_core::types::RemoteConnection,
+    ssg_forwards: &[coast_core::protocol::SharedServicePortForward],
+    ssg_pairs: &[(u16, u16)],
+) -> Result<()> {
+    debug_assert_eq!(ssg_forwards.len(), ssg_pairs.len());
+
+    let (to_spawn, reused) =
+        partition_ssg_tunnels_to_spawn(req, state, remote_config, ssg_forwards, ssg_pairs).await?;
+
+    if reused > 0 {
+        info!(
+            project = %req.project,
+            remote = %remote_config.host,
+            reused,
+            "SSG shared reverse tunnel(s) reused from sibling instance"
+        );
+    }
+    if to_spawn.is_empty() {
+        return Ok(());
+    }
+
+    let pairs: Vec<(u16, u16)> = to_spawn.iter().map(|(_, p)| *p).collect();
+    let pids = match super::remote::tunnel::reverse_forward_ports(remote_config, &pairs).await {
+        Ok(pids) => pids,
+        Err(e) => {
+            info!(
+                host = %remote_config.host,
+                error = %e,
+                "SSG shared-service reverse tunnels: some failed to bind; see earlier warnings"
+            );
+            // Even on partial failure the inner per-port loop returns
+            // whatever pids it managed to spawn — but the function
+            // signature returns Err on full failure with no pids. We
+            // can't get those granular pids back, so leave the
+            // pre-recorded rows with ssh_pid=None; daemon restart
+            // (§20.5) will respawn them.
+            return Ok(());
+        }
+    };
+
+    persist_ssg_shared_tunnel_pids(req, state, remote_config, &to_spawn, &pids).await?;
+    info!(
+        project = %req.project,
+        remote = %remote_config.host,
+        spawned = pids.len(),
+        "SSG shared reverse tunnel(s) spawned"
+    );
+    Ok(())
+}
+
+/// Phase 30: split SSG forwards into a "to spawn" list (no live
+/// tunnel exists) and a count of "already alive, reused". Holds
+/// the DB lock briefly to snapshot existing rows; doesn't block on
+/// the slow ssh spawn that the caller does later.
+async fn partition_ssg_tunnels_to_spawn(
+    req: &RunRequest,
+    state: &AppState,
+    remote_config: &coast_core::types::RemoteConnection,
+    ssg_forwards: &[coast_core::protocol::SharedServicePortForward],
+    ssg_pairs: &[(u16, u16)],
+) -> Result<(
+    Vec<(coast_core::protocol::SharedServicePortForward, (u16, u16))>,
+    usize,
+)> {
+    use coast_ssg::state::SsgStateExt;
+    let db = state.db.lock().await;
+    let mut to_spawn: Vec<(coast_core::protocol::SharedServicePortForward, (u16, u16))> =
+        Vec::new();
+    let mut reused = 0usize;
+    for (fwd, pair) in ssg_forwards.iter().zip(ssg_pairs.iter()) {
+        let existing =
+            db.get_ssg_shared_tunnel(&req.project, &remote_config.host, &fwd.name, fwd.port)?;
+        let alive = existing
+            .as_ref()
+            .and_then(|r| r.ssh_pid)
+            .is_some_and(is_pid_alive);
+        if alive {
+            reused += 1;
+            continue;
+        }
+        // Pre-record the row with `ssh_pid = None` so a crash
+        // mid-spawn doesn't leave the table without an entry.
+        // The caller updates the pid after spawning.
+        db.upsert_ssg_shared_tunnel(
+            &req.project,
+            &remote_config.host,
+            &fwd.name,
+            fwd.port,
+            fwd.remote_port,
+            None,
+        )?;
+        to_spawn.push((fwd.clone(), *pair));
+    }
+    Ok((to_spawn, reused))
+}
+
+/// Phase 30: persist the freshly-spawned ssh PIDs into
+/// `ssg_shared_tunnels` so daemon-restart restore + heal both see
+/// live tunnels. PIDs correspond positionally to the input pairs
+/// returned by `reverse_forward_ports`.
+async fn persist_ssg_shared_tunnel_pids(
+    req: &RunRequest,
+    state: &AppState,
+    remote_config: &coast_core::types::RemoteConnection,
+    to_spawn: &[(coast_core::protocol::SharedServicePortForward, (u16, u16))],
+    pids: &[u32],
+) -> Result<()> {
+    use coast_ssg::state::SsgStateExt;
+    let db = state.db.lock().await;
+    for ((fwd, _), pid) in to_spawn.iter().zip(pids.iter()) {
+        db.update_ssg_shared_tunnel_pid(
+            &req.project,
+            &remote_config.host,
+            &fwd.name,
+            fwd.port,
+            Some(*pid as i32),
+        )?;
+    }
+    Ok(())
 }
 
 /// Fetch the active SSG manifest + `ssg_services` rows and ask

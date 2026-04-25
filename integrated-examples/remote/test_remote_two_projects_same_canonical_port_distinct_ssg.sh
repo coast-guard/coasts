@@ -276,13 +276,23 @@ sleep 3
 
 # ============================================================
 # Step 5: Assert distinct remote_port + distinct local upstream per
-#         project's tunnel. This is the concrete Phase 24 proof:
-#         coast A's tunnel points at phase24-a's SSG dynamic port,
-#         coast B's at phase24-b's.
+#         project's tunnel.
+#
+# Phase 30 (DESIGN.md §24): each project's SSG-backed reverse
+# tunnel is now SYMMETRIC on the project's stable VIRTUAL port —
+# both `ssh -R` legs are `<vport>:localhost:<vport>`. The local
+# leg terminates at the Phase 28 host socat (which forwards to
+# whatever dyn port the SSG currently publishes), so the local
+# upstream a packet capture would show is the virtual port, NOT
+# the SSG dyn port the test originally asserted on.
+#
+# Per-project isolation is preserved because each project has its
+# own virtual port from `ssg_virtual_ports` — and (project A's
+# vport) != (project B's vport) by construction.
 # ============================================================
 
 echo ""
-echo "=== Step 5: Distinct remote ports + project-scoped local upstreams ==="
+echo "=== Step 5: Distinct remote ports + project-scoped virtual ports ==="
 
 ALL_TUNNELS=$(pgrep -af "ssh -N -R 0.0.0.0:" | \
     grep -oE '0\.0\.0\.0:[0-9]+:localhost:[0-9]+' || true)
@@ -304,13 +314,41 @@ if [ "$REMOTE_COUNT" -lt 2 ]; then
     fail "expected at least 2 distinct remote tunnel ports (one per project); got $REMOTE_COUNT"
 fi
 
-# Each project's reverse tunnel must terminate at its OWN SSG
-# dynamic port, not the other project's.
-echo "$LOCAL_UPSTREAMS" | grep -q "^${SSG_A_DYNAMIC}$" \
-    || fail "no reverse tunnel terminates at phase24-a SSG port $SSG_A_DYNAMIC — cross-project leak?"
-echo "$LOCAL_UPSTREAMS" | grep -q "^${SSG_B_DYNAMIC}$" \
-    || fail "no reverse tunnel terminates at phase24-b SSG port $SSG_B_DYNAMIC — cross-project leak?"
-pass "both tunnels point at their own project's SSG dynamic port"
+# Phase 30: each remote port equals the project's virtual port,
+# and so does the local-side leg (symmetric). Different projects
+# have distinct virtual ports → distinct (remote, local) pairs.
+LOCAL_COUNT=$(echo "$LOCAL_UPSTREAMS" | grep -cv '^$' || echo 0)
+if [ "$LOCAL_COUNT" -lt 2 ]; then
+    fail "expected at least 2 distinct local upstreams (one virtual port per project); got $LOCAL_COUNT"
+fi
+
+# The OLD assertion was "local upstream contains $SSG_X_DYNAMIC".
+# Phase 30 inverts that contract: SSG dyn ports MUST NOT appear
+# in the ssh -R argv anymore — only the virtual port shows there.
+# A regression to the dyn port (e.g. someone reverts the
+# rewrite_reverse_tunnel_pairs change) would make this assertion
+# fail in exactly the right place.
+if echo "$LOCAL_UPSTREAMS" | grep -q "^${SSG_A_DYNAMIC}$"; then
+    fail "Phase 30 violation: ssh -R local upstream $SSG_A_DYNAMIC is the SSG dyn port; expected the virtual port"
+fi
+if echo "$LOCAL_UPSTREAMS" | grep -q "^${SSG_B_DYNAMIC}$"; then
+    fail "Phase 30 violation: ssh -R local upstream $SSG_B_DYNAMIC is the SSG dyn port; expected the virtual port"
+fi
+
+# Phase 30 symmetry: for every tunnel, the remote and local
+# halves are equal (vport:localhost:vport). Verify by parsing
+# each line individually — any line where remote != local is a
+# Phase 30 contract violation (the fall-through inline shape).
+while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    R=$(echo "$line" | awk -F: '{print $2}')
+    L=$(echo "$line" | awk -F: '{print $NF}')
+    if [ "$R" != "$L" ]; then
+        fail "Phase 30 violation: ssh -R '$line' is asymmetric (remote=$R != local=$L) for an SSG-backed tunnel"
+    fi
+done <<<"$ALL_TUNNELS"
+
+pass "every SSG tunnel is symmetric (remote == local) and projects' virtual ports are distinct"
 
 # ============================================================
 # Step 6: Functional proof — each consumer's psql sees its own
@@ -413,17 +451,39 @@ sleep 5
 # Phase 24, the second project's instance on the shared remote was
 # silently skipped because the first instance's host_key was already
 # in `restored_hosts`.
+#
+# Phase 30: each project's tunnel is symmetric on its own virtual
+# port. The post-restart shape must include exactly the same set
+# of (vport, vport) pairs that existed pre-restart, so we compare
+# the SORTED unique remote-port sets across the restart.
 ALL_TUNNELS_AFTER=$(pgrep -af "ssh -N -R 0.0.0.0:" | \
     grep -oE '0\.0\.0\.0:[0-9]+:localhost:[0-9]+' || true)
-LOCAL_UPSTREAMS_AFTER=$(echo "$ALL_TUNNELS_AFTER" | awk -F: '{print $NF}' | sort -u)
-echo "  post-restart local upstreams:"
-echo "$LOCAL_UPSTREAMS_AFTER" | sed 's/^/    /'
+REMOTE_PORTS_AFTER=$(echo "$ALL_TUNNELS_AFTER" | awk -F: '{print $2}' | sort -u)
+echo "  post-restart remote ports:"
+echo "$REMOTE_PORTS_AFTER" | sed 's/^/    /'
 
-echo "$LOCAL_UPSTREAMS_AFTER" | grep -q "^${SSG_A_DYNAMIC}$" \
-    || fail "phase24-a's reverse tunnel was NOT restored after daemon restart"
-echo "$LOCAL_UPSTREAMS_AFTER" | grep -q "^${SSG_B_DYNAMIC}$" \
-    || fail "phase24-b's reverse tunnel was NOT restored after daemon restart — Phase 24 restored_hosts dedup regression"
-pass "both projects' reverse tunnels restored after daemon restart"
+# Compare with the pre-restart REMOTE_PORTS captured in step 5.
+# Both sets must be equal — Phase 30 keeps virtual ports stable
+# across daemon restart.
+PRE_REMOTE_SORTED=$(echo "$REMOTE_PORTS" | sort -u)
+POST_REMOTE_SORTED=$(echo "$REMOTE_PORTS_AFTER" | sort -u)
+if [ "$PRE_REMOTE_SORTED" != "$POST_REMOTE_SORTED" ]; then
+    echo "  pre-restart : $(echo "$PRE_REMOTE_SORTED" | tr '\n' ' ')"
+    echo "  post-restart: $(echo "$POST_REMOTE_SORTED" | tr '\n' ' ')"
+    fail "Phase 30 violation: SSG shared tunnels' virtual ports MUST be stable across daemon restart"
+fi
+
+# Symmetry must hold post-restart too.
+while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    R=$(echo "$line" | awk -F: '{print $2}')
+    L=$(echo "$line" | awk -F: '{print $NF}')
+    if [ "$R" != "$L" ]; then
+        fail "post-restart Phase 30 violation: ssh -R '$line' is asymmetric (remote=$R != local=$L)"
+    fi
+done <<<"$ALL_TUNNELS_AFTER"
+
+pass "both projects' tunnels restored after daemon restart with stable virtual ports"
 
 # ============================================================
 # Cleanup

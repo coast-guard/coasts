@@ -117,6 +117,34 @@ pub struct SsgVirtualPortRecord {
     pub created_at: String,
 }
 
+/// Phase 30 (§24 / §20): one row per
+/// `(project, remote_host, service_name, container_port)` SSG
+/// shared service that has a live reverse SSH tunnel.
+///
+/// Phase 30 coalesces SSG reverse tunnels across instances of the
+/// same project on the same remote VM — only the FIRST instance
+/// spawns the `ssh -N -R <virtual_port>:localhost:<virtual_port>`
+/// process; subsequent instances reuse it. The tunnel is torn down
+/// when the LAST instance of the project on that remote is
+/// removed. `ssh_pid` is `None` between teardown and the next
+/// re-spawn (or after a daemon restart that found a stale row).
+///
+/// Per-instance bookkeeping for inner-DinD socats stays in
+/// `shared_service_forwards`; this table is purely for "which
+/// (project, remote_host) tuples currently own a live SSH child
+/// process and at what virtual port".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SsgSharedTunnelRecord {
+    pub project: String,
+    pub remote_host: String,
+    pub service_name: String,
+    pub container_port: u16,
+    pub virtual_port: u16,
+    pub ssh_pid: Option<i32>,
+    /// RFC 3339 timestamp.
+    pub created_at: String,
+}
+
 /// Typed CRUD for the SSG state tables.
 ///
 /// Implemented on `coast_daemon::state::StateDb` in
@@ -273,4 +301,67 @@ pub trait SsgStateExt {
     /// allocator to avoid handing the same virtual port to two
     /// services across different projects. Unordered.
     fn list_all_ssg_virtual_port_numbers(&self) -> Result<Vec<u16>>;
+
+    // --- ssg_shared_tunnels (Phase 30 / §24) ---
+
+    /// Insert (or replace by
+    /// `(project, remote_host, service_name, container_port)`) a
+    /// shared-tunnel row recording the live ssh child's pid + virtual
+    /// port. The first instance of `project` to land on `remote_host`
+    /// for that service inserts the row; subsequent instances reuse
+    /// the live tunnel without spawning a duplicate.
+    fn upsert_ssg_shared_tunnel(
+        &self,
+        project: &str,
+        remote_host: &str,
+        service_name: &str,
+        container_port: u16,
+        virtual_port: u16,
+        ssh_pid: Option<i32>,
+    ) -> Result<()>;
+
+    /// Read the shared-tunnel row for the given quad, or `None` when
+    /// no instance of `project` currently holds a tunnel for the
+    /// service on `remote_host`.
+    fn get_ssg_shared_tunnel(
+        &self,
+        project: &str,
+        remote_host: &str,
+        service_name: &str,
+        container_port: u16,
+    ) -> Result<Option<SsgSharedTunnelRecord>>;
+
+    /// List every shared-tunnel row for `(project, remote_host)`.
+    /// Used by the teardown helper that runs when the last instance
+    /// of `project` on `remote_host` is removed: it iterates these
+    /// rows, kills each `ssh_pid`, and deletes the rows.
+    fn list_ssg_shared_tunnels_for_remote(
+        &self,
+        project: &str,
+        remote_host: &str,
+    ) -> Result<Vec<SsgSharedTunnelRecord>>;
+
+    /// Update just the `ssh_pid` column for an existing
+    /// shared-tunnel row. Called when daemon-restart respawns a
+    /// dead tunnel: the row's `virtual_port` is preserved, only the
+    /// fresh ssh child's pid is written.
+    fn update_ssg_shared_tunnel_pid(
+        &self,
+        project: &str,
+        remote_host: &str,
+        service_name: &str,
+        container_port: u16,
+        ssh_pid: Option<i32>,
+    ) -> Result<()>;
+
+    /// Delete the single shared-tunnel row matching the quad. Called
+    /// by the teardown path after the ssh process has been killed.
+    /// Idempotent — succeeds when the row is already gone.
+    fn clear_ssg_shared_tunnel(
+        &self,
+        project: &str,
+        remote_host: &str,
+        service_name: &str,
+        container_port: u16,
+    ) -> Result<()>;
 }

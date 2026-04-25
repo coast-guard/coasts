@@ -14,8 +14,8 @@ use tracing::{debug, instrument};
 
 use coast_core::error::{CoastError, Result};
 use coast_ssg::state::{
-    SsgConsumerPinRecord, SsgPortCheckoutRecord, SsgRecord, SsgServiceRecord, SsgStateExt,
-    SsgVirtualPortRecord,
+    SsgConsumerPinRecord, SsgPortCheckoutRecord, SsgRecord, SsgServiceRecord,
+    SsgSharedTunnelRecord, SsgStateExt, SsgVirtualPortRecord,
 };
 
 use super::StateDb;
@@ -65,6 +65,18 @@ fn row_to_virtual_port(row: &rusqlite::Row<'_>) -> rusqlite::Result<SsgVirtualPo
         container_port: row.get::<_, i64>(2)? as u16,
         port: row.get::<_, i64>(3)? as u16,
         created_at: row.get(4)?,
+    })
+}
+
+fn row_to_shared_tunnel(row: &rusqlite::Row<'_>) -> rusqlite::Result<SsgSharedTunnelRecord> {
+    Ok(SsgSharedTunnelRecord {
+        project: row.get(0)?,
+        remote_host: row.get(1)?,
+        service_name: row.get(2)?,
+        container_port: row.get::<_, i64>(3)? as u16,
+        virtual_port: row.get::<_, i64>(4)? as u16,
+        ssh_pid: row.get::<_, Option<i64>>(5)?.map(|p| p as i32),
+        created_at: row.get(6)?,
     })
 }
 
@@ -626,6 +638,204 @@ impl SsgStateExt for StateDb {
             })?);
         }
         Ok(out)
+    }
+
+    // --- ssg_shared_tunnels (Phase 30 / §24) ---
+
+    #[instrument(
+        level = "debug",
+        skip(self),
+        fields(
+            project = %project,
+            remote = %remote_host,
+            service = %service_name,
+            container_port = container_port,
+            virtual_port = virtual_port,
+            ssh_pid = ?ssh_pid,
+        ),
+    )]
+    fn upsert_ssg_shared_tunnel(
+        &self,
+        project: &str,
+        remote_host: &str,
+        service_name: &str,
+        container_port: u16,
+        virtual_port: u16,
+        ssh_pid: Option<i32>,
+    ) -> Result<()> {
+        let created_at = chrono::Utc::now().to_rfc3339();
+        self.conn
+            .execute(
+                "INSERT OR REPLACE INTO ssg_shared_tunnels
+                   (project, remote_host, service_name, container_port,
+                    virtual_port, ssh_pid, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    project,
+                    remote_host,
+                    service_name,
+                    container_port as i64,
+                    virtual_port as i64,
+                    ssh_pid.map(|p| p as i64),
+                    created_at,
+                ],
+            )
+            .map_err(|e| {
+                state_err(
+                    format!(
+                        "failed to upsert ssg_shared_tunnel for \
+                         '{project}/{remote_host}/{service_name}:{container_port}': {e}"
+                    ),
+                    e,
+                )
+            })?;
+        debug!("upserted ssg_shared_tunnel");
+        Ok(())
+    }
+
+    #[instrument(
+        level = "debug",
+        skip(self),
+        fields(project = %project, remote = %remote_host, service = %service_name, container_port = container_port),
+    )]
+    fn get_ssg_shared_tunnel(
+        &self,
+        project: &str,
+        remote_host: &str,
+        service_name: &str,
+        container_port: u16,
+    ) -> Result<Option<SsgSharedTunnelRecord>> {
+        self.conn
+            .query_row(
+                "SELECT project, remote_host, service_name, container_port,
+                        virtual_port, ssh_pid, created_at
+                 FROM ssg_shared_tunnels
+                 WHERE project = ?1 AND remote_host = ?2
+                   AND service_name = ?3 AND container_port = ?4",
+                params![project, remote_host, service_name, container_port as i64],
+                row_to_shared_tunnel,
+            )
+            .optional()
+            .map_err(|e| {
+                state_err(
+                    format!(
+                        "failed to read ssg_shared_tunnel for \
+                         '{project}/{remote_host}/{service_name}:{container_port}': {e}"
+                    ),
+                    e,
+                )
+            })
+    }
+
+    #[instrument(level = "debug", skip(self), fields(project = %project, remote = %remote_host))]
+    fn list_ssg_shared_tunnels_for_remote(
+        &self,
+        project: &str,
+        remote_host: &str,
+    ) -> Result<Vec<SsgSharedTunnelRecord>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT project, remote_host, service_name, container_port,
+                        virtual_port, ssh_pid, created_at
+                 FROM ssg_shared_tunnels
+                 WHERE project = ?1 AND remote_host = ?2
+                 ORDER BY service_name ASC, container_port ASC",
+            )
+            .map_err(|e| {
+                state_err(
+                    format!("failed to prepare list_ssg_shared_tunnels_for_remote: {e}"),
+                    e,
+                )
+            })?;
+        let rows = stmt
+            .query_map(params![project, remote_host], row_to_shared_tunnel)
+            .map_err(|e| state_err(format!("failed to list ssg_shared_tunnels: {e}"), e))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(
+                row.map_err(|e| {
+                    state_err(format!("row parse in list_ssg_shared_tunnels: {e}"), e)
+                })?,
+            );
+        }
+        Ok(out)
+    }
+
+    #[instrument(
+        level = "debug",
+        skip(self),
+        fields(
+            project = %project,
+            remote = %remote_host,
+            service = %service_name,
+            container_port = container_port,
+            ssh_pid = ?ssh_pid,
+        ),
+    )]
+    fn update_ssg_shared_tunnel_pid(
+        &self,
+        project: &str,
+        remote_host: &str,
+        service_name: &str,
+        container_port: u16,
+        ssh_pid: Option<i32>,
+    ) -> Result<()> {
+        self.conn
+            .execute(
+                "UPDATE ssg_shared_tunnels
+                 SET ssh_pid = ?5
+                 WHERE project = ?1 AND remote_host = ?2
+                   AND service_name = ?3 AND container_port = ?4",
+                params![
+                    project,
+                    remote_host,
+                    service_name,
+                    container_port as i64,
+                    ssh_pid.map(|p| p as i64),
+                ],
+            )
+            .map_err(|e| {
+                state_err(
+                    format!(
+                        "failed to update ssg_shared_tunnel pid for \
+                         '{project}/{remote_host}/{service_name}:{container_port}': {e}"
+                    ),
+                    e,
+                )
+            })?;
+        Ok(())
+    }
+
+    #[instrument(
+        level = "debug",
+        skip(self),
+        fields(project = %project, remote = %remote_host, service = %service_name, container_port = container_port),
+    )]
+    fn clear_ssg_shared_tunnel(
+        &self,
+        project: &str,
+        remote_host: &str,
+        service_name: &str,
+        container_port: u16,
+    ) -> Result<()> {
+        self.conn
+            .execute(
+                "DELETE FROM ssg_shared_tunnels
+                 WHERE project = ?1 AND remote_host = ?2
+                   AND service_name = ?3 AND container_port = ?4",
+                params![project, remote_host, service_name, container_port as i64],
+            )
+            .map_err(|e| {
+                state_err(
+                    format!(
+                        "failed to clear ssg_shared_tunnel for \
+                         '{project}/{remote_host}/{service_name}:{container_port}': {e}"
+                    ),
+                    e,
+                )
+            })?;
+        Ok(())
     }
 }
 
@@ -1355,5 +1565,166 @@ mod tests {
         );
         // Idempotent.
         db.clear_ssg_virtual_port_one(P, "minio", 9000).unwrap();
+    }
+
+    // --- ssg_shared_tunnels (Phase 30 / §24) ---
+
+    const REMOTE_A: &str = "ssh://user@host-a";
+    const REMOTE_B: &str = "ssh://user@host-b";
+
+    #[test]
+    fn shared_tunnel_upsert_then_get_returns_record() {
+        let db = db();
+        assert!(db
+            .get_ssg_shared_tunnel(P, REMOTE_A, "postgres", 5432)
+            .unwrap()
+            .is_none());
+
+        db.upsert_ssg_shared_tunnel(P, REMOTE_A, "postgres", 5432, 42001, Some(12345))
+            .unwrap();
+
+        let rec = db
+            .get_ssg_shared_tunnel(P, REMOTE_A, "postgres", 5432)
+            .unwrap()
+            .unwrap();
+        assert_eq!(rec.project, P);
+        assert_eq!(rec.remote_host, REMOTE_A);
+        assert_eq!(rec.service_name, "postgres");
+        assert_eq!(rec.container_port, 5432);
+        assert_eq!(rec.virtual_port, 42001);
+        assert_eq!(rec.ssh_pid, Some(12345));
+        assert!(!rec.created_at.is_empty());
+    }
+
+    #[test]
+    fn shared_tunnel_pid_can_be_null() {
+        // Daemon-restart scenario: row exists from a previous run
+        // but the ssh child died with the daemon. ssh_pid is None
+        // until the restore loop respawns and updates it.
+        let db = db();
+        db.upsert_ssg_shared_tunnel(P, REMOTE_A, "postgres", 5432, 42001, None)
+            .unwrap();
+        let rec = db
+            .get_ssg_shared_tunnel(P, REMOTE_A, "postgres", 5432)
+            .unwrap()
+            .unwrap();
+        assert!(rec.ssh_pid.is_none());
+    }
+
+    #[test]
+    fn shared_tunnel_upsert_replaces_by_quad() {
+        let db = db();
+        db.upsert_ssg_shared_tunnel(P, REMOTE_A, "postgres", 5432, 42001, Some(100))
+            .unwrap();
+        // Same quad, different virtual port + new pid.
+        db.upsert_ssg_shared_tunnel(P, REMOTE_A, "postgres", 5432, 42050, Some(200))
+            .unwrap();
+
+        let rec = db
+            .get_ssg_shared_tunnel(P, REMOTE_A, "postgres", 5432)
+            .unwrap()
+            .unwrap();
+        assert_eq!(rec.virtual_port, 42050);
+        assert_eq!(rec.ssh_pid, Some(200));
+        // Only one row for this key.
+        assert_eq!(
+            db.list_ssg_shared_tunnels_for_remote(P, REMOTE_A)
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn shared_tunnel_list_for_remote_is_scoped() {
+        // Two projects, two remotes, multiple service+port pairs.
+        // The list call only returns rows matching (project, remote_host).
+        let db = db();
+        db.upsert_ssg_shared_tunnel(P, REMOTE_A, "postgres", 5432, 42001, Some(1))
+            .unwrap();
+        db.upsert_ssg_shared_tunnel(P, REMOTE_A, "redis", 6379, 42002, Some(2))
+            .unwrap();
+        db.upsert_ssg_shared_tunnel(P, REMOTE_B, "postgres", 5432, 42100, Some(3))
+            .unwrap();
+        db.upsert_ssg_shared_tunnel(Q, REMOTE_A, "postgres", 5432, 42200, Some(4))
+            .unwrap();
+
+        let p_a = db.list_ssg_shared_tunnels_for_remote(P, REMOTE_A).unwrap();
+        assert_eq!(p_a.len(), 2);
+        // Sorted (service_name, container_port) ascending.
+        let names: Vec<_> = p_a.iter().map(|r| r.service_name.as_str()).collect();
+        assert_eq!(names, vec!["postgres", "redis"]);
+
+        let p_b = db.list_ssg_shared_tunnels_for_remote(P, REMOTE_B).unwrap();
+        assert_eq!(p_b.len(), 1);
+        assert_eq!(p_b[0].virtual_port, 42100);
+
+        let q_a = db.list_ssg_shared_tunnels_for_remote(Q, REMOTE_A).unwrap();
+        assert_eq!(q_a.len(), 1);
+        assert_eq!(q_a[0].project, Q);
+    }
+
+    #[test]
+    fn shared_tunnel_update_pid_preserves_other_columns() {
+        // Daemon restart: virtual_port is preserved across the
+        // update; only ssh_pid changes when the new ssh child
+        // claims its place.
+        let db = db();
+        db.upsert_ssg_shared_tunnel(P, REMOTE_A, "postgres", 5432, 42001, Some(1234))
+            .unwrap();
+
+        // Simulate the ssh child dying + daemon noticing it.
+        db.update_ssg_shared_tunnel_pid(P, REMOTE_A, "postgres", 5432, None)
+            .unwrap();
+        let rec = db
+            .get_ssg_shared_tunnel(P, REMOTE_A, "postgres", 5432)
+            .unwrap()
+            .unwrap();
+        assert!(rec.ssh_pid.is_none());
+        assert_eq!(
+            rec.virtual_port, 42001,
+            "virtual_port must survive a pid-only update"
+        );
+
+        // Restore-loop respawns and writes the new pid.
+        db.update_ssg_shared_tunnel_pid(P, REMOTE_A, "postgres", 5432, Some(5678))
+            .unwrap();
+        let rec = db
+            .get_ssg_shared_tunnel(P, REMOTE_A, "postgres", 5432)
+            .unwrap()
+            .unwrap();
+        assert_eq!(rec.ssh_pid, Some(5678));
+        assert_eq!(rec.virtual_port, 42001);
+    }
+
+    #[test]
+    fn shared_tunnel_clear_drops_only_target_quad() {
+        let db = db();
+        db.upsert_ssg_shared_tunnel(P, REMOTE_A, "postgres", 5432, 42001, Some(1))
+            .unwrap();
+        db.upsert_ssg_shared_tunnel(P, REMOTE_A, "redis", 6379, 42002, Some(2))
+            .unwrap();
+        db.upsert_ssg_shared_tunnel(P, REMOTE_B, "postgres", 5432, 42100, Some(3))
+            .unwrap();
+
+        // Clear postgres on REMOTE_A only.
+        db.clear_ssg_shared_tunnel(P, REMOTE_A, "postgres", 5432)
+            .unwrap();
+
+        assert!(db
+            .get_ssg_shared_tunnel(P, REMOTE_A, "postgres", 5432)
+            .unwrap()
+            .is_none());
+        assert!(db
+            .get_ssg_shared_tunnel(P, REMOTE_A, "redis", 6379)
+            .unwrap()
+            .is_some());
+        assert!(db
+            .get_ssg_shared_tunnel(P, REMOTE_B, "postgres", 5432)
+            .unwrap()
+            .is_some());
+        // Idempotent.
+        db.clear_ssg_shared_tunnel(P, REMOTE_A, "postgres", 5432)
+            .unwrap();
     }
 }

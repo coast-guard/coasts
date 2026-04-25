@@ -342,7 +342,11 @@ tests:
   test_remote_two_projects_same_canonical_port_distinct_ssg:
     script: integrated-examples/remote/test_remote_two_projects_same_canonical_port_distinct_ssg.sh
     timeout: 600
-    note: "Phase 24: two projects with own SSGs (pg15 vs pg16) + one shared remote; each consumer's tunnel routes to its own project's SSG dynamic port; daemon-restart leg proves the `restored_hosts` host-keyed skip was correctly removed (DESIGN §23.3 item 7, Phase 24)"
+    note: "Phase 24: two projects with own SSGs (pg15 vs pg16) + one shared remote; daemon-restart leg proves the `restored_hosts` host-keyed skip was correctly removed (DESIGN §23.3 item 7). Phase 30: each project's tunnel is symmetric on its own virtual port (vport:localhost:vport), and `ssh -R` argv MUST NOT contain SSG dyn ports anymore."
+  test_remote_multi_instance_same_project_shares_ssg_tunnel:
+    script: integrated-examples/remote/test_remote_multi_instance_same_project_shares_ssg_tunnel.sh
+    timeout: 600
+    note: "Phase 30: two instances of the SAME project on the SAME remote VM share ONE `ssh -R` process for SSG-backed shared services. Asserts (1) exactly one ssh -R for the project's vport regardless of instance count, (2) reuse-don't-respawn across `coast run`, (3) shared tunnel survives an intermediate `coast rm` while a sibling holds it, (4) tear-down only when the last sibling is removed (DESIGN §24, Phase 30)."
   test_remote_port_recovery_after_restart:
     script: integrated-examples/remote/test_remote_port_recovery_after_restart.sh
     timeout: 300

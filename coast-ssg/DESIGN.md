@@ -837,30 +837,85 @@ informational metadata only.
 
 ### Phase 30 — Remote tunnel retargets virtual port
 Fifth step. The local side works; now fix the remote counterpart.
-- [ ] `ssh -R` argv in [coast-daemon/src/lib.rs](/Users/jamie/work/coasts/coast-daemon/src/lib.rs)
-      `spawn_shared_service_tunnel` (and friends): both sides of
-      the forward become `<virtual_port>:localhost:<virtual_port>`.
-      The local endpoint is the daemon-managed host socat from
-      Phase 27, so the tunnel terminates at a stable target and
-      socat takes it from there.
-- [ ] [coast-service/src/handlers/run.rs](/Users/jamie/work/coasts/coast-service/src/handlers/run.rs)
-      and
-      [coast-service/src/handlers/service_control.rs](/Users/jamie/work/coasts/coast-service/src/handlers/service_control.rs):
-      the `SharedServicePortForward.remote_port` field's semantics
-      change from "daemon-allocated remote dyn port" to "project's
-      virtual port, same on both sides." Update struct docs.
-- [ ] `restore_shared_service_tunnels` in
+
+**Spec corrections / scope expansions made during implementation:**
+
+- **Symbol names.** The original bullet referenced
+  `spawn_shared_service_tunnel` in `coast-daemon/src/lib.rs`. The
+  actual symbols are `setup_shared_service_tunnels` (in
+  [coast-daemon/src/handlers/run/mod.rs](/Users/jamie/work/coasts/coast-daemon/src/handlers/run/mod.rs))
+  and `reverse_forward_ports` (in
+  [coast-daemon/src/handlers/remote/tunnel.rs](/Users/jamie/work/coasts/coast-daemon/src/handlers/remote/tunnel.rs)),
+  with sibling sites in `restore_shared_service_tunnels` and
+  `heal_shared_service_tunnels` (in
+  [coast-daemon/src/lib.rs](/Users/jamie/work/coasts/coast-daemon/src/lib.rs))
+  and `reestablish_shared_service_tunnels` (in
+  [coast-daemon/src/handlers/start.rs](/Users/jamie/work/coasts/coast-daemon/src/handlers/start.rs)).
+- **Virtual port lives in `ssg_virtual_ports`, not `ssg_services`.**
+  The original bullet said "deterministic from
+  `ssg_services.virtual_port`". After Phase 26+28 the virtual port
+  lives in the separate `ssg_virtual_ports` table keyed
+  `(project, service_name, container_port)`. Phase 30's argv
+  construction joins through that table, not a non-existent column
+  on `ssg_services`.
+- **New table `ssg_shared_tunnels` for the multi-instance
+  refcount.** The DESIGN narrative didn't say how multiple
+  consumer instances of the same project on the same remote VM
+  avoid a `ssh -R` collision when both sides become
+  `<vport>:<vport>`. Phase 30 coalesces tunnels per
+  `(project, remote_host, service, container_port)` — only the
+  FIRST instance spawns the `ssh -R`; subsequent instances reuse
+  the live process. The new `ssg_shared_tunnels` table tracks
+  `ssh_pid` per quad so `coast rm` of an intermediate instance
+  doesn't tear the tunnel down (last-out wins). Inline shared
+  services are unchanged — they remain per-instance.
+
+**Checklist:**
+
+- [x] `ssh -R` argv in
+      [coast-daemon/src/handlers/run/mod.rs](/Users/jamie/work/coasts/coast-daemon/src/handlers/run/mod.rs)
+      `setup_shared_service_tunnels` and
+      [coast-ssg/src/remote_tunnel.rs](/Users/jamie/work/coasts/coast-ssg/src/remote_tunnel.rs)
+      `rewrite_reverse_tunnel_pairs`: SSG-backed forwards now have
+      both sides equal to the project's virtual port
+      (`<vport>:localhost:<vport>`). The local endpoint terminates
+      at the Phase 28 host socat. Inline forwards keep their
+      Phase 18 shape (`<dyn>:localhost:<canonical>`).
+- [x] [coast-service/src/handlers/run.rs](/Users/jamie/work/coasts/coast-service/src/handlers/run.rs)
+      / [start.rs](/Users/jamie/work/coasts/coast-service/src/handlers/start.rs):
+      no structural changes were needed — the in-DinD socat just
+      reads `forwarding_port` and binds it. The dual semantics
+      ("virtual for SSG, dyn for inline") were documented on
+      [coast-core/src/protocol/instance.rs::SharedServicePortForward.remote_port](/Users/jamie/work/coasts/coast-core/src/protocol/instance.rs).
+      `service_control.rs` does not reference `SharedServicePortForward`
+      and didn't need changes.
+- [x] `restore_shared_service_tunnels` in
       [coast-daemon/src/lib.rs](/Users/jamie/work/coasts/coast-daemon/src/lib.rs):
-      simplify the argv construction — no need to re-resolve the
-      current dyn port on daemon restart. Every tunnel argv is
-      deterministic from `ssg_services.virtual_port` + the
-      `instance` row.
-- [ ] Update 2 Phase 24 remote tests
-      (`test_remote_two_projects_same_canonical_port_distinct_ssg`,
-      `test_remote_multi_instance_independent_tunnels`) to assert
-      `ssh -R` argv uses the virtual port on both sides.
-- [ ] Acceptance gate: Cargo trio + dindind runs of the 2 tests
-      above.
+      split into two passes. (1) New `restore_ssg_shared_tunnels`
+      runs once per `(project, remote_host)` and rebuilds tunnels
+      from `ssg_shared_tunnels` (no per-instance multiplication).
+      (2) `restore_tunnels_for_instance` filters out SSG-backed
+      forwards from `shared_service_forwards` so per-instance replay
+      handles inline only. The argv is deterministic — every quad
+      stores its virtual port, so respawn re-uses it without
+      re-evaluating ssg state.
+- [x] Updated the 2 Phase 24 remote tests:
+      `test_remote_two_projects_same_canonical_port_distinct_ssg`
+      now asserts SSG tunnels are SYMMETRIC on the project's virtual
+      port (and the SSG dyn port MUST NOT appear in the argv) plus
+      that the post-restart virtual ports are stable;
+      `test_remote_multi_instance_independent_tunnels` was left
+      unchanged because it exercises INLINE shared services
+      (Phase 30 is SSG-only). Also updated
+      `test_ssg_remote_reverse_tunnel.sh` for the same symmetric
+      argv. Added new
+      `test_remote_multi_instance_same_project_shares_ssg_tunnel.sh`
+      that covers Phase 30's refcount semantics: two instances ⇒
+      ONE ssh process, removing an intermediate instance keeps
+      the tunnel alive, last-out tears it down.
+- [x] Acceptance gate: cargo trio (fmt + test + clippy) green;
+      scoped dindind runs of the 3 tests above deferred to user
+      verification.
 
 ### Phase 31 — Integration test sweep + DESIGN.md final cleanup
 Closing pass. Mirror of Phase 25.5's posture — predict failures,

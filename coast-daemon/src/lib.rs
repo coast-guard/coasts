@@ -689,10 +689,7 @@ async fn heal_unhealthy_instance(
 
 /// Re-establish shared service reverse tunnels for a specific remote instance.
 async fn heal_shared_service_tunnels(state: &Arc<server::AppState>, project: &str) {
-    let reverse_pairs = shared_service_reverse_pairs(project);
-    if reverse_pairs.is_empty() {
-        return;
-    }
+    let inline_pairs = shared_service_reverse_pairs(project);
 
     let (remotes, instances) = {
         let db = state.db.lock().await;
@@ -722,23 +719,157 @@ async fn heal_shared_service_tunnels(state: &Arc<server::AppState>, project: &st
         },
     );
 
-    match handlers::remote::tunnel::reverse_forward_ports(&connection, &reverse_pairs).await {
-        Ok(pids) => {
-            tracing::info!(
-                project = %project,
-                tunnels = reverse_pairs.len(),
-                pids = ?pids,
-                "healed shared service reverse tunnels"
-            );
+    if !inline_pairs.is_empty() {
+        match handlers::remote::tunnel::reverse_forward_ports(&connection, &inline_pairs).await {
+            Ok(pids) => {
+                tracing::info!(
+                    project = %project,
+                    tunnels = inline_pairs.len(),
+                    pids = ?pids,
+                    "healed inline shared service reverse tunnels"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    project = %project,
+                    error = %e,
+                    "failed to heal inline shared service reverse tunnels"
+                );
+            }
         }
-        Err(e) => {
+    }
+
+    // Phase 30: also heal SSG-shared reverse tunnels (one per
+    // `(project, remote_host, service, container_port)` quad). For
+    // each persisted row, probe the recorded ssh pid; respawn and
+    // update the pid when the previous child has died.
+    heal_ssg_shared_tunnels(state, project, &connection, &entry.host).await;
+}
+
+/// Phase 30 heal pass for SSG shared reverse tunnels. Reads
+/// `ssg_shared_tunnels` for `(project, remote_host)`, probes each
+/// row's recorded `ssh_pid`, and respawns any that have died. The
+/// virtual port is preserved across the respawn so consumers never
+/// see the local upstream change.
+async fn heal_ssg_shared_tunnels(
+    state: &Arc<server::AppState>,
+    project: &str,
+    connection: &coast_core::types::RemoteConnection,
+    remote_host: &str,
+) {
+    respawn_dead_ssg_shared_tunnels(state, project, connection, remote_host, "phase 30 heal").await;
+}
+
+/// Phase 30 shared respawn loop used by both `heal_ssg_shared_tunnels`
+/// (steady-state recovery) and `restore_ssg_shared_tunnels` (daemon
+/// startup). Reads the persisted `ssg_shared_tunnels` rows for
+/// `(project, remote_host)`, identifies any whose ssh pid is dead,
+/// respawns them via `reverse_forward_ports`, and updates the pid
+/// column. Errors are logged with the `caller_tag` prefix and
+/// swallowed — one bad row must not block the rest.
+async fn respawn_dead_ssg_shared_tunnels(
+    state: &Arc<server::AppState>,
+    project: &str,
+    connection: &coast_core::types::RemoteConnection,
+    remote_host: &str,
+    caller_tag: &'static str,
+) {
+    let to_respawn = match collect_dead_ssg_shared_tunnels(state, project, remote_host).await {
+        Ok(items) => items,
+        Err(err) => {
             tracing::warn!(
                 project = %project,
-                error = %e,
-                "failed to heal shared service reverse tunnels"
+                remote = %remote_host,
+                error = %err,
+                caller = %caller_tag,
+                "failed to list ssg_shared_tunnels"
+            );
+            return;
+        }
+    };
+    if to_respawn.is_empty() {
+        return;
+    }
+
+    let pairs: Vec<(u16, u16)> = to_respawn.iter().map(|(_, _, vp)| (*vp, *vp)).collect();
+    let pids = match handlers::remote::tunnel::reverse_forward_ports(connection, &pairs).await {
+        Ok(pids) => pids,
+        Err(err) => {
+            tracing::warn!(
+                project = %project,
+                remote = %remote_host,
+                error = %err,
+                caller = %caller_tag,
+                "failed to respawn SSG shared tunnels"
+            );
+            return;
+        }
+    };
+
+    persist_respawned_ssg_pids(state, project, remote_host, &to_respawn, &pids, caller_tag).await;
+    tracing::info!(
+        project = %project,
+        remote = %remote_host,
+        respawned = pids.len(),
+        caller = %caller_tag,
+        "respawned SSG shared tunnels"
+    );
+}
+
+/// Phase 30: write the freshly-spawned ssh PIDs back into
+/// `ssg_shared_tunnels`. Errors per row are logged and swallowed so
+/// one bad write doesn't lose the rest.
+async fn persist_respawned_ssg_pids(
+    state: &Arc<server::AppState>,
+    project: &str,
+    remote_host: &str,
+    to_respawn: &[(String, u16, u16)],
+    pids: &[u32],
+    caller_tag: &'static str,
+) {
+    use coast_ssg::state::SsgStateExt;
+    let db = state.db.lock().await;
+    for ((service, container_port, _vport), pid) in to_respawn.iter().zip(pids.iter()) {
+        if let Err(err) = db.update_ssg_shared_tunnel_pid(
+            project,
+            remote_host,
+            service,
+            *container_port,
+            Some(*pid as i32),
+        ) {
+            tracing::warn!(
+                project = %project,
+                remote = %remote_host,
+                service = %service,
+                container_port,
+                error = %err,
+                caller = %caller_tag,
+                "failed to update ssg_shared_tunnel pid"
             );
         }
     }
+}
+
+/// Phase 30: snapshot every `ssg_shared_tunnels` row for
+/// `(project, remote_host)` whose recorded `ssh_pid` is dead (or
+/// `None`). Returns a vec of `(service_name, container_port,
+/// virtual_port)` tuples ready to feed into `reverse_forward_ports`.
+async fn collect_dead_ssg_shared_tunnels(
+    state: &Arc<server::AppState>,
+    project: &str,
+    remote_host: &str,
+) -> coast_core::error::Result<Vec<(String, u16, u16)>> {
+    use coast_ssg::state::SsgStateExt;
+    let db = state.db.lock().await;
+    let rows = db.list_ssg_shared_tunnels_for_remote(project, remote_host)?;
+    let mut out = Vec::new();
+    for row in rows {
+        let alive = row.ssh_pid.is_some_and(handlers::run::is_pid_alive);
+        if !alive {
+            out.push((row.service_name, row.container_port, row.virtual_port));
+        }
+    }
+    Ok(out)
 }
 
 // ---------------------------------------------------------------------------
@@ -1399,14 +1530,22 @@ pub fn shared_service_reverse_pairs(project: &str) -> Vec<(u16, u16)> {
 
 /// Re-establish SSH reverse tunnels for shared services after daemon restart.
 ///
-/// Phase 24: every instance gets its own `ssh -R` process because
-/// every instance owns distinct `remote_port`s (allocated once in
-/// `setup_shared_service_tunnels` per §18). A previous iteration
-/// deduped restoration by `user@host:port` — that was latent under
-/// Phase 18 (single project with multi-instance tests) but became a
-/// silent cross-project leak the moment two projects shared a remote
-/// VM, so the dedup has been removed. See `coast-ssg/DESIGN.md §23.3
-/// item 7` + Phase 24 plan.
+/// Phase 24: every instance gets its own `ssh -R` process for INLINE
+/// forwards because every instance owns distinct `remote_port`s
+/// (allocated once in `setup_shared_service_tunnels` per §18).
+///
+/// Phase 30: SSG forwards are now coalesced per
+/// `(project, remote_host, service, container_port)` — only ONE
+/// `ssh -R` exists across all instances of that project on that
+/// remote VM. Daemon-restart restore therefore splits in two:
+///
+///   1. `restore_ssg_shared_tunnels` runs first and rebuilds shared
+///      tunnels from `ssg_shared_tunnels` — at-most-once per quad,
+///      regardless of how many instances reference each.
+///   2. `restore_tunnels_for_instance` runs per-instance for INLINE
+///      forwards only (SSG rows in `shared_service_forwards` are
+///      filtered out, since the shared restore above already handled
+///      them).
 async fn restore_shared_service_tunnels(
     state: &Arc<server::AppState>,
     instances: &[coast_core::types::CoastInstance],
@@ -1425,9 +1564,56 @@ async fn restore_shared_service_tunnels(
         db.list_remotes().unwrap_or_default()
     };
 
+    // Phase 30: dedupe (project, remote_host) pairs that have at
+    // least one live remote instance. Restore SSG shared tunnels
+    // once per pair before per-instance inline restore.
+    let mut shared_keys: std::collections::BTreeSet<(String, String)> =
+        std::collections::BTreeSet::new();
+    for inst in &remote_instances {
+        if let Some(host) = inst.remote_host.as_deref() {
+            shared_keys.insert((inst.project.clone(), host.to_string()));
+        }
+    }
+    for (project, remote_host) in &shared_keys {
+        restore_ssg_shared_tunnels(state, project, remote_host, &remotes).await;
+    }
+
     for inst in &remote_instances {
         restore_tunnels_for_instance(state, inst, &remotes).await;
     }
+}
+
+/// Phase 30 daemon-startup hook for SSG shared tunnels. Reads every
+/// `ssg_shared_tunnels` row for `(project, remote_host)`, probes the
+/// recorded `ssh_pid`, and respawns any whose pid is dead (or was
+/// never written because the daemon crashed mid-spawn last run). The
+/// virtual port is preserved across the respawn so consumers never
+/// see the local upstream change.
+async fn restore_ssg_shared_tunnels(
+    state: &Arc<server::AppState>,
+    project: &str,
+    remote_host: &str,
+    remotes: &[coast_core::types::RemoteEntry],
+) {
+    let Some(entry) = remotes
+        .iter()
+        .find(|r| r.name == remote_host || r.host == remote_host)
+    else {
+        tracing::warn!(
+            project = %project,
+            remote = %remote_host,
+            "phase 30 restore: no remote entry for shared-tunnel rows; skipping"
+        );
+        return;
+    };
+    let connection = coast_core::types::RemoteConnection::from_entry(
+        entry,
+        &coast_core::types::RemoteConfig {
+            workspace_sync: coast_core::types::SyncStrategy::default(),
+        },
+    );
+    respawn_dead_ssg_shared_tunnels(state, project, &connection, remote_host, "phase 30 restore")
+        .await;
 }
 
 /// Read the persisted reverse-tunnel pairs for an instance from the
@@ -1440,11 +1626,32 @@ async fn restore_shared_service_tunnels(
 /// the exact same tunnels without having to reallocate `remote_port`s
 /// or re-evaluate SSG state. Returns an empty vec when the instance has
 /// no recorded forwards.
+///
+/// Phase 30: SSG-backed forwards are FILTERED OUT here — the shared
+/// SSG tunnels are restored once per `(project, remote_host)` by
+/// `restore_ssg_shared_tunnels`, not once per instance. Per-instance
+/// replay only handles inline shared services. The optional
+/// `remote_host` lets the caller scope the SSG-shared filter.
 pub(crate) async fn shared_service_reverse_pairs_with_ssg(
     state: &server::AppState,
     project: &str,
     instance: &str,
 ) -> Vec<(u16, u16)> {
+    shared_service_reverse_pairs_filtered(state, project, instance, None).await
+}
+
+/// Phase 30: variant of [`shared_service_reverse_pairs_with_ssg`]
+/// that filters out forwards already covered by an
+/// `ssg_shared_tunnels` row for `remote_host`. Use this from the
+/// per-instance restore path so SSG shared tunnels are not respawned
+/// once-per-instance.
+pub(crate) async fn shared_service_reverse_pairs_filtered(
+    state: &server::AppState,
+    project: &str,
+    instance: &str,
+    remote_host: Option<&str>,
+) -> Vec<(u16, u16)> {
+    use coast_ssg::state::SsgStateExt;
     let db = state.db.lock().await;
     let rows = match db.list_shared_service_forwards_for_instance(project, instance) {
         Ok(rows) => rows,
@@ -1458,7 +1665,26 @@ pub(crate) async fn shared_service_reverse_pairs_with_ssg(
             return Vec::new();
         }
     };
+    let ssg_keys: std::collections::HashSet<(String, u16)> = match remote_host {
+        Some(host) => match db.list_ssg_shared_tunnels_for_remote(project, host) {
+            Ok(rows) => rows
+                .into_iter()
+                .map(|r| (r.service_name, r.container_port))
+                .collect(),
+            Err(e) => {
+                tracing::warn!(
+                    project = %project,
+                    remote = %host,
+                    error = %e,
+                    "failed to read ssg_shared_tunnels; replaying every forward as inline"
+                );
+                std::collections::HashSet::new()
+            }
+        },
+        None => std::collections::HashSet::new(),
+    };
     rows.into_iter()
+        .filter(|r| !ssg_keys.contains(&(r.service_name.clone(), r.port)))
         .map(|r| (r.remote_port, r.local_port))
         .collect()
 }
@@ -1474,18 +1700,28 @@ async fn restore_tunnels_for_instance(
     // SSG state or reallocating remote ports.
     //
     // Phase 24: no dedup by host. Every `(project, instance)` on the
-    // same remote VM owns distinct `remote_port`s, so each needs its
-    // own `ssh -R` process. Two projects sharing a remote now both
-    // get their tunnels restored.
-    let reverse_pairs =
-        shared_service_reverse_pairs_with_ssg(state.as_ref(), &inst.project, &inst.name).await;
-    if reverse_pairs.is_empty() {
-        return;
-    }
-
+    // same remote VM owns distinct `remote_port`s for INLINE forwards,
+    // so each instance needs its own `ssh -R` process. Two projects
+    // sharing a remote now both get their tunnels restored.
+    //
+    // Phase 30: SSG-backed forwards are filtered out here — they're
+    // restored once per `(project, remote_host)` by
+    // `restore_ssg_shared_tunnels` rather than once per instance. The
+    // filter compares each `shared_service_forwards` row against the
+    // `ssg_shared_tunnels` rows for this instance's remote.
     let Some(remote_host) = inst.remote_host.as_deref() else {
         return;
     };
+    let reverse_pairs = shared_service_reverse_pairs_filtered(
+        state.as_ref(),
+        &inst.project,
+        &inst.name,
+        Some(remote_host),
+    )
+    .await;
+    if reverse_pairs.is_empty() {
+        return;
+    }
     let Some(entry) = remotes
         .iter()
         .find(|r| r.name == remote_host || r.host == remote_host)
