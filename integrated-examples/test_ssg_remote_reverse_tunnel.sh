@@ -83,8 +83,11 @@ assert_contains "$SSG_RUN_OUT" "SSG running" "ssg run succeeds"
 
 PORTS_OUT=$("$COAST" ssg ports 2>&1)
 SSG_DYNAMIC=$(echo "$PORTS_OUT" | awk '/^  postgres/ {print $3}')
+SSG_VIRTUAL=$(echo "$PORTS_OUT" | awk '/^  postgres/ {print $4}')
 [ -n "$SSG_DYNAMIC" ] || fail "could not extract SSG postgres dynamic port"
-pass "SSG postgres dynamic host port = $SSG_DYNAMIC"
+[ -n "$SSG_VIRTUAL" ] && [ "$SSG_VIRTUAL" != "--" ] \
+    || fail "could not extract SSG postgres virtual port (col 4 of ssg ports). Got '$SSG_VIRTUAL'"
+pass "SSG postgres dynamic=$SSG_DYNAMIC virtual=$SSG_VIRTUAL"
 
 sleep 5
 
@@ -154,7 +157,12 @@ fi
 if [ "$LOCAL_LEG" = "$SSG_DYNAMIC" ]; then
     fail "Phase 30 violation: ssh -R local leg is the SSG dyn port ($SSG_DYNAMIC); expected the host-socat virtual port"
 fi
-pass "reverse ssh tunnel is symmetric ($REMOTE_LEG:localhost:$LOCAL_LEG) and terminates at the host socat, not the SSG dyn port"
+# Phase 31: cross-check that the symmetric value matches the
+# project's recorded virtual_port from `coast ssg ports` col 4.
+if [ "$LOCAL_LEG" != "$SSG_VIRTUAL" ]; then
+    fail "Phase 31 violation: ssh -R legs ($LOCAL_LEG) do not match the project's recorded virtual port ($SSG_VIRTUAL) from `coast ssg ports`"
+fi
+pass "reverse ssh tunnel is symmetric on the project's virtual port ($SSG_VIRTUAL:localhost:$SSG_VIRTUAL)"
 
 echo ""
 echo "=== Step 6: app container inside remote coast reaches SSG postgres ==="

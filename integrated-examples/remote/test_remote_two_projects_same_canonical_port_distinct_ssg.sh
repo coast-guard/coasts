@@ -188,8 +188,11 @@ SSG_RUN_A=$("$COAST" ssg run 2>&1)
 assert_contains "$SSG_RUN_A" "SSG running" "phase24-a ssg run succeeds"
 PORTS_A_OUT=$("$COAST" ssg ports 2>&1)
 SSG_A_DYNAMIC=$(echo "$PORTS_A_OUT" | awk '/^  postgres/ {print $3}')
+SSG_A_VIRTUAL=$(echo "$PORTS_A_OUT" | awk '/^  postgres/ {print $4}')
 [ -n "$SSG_A_DYNAMIC" ] || fail "could not extract phase24-a SSG dynamic port"
-pass "phase24-a SSG postgres dynamic host port = $SSG_A_DYNAMIC"
+[ -n "$SSG_A_VIRTUAL" ] && [ "$SSG_A_VIRTUAL" != "--" ] \
+    || fail "could not extract phase24-a SSG virtual port (col 4 of ssg ports)"
+pass "phase24-a SSG postgres dynamic=$SSG_A_DYNAMIC virtual=$SSG_A_VIRTUAL"
 
 cd "$PROJ_B"
 SSG_BUILD_B=$("$COAST" ssg build 2>&1)
@@ -198,8 +201,17 @@ SSG_RUN_B=$("$COAST" ssg run 2>&1)
 assert_contains "$SSG_RUN_B" "SSG running" "phase24-b ssg run succeeds"
 PORTS_B_OUT=$("$COAST" ssg ports 2>&1)
 SSG_B_DYNAMIC=$(echo "$PORTS_B_OUT" | awk '/^  postgres/ {print $3}')
+SSG_B_VIRTUAL=$(echo "$PORTS_B_OUT" | awk '/^  postgres/ {print $4}')
 [ -n "$SSG_B_DYNAMIC" ] || fail "could not extract phase24-b SSG dynamic port"
-pass "phase24-b SSG postgres dynamic host port = $SSG_B_DYNAMIC"
+[ -n "$SSG_B_VIRTUAL" ] && [ "$SSG_B_VIRTUAL" != "--" ] \
+    || fail "could not extract phase24-b SSG virtual port (col 4 of ssg ports)"
+pass "phase24-b SSG postgres dynamic=$SSG_B_DYNAMIC virtual=$SSG_B_VIRTUAL"
+
+# Phase 31: each project's virtual port is distinct, by allocator
+# construction. Two projects on the same host MUST get different
+# virtual ports even though they share canonical 5432.
+[ "$SSG_A_VIRTUAL" != "$SSG_B_VIRTUAL" ] \
+    || fail "two projects must allocate distinct virtual ports; got $SSG_A_VIRTUAL for both"
 
 [ "$SSG_A_DYNAMIC" != "$SSG_B_DYNAMIC" ] \
     || fail "each project's SSG must publish on a distinct dynamic port (got $SSG_A_DYNAMIC for both)"

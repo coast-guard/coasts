@@ -920,73 +920,142 @@ Fifth step. The local side works; now fix the remote counterpart.
 ### Phase 31 — Integration test sweep + DESIGN.md final cleanup
 Closing pass. Mirror of Phase 25.5's posture — predict failures,
 fix preemptively, run.
-- [ ] Delete (2): `test_ssg_drift_warning.sh`,
-      `test_ssg_drift_missing_service.sh`. De-register both from
-      [dindind/integration.yaml](/Users/jamie/work/coasts/dindind/integration.yaml).
-- [ ] Simplify (1): `test_ssg_pin_protects_from_drift.sh` keeps the
-      pin-correctness assertions (pin references a specific build,
-      run uses it), drops the drift-protection assertions
-      (obsolete). Rename to `test_ssg_pin_anchors_build.sh`.
-- [ ] Rewire (~12): port-assertion tests updated to read the
-      virtual port from `coast-dev ssg ports` (new column) instead
-      of the dyn port. Target list:
-      `test_ssg_rm_run_refreshes_consumers.sh` (REWRITE: consumer
-      socat argv must NOT change across `ssg rm`/`run`; assert
-      pidfile content is stable), `test_ssg_two_projects_same_canonical_port.sh`,
+
+**Spec correction folded into this phase:** before any test rewire
+could read the virtual port from `coast ssg ports`, the column had
+to exist. Phase 31 added it as the first todo (`SsgPortInfo.virtual_port:
+Option<u16>`, `ports_ssg` join with `ssg_virtual_ports`, CLI table
+gains a `VIRTUAL` column appended **after** `DYNAMIC` so existing
+`awk '{print $3}'` consumers keep reading dyn — semantic surprise
+avoided; explicit col-4 read is opt-in).
+
+- [x] Delete (2): `test_ssg_drift_warning.sh`,
+      `test_ssg_drift_missing_service.sh`. De-registered from
+      [dindind/integration.yaml](/Users/jamie/work/coasts/dindind/integration.yaml)
+      with a one-line breadcrumb pointing at
+      `test_ssg_consumer_fails_fast_when_service_missing.sh`.
+- [x] Simplify + rename (1): `test_ssg_pin_protects_from_drift.sh`
+      → `test_ssg_pin_anchors_build.sh`. Drift-protection
+      assertions stripped; pin-correctness + auto-prune
+      coverage retained; consumer manifest's `ssg.build_id`
+      verified to equal the pinned id (read directly from
+      `manifest.json` since the runtime drift audit no longer
+      surfaces it). Re-registered under the new name.
+- [x] Rewire: extra `coast ssg ports` col-4 reads added to
+      `test_ssg_two_projects_same_canonical_port.sh`,
       `remote/test_remote_two_projects_same_canonical_port_distinct_ssg.sh`,
-      `remote/test_remote_multi_instance_independent_tunnels.sh`,
-      `test_ssg_remote_reverse_tunnel.sh`,
-      `test_ssg_stop_blocked_by_remote.sh`,
-      `test_ssg_stop_force_cleans_tunnels.sh`,
-      `test_ssg_checkout_displaces_instance.sh`,
-      `test_ssg_checkout_positional.sh`, `test_ssg_host_checkout.sh`,
-      `test_ssg_ps_live_state.sh`,
-      `test_ssg_uncheckout_build_restores_latest.sh`.
-- [ ] New (~5) in
+      `test_ssg_remote_reverse_tunnel.sh`, and
+      `test_ssg_ps_live_state.sh` — each cross-references the
+      virtual port the daemon reports against the value seen in
+      ssh/socat argv. The other targets in the original list
+      either don't parse port columns (`stop_blocked_by_remote`,
+      `stop_force_cleans_tunnels`, `checkout_displaces_instance`)
+      or only check the STATUS annotation (`checkout_positional`,
+      `host_checkout`) which is unaffected by the column append.
+      `test_remote_multi_instance_independent_tunnels.sh` is
+      inline-only (no SSG); left as-is per Phase 30. The `REWRITE`
+      target `test_ssg_rm_run_refreshes_consumers.sh` is handled
+      in its own todo below.
+- [x] Rewrite `test_ssg_rm_run_refreshes_consumers.sh` to read
+      the consumer-facing virtual port from `coast ssg ports` col 4
+      instead of docker-exec'ing into the consumer DinD's `ps -ef`.
+      The `ps -ef` parse is kept as a defense-in-depth sanity
+      check that the daemon's reported value matches the in-DinD
+      socat upstream.
+- [x] Fix `test_ssg_uncheckout_build_restores_latest.sh` step 6:
+      drop the verbatim `"SSG has changed since this coast was
+      built"` expectation; assert the consumer's manifest's
+      `ssg.build_id` flips from A (pinned) to B (project latest)
+      after `uncheckout-build`. Replaces the deleted Phase 29
+      drift hard-error contract.
+- [x] New (5) in
       [integrated-examples/](/Users/jamie/work/coasts/integrated-examples/):
-      `test_ssg_virtual_port_stable_across_rebuild.sh` (build +
-      rebuild SSG, assert consumer socat pidfile + argv are
-      identical), `test_ssg_host_socat_respawn_on_daemon_restart.sh`,
-      `test_ssg_consumer_fails_fast_when_service_missing.sh`
-      (was the drift-missing-service test, now expects
-      `ECONNREFUSED`-like behavior at runtime), `test_ssg_allocator_collision_fallback.sh`
-      (pre-bind a port in the band, SSG build picks the next),
-      `test_ssg_docker_restart_outside_daemon_recovers.sh`
-      (`docker restart cg-ssg` outside the daemon, next `ssg
-      lifecycle` verb detects the mismatch and refreshes the host
-      socat).
-- [ ] Revisit Phase 25.5 workaround in
-      `test_ssg_named_volume_persists.sh`: the `ssg build` between
-      `rm --with-data` and `ssg run` is still needed (data was
-      destroyed, allocation was dropped), but add a comment noting
-      that routing-level refresh is no longer the concern (§24).
-- [ ] DESIGN.md final cleanup:
-      - §4 high-level architecture: rewrite the routing diagram to
-        include the host socat hop; mark the old diagram as
-        "pre-§24 legacy."
-      - §8 Daemon state: add the `virtual_port` column to the
-        `ssg_services` row in the state-table description.
-      - §11 Port plumbing: already has §24 banner from earlier in
-        this migration; verify it's still accurate.
-      - §17-38 SETTLED: mark the consumer-refresh invariants that
-        came from Phase 11 as "Superseded by §24 — see §24.7
-        quick reference."
-      - §18 Risks: mark the "consumer refresh reliability" and
-        "SSG shape drift surprises" bullets as obsolete.
-      - §19 Success criteria: add one line for virtual-port
-        stability.
-      - §22 Terminology cheat sheet: new row for "SSG virtual port";
-        existing "SSG dynamic port" row gets a "(daemon-internal;
-        not consumer-facing)" clarification.
-- [ ] Pre-run host gates (same as Phase 25.5): `cargo fmt --check`,
+      `test_ssg_virtual_port_stable_across_rebuild.sh`,
+      `test_ssg_host_socat_respawn_on_daemon_restart.sh`,
+      `test_ssg_consumer_fails_fast_when_service_missing.sh`,
+      `test_ssg_allocator_collision_fallback.sh`,
+      `test_ssg_docker_restart_outside_daemon_recovers.sh`. All 5
+      registered in `dindind/integration.yaml` with explicit
+      Phase 31 + DESIGN section pointers.
+- [x] Revisit Phase 25.5 workaround in
+      `test_ssg_named_volume_persists.sh`: kept the `ssg build`
+      between `rm --with-data` and `ssg run` (state-level
+      requirement); appended a §24 clarifier comment noting that
+      routing-level refresh is automatic via
+      `host_socat::reconcile_project`.
+- [x] DESIGN.md final cleanup:
+      - §4 high-level architecture: supersede banner extended to
+        cite §24 + the host-socat hop; legacy diagram retained
+        for reference.
+      - §8 Daemon state: supersede banner extended with
+        `ssg_virtual_ports` (Phase 26 + 28 per-port keying) and
+        `ssg_shared_tunnels` (Phase 30) sketches plus the
+        cross-table join `ssg_services x ssg_virtual_ports` that
+        `coast ssg ports` exposes via the new VIRTUAL column.
+      - §11 Port plumbing: §24 banner already in place from Phase
+        28; §11.1's stale "daemon refreshes each consumer's
+        in-DinD socat" paragraph rewritten to describe the host-
+        socat refresh and point at §24.
+      - §17 SETTLED #38: marked SUPERSEDED — Phase 28 / §24.7;
+        body now describes the deletion of `consumer_refresh.rs`
+        and the host-socat takeover.
+      - §18 Risks: "Consumer refresh reliability" and "SSG shape
+        drift surprises" struck out as obsolete (Phase 28 / 29);
+        "State drift" gained a Phase 31 self-healing note pointing
+        at the new docker-restart-outside-daemon test.
+      - §19 Success criteria: added a virtual-port stability
+        bullet citing the 3 new Phase 31 tests.
+      - §22 Terminology cheat sheet: added an "SSG virtual port"
+        row; clarified "SSG host port" as daemon-internal;
+        marked "Drift" superseded by §24.4; clarified "Remote
+        dynamic tunnel port" as inline-only after Phase 30.
+- [x] Pre-run host gates: `cargo fmt --all -- --check`,
       `cargo test -p coast-daemon -p coast-ssg -p coast-core -p
       coast-cli`, `cargo clippy --workspace -- -D warnings`.
-- [ ] DinD verification (same scope as Phase 25.5): 2 Phase 30
-      remote tests + 9 self-contained + 19 consumer-paired (now
-      reduced by 2 drift deletions) + 5 new §24 tests. Target
-      ~33 passing dindind runs with no Rust regressions.
-- [ ] Full `make run-dind-integration TEST=all` — deferred to CI,
-      same posture as Phase 25.
+- [ ] DinD verification: scoped runs of the 5 new + 4 rewired +
+      1 renamed tests deferred to user verification. Full
+      `make run-dind-integration TEST=all` deferred to CI, same
+      posture as Phase 25.
+
+---
+
+### Migration complete
+
+Phases 26–31 land the host-owned virtual ports work end-to-end:
+
+- **Phase 26** — `ssg_virtual_ports` table + allocator (initially
+  per-service; Phase 28 made it per-port).
+- **Phase 27** — `host_socat` supervisor module (`spawn_or_update`,
+  `kill`, `reconcile_all`); built `#[allow(dead_code)]` for
+  Phase 28 to wire.
+- **Phase 28** — schema amended to per-port keying; supervisor
+  wired into SSG `run`/`start`/`restart`/`stop`/`rm`/daemon-restart
+  reconciliation; consumer routing switched to virtual port via
+  `synthesize_shared_service_configs` substitution; Phase 11
+  `consumer_refresh.rs` (468 LOC + 10 tests) deleted; cross-crate
+  rename `host_port → forwarding_port` on `SharedServicePort`
+  with `#[serde(rename = "host_port")]` for wire compat.
+- **Phase 29** — runtime drift audit deleted (`coast-ssg/src/drift.rs`,
+  `validate_ssg_drift` + helpers, 6 drift-related tests in
+  `ssg_integration.rs`); static "missing SSG service" check
+  retained as `build_ssg_manifest_block` parse-time error.
+- **Phase 30** — symmetric `ssh -R <vport>:localhost:<vport>` for
+  SSG-backed forwards; `ssg_shared_tunnels` table coalesces tunnels
+  per `(project, remote_host, service, container_port)` so
+  multiple instances of one project on one remote share ONE ssh
+  process; new helpers `restore_ssg_shared_tunnels` +
+  `heal_ssg_shared_tunnels` + `teardown_ssg_shared_tunnels_if_last`.
+- **Phase 31** — `coast ssg ports` exposes a `VIRTUAL` column;
+  3 obsolete drift integration tests deleted + 1 simplified;
+  9 tests rewired or cross-checked against the new column;
+  5 new §24 integration tests added; DESIGN.md §4/§8/§11.1/§17-38/
+  §18/§19/§22 brought into alignment with §24.
+
+End-to-end success criterion: a consumer's in-DinD socat argv is
+written once at provision and never touched again for the life of
+that consumer instance, regardless of SSG rebuild, daemon restart,
+or external `docker restart`. The user-visible benefit: `coast ssg
+build` + `ssg run` no longer disturbs running consumers.
 
 ---
 
@@ -1072,11 +1141,27 @@ We want:
 
 ## 4. High-level architecture
 
-> **Superseded by §23.** The diagram below shows the singleton
-> topology with two projects sharing one `coast-ssg` container. Under
-> the per-project correction, each project gets its own `{project}-ssg`
-> container (e.g. `cg-ssg`, `filemap-ssg`), and each project's
-> consumers route to their own project's SSG. See §23.
+> **Superseded by §23 + §24.** The diagram below shows the singleton
+> topology with two projects sharing one `coast-ssg` container.
+> Under the per-project correction, each project gets its own
+> `{project}-ssg` container (e.g. `cg-ssg`, `filemap-ssg`), and
+> each project's consumers route to their own project's SSG. See
+> §23.
+>
+> **Phase 28 / 30 / §24 add a host-socat hop.** Consumers no longer
+> connect directly to `host.docker.internal:<ssg-dyn-port>`; they
+> connect to `host.docker.internal:<virtual-port>`, where the
+> daemon-managed host socat (Phase 27/28) terminates the
+> connection and forwards to whatever dyn port the SSG is currently
+> publishing. The virtual port is stable per
+> `(project, service, container_port)` (`ssg_virtual_ports` table)
+> and survives `ssg build`/`ssg run`/`ssg stop`/daemon restart;
+> only `ssg rm --with-data` releases it. Remote consumers route
+> through symmetric `ssh -R <vport>:localhost:<vport>` tunnels
+> (Phase 30) where the local leg terminates at the same host
+> socat. The legacy "consumer in-DinD socat is rewritten when the
+> SSG dyn port changes" path (Phase 11 `consumer_refresh.rs`) was
+> deleted in Phase 28.
 
 ```text
 Host Docker daemon
@@ -1447,11 +1532,35 @@ Wired into `Request` / `Response` in `coast-core/src/protocol/mod.rs`.
 
 ## 8. Daemon state
 
-> **Superseded by §23.** The `CHECK (id = 1)` constraint and the
-> flat service / checkout PKs below are the singleton schema.
+> **Superseded by §23 + §24.** The `CHECK (id = 1)` constraint and
+> the flat service / checkout PKs below are the singleton schema.
 > Phase 20 replaces `id` with `project TEXT PRIMARY KEY` and adds
 > `project` to the composite PK of `ssg_services` and
 > `ssg_port_checkouts`. See §23.
+>
+> Phase 26 / 28 / 30 add two more tables (sketch below; the
+> migration code is the source of truth):
+>
+> - **`ssg_virtual_ports`** (Phase 26 + 28 per-port keying):
+>   `PRIMARY KEY (project, service_name, container_port)`,
+>   columns `port INTEGER NOT NULL`, `created_at`. Owns the
+>   stable host-side virtual port that consumer in-DinD socats
+>   resolve to. Allocated on first `ssg run` by
+>   `virtual_port_allocator::allocate_or_reuse`; preserved across
+>   `ssg build` / `ssg run` / `ssg stop` cycles; cleared by
+>   `ssg rm --with-data`.
+> - **`ssg_shared_tunnels`** (Phase 30): `PRIMARY KEY (project,
+>   remote_host, service_name, container_port)`, columns
+>   `virtual_port INTEGER NOT NULL`, `ssh_pid INTEGER` (NULL
+>   when not live), `created_at`. Tracks the single `ssh -N -R`
+>   process that ALL consumer instances of `project` on
+>   `remote_host` share. Daemon restart respawns dead pids; last
+>   sibling instance removed tears the row down.
+>
+> The cross-table join `ssg_services x ssg_virtual_ports` (by
+> `(project, service_name, container_port)`) is what
+> `coast ssg ports` exposes via the new `VIRTUAL` column
+> (Phase 31).
 
 New SQLite tables, added via migration in
 [`coast-daemon/src/state/mod.rs`](../coast-daemon/src/state/mod.rs).
@@ -1778,10 +1887,14 @@ is not currently running.
 - Emit `CoastEvent::SsgStarting` / `SsgStarted` on the run progress
   channel so Coastguard can show boot progress inline.
 - After every `run` / `start` / `restart` commits new
-  `ssg_services.dynamic_host_port` rows, the daemon refreshes each
-  local running consumer's in-dind socat forwarders so existing
-  consumer coasts survive an SSG port reallocation without rebuilding.
-  See §17-38.
+  `ssg_services.dynamic_host_port` rows, the daemon refreshes the
+  daemon-managed host socat (Phase 27/28) so existing consumer
+  coasts survive an SSG port reallocation. **Phase 28
+  superseded** the earlier "refresh each consumer's in-DinD socat"
+  path: consumer in-DinD socat argv is set once at provision and
+  never mutated. Only the host socat's upstream argv changes on
+  SSG lifecycle verbs. See §24 for the full hop sequence and §17-38
+  for the historical (deleted) consumer-refresh contract.
 
 ## 12. Host-side access + `coast ssg checkout`
 
@@ -2471,26 +2584,24 @@ tracks state across sessions.
     `&bollard::Docker` or `DindRuntime` references remain in
     `coast-ssg/src/runtime`, `coast-ssg/src/build`, or
     `coast-ssg/src/daemon_integration.rs` outside docs.
-38. (SETTLED — Phase 11) **Consumer socat refresh invariant.** Every
-    SSG lifecycle verb that can mutate
-    `ssg_services.dynamic_host_port` (`run` / `start` / `restart`)
-    triggers a best-effort refresh of every local running consumer
-    coast that references the SSG via `from_group = true`. The
-    refresh re-plans socat routing with the current `ssg_services`
-    rows and re-runs
-    [`ensure_shared_service_proxies`](../coast-daemon/src/handlers/shared_service_routing.rs)
-    inside the consumer dind; the proxy script tears down stale PIDs
-    before spawning new ones, so the hook is idempotent (no-op when
-    dynamic ports did not actually change). Remote shadow coasts
-    (`remote_host.is_some()`) are skipped — they re-establish via
-    the reverse-tunnel path on their own run cycle. `stop` and `rm`
-    do NOT refresh: there is nothing to point proxies at. Per-consumer
-    failures are logged and skipped; the lifecycle verb itself never
-    fails on refresh errors. Refresh results are announced in the
-    lifecycle response message as
-    `Refreshed shared-service proxies for: <project>/<instance>, …`.
-    See
-    [`coast-daemon/src/handlers/ssg/consumer_refresh.rs`](../coast-daemon/src/handlers/ssg/consumer_refresh.rs).
+38. (SETTLED — Phase 11; **SUPERSEDED — Phase 28 / §24.7**)
+    **Consumer socat refresh invariant.** Phase 11 used to wire
+    each SSG lifecycle verb to docker-exec into every local running
+    consumer and rewrite its in-DinD socat argv against the new
+    `ssg_services.dynamic_host_port` rows. Phase 28 deleted
+    [`coast-daemon/src/handlers/ssg/consumer_refresh.rs`](../coast-daemon/src/handlers/ssg/consumer_refresh.rs)
+    (468 LOC + 10 unit tests) and replaced this contract with the
+    daemon-managed host socat: every consumer's in-DinD socat
+    argv is set once at provision and **never** mutated. Only the
+    daemon-side host socat's upstream argv changes on SSG
+    lifecycle verbs (`run` / `start` / `restart`). The lifecycle
+    response now announces `Refreshed host socats for:
+    <project>/<service>:<container_port>, …` instead of the
+    legacy `Refreshed shared-service proxies` message. See §24
+    for the full architecture and §0 Phase 28 for the migration
+    notes. The collision-rebind path (the only remaining
+    docker-exec-into-consumer call) is documented in §24's Phase
+    28 checklist; it fires effectively never.
 39. (SETTLED — Phase 12) **Fat `SsgDockerOps` trait: one named
     method per semantic operation.** The Phase 12 migration picked
     the fat-trait shape over a leaner alternative that would have
@@ -2693,6 +2804,23 @@ tracks state across sessions.
   could disagree (e.g. after manual `docker stop`). `coast ssg ps`
   must inspect live Docker state and reconcile, like
   [`coast-daemon/src/handlers/shared.rs::fetch_shared_services`](../coast-daemon/src/handlers/shared.rs).
+  > **Phase 31 update**: the `docker restart {project}-ssg`
+  > variant of state drift is now self-healing — the next
+  > `coast ssg run/start/restart` triggers
+  > `host_socat::reconcile_project` which detects the new dyn
+  > port and rewrites the host socat upstream. See
+  > `test_ssg_docker_restart_outside_daemon_recovers.sh` for the
+  > integration coverage.
+- ~~**Consumer refresh reliability.**~~ **Obsolete (Phase 28).** The
+  Phase 11 risk that "consumer socat refresh might fail when the
+  daemon docker-execs into N consumers after every SSG lifecycle
+  verb" no longer applies. Phase 28 deleted that path entirely;
+  consumer in-DinD socat argv is now stable across SSG lifecycle.
+  See §24 + §17 SETTLED #38.
+- ~~**SSG shape drift surprises users at run time.**~~ **Obsolete
+  (Phase 29 / 31).** The runtime drift audit was deleted in Phase
+  29. Shape changes now manifest as connection failure at connect
+  time — see §24.4 and `test_ssg_consumer_fails_fast_when_service_missing.sh`.
 
 ## 19. Success criteria
 
@@ -2718,6 +2846,17 @@ tracks state across sessions.
   and re-building — no application code changes.
 - Existing Coastfiles using only inline `[shared_services.*]` keep
   working unchanged (zero-migration guarantee).
+- **(Phase 31)** The project's virtual port for each
+  `(service, container_port)` pair is **stable** across `ssg
+  build`, `ssg run`, `ssg stop`, daemon restart, and external
+  `docker restart {project}-ssg`. Only `ssg rm --with-data`
+  releases the allocation. Consumer in-DinD socats target this
+  stable virtual port and never need rewriting; remote `ssh -R`
+  tunnels are symmetric on the virtual port and shared per
+  `(project, remote_host)`. Verified end-to-end by
+  `test_ssg_virtual_port_stable_across_rebuild.sh`,
+  `test_ssg_host_socat_respawn_on_daemon_restart.sh`, and
+  `test_ssg_docker_restart_outside_daemon_recovers.sh`. See §24.
 
 ## 20. Remote coasts with SSG
 
@@ -3008,12 +3147,13 @@ Pinned glossary for context-compacted sessions.
 | SSG Coastfile | The top-level `Coastfile.shared_service_groups` TOML file |
 | Consumer coast | A regular coast that references SSG services via `[shared_services.<name>] from_group = true` |
 | Canonical port | The port apps talk to by name (5432, 6379, ...); unchanged |
-| SSG host port | The dynamically allocated host port the SSG publishes for an inner service |
+| SSG host port | The dynamically allocated host port the SSG publishes for an inner service. **Phase 28+ note**: daemon-internal; not consumer-facing. The user-visible value is the **SSG virtual port** below. |
+| **SSG virtual port** | (Phase 26 / 28 / §24.5) Stable host-owned port allocated per `(project, service, container_port)` in `ssg_virtual_ports`. The daemon-managed host socat listens here and forwards to the current SSG host port. Consumer in-DinD socats target this virtual port; remote `ssh -R` tunnels are symmetric on it. Survives `ssg build`/`ssg run`/`ssg stop`/daemon restart; released only by `ssg rm --with-data`. |
 | Inner compose | The `compose.yml` the SSG DinD runs inside itself to start its services |
 | Symmetric path | The bind-mount plan in §10.2 — the same host path string on both mount hops |
 | Displacement | `coast ssg checkout` taking over a canonical port held by a coast instance |
-| Drift | Mismatch between a coast build's recorded SSG reference and the current SSG state (§6.1) |
-| Remote dynamic tunnel port | The per-forward ephemeral port on the remote VM that sshd binds for the reverse tunnel under Phase 18. Independent per coast, so two coasts on one remote can both have a `postgres:5432` consumer without collision (§20). |
+| Drift | ~~Mismatch between a coast build's recorded SSG reference and the current SSG state (§6.1).~~ **Superseded by §24.4 (Phase 29 / 31).** The runtime drift audit was deleted; shape changes manifest as connection failure at connect time. The build-time `from_group` typo check (a missing service name in the SSG Coastfile) survives as `build_ssg_manifest_block`. |
+| Remote dynamic tunnel port | The per-forward ephemeral port on the remote VM that sshd binds for the reverse tunnel under Phase 18 — **inline shared services only**. **Phase 30 note**: SSG-backed reverse tunnels use the project's **virtual port** on BOTH legs of `ssh -R`, shared per `(project, remote_host)` rather than per instance. See §24 + Phase 30. |
 
 ---
 

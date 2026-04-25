@@ -339,12 +339,24 @@ pub fn ps_ssg(project: &str, state: Option<&dyn crate::state::SsgStateExt>) -> R
 
     let container_status = ssg_record.as_ref().map(|r| r.status.clone());
     let service_rows = db.list_ssg_services(project)?;
+    // Phase 31: join with `ssg_virtual_ports` so each row exposes the
+    // host-owned virtual port the consumer socat targets. `None`
+    // means the SSG hasn't fully run yet (no allocator pass) — the
+    // CLI renders that as `--` in the VIRTUAL column.
+    let vport_rows = db.list_ssg_virtual_ports(project)?;
+    let vport_by_key: std::collections::HashMap<(&str, u16), u16> = vport_rows
+        .iter()
+        .map(|r| ((r.service_name.as_str(), r.container_port), r.port))
+        .collect();
     let ports: Vec<SsgPortInfo> = service_rows
         .iter()
         .map(|s| SsgPortInfo {
             service: s.service_name.clone(),
             canonical_port: s.container_port,
             dynamic_host_port: s.dynamic_host_port,
+            virtual_port: vport_by_key
+                .get(&(s.service_name.as_str(), s.container_port))
+                .copied(),
             checked_out: false,
         })
         .collect();

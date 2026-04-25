@@ -550,10 +550,19 @@ pub async fn exec_ssg(
 /// true`; rows whose socat was torn down (e.g. after `coast ssg stop`)
 /// keep the row but set `socat_pid = null` and thus read `false`
 /// until the next `run` / `start` re-spawns them.
+///
+/// Phase 31 also joins `ssg_virtual_ports` so the response carries
+/// each service's stable virtual port (the value consumer in-DinD
+/// socats target). `None` means the SSG hasn't run yet.
 pub fn ports_ssg(project: &str, state: &dyn SsgStateExt) -> Result<SsgResponse> {
     let services = state.list_ssg_services(project)?;
     let record = state.get_ssg(project)?;
     let checkouts = state.list_ssg_port_checkouts(project)?;
+    let vports = state.list_ssg_virtual_ports(project)?;
+    let vport_by_key: std::collections::HashMap<(&str, u16), u16> = vports
+        .iter()
+        .map(|r| ((r.service_name.as_str(), r.container_port), r.port))
+        .collect();
 
     let ports: Vec<SsgPortInfo> = services
         .iter()
@@ -567,6 +576,9 @@ pub fn ports_ssg(project: &str, state: &dyn SsgStateExt) -> Result<SsgResponse> 
                 service: s.service_name.clone(),
                 canonical_port: s.container_port,
                 dynamic_host_port: s.dynamic_host_port,
+                virtual_port: vport_by_key
+                    .get(&(s.service_name.as_str(), s.container_port))
+                    .copied(),
                 checked_out,
             }
         })
@@ -738,12 +750,20 @@ fn build_response(
         });
     }
 
+    // Phase 31: this `build_response` runs INSIDE
+    // `apply_to_state_and_response`, BEFORE Phase 28's host_socat
+    // reconcile pass calls the virtual-port allocator. The
+    // ports_ssg DB-aware path (above) sees the populated rows; this
+    // pre-allocator path leaves `virtual_port = None` so callers
+    // (CLI table) print `--`. Once the lifecycle hook reconciles,
+    // a follow-up `coast ssg ports` shows the populated value.
     let ports: Vec<SsgPortInfo> = plans
         .iter()
         .map(|p| SsgPortInfo {
             service: p.service.clone(),
             canonical_port: p.container_port,
             dynamic_host_port: p.dynamic_host_port,
+            virtual_port: None,
             checked_out: false,
         })
         .collect();

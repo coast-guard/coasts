@@ -761,6 +761,87 @@ compose = "docker-compose.yml"
             "got: {err}"
         );
     }
+
+    // --- Phase 31: format_ports_table virtual port column ---
+
+    fn port_with(virtual_port: Option<u16>) -> SsgPortInfo {
+        SsgPortInfo {
+            service: "postgres".to_string(),
+            canonical_port: 5432,
+            dynamic_host_port: 60001,
+            virtual_port,
+            checked_out: false,
+        }
+    }
+
+    /// Strip ANSI escape codes from a string. The header is bolded
+    /// for the terminal but the unit test only cares about plaintext
+    /// matches.
+    fn strip_ansi(s: &str) -> String {
+        let mut out = String::with_capacity(s.len());
+        let mut in_escape = false;
+        for ch in s.chars() {
+            if ch == '\u{1b}' {
+                in_escape = true;
+                continue;
+            }
+            if in_escape {
+                if ch == 'm' {
+                    in_escape = false;
+                }
+                continue;
+            }
+            out.push(ch);
+        }
+        out
+    }
+
+    #[test]
+    fn format_ports_table_header_includes_virtual_column() {
+        let table = format_ports_table(&[]);
+        let plain = strip_ansi(&table);
+        assert!(plain.contains("VIRTUAL"), "header missing VIRTUAL: {plain}");
+        // Phase 31 column order — DYNAMIC stays before VIRTUAL so
+        // existing scripts that read col 3 keep getting the dyn port.
+        let dyn_idx = plain.find("DYNAMIC").expect("DYNAMIC missing");
+        let vport_idx = plain.find("VIRTUAL").expect("VIRTUAL missing");
+        let status_idx = plain.find("STATUS").expect("STATUS missing");
+        assert!(
+            dyn_idx < vport_idx && vport_idx < status_idx,
+            "expected DYNAMIC < VIRTUAL < STATUS, got positions {dyn_idx}, {vport_idx}, {status_idx}"
+        );
+    }
+
+    #[test]
+    fn format_ports_table_renders_virtual_port_when_some() {
+        let table = format_ports_table(&[port_with(Some(42001))]);
+        let plain = strip_ansi(&table);
+        assert!(
+            plain.contains("42001"),
+            "expected virtual port 42001 in output: {plain}"
+        );
+        // Dyn port still present in the same row.
+        assert!(
+            plain.contains("60001"),
+            "expected dynamic port 60001 in output: {plain}"
+        );
+    }
+
+    #[test]
+    fn format_ports_table_renders_dash_when_virtual_port_none() {
+        let table = format_ports_table(&[port_with(None)]);
+        let plain = strip_ansi(&table);
+        // Look for "-- " in the data line (after dyn port). The header
+        // doesn't contain "-- ", and the dyn port is 60001.
+        let data_line = plain
+            .lines()
+            .find(|l| l.contains("60001"))
+            .expect("data line not found");
+        assert!(
+            data_line.contains("--"),
+            "expected '--' rendering for None virtual_port: {data_line}"
+        );
+    }
 }
 
 async fn execute_build(
@@ -1081,11 +1162,16 @@ fn format_services_table(services: &[SsgServiceInfo]) -> String {
 
 fn format_ports_table(ports: &[SsgPortInfo]) -> String {
     let mut lines = Vec::with_capacity(ports.len() + 1);
+    // Phase 31: VIRTUAL column appended after DYNAMIC so existing
+    // scripts that parse `awk '{print $3}'` keep reading the dynamic
+    // port (a daemon-internal sanity check). Consumer-routing
+    // assertions read column 4. See `coast-ssg/DESIGN.md §24.5`.
     lines.push(format!(
-        "  {:<20} {:<15} {:<15} {}",
+        "  {:<20} {:<15} {:<15} {:<15} {}",
         "SERVICE".bold(),
         "CANONICAL".bold(),
         "DYNAMIC".bold(),
+        "VIRTUAL".bold(),
         "STATUS".bold(),
     ));
     for port in ports {
@@ -1097,9 +1183,15 @@ fn format_ports_table(ports: &[SsgPortInfo]) -> String {
         } else {
             ""
         };
+        // Phase 31: render `--` when the virtual port hasn't been
+        // allocated yet (SSG not running, or pre-Phase 28 daemon).
+        let virtual_port_display = match port.virtual_port {
+            Some(v) => v.to_string(),
+            None => "--".to_string(),
+        };
         lines.push(format!(
-            "  {:<20} {:<15} {:<15} {}",
-            port.service, port.canonical_port, port.dynamic_host_port, status,
+            "  {:<20} {:<15} {:<15} {:<15} {}",
+            port.service, port.canonical_port, port.dynamic_host_port, virtual_port_display, status,
         ));
     }
     lines.join("\n")

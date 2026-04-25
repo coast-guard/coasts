@@ -144,8 +144,11 @@ SSG_RUN_A=$("$COAST" ssg run 2>&1)
 assert_contains "$SSG_RUN_A" "SSG running" "phase25-a ssg run succeeds"
 PORTS_A_OUT=$("$COAST" ssg ports 2>&1)
 SSG_A_DYNAMIC=$(echo "$PORTS_A_OUT" | awk '/^  postgres/ {print $3}')
+SSG_A_VIRTUAL=$(echo "$PORTS_A_OUT" | awk '/^  postgres/ {print $4}')
 [ -n "$SSG_A_DYNAMIC" ] || fail "could not extract phase25-a SSG dynamic port"
-pass "phase25-a SSG postgres dynamic host port = $SSG_A_DYNAMIC"
+[ -n "$SSG_A_VIRTUAL" ] && [ "$SSG_A_VIRTUAL" != "--" ] \
+    || fail "could not extract phase25-a SSG virtual port (col 4 of ssg ports). Got '$SSG_A_VIRTUAL'"
+pass "phase25-a SSG postgres dynamic=$SSG_A_DYNAMIC virtual=$SSG_A_VIRTUAL"
 
 cd "$PROJ_B"
 SSG_BUILD_B=$("$COAST" ssg build 2>&1)
@@ -154,11 +157,22 @@ SSG_RUN_B=$("$COAST" ssg run 2>&1)
 assert_contains "$SSG_RUN_B" "SSG running" "phase25-b ssg run succeeds"
 PORTS_B_OUT=$("$COAST" ssg ports 2>&1)
 SSG_B_DYNAMIC=$(echo "$PORTS_B_OUT" | awk '/^  postgres/ {print $3}')
+SSG_B_VIRTUAL=$(echo "$PORTS_B_OUT" | awk '/^  postgres/ {print $4}')
 [ -n "$SSG_B_DYNAMIC" ] || fail "could not extract phase25-b SSG dynamic port"
-pass "phase25-b SSG postgres dynamic host port = $SSG_B_DYNAMIC"
+[ -n "$SSG_B_VIRTUAL" ] && [ "$SSG_B_VIRTUAL" != "--" ] \
+    || fail "could not extract phase25-b SSG virtual port (col 4 of ssg ports). Got '$SSG_B_VIRTUAL'"
+pass "phase25-b SSG postgres dynamic=$SSG_B_DYNAMIC virtual=$SSG_B_VIRTUAL"
 
 [ "$SSG_A_DYNAMIC" != "$SSG_B_DYNAMIC" ] \
     || fail "each project's SSG must publish on a distinct dynamic port (got $SSG_A_DYNAMIC for both)"
+
+# Phase 31: each project's virtual port is also distinct — virtual
+# ports are allocated per `(project, service, container_port)`, so
+# two different projects on the same host MUST get different
+# virtual ports even though they share the canonical 5432.
+[ "$SSG_A_VIRTUAL" != "$SSG_B_VIRTUAL" ] \
+    || fail "each project's SSG must allocate a distinct virtual port (got $SSG_A_VIRTUAL for both)"
+pass "phase25-a and phase25-b have distinct virtual ports ($SSG_A_VIRTUAL vs $SSG_B_VIRTUAL)"
 
 # Both SSG containers exist concurrently — Phase 23 correction.
 docker inspect phase25-a-ssg >/dev/null 2>&1 \

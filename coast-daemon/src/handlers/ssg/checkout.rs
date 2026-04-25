@@ -420,12 +420,17 @@ fn build_checkout_response(
     } else {
         format!("{}\n{}", header, warnings.join("\n"))
     };
+    // Phase 31: checkout responses don't include the virtual port
+    // because the checkout flow operates on canonical / dynamic
+    // ports specifically. Consumers can call `coast ssg ports`
+    // separately to see the join with `ssg_virtual_ports`.
     let ports = plans
         .iter()
         .map(|p| SsgPortInfo {
             service: p.service_name.clone(),
             canonical_port: p.canonical_port,
             dynamic_host_port: p.dynamic_host_port,
+            virtual_port: None,
             checked_out: true,
         })
         .collect();

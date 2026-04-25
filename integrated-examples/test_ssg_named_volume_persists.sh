@@ -122,6 +122,13 @@ assert_contains "$RM_OUT" "SSG removed" "rm reports success"
 # rebuild before running again (no global `~/.coast/ssg/latest`
 # fallback exists anymore; every `ssg run` needs a per-project
 # `latest_build_id`).
+#
+# Phase 31 clarification: the rebuild here is purely state-level
+# (data wipe → `latest_build_id` was dropped). Routing- and
+# socat-level refresh is NOT the concern: Phase 28's
+# `host_socat::reconcile_project` runs automatically after
+# `apply_to_state_and_response`, so no manual host-side socat
+# rewiring is needed. See `coast-ssg/DESIGN.md §24`.
 "$COAST" ssg build >/dev/null 2>&1
 "$COAST" ssg run >/dev/null 2>&1
 sleep 8

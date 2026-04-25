@@ -185,12 +185,27 @@ pub struct SsgServiceInfo {
 }
 
 /// Per-service port info shown by `coast ssg ports`.
+///
+/// Phase 31: `virtual_port` is the host-owned, stable port the
+/// consumer's in-DinD socat connects to via
+/// `host.docker.internal:<virtual_port>`. The daemon-managed host
+/// socat (Phase 27/28) bridges that virtual port to whatever
+/// `dynamic_host_port` the SSG container is currently published on.
+/// `None` when the SSG hasn't run yet (no `ssg_virtual_ports` row).
+/// `dynamic_host_port` is preserved for daemon-internal debugging
+/// (`docker port`-style sanity checks in tests + `coast ssg ports`
+/// shows it under the `DYNAMIC` column for transparency); consumer
+/// routing only uses `virtual_port`.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct SsgPortInfo {
     pub service: String,
     pub canonical_port: u16,
     pub dynamic_host_port: u16,
+    /// Phase 31. Older daemons / clients omit this; `#[serde(default)]`
+    /// renders missing as `None`, which the CLI prints as `--`.
+    #[serde(default)]
+    pub virtual_port: Option<u16>,
     pub checked_out: bool,
 }
 

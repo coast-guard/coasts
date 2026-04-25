@@ -79,16 +79,14 @@ CLEANUP_INSTANCES+=("inst-a")
 
 sleep 3  # inner compose for the consumer
 
-# Phase 28: capture the consumer's in-DinD socat upstream from
-# `ps`. The argv looks like:
-#   socat TCP-LISTEN:5432,fork,reuseaddr,bind=... TCP:host.docker.internal:<port>
-# The `<port>` is the VIRTUAL port — it must stay the same across
-# ssg rm/run. We extract it via the `:` after `host.docker.internal`.
+# Phase 31: read the consumer's stable virtual port directly from
+# `coast ssg ports` (col 4). Earlier this test docker-exec'd into
+# the consumer DinD and parsed `ps -ef`; the new `VIRTUAL` column
+# means we can ask the daemon and get the authoritative value.
 #
-# `coast-ssg-consumer-basic-inst-a` is the consumer's outer DinD
-# container (project-instance naming). We `docker exec` directly on
-# the host because `coast exec` only runs INSIDE the inner compose
-# service, not on the DinD shell that hosts the in-DinD socat.
+# We also keep a defense-in-depth check that the in-DinD socat is
+# pointed at the same port — that's the consumer-side observation
+# that Phase 28 actually wired the virtual port through synthesis.
 CONSUMER_DIND="coast-ssg-consumer-basic-coasts-inst-a"
 extract_consumer_socat_upstream() {
     docker exec "$CONSUMER_DIND" sh -c \
@@ -99,19 +97,25 @@ extract_consumer_socat_upstream() {
         | awk -F: '{print $NF}'
 }
 
+INITIAL_VIRTUAL=$("$COAST" ssg ports 2>&1 | awk '/^  postgres/ {print $4}')
+[ -n "$INITIAL_VIRTUAL" ] && [ "$INITIAL_VIRTUAL" != "--" ] \
+    || fail "could not read virtual port from `coast ssg ports` col 4 (got '$INITIAL_VIRTUAL')"
+pass "phase 31: consumer-facing virtual port (from `coast ssg ports`) = $INITIAL_VIRTUAL"
+
 INITIAL_UPSTREAM=$(extract_consumer_socat_upstream)
 [ -n "$INITIAL_UPSTREAM" ] || fail "could not extract consumer socat upstream port from $CONSUMER_DIND"
-pass "consumer in-DinD socat upstream port (phase 28: virtual port) = $INITIAL_UPSTREAM"
+pass "consumer in-DinD socat upstream port (sanity check) = $INITIAL_UPSTREAM"
 
-# Phase 28 sanity: the consumer upstream is a host-owned virtual
-# port (band defaults to 42000-43000), NOT the SSG's dyn port.
-if [ "$INITIAL_UPSTREAM" = "$OLD_DYN" ]; then
-    fail "consumer upstream ($INITIAL_UPSTREAM) matched the SSG dyn port ($OLD_DYN); \
-this means Phase 28's host_socat layer is NOT in front of the consumer — \
-either reconcile_project never ran or synthesize_configs_for_consumer \
-didn't substitute the virtual port"
+# Phase 28+31 sanity: the consumer upstream MUST equal the daemon's
+# recorded virtual port — they're the same value.
+[ "$INITIAL_UPSTREAM" = "$INITIAL_VIRTUAL" ] \
+    || fail "consumer in-DinD socat ($INITIAL_UPSTREAM) does not match `coast ssg ports` virtual ($INITIAL_VIRTUAL); synthesize_configs_for_consumer must substitute the virtual port"
+
+# And the virtual port is NOT the SSG dyn port.
+if [ "$INITIAL_VIRTUAL" = "$OLD_DYN" ]; then
+    fail "virtual port ($INITIAL_VIRTUAL) matched the SSG dyn port ($OLD_DYN); host_socat layer is missing"
 fi
-pass "consumer upstream is distinct from SSG dyn port (phase 28 layering verified)"
+pass "virtual port is distinct from SSG dyn port (phase 28+31 layering verified)"
 
 echo ""
 echo "=== Step 2: baseline psql from consumer works ==="
@@ -210,6 +214,7 @@ echo ""
 echo "=== Step 6: consumer socat argv stable (Phase 28 invariant) ==="
 
 POST_UPSTREAM=$(extract_consumer_socat_upstream)
+POST_VIRTUAL=$("$COAST" ssg ports 2>&1 | awk '/^  postgres/ {print $4}')
 [ -n "$POST_UPSTREAM" ] || fail "could not extract consumer socat upstream port post-rerun"
 
 # Phase 28: `rm --with-data` cleared `ssg_virtual_ports`, so a
@@ -219,6 +224,10 @@ POST_UPSTREAM=$(extract_consumer_socat_upstream)
 # user about exactly this case. If the SSG run didn't rebind
 # (the same virtual port was reissued), then the upstreams must
 # match.
+#
+# Phase 31 cross-check: also compare against `coast ssg ports`
+# col 4 to anchor the test's notion of "stable" to the daemon's
+# authoritative value.
 REBOUND_DETECTED=$(echo "$FINAL_RERUN_OUT" | grep -E "WARNING:.*virtual port rebound" || true)
 if [ -n "$REBOUND_DETECTED" ]; then
     echo "rebound warning was emitted ($REBOUND_DETECTED) — consumer upstream may be stale"
@@ -229,7 +238,11 @@ else
         fail "consumer in-DinD socat upstream changed without a rebind notice: \
 $INITIAL_UPSTREAM -> $POST_UPSTREAM (Phase 28 contract violated)"
     fi
-    pass "consumer in-DinD socat upstream unchanged: $INITIAL_UPSTREAM (Phase 28 contract upheld)"
+    if [ "$POST_VIRTUAL" != "$INITIAL_VIRTUAL" ]; then
+        fail "`coast ssg ports` virtual port changed without a rebind notice: \
+$INITIAL_VIRTUAL -> $POST_VIRTUAL (Phase 28 contract violated; should have surfaced WARNING)"
+    fi
+    pass "consumer-facing virtual port unchanged: $INITIAL_VIRTUAL (Phase 28 contract upheld)"
 fi
 
 # Cleanup.

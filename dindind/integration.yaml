@@ -440,14 +440,12 @@ tests:
     note: "ssg checkout displaces a coast holding the canonical port with a clear warning; no auto-restore on uncheckout"
 
   # --- Shared Service Groups (coast-ssg) — Phase 7 (drift detection) ---
-  test_ssg_drift_warning:
-    script: integrated-examples/test_ssg_drift_warning.sh
-    timeout: 600
-    note: "consumer warns + proceeds when SSG rebuilt with new id but identical image refs"
-  test_ssg_drift_missing_service:
-    script: integrated-examples/test_ssg_drift_missing_service.sh
-    timeout: 600
-    note: "coast run hard-errors with DESIGN \u00a76.1 wording when a referenced SSG service is gone"
+  # Phase 31: test_ssg_drift_warning + test_ssg_drift_missing_service
+  # were deleted along with the runtime drift audit (Phase 29). The
+  # "consumer fails fast on missing service" contract is now covered
+  # by integrated-examples/test_ssg_consumer_fails_fast_when_service_missing.sh
+  # which exercises ECONNREFUSED at connect time rather than a
+  # build-time drift comparison.
 
   # --- Shared Service Groups (coast-ssg) — Phase 4.5 (remote) ---
   test_ssg_remote_reverse_tunnel:
@@ -504,14 +502,14 @@ tests:
     note: "coast ssg import-host-volume snippet + --apply + .bak + duplicate mount + missing volume; ssg build succeeds on rewritten Coastfile (DESIGN §10.7)"
 
   # --- Shared Service Groups (coast-ssg) — Phase 16 (consumer pinning) ---
-  test_ssg_pin_protects_from_drift:
-    script: integrated-examples/test_ssg_pin_protects_from_drift.sh
+  test_ssg_pin_anchors_build:
+    script: integrated-examples/test_ssg_pin_anchors_build.sh
     timeout: 600
-    note: "coast ssg checkout-build pins a consumer; rebuilding the SSG does not surface drift warn; pinned build survives auto_prune (DESIGN §17-9 SETTLED #41)"
+    note: "Phase 16 + 31 (post-drift removal): coast ssg checkout-build pins a consumer to a specific SSG build_id; the pinned build's directory survives auto_prune; subsequent `coast run` resolves the consumer's ssg manifest from the pinned build (recorded in manifest.json), not the project's latest_build_id (DESIGN §17-9 SETTLED #41 + §29)"
   test_ssg_uncheckout_build_restores_latest:
     script: integrated-examples/test_ssg_uncheckout_build_restores_latest.sh
     timeout: 600
-    note: "uncheckout-build drops the pin; drift now evaluates against latest and hard-errors on image ref change (DESIGN §17-9)"
+    note: "Phase 16 + 31: uncheckout-build drops the pin; subsequent `coast run` resolves against the project's current latest_build_id (DESIGN §17-9). Replaces the pre-Phase-29 drift hard-error contract."
   test_ssg_pin_missing_build_errors:
     script: integrated-examples/test_ssg_pin_missing_build_errors.sh
     timeout: 600
@@ -540,3 +538,25 @@ tests:
     script: integrated-examples/test_ssg_per_project_build_isolation.sh
     timeout: 600
     note: "project A's `ssg build` is invisible to project B's consumer; `coast build` in B hard-errors naming project B instead of silently picking up A's build via the old global `latest` symlink (DESIGN §23, Phase 23)"
+
+  # --- Shared Service Groups (coast-ssg) — Phase 31 (host-owned virtual ports) ---
+  test_ssg_virtual_port_stable_across_rebuild:
+    script: integrated-examples/test_ssg_virtual_port_stable_across_rebuild.sh
+    timeout: 600
+    note: "Phase 31 / DESIGN §24.5: the project's virtual port survives `ssg build` + `ssg run` and `ssg stop` + `ssg run` cycles. Only `ssg rm --with-data` releases the allocation. Anchors the consumer-stability invariant for Phase 28."
+  test_ssg_host_socat_respawn_on_daemon_restart:
+    script: integrated-examples/test_ssg_host_socat_respawn_on_daemon_restart.sh
+    timeout: 600
+    note: "Phase 31 / DESIGN §24: kill the host socat directly, restart the daemon, `restore_running_state -> host_socat::reconcile_all` respawns it with the same virtual port. Validates the daemon-startup recovery path."
+  test_ssg_consumer_fails_fast_when_service_missing:
+    script: integrated-examples/test_ssg_consumer_fails_fast_when_service_missing.sh
+    timeout: 600
+    note: "Phase 31 / DESIGN §24.4: replaces the deleted Phase 29 drift-missing-service test. SSG rebuild drops a service; the still-running consumer's connection to that service fails at runtime (TCP refused) instead of via a build-time drift audit. postgres unaffected; redis unreachable."
+  test_ssg_allocator_collision_fallback:
+    script: integrated-examples/test_ssg_allocator_collision_fallback.sh
+    timeout: 600
+    note: "Phase 31 / DESIGN §24.5: pre-bind a port in the allocator's band via a host python listener; `ssg run` MUST allocate the next free port in the band, NOT the pre-bound one. Validates `virtual_port_allocator::allocate_or_reuse`'s `probe_port_free` skip."
+  test_ssg_docker_restart_outside_daemon_recovers:
+    script: integrated-examples/test_ssg_docker_restart_outside_daemon_recovers.sh
+    timeout: 600
+    note: "Phase 31 / DESIGN §24.5: `docker restart {project}-ssg` outside the daemon may shift the dynamic host port. The next `coast ssg restart` triggers `host_socat::reconcile_project` which refreshes the host socat's upstream; the consumer keeps working without a rebuild."
