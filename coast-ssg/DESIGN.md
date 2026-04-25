@@ -1057,6 +1057,55 @@ that consumer instance, regardless of SSG rebuild, daemon restart,
 or external `docker restart`. The user-visible benefit: `coast ssg
 build` + `ssg run` no longer disturbs running consumers.
 
+**Phase 32 closed all 3 audit findings.** The `AlreadyRunning`
+branch now refreshes host socats unconditionally (the host-socat
+refresh was hoisted out of `run_and_apply`/`start_and_apply` and
+into `ensure_ready_for_consumer` itself); the §4 architecture
+diagram has been rewritten for the post-§24 topology; and the
+`provision.rs` comment has been brought current. See Phase 32.
+
+### Phase 32 — Closing audit fixes
+Post-Phase-31 audit (DESIGN.md §24 vs implementation) surfaced
+three findings. None block the migration's user-visible contract;
+one is a real-but-rare edge case worth closing.
+
+- [x] **AlreadyRunning auto-start refresh.** `ensure_ready_for_consumer`
+      in [coast-daemon/src/handlers/run/ssg_integration.rs](/Users/jamie/work/coasts/coast-daemon/src/handlers/run/ssg_integration.rs)
+      now calls `refresh_host_socats_for_project` once,
+      unconditionally, after the dispatch match — covering all
+      three outcomes (`Created` / `Started` / `AlreadyRunning`).
+      The two per-branch calls inside `run_and_apply` and
+      `start_and_apply` were removed. Reconcile is idempotent
+      (`host_socat::spawn_or_update` short-circuits when argv
+      matches), so calling on every path is cheap.
+- [x] **§4 architecture diagram.** Replaced the legacy singleton
+      `coast-ssg` diagram + the multi-paragraph supersede banner
+      with a Phase 24-current diagram showing per-project SSG
+      containers (Phase 23), the daemon-managed host socat hop
+      (Phase 27/28) keyed on `(project, service, container_port)`,
+      and consumer in-DinD socats targeting
+      `host.docker.internal:<virtual_port>`. Added a one-paragraph
+      remote callout for the Phase 30 symmetric
+      `ssh -R <vport>:localhost:<vport>` shape and `ssg_shared_tunnels`.
+- [x] **provision.rs:519-525 comment.** Updated the 6-line comment to
+      describe Phase 28's virtual-port substitution + the host
+      socat hop instead of the legacy
+      `host.docker.internal:<ssg-dynamic-port>` wording.
+- [x] Acceptance: cargo trio (fmt + test + clippy) green; the
+      `AlreadyRunning` fix needs no new unit test (the existing
+      `host_socat::spawn_or_update` idempotency test covers the
+      "called twice" case; the fix is a missing call, not new
+      logic). 3× `make test` stress run clean.
+
+#### Why these three were caught after "Migration complete"
+
+The Phase 31 acceptance gate verified Rust unit tests, fmt, and
+clippy. None of these surface (1) a missing call between two
+correct implementations, (2) a stale ASCII diagram, or (3) a stale
+comment. The gap was caught by an explicit post-hoc audit asking
+"does the code actually do what §24 says?" — that audit is
+recommended at the close of any future migration of similar size.
+
 ---
 
 ## 1. Problem
@@ -1141,47 +1190,49 @@ We want:
 
 ## 4. High-level architecture
 
-> **Superseded by §23 + §24.** The diagram below shows the singleton
-> topology with two projects sharing one `coast-ssg` container.
-> Under the per-project correction, each project gets its own
-> `{project}-ssg` container (e.g. `cg-ssg`, `filemap-ssg`), and
-> each project's consumers route to their own project's SSG. See
-> §23.
->
-> **Phase 28 / 30 / §24 add a host-socat hop.** Consumers no longer
-> connect directly to `host.docker.internal:<ssg-dyn-port>`; they
-> connect to `host.docker.internal:<virtual-port>`, where the
-> daemon-managed host socat (Phase 27/28) terminates the
-> connection and forwards to whatever dyn port the SSG is currently
-> publishing. The virtual port is stable per
-> `(project, service, container_port)` (`ssg_virtual_ports` table)
-> and survives `ssg build`/`ssg run`/`ssg stop`/daemon restart;
-> only `ssg rm --with-data` releases it. Remote consumers route
-> through symmetric `ssh -R <vport>:localhost:<vport>` tunnels
-> (Phase 30) where the local leg terminates at the same host
-> socat. The legacy "consumer in-DinD socat is rewritten when the
-> SSG dyn port changes" path (Phase 11 `consumer_refresh.rs`) was
-> deleted in Phase 28.
+> The diagram below shows the post-§24 routing topology: per-project
+> SSG containers (Phase 23), the daemon-managed host socat hop
+> (Phase 27/28), and consumer in-DinD socats targeting the project's
+> stable virtual port. The pre-§24 singleton-DinD diagram has been
+> retired — see git history if you need the legacy shape. The
+> definitive narrative for the routing chain is §24.
 
 ```text
 Host Docker daemon
 |
-+-- coast-ssg (DinD, --privileged, singleton)          <-- NEW
++-- {project}-ssg (DinD, --privileged, per-project)         <-- Phase 23
 |     +-- Inner Docker daemon
 |     |     +-- postgres  (inner :5432)
 |     |     +-- redis     (inner :6379)
-|     |     +-- mongodb   (inner :27017)
 |     +-- bind mounts: host dirs -> same paths inside DinD
-|     +-- published ports: dynamic -> inner 5432/6379/27017
+|     +-- published ports: <dyn>:5432, <dyn>:6379           <-- ephemeral; daemon-internal only
+|                              ^
+|                              |
++-- daemon-managed host socat (one per service+container_port)   <-- Phase 27/28
+|     LISTEN:   0.0.0.0:<virtual_port>                      (stable per (project, service, port))
+|     UPSTREAM: host.docker.internal:<dyn>                  (refreshed on every ssg run/start/restart)
+|                              ^
+|                              |
++-- {project}/inst-a  (consumer DinD)                       <-- regular coast
+|     +-- in-DinD socat (alias-IP forwarder)
+|           LISTEN:   <alias-IP>:5432                       (canonical port, what the app dials)
+|           UPSTREAM: host.docker.internal:<virtual_port>   (written ONCE at provision; never mutated)
+|     +-- app container -> `postgres:5432` -> alias IP -> in-DinD socat -> ...
 |
-+-- coast: proj-a/dev-1  (existing DinD)
-|     +-- docker0-alias socat forwarders
-|           postgres:5432 -> host.docker.internal:{ssg-dyn-postgres}
-|           redis:6379    -> host.docker.internal:{ssg-dyn-redis}
-|
-+-- coast: proj-b/dev-1
-      +-- same story, same SSG, same host-side dynamic ports
++-- {project}/inst-b  (sibling consumer DinD, same project)
+      +-- same in-DinD socat shape, same <virtual_port>
+      +-- both instances ride the SAME host socat above
 ```
+
+> **Remote consumers (Phase 30 / §24.6).** A consumer running on a
+> remote VM gets `ssh -N -R <virtual_port>:localhost:<virtual_port>`
+> — symmetric on the project's virtual port. The remote sshd binds
+> `<virtual_port>` on the remote side; the local end terminates at
+> the daemon-managed host socat above. The daemon coalesces these
+> tunnels per `(project, remote_host)`: multiple consumer instances
+> of the same project on one remote VM share ONE `ssh -R` process,
+> torn down only when the last sibling instance is removed. See §20
+> + `ssg_shared_tunnels` in §8.
 
 Key insight: the existing `shared_service_routing` mechanism already
 forwards `host.docker.internal:{host_port}` from inside each coast. All

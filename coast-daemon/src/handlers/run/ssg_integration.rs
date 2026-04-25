@@ -176,6 +176,17 @@ pub async fn ensure_ready_for_consumer(
         }
     };
 
+    // Phase 32: refresh host socats unconditionally — including the
+    // `AlreadyRunning` branch, which previously skipped this. If a
+    // host socat died between SSG lifecycle verbs without a daemon
+    // restart (OOM-killer, manual `kill`, kernel reaper), the next
+    // consumer's `coast run` would otherwise leave the in-DinD
+    // socat pointing at a dead virtual port. Reconcile is
+    // idempotent (`host_socat::spawn_or_update` short-circuits when
+    // argv matches), so this is cheap on the common path. See
+    // `coast-ssg/DESIGN.md §0 Phase 32` and §24.
+    refresh_host_socats_for_project(project, state).await;
+
     let build_id = outcome.build_id().to_string();
 
     emit_done(progress, &outcome);
@@ -262,13 +273,9 @@ async fn run_and_apply(
             format!("SSG running on build {build_id}"),
         )?;
     }
-    // Phase 28: refresh per-service host socats so the consumer's
-    // virtual-port resolves to the just-allocated dyn ports. Done
-    // here (after the SSG state apply) on the auto-start path so
-    // `synthesize_configs_for_consumer` can read the persisted
-    // virtual ports immediately afterward. See
-    // `coast-ssg/DESIGN.md §24`.
-    refresh_host_socats_for_project(project, state).await;
+    // Phase 32: host-socat refresh moved up to
+    // `ensure_ready_for_consumer` so the `AlreadyRunning` branch
+    // also refreshes. See the comment at that call site.
     Ok(build_id)
 }
 
@@ -321,9 +328,9 @@ async fn start_and_apply(
             format!("SSG started on build {build_id}"),
         )?;
     }
-    // Phase 28: refresh per-service host socats — see `run_and_apply`
-    // above for the rationale.
-    refresh_host_socats_for_project(project, state).await;
+    // Phase 32: host-socat refresh moved up to
+    // `ensure_ready_for_consumer` so the `AlreadyRunning` branch
+    // also refreshes. See the comment at that call site.
     Ok(build_id)
 }
 
