@@ -2488,6 +2488,76 @@ SSG_CONSUMER_DISABLE_AUTODB_SSG_EOF
 
 setup_coast_ssg_consumer_disable_auto_db
 
+# --- coast-ssg-secrets ---
+# Phase 33 fixture: SSG-native `[secrets.<name>]` declarations.
+# `Coastfile.shared_service_groups` declares two secrets:
+#   - `pg_password` via the `env` extractor → `inject = "env:POSTGRES_PASSWORD"`
+#   - `jwt` via the `file` extractor → `inject = "file:/run/secrets/jwt"`
+#
+# `coast ssg build` extracts both into the keystore under
+# `coast_image = "ssg:coast-ssg-secrets"`. `coast ssg run`
+# decrypts and writes a per-run `compose.override.yml` that
+# `docker compose` layers on top of `/coast-artifact/compose.yml`.
+# The test fixtures inside `integrated-examples/test_ssg_secrets_*.sh`
+# verify each branch.
+
+setup_coast_ssg_secrets() {
+    local dir="$PROJECTS_DIR/coast-ssg-secrets"
+    echo "Setting up coast-ssg-secrets..."
+    mkdir -p "$dir"
+    rm -rf "$dir/.git"
+
+    cat > "$dir/Coastfile" << 'SSG_SECRETS_COAST_EOF'
+[coast]
+name = "coast-ssg-secrets"
+compose = "./docker-compose.yml"
+runtime = "dind"
+SSG_SECRETS_COAST_EOF
+
+    cat > "$dir/docker-compose.yml" << 'SSG_SECRETS_COMPOSE_EOF'
+services:
+  app:
+    image: postgres:16-alpine
+    command: ["sh", "-c", "while true; do sleep 10; done"]
+SSG_SECRETS_COMPOSE_EOF
+
+    # Phase 33: `[secrets.*]` declared on the SSG side. Postgres reads
+    # POSTGRES_PASSWORD from the env-injected secret; jwt is a file
+    # secret bind-mounted at /run/secrets/jwt.
+    cat > "$dir/Coastfile.shared_service_groups" << 'SSG_SECRETS_SSG_EOF'
+[ssg]
+runtime = "dind"
+
+[shared_services.postgres]
+image = "postgres:16-alpine"
+ports = [5432]
+volumes = ["pg_data:/var/lib/postgresql/data"]
+# POSTGRES_USER stays here (not a secret); POSTGRES_PASSWORD comes from
+# the secret block below via the per-run compose.override.yml.
+env = { POSTGRES_USER = "postgres" }
+
+[secrets.pg_password]
+extractor = "env"
+inject = "env:POSTGRES_PASSWORD"
+var = "SSG_TEST_PG_PASSWORD"
+
+[secrets.jwt]
+extractor = "env"
+inject = "file:/run/secrets/jwt"
+var = "SSG_TEST_JWT_VALUE"
+SSG_SECRETS_SSG_EOF
+
+    cd "$dir"
+    git init -b main
+    git config user.name "Coast Dev"
+    git config user.email "dev@coasts.dev"
+    git add -A
+    git commit -m "initial commit: SSG with [secrets.*] block (Phase 33)"
+    echo "  coast-ssg-secrets ready"
+}
+
+setup_coast_ssg_secrets
+
 # --- coast-ssg-consumer-inject-file ---
 # Phase 13 fixture: consumer with `inject = "file:<path>"` instead of
 # `env:NAME`. Verifies the file body is written inside the coast DinD

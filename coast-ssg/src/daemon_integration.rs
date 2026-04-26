@@ -44,10 +44,19 @@ pub struct SsgBuildInputs {
 /// Total build steps emitted in the progress plan.
 ///
 /// Fixed plan: parse (1) + resolve build id (2) + synth compose (3) +
-/// write artifact (4) + flip latest (5) + prune (6), then one per
-/// image.
-fn total_steps(num_services: usize) -> u32 {
-    6 + num_services as u32
+/// (optional) extract secrets + write artifact + flip latest + prune,
+/// then one per image. The extract-secrets step is only counted when
+/// the Coastfile declares at least one `[secrets.<name>]` entry —
+/// matches the regular build's "no secrets, no step" behaviour and
+/// keeps existing SSG test fixtures' progress event sequence
+/// unchanged.
+fn total_steps(num_services: usize, has_secrets: bool) -> u32 {
+    let base = 6 + num_services as u32;
+    if has_secrets {
+        base + 1
+    } else {
+        base
+    }
 }
 
 /// Resolve the SSG Coastfile path from the request inputs.
@@ -150,7 +159,8 @@ pub async fn build_ssg(
         }
     }
 
-    let total = total_steps(cf.services.len());
+    let has_secrets = !cf.secrets.is_empty();
+    let total = total_steps(cf.services.len(), has_secrets);
 
     // Re-emit step 1 with a proper total so renderers can plan correctly.
     // (Some CLI displays show the max total_steps they've seen.)
@@ -183,10 +193,26 @@ pub async fn build_ssg(
         .send(BuildProgressEvent::done("Synthesize compose", "ok"))
         .await;
 
-    // --- Steps 4..N: pull images ---
+    // --- Step 4 (optional): extract secrets ---
     //
-    // Pull steps are numbered starting at 4. Artifact/flip/prune come
-    // after all images.
+    // Phase 33: walk `cf.secrets`, run each declared extractor via
+    // `coast_secrets`, and persist the encrypted result into the
+    // shared keystore under `coast_image = "ssg:<project>"`. Skipped
+    // entirely when the Coastfile has no `[secrets]` block — keeps
+    // existing test fixtures' progress sequence unchanged. Returns
+    // a small report (count + warnings) folded into the final
+    // `SsgResponse.message`. See `DESIGN.md §33`.
+    let next_step_after_secrets: u32 = if has_secrets {
+        crate::build::secrets::extract_ssg_secrets(&inputs.project, &cf, &progress, 4, total).await;
+        5
+    } else {
+        4
+    };
+
+    // --- Pull image steps ---
+    //
+    // Pull steps are numbered starting after the (possibly skipped)
+    // extract step. Artifact/flip/prune come after all images.
     let cache_dir = artifact::image_cache_dir()?;
     std::fs::create_dir_all(&cache_dir).map_err(|e| CoastError::Io {
         message: format!(
@@ -196,9 +222,17 @@ pub async fn build_ssg(
         path: cache_dir.clone(),
         source: Some(e),
     })?;
-    pull_and_cache_ssg_images(ops, &cf.services, &cache_dir, &progress, 4, total).await?;
+    pull_and_cache_ssg_images(
+        ops,
+        &cf.services,
+        &cache_dir,
+        &progress,
+        next_step_after_secrets,
+        total,
+    )
+    .await?;
 
-    let post_pull_step = 4 + cf.services.len() as u32;
+    let post_pull_step = next_step_after_secrets + cf.services.len() as u32;
 
     // --- Write artifact ---
     let _ = progress
@@ -704,6 +738,7 @@ mod tests {
                     auto_create_db,
                 })
                 .collect(),
+            secret_injects: vec![],
         }
     }
 

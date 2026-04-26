@@ -1106,6 +1106,50 @@ comment. The gap was caught by an explicit post-hoc audit asking
 "does the code actually do what §24 says?" — that audit is
 recommended at the close of any future migration of similar size.
 
+### Phase 33 — SSG-native secrets
+SSG Coastfiles accept their own `[secrets.<name>]` blocks.
+Build-time extract via `coast_secrets::extractor::ExtractorRegistry`,
+keystore namespace `ssg:<project>`. Run-time inject via per-run
+`compose.override.yml` bind-mounted into the outer DinD at
+`/coast-runtime/`. Keystore never auto-purged — only
+`coast ssg secrets clear` removes rows. See §33 for full design.
+
+- [x] Schema: `[secrets.<name>]` in `RawSsgCoastfile` + parser +
+      validator + `to_standalone_toml` + `extends`/`includes`/`[unset]`
+      merge policy + 9 new parser unit tests
+- [x] Manifest: `SsgManifestSecretInject` (manifest-of-shape only,
+      values stay encrypted) + folded into `compute_coastfile_hash`
+      so config edits invalidate build cache
+- [x] Build pipeline: new `Extracting secrets` step in
+      `daemon_integration::build_ssg` + `build::secrets::extract_ssg_secrets`
+      mirrors the regular daemon's `handlers::build::secrets`, keyed on
+      `coast_image = "ssg:<project>"`
+- [x] Run pipeline: new `Materializing secrets` step (silent when
+      empty); `runtime::secrets_inject::materialize_secrets` renders
+      `~/.coast/ssg/runs/<project>/compose.override.yml` and bind-mounts
+      `/coast-runtime/` into the outer DinD
+- [x] `inner_compose_up` extra-files API: argv builder + trait method
+      + Bollard impl + Mock all take `extra_compose_files: &[String]`
+- [x] `RUN_STEPS` bumped from 6 to 7; build plan always advertises
+      the materialize step so the SPA's checklist renders stably
+- [x] `SsgAction::SecretsClear` protocol verb + daemon handler +
+      `coast ssg secrets clear` CLI verb +
+      `POST /api/v1/ssg/secrets/clear` HTTP endpoint
+- [x] Doctor: info-level finding when `[secrets.*]` declared but
+      keystore row missing (e.g. after `secrets clear`)
+- [x] SPA: `SsgSecretsTab.tsx` renders `manifest.secret_injects`
+      table + `Clear secrets` button via the new endpoint
+- [x] 5 new integration tests in `dindind/integration.yaml`:
+      `test_ssg_secrets_env_inject`, `_file_inject`,
+      `_rebuild_reextracts`, `_rm_keeps_keystore`, `_clear`
+      (all passing inside dindind)
+- [x] Pre-existing SSG tests verified (no regressions):
+      `test_ssg_build_minimal`, `test_ssg_run_lifecycle`,
+      `test_ssg_doctor`, `test_ssg_inject_env`
+- [x] DESIGN.md: §14 rewritten to remove "secrets must come from
+      consumer Coastfile" prescription; new §33 documents the full
+      pipeline + composition with consumer-side `[secrets.*]`.
+
 ---
 
 ## 1. Problem
@@ -2039,8 +2083,24 @@ the referenced SSG service's metadata:
 - `${port}` is the canonical inner port (5432) — NOT the dynamic host
   port.
 - Any per-project overrides (e.g. username / password / DB name) come
-  from the consumer Coastfile's `inject` template or from secrets
-  declared in the consumer Coastfile.
+  from one of two layers:
+  1. **Consumer-side** — the consumer Coastfile's own `inject`
+     template + `[secrets.<name>]` blocks (the historical layer).
+     These get baked into the coast DinD via the regular
+     `coast build` keystore + run-time secret-file exec path.
+  2. **SSG-side (Phase 33, see §22)** — the SSG Coastfile's own
+     `[secrets.<name>]` blocks. `coast ssg build` extracts via the
+     same `coast_secrets::extractor` registry as a regular build,
+     stores values encrypted in the keystore under
+     `coast_image = "ssg:<project>"`, and `coast ssg run` decrypts
+     them into a per-run `compose.override.yml` that the inner
+     compose stack layers on top of `/coast-artifact/compose.yml`.
+
+The two layers compose orthogonally: the SSG-side layer covers
+"things postgres / redis themselves need" (e.g. `POSTGRES_PASSWORD`),
+the consumer-side layer covers "things the consumer's app needs to
+talk to that SSG" (e.g. `DATABASE_URL` interpolated against the
+canonical host/port).
 
 Result: the inject string a coast sees at runtime is always something
 like `postgres://coast:coast@postgres:5432/app`, regardless of the
@@ -2065,6 +2125,12 @@ SSG-backed shared services:
   Non-absolute container paths are rejected at provision time; path
   collisions with existing secrets are hard errors. See §17-20 /
   §17-21 for the full settlement.
+
+Note: Pre-Phase-33 versions of this document said "secrets must come
+from the consumer Coastfile". Phase 33 lifted that prescription —
+SSG Coastfiles now accept their own `[secrets.<name>]` blocks. The
+consumer-side layer continues to work unchanged. See §22 for the
+SSG-native pipeline.
 
 ## 15. File organization
 
@@ -3615,3 +3681,234 @@ ssh -R <virtual_port>:localhost:<virtual_port> coast-service@<remote>
 - Dropping `docker exec` from the Coast code base. Consumer-side
   provisioning still uses it to install the consumer socat. Only the
   refresh path loses its dependency on `docker exec`-into-consumer.
+
+## 33. SSG-native secrets (Phase 33)
+
+Phase 33 lifts the pre-existing prescription in §14 ("secrets must
+come from the consumer Coastfile") and adds a parallel,
+SSG-side secret pipeline. The two layers compose orthogonally:
+
+- **Consumer-side `[secrets.*]`** (unchanged, see §14) — covers
+  things the consumer's app needs to talk to a shared service
+  (e.g. `DATABASE_URL` interpolated against canonical host/port).
+  Lives in the consumer's regular Coastfile.
+- **SSG-side `[secrets.*]`** (new) — covers things the shared
+  services themselves need (e.g. `POSTGRES_PASSWORD`). Lives in
+  `Coastfile.shared_service_groups`, runs the same
+  `coast_secrets::extractor` registry as the consumer side, and
+  injects via a per-run `compose.override.yml` rather than via
+  the consumer's secret-file exec path.
+
+### 33.1 Schema
+
+`Coastfile.shared_service_groups` accepts `[secrets.<name>]` blocks
+with the same shape as the regular Coastfile:
+
+```toml
+[shared_services.postgres]
+image = "postgres:16-alpine"
+ports = [5432]
+env = { POSTGRES_USER = "postgres" }
+
+[secrets.pg_password]
+extractor = "env"
+inject = "env:POSTGRES_PASSWORD"
+var = "MY_PG_PASSWORD"
+
+[secrets.jwt]
+extractor = "env"
+inject = "file:/run/secrets/jwt"
+var = "MY_JWT_VALUE"
+```
+
+Inheritance via `extends` / `includes` follows the same merge
+policy as `[shared_services.*]` (whole-entry replace by name); the
+`[unset]` block accepts a `secrets = ["..."]` list to drop
+inherited entries. See parser tests in
+[`coast-ssg/src/coastfile/mod.rs`](src/coastfile/mod.rs).
+
+### 33.2 Build pipeline
+
+`coast ssg build` runs an `Extracting secrets` step between
+`Synthesize compose` and the per-image pull steps. Skipped
+silently when no `[secrets]` block is present (no progress event,
+no step number consumed) so existing fixtures' progress sequence
+stays unchanged.
+
+For each declared secret:
+
+1. `coast_secrets::extractor::ExtractorRegistry::extract` runs
+   the user's chosen extractor (env / file / command / keychain /
+   1password).
+2. Bytes land encrypted in
+   [`~/.coast/keystore.db`](../coast-secrets/src/keystore.rs)
+   under `coast_image = "ssg:<project>"` — a sentinel namespace
+   that can never collide with a regular instance image (`:` is
+   illegal in a project name, validated upstream).
+3. Per-secret `BuildProgressEvent::item` events stream out so the
+   SPA's progress checklist renders one row per extractor.
+4. Existing rows for `ssg:<project>` are deleted before
+   extraction starts → rebuild semantics: re-prompts on every
+   build, but the keystore is always coherent with the most
+   recent build.
+
+The build artifact's `manifest.json` carries a `secret_injects`
+array — a manifest-of-shape only (`{secret_name, inject_type,
+inject_target, services}`); values stay encrypted in the keystore.
+The hash inputs in `compute_coastfile_hash` fold in
+`secrets[].extractor`, `secrets[].inject`, params, and ttl so a
+Coastfile edit that only changes the secret config still produces
+a fresh `build_id`.
+
+### 33.3 Run pipeline
+
+`coast ssg run` runs a `Materializing secrets` step (step 6 of 7,
+see [`coast-ssg/src/runtime/lifecycle.rs`](src/runtime/lifecycle.rs))
+between `Loading cached images` and `Starting inner services`.
+Skipped silently when `manifest.secret_injects` is empty; the SPA
+plan always advertises 7 steps so the checklist renders stably.
+
+The materialize step
+([`coast-ssg/src/runtime/secrets_inject.rs`](src/runtime/secrets_inject.rs)):
+
+1. Opens the keystore and lists rows for `ssg:<project>`.
+2. For each `manifest.secret_injects` entry, looks up the
+   matching keystore row by `secret_name`.
+3. **`env:`** injects → accumulates `{NAME: value}` per service
+   in a `BTreeMap<&str, ServiceOverlay>`.
+4. **`file:`** injects → writes decrypted bytes to
+   `~/.coast/ssg/runs/<project>/secrets/<basename>` with mode
+   `0600`, then queues a read-only volume entry pointing at the
+   inner path (`/coast-runtime/secrets/<basename>:<inject_target>:ro`).
+5. Renders a deterministic YAML override file:
+
+   ```yaml
+   # Generated by coast-ssg at run time. Do not hand-edit.
+   services:
+     postgres:
+       environment:
+         POSTGRES_PASSWORD: "<decrypted>"
+       volumes:
+         - "/coast-runtime/secrets/jwt:/run/secrets/jwt:ro"
+   ```
+
+6. Writes the override to
+   `~/.coast/ssg/runs/<project>/compose.override.yml`.
+
+The per-run scratch dir is bind-mounted into the outer DinD at
+`/coast-runtime/` (added to `create_ssg_container`'s bind list
+alongside the immutable `/coast-artifact/`). The compose argv
+becomes:
+
+```
+docker compose -f /coast-artifact/compose.yml \
+               -f /coast-runtime/compose.override.yml \
+               -p <project>-ssg up -d --remove-orphans
+```
+
+The argv builder + `SsgDockerOps::inner_compose_up` trait method +
+Bollard impl + Mock all take an `extra_compose_files: &[String]`
+list. `start_ssg` re-runs `materialize_secrets` so the override
+file gets refreshed on every start (a `secrets clear` between stop
+and start takes effect).
+
+### 33.4 Lifecycle: keystore is never auto-purged
+
+`coast ssg rm` and `coast ssg rm --with-data` deliberately do NOT
+touch the keystore. This is by user-explicit design preference:
+"removing an SSG" is about wiping containers and data volumes,
+not about destroying credentials the user may have laboriously
+extracted from a keychain or 1Password. After `rm --with-data` the
+build pointer + container + data volumes are all gone; the
+keystore rows persist.
+
+The only verb that drops SSG keystore rows is `coast ssg secrets
+clear`:
+
+- CLI: `coast ssg secrets clear` (project resolved from
+  `[coast].name` of the consumer Coastfile in cwd or
+  `--working-dir`).
+- HTTP: `POST /api/v1/ssg/secrets/clear` with body
+  `{"project":"..."}`.
+- Daemon handler:
+  [`coast-daemon/src/handlers/ssg/mod.rs::handle_secrets_clear`](../coast-daemon/src/handlers/ssg/mod.rs)
+  calls `keystore.delete_secrets_for_image("ssg:<project>")`.
+- Idempotent: running it twice in a row reports `Cleared 2`,
+  then `Cleared 0`.
+
+### 33.5 Doctor
+
+`coast ssg doctor` includes a Phase 33 finding per declared
+secret:
+
+- `ok` when the manifest declares a secret AND the keystore has a
+  matching row for `ssg:<project>`.
+- `info` ("Declared in Coastfile but missing from the keystore.
+  Run `coast ssg build` to re-extract...") when the manifest
+  declares a secret but the keystore row is gone.
+
+The pure planner is
+[`coast_ssg::doctor::evaluate_secrets_doctor`](src/doctor.rs).
+The daemon-side adapter
+([`coast-daemon/src/handlers/ssg/doctor.rs`](../coast-daemon/src/handlers/ssg/doctor.rs))
+opens the keystore and supplies the set of stored secret names.
+
+### 33.6 SPA
+
+[`coast-guard/src/components/ssg/SsgSecretsTab.tsx`](../coast-guard/src/components/ssg/SsgSecretsTab.tsx)
+renders the manifest's `secret_injects` array as a table with
+columns `(name, inject type, target, services)`. Values are never
+sent to the SPA. A `Clear secrets` button calls
+`POST /api/v1/ssg/secrets/clear` after a confirmation modal. The
+existing `env_keys` view remains for plain `env = {}` keys
+declared on shared services (these are NOT extracted secrets;
+they're env vars set directly in the Coastfile).
+
+### 33.7 Composition with consumer-side `[secrets.*]`
+
+Both layers run independently:
+
+| Layer | Where declared | Where extracted | Where injected |
+|---|---|---|---|
+| Consumer-side | `Coastfile` of the consumer project | `coast build` time, into `coast_image = "<project_image>"` | Inside the consumer's coast DinD via `handlers/run/secrets.rs::write_secret_files_via_exec` + `compose_rewrite::ensure_secret_mounts` |
+| SSG-side | `Coastfile.shared_service_groups` | `coast ssg build` time, into `coast_image = "ssg:<project>"` | Inside the SSG's outer DinD via per-run `compose.override.yml` layered onto the inner compose stack |
+
+There is no overlap in keystore namespaces (`<project>` vs
+`ssg:<project>`), no overlap in injection targets (consumer's
+inner services vs SSG's inner services), and no shared run-time
+state. The two layers can be used together freely.
+
+### 33.8 Why a `compose.override.yml` instead of `docker exec`?
+
+The consumer-side `file:` inject pipeline uses
+`docker exec <coast> sh -c 'mkdir -p ... && cat > ...'` to
+materialize secret bytes inside the consumer's coast DinD before
+compose-up. We chose a different mechanism for the SSG side:
+
+- The SSG runs a single shared DinD. Bind-mounting a host scratch
+  dir at `/coast-runtime/` is much cheaper than a privileged exec
+  for every secret.
+- The override file is a real compose feature (`-f` layering); the
+  inner compose stack handles the env/volume merge natively. No
+  custom rewrite logic in `compose_synth`.
+- Keeping the artifact dir (`/coast-artifact/`) read-only is an
+  invariant of the build pipeline. The override lives outside the
+  artifact dir so build artifacts stay byte-stable.
+
+### 33.9 File map
+
+- [`coast-ssg/src/coastfile/raw_types.rs`](src/coastfile/raw_types.rs) — `RawSsgSecretConfig`
+- [`coast-ssg/src/coastfile/mod.rs`](src/coastfile/mod.rs) — schema validation + merge + serialize
+- [`coast-ssg/src/build/artifact.rs`](src/build/artifact.rs) — `SsgManifestSecretInject` + hash inputs
+- [`coast-ssg/src/build/secrets.rs`](src/build/secrets.rs) — `extract_ssg_secrets` + keystore namespace
+- [`coast-ssg/src/runtime/secrets_inject.rs`](src/runtime/secrets_inject.rs) — `materialize_secrets` + override renderer
+- [`coast-ssg/src/runtime/lifecycle.rs`](src/runtime/lifecycle.rs) — wires the run-time step + bind mount
+- [`coast-ssg/src/docker_ops.rs`](src/docker_ops.rs) — `inner_compose_up` extra-files API
+- [`coast-ssg/src/doctor.rs`](src/doctor.rs) — `evaluate_secrets_doctor`
+- [`coast-core/src/protocol/ssg.rs`](../coast-core/src/protocol/ssg.rs) — `SsgAction::SecretsClear`
+- [`coast-daemon/src/handlers/ssg/mod.rs`](../coast-daemon/src/handlers/ssg/mod.rs) — `handle_secrets_clear`
+- [`coast-daemon/src/handlers/ssg/doctor.rs`](../coast-daemon/src/handlers/ssg/doctor.rs) — keystore lookup adapter
+- [`coast-daemon/src/api/query/ssg.rs`](../coast-daemon/src/api/query/ssg.rs) — `POST /ssg/secrets/clear`
+- [`coast-cli/src/commands/ssg.rs`](../coast-cli/src/commands/ssg.rs) — `coast ssg secrets clear`
+- [`coast-guard/src/components/ssg/SsgSecretsTab.tsx`](../coast-guard/src/components/ssg/SsgSecretsTab.tsx) — UI
+- Integration tests: `integrated-examples/test_ssg_secrets_*.sh` (5 new)

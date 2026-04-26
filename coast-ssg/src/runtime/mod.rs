@@ -42,5 +42,12 @@ pub mod host_volume_import;
 // read it and prefer the pinned build over `latest`.
 pub mod pinning;
 
+// ssg-phase-33: run-time secret materialization. Reads decrypted
+// secret values from the keystore (built by `build::secrets`) and
+// renders a per-run `compose.override.yml` that the lifecycle path
+// layers on top of `/coast-artifact/compose.yml`. See
+// `DESIGN.md §33`.
+pub mod secrets_inject;
+
 pub use port_checkout::{plan_checkouts, SsgCheckoutPlan, SsgCheckoutTarget};
 pub use ports::{allocate_service_ports, SsgServicePortPlan};

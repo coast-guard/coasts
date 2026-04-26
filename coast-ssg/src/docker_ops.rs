@@ -132,12 +132,20 @@ pub trait SsgDockerOps: Send + Sync {
 
     // --- inner docker compose ---
 
-    /// Run `docker compose -f <compose_path> -p <project> up -d --remove-orphans`
+    /// Run `docker compose -f <compose_path> [-f <override>...] -p <project> up -d --remove-orphans`
     /// inside `container_id`.
+    ///
+    /// `extra_compose_files` is an optional list of additional
+    /// compose files to layer on top of the base `compose_path` —
+    /// each element becomes another `-f <path>` argv pair, in
+    /// order. Phase 33 uses this to inject the per-run
+    /// `compose.override.yml` carrying decrypted secret env-vars
+    /// and bind-mounts. Empty slice = old behaviour (single `-f`).
     async fn inner_compose_up(
         &self,
         container_id: &str,
         compose_path: &str,
+        extra_compose_files: &[String],
         project: &str,
     ) -> Result<()>;
 
@@ -203,19 +211,32 @@ pub trait SsgDockerOps: Send + Sync {
 // the real Bollard impl and the lifecycle orchestrators. Extracting
 // them makes the argv format unit-testable without any Docker client.
 
-/// `docker compose -f <path> -p <project> up -d --remove-orphans`.
-pub fn build_inner_compose_up_argv(compose_path: &str, project: &str) -> Vec<String> {
-    vec![
-        "docker".to_string(),
-        "compose".to_string(),
-        "-f".to_string(),
-        compose_path.to_string(),
-        "-p".to_string(),
-        project.to_string(),
-        "up".to_string(),
-        "-d".to_string(),
-        "--remove-orphans".to_string(),
-    ]
+/// `docker compose -f <path> [-f <extra>...] -p <project> up -d --remove-orphans`.
+///
+/// `extras` is appended as additional `-f <path>` argv pairs in
+/// the supplied order, so callers can layer override files on top
+/// of the base compose file. Empty `extras` reproduces the legacy
+/// single-`-f` argv.
+pub fn build_inner_compose_up_argv(
+    compose_path: &str,
+    extras: &[String],
+    project: &str,
+) -> Vec<String> {
+    let mut argv = Vec::with_capacity(8 + 2 * extras.len());
+    argv.push("docker".to_string());
+    argv.push("compose".to_string());
+    argv.push("-f".to_string());
+    argv.push(compose_path.to_string());
+    for extra in extras {
+        argv.push("-f".to_string());
+        argv.push(extra.clone());
+    }
+    argv.push("-p".to_string());
+    argv.push(project.to_string());
+    argv.push("up".to_string());
+    argv.push("-d".to_string());
+    argv.push("--remove-orphans".to_string());
+    argv
 }
 
 /// `docker compose -f <path> -p <project> down`.
@@ -470,9 +491,10 @@ impl SsgDockerOps for BollardSsgDockerOps {
         &self,
         container_id: &str,
         compose_path: &str,
+        extra_compose_files: &[String],
         project: &str,
     ) -> Result<()> {
-        let argv = build_inner_compose_up_argv(compose_path, project);
+        let argv = build_inner_compose_up_argv(compose_path, extra_compose_files, project);
         let out = self.exec_inner(container_id, &argv).await?;
         if !out.success() {
             return Err(CoastError::docker(format!(
@@ -672,6 +694,7 @@ mod mock {
         InnerComposeUp {
             container_id: String,
             compose_path: String,
+            extra_compose_files: Vec<String>,
             project: String,
         },
         InnerComposeDown {
@@ -939,11 +962,13 @@ mod mock {
             &self,
             cid: &str,
             compose_path: &str,
+            extra_compose_files: &[String],
             project: &str,
         ) -> Result<()> {
             self.log.lock().unwrap().push(MockCall::InnerComposeUp {
                 container_id: cid.to_string(),
                 compose_path: compose_path.to_string(),
+                extra_compose_files: extra_compose_files.to_vec(),
                 project: project.to_string(),
             });
             self.compose_up_results
@@ -1239,7 +1264,7 @@ mod tests {
     #[test]
     fn build_inner_compose_up_argv_is_stable() {
         assert_eq!(
-            build_inner_compose_up_argv("/coast-artifact/compose.yml", "coast-ssg"),
+            build_inner_compose_up_argv("/coast-artifact/compose.yml", &[], "coast-ssg"),
             vec![
                 "docker",
                 "compose",
@@ -1247,6 +1272,36 @@ mod tests {
                 "/coast-artifact/compose.yml",
                 "-p",
                 "coast-ssg",
+                "up",
+                "-d",
+                "--remove-orphans",
+            ]
+        );
+    }
+
+    #[test]
+    fn build_inner_compose_up_argv_layers_extra_files_in_order() {
+        // Phase 33: per-run override file gets layered on top of
+        // the immutable artifact compose file via additional `-f`
+        // pairs. Multiple extras flow through in order so callers
+        // can stack overrides if needed.
+        let extras = vec![
+            "/coast-runtime/compose.override.yml".to_string(),
+            "/coast-runtime/compose.override2.yml".to_string(),
+        ];
+        assert_eq!(
+            build_inner_compose_up_argv("/coast-artifact/compose.yml", &extras, "cg-ssg"),
+            vec![
+                "docker",
+                "compose",
+                "-f",
+                "/coast-artifact/compose.yml",
+                "-f",
+                "/coast-runtime/compose.override.yml",
+                "-f",
+                "/coast-runtime/compose.override2.yml",
+                "-p",
+                "cg-ssg",
                 "up",
                 "-d",
                 "--remove-orphans",
@@ -1475,7 +1530,7 @@ mod tests {
     #[tokio::test]
     async fn mock_inner_compose_up_records_args() {
         let mock = MockSsgDockerOps::new();
-        mock.inner_compose_up("cid", "/c.yml", "coast-ssg")
+        mock.inner_compose_up("cid", "/c.yml", &[], "coast-ssg")
             .await
             .unwrap();
         assert_eq!(
@@ -1483,6 +1538,27 @@ mod tests {
             vec![MockCall::InnerComposeUp {
                 container_id: "cid".to_string(),
                 compose_path: "/c.yml".to_string(),
+                extra_compose_files: vec![],
+                project: "coast-ssg".to_string(),
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn mock_inner_compose_up_records_extra_files() {
+        // Phase 33: when the run path layers a per-run override
+        // file, the extras list flows through unchanged.
+        let mock = MockSsgDockerOps::new();
+        let extras = vec!["/coast-runtime/compose.override.yml".to_string()];
+        mock.inner_compose_up("cid", "/c.yml", &extras, "coast-ssg")
+            .await
+            .unwrap();
+        assert_eq!(
+            mock.calls(),
+            vec![MockCall::InnerComposeUp {
+                container_id: "cid".to_string(),
+                compose_path: "/c.yml".to_string(),
+                extra_compose_files: extras,
                 project: "coast-ssg".to_string(),
             }]
         );

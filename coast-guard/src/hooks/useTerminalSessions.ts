@@ -122,6 +122,41 @@ export function buildServiceExecTerminalConfig(
   };
 }
 
+/**
+ * SSG flavor of {@link buildServiceExecTerminalConfig}: routes
+ * the persistent-terminal scaffolding at
+ * `/api/v1/ssg/services/{exec,sessions}` with `(project, service)`
+ * keying. Reuses the same WS protocol and session pool as the
+ * per-instance variant — only the URL prefix and the configKey
+ * namespace differ. Sessions are recovered on reconnect via the
+ * usual `?session_id=<id>` param. There's no upload-into-service
+ * flow for SSG today (the SSG outer DinD has no `/workspace`
+ * bind); `uploadUrl` is intentionally null.
+ */
+export function buildSsgServiceExecTerminalConfig(
+  project: string,
+  service: string,
+): PersistentTerminalConfig {
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const host = window.location.host;
+  const ep = encodeURIComponent(project);
+  const es = encodeURIComponent(service);
+  return {
+    listSessionsUrl: `/api/v1/ssg/services/sessions?project=${ep}&service=${es}`,
+    // Sessions are reaped via the shared `/api/v1/service/sessions`
+    // delete handler since both pools live in `service_exec_sessions`.
+    deleteSessionUrl: (id) => `/api/v1/service/sessions?id=${encodeURIComponent(id)}`,
+    wsUrl: (sid) => {
+      let url = `${proto}//${host}/api/v1/ssg/services/exec?project=${ep}&service=${es}`;
+      if (sid != null) url += `&session_id=${encodeURIComponent(sid)}`;
+      return url;
+    },
+    uploadUrl: null,
+    uploadMeta: null,
+    configKey: `ssg-service:${project}:${service}`,
+  };
+}
+
 export function buildHostServiceExecTerminalConfig(
   project: string,
   service: string,

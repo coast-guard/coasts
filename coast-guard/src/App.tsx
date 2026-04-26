@@ -16,6 +16,9 @@ import HostImageDetailPage from './pages/HostImageDetailPage';
 import BuildDetailPage from './pages/BuildDetailPage';
 import SsgBuildDetailPage from './pages/SsgBuildDetailPage';
 import SsgLocalPage from './pages/SsgLocalPage';
+import SsgImageDetailPage from './pages/SsgImageDetailPage';
+import SsgVolumeDetailPage from './pages/SsgVolumeDetailPage';
+import SsgServiceDetailPage from './pages/SsgServiceDetailPage';
 import BareServiceDetailPage from './pages/BareServiceDetailPage';
 import RemoteDetailPage from './pages/RemoteDetailPage';
 import RemoteInstanceDetailPage from './pages/RemoteInstanceDetailPage';
@@ -43,6 +46,10 @@ const router = createHashRouter([
       { path: 'project/:project/builds/:buildId', element: <BuildDetailPage /> },
       { path: 'project/:project/ssg-builds/:buildId', element: <SsgBuildDetailPage /> },
       { path: 'project/:project/ssg/local', element: <SsgLocalPage /> },
+      { path: 'project/:project/ssg/local/images/:imageId', element: <SsgImageDetailPage /> },
+      { path: 'project/:project/ssg/local/volumes/:volumeName', element: <SsgVolumeDetailPage /> },
+      { path: 'project/:project/ssg/local/services/:service/:tab', element: <SsgServiceDetailPage /> },
+      { path: 'project/:project/ssg/local/services/:service', element: <SsgServiceDetailPage /> },
       { path: 'project/:project/ssg/local/:tab', element: <SsgLocalPage /> },
       { path: 'project/:project/remotes/:remote/:tab', element: <RemoteDetailPage /> },
       { path: 'project/:project/remotes/:remote', element: <RemoteDetailPage /> },

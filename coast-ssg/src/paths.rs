@@ -43,6 +43,22 @@ pub fn ssg_build_dir(build_id: &str) -> Result<PathBuf> {
     Ok(ssg_builds_dir()?.join(build_id))
 }
 
+/// `~/.coast/ssg/runs/`.
+///
+/// Phase 33: per-project scratch dir for the run-time
+/// `compose.override.yml` and decrypted file-secret payloads.
+/// Bind-mounted into the outer DinD at
+/// [`crate::runtime::lifecycle::INNER_RUNTIME_DIR`]. Held outside
+/// `builds/` to keep the build artifact dir read-only.
+pub fn ssg_runs_dir() -> Result<PathBuf> {
+    Ok(ssg_home()?.join("runs"))
+}
+
+/// `~/.coast/ssg/runs/{project}/`.
+pub fn ssg_run_dir(project: &str) -> Result<PathBuf> {
+    Ok(ssg_runs_dir()?.join(project))
+}
+
 /// Read the `latest` symlink to get the active build_id, if any.
 ///
 /// Returns `None` when the symlink is missing, broken, or the target

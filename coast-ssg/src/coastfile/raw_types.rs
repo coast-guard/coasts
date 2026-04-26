@@ -24,9 +24,20 @@ pub(super) struct RawSsgCoastfile {
     pub ssg: RawSsgSection,
     #[serde(default)]
     pub shared_services: HashMap<String, RawSsgSharedServiceConfig>,
+    /// Phase 33: `[secrets.<name>]` blocks. Each entry mirrors the
+    /// regular Coastfile's `[secrets.<name>]` shape — extractor +
+    /// inject + extractor-specific params (flattened). The SSG
+    /// build pipeline runs the same `coast_secrets::extractor`
+    /// registry against these, encrypts results into the
+    /// keystore under `coast_image = "ssg:<project>"`, and the
+    /// run pipeline decrypts + injects via per-run
+    /// `compose.override.yml`. See `DESIGN.md §33`.
+    #[serde(default)]
+    pub secrets: HashMap<String, RawSsgSecretConfig>,
     /// Phase 17: `[unset]` block (applied after inheritance merge).
-    /// Scoped to `shared_services` — the only named collection in
-    /// the SSG schema. See `DESIGN.md §17 SETTLED #42`.
+    /// Scoped to `shared_services` and `secrets` — the only named
+    /// collections in the SSG schema. See `DESIGN.md §17 SETTLED
+    /// #42` and `§33`.
     #[serde(default)]
     pub unset: Option<RawSsgUnsetConfig>,
 }
@@ -57,10 +68,10 @@ pub(super) struct RawSsgSection {
     pub project: Option<String>,
 }
 
-/// `[unset]` block — list named `shared_services` entries to drop
-/// after merging parents/includes. Only applied when the current
-/// Coastfile uses `extends` or `includes`; standalone files never
-/// reach the unset pass. Mirrors
+/// `[unset]` block — list named `shared_services` and/or `secrets`
+/// entries to drop after merging parents/includes. Only applied
+/// when the current Coastfile uses `extends` or `includes`;
+/// standalone files never reach the unset pass. Mirrors
 /// [`coast_core::coastfile::raw_types::RawUnsetConfig`] (narrow
 /// version for the SSG schema).
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -68,6 +79,33 @@ pub(super) struct RawSsgSection {
 pub(super) struct RawSsgUnsetConfig {
     #[serde(default)]
     pub shared_services: Vec<String>,
+    /// Phase 33: drop `[secrets.<name>]` entries inherited from a
+    /// parent / fragment.
+    #[serde(default)]
+    pub secrets: Vec<String>,
+}
+
+/// A single `[secrets.<name>]` entry in the SSG Coastfile.
+///
+/// Identical shape to [`coast_core::coastfile::raw_types::RawSecretConfig`]
+/// (same `extractor` / `inject` / `ttl` + flattened extractor
+/// params). Defined here in the SSG crate rather than re-exporting
+/// from `coast-core` because the regular Coastfile module keeps
+/// that struct `pub(super)` on purpose. `coast-secrets` consumes
+/// the validated [`coast_core::types::SecretConfig`], so the two
+/// raw shapes never need to share a type.
+///
+/// Note: no `#[serde(deny_unknown_fields)]` here — `#[serde(flatten)]`
+/// on `params` is incompatible with `deny_unknown_fields`. The
+/// regular Coastfile makes the same trade-off.
+#[derive(Debug, Clone, Deserialize)]
+pub(super) struct RawSsgSecretConfig {
+    pub extractor: String,
+    pub inject: String,
+    #[serde(default)]
+    pub ttl: Option<String>,
+    #[serde(flatten)]
+    pub params: HashMap<String, toml::Value>,
 }
 
 /// A single `[shared_services.<name>]` entry.

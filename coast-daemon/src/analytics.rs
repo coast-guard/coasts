@@ -526,6 +526,7 @@ pub fn request_command_name(req: &Request) -> String {
             SsgAction::ImportHostVolume { .. } => "ssg/import-host-volume",
             SsgAction::Ls => "ssg/ls",
             SsgAction::BuildsLs => "ssg/builds-ls",
+            SsgAction::SecretsClear => "ssg/secrets-clear",
         }
         .into(),
     }

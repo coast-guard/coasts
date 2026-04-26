@@ -2866,6 +2866,60 @@ mod tests {
     }
 
     // -------------------------------------------------------------------
+    // Phase 33: SSG secrets clear endpoint
+    // -------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_ssg_secrets_clear_missing_project_returns_400() {
+        let fixture = SsgEndpointFixture::new("secrets-clear-missing-project");
+        let response = fixture
+            .router()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/ssg/secrets/clear")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::json!({ "project": "" }).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_ssg_secrets_clear_returns_ok_with_no_keystore() {
+        // Fresh test fixture has no keystore.db — the handler must
+        // treat that as a no-op success (semantically "secrets are
+        // already cleared because there's nothing to clear").
+        let fixture = SsgEndpointFixture::new("secrets-clear-no-keystore");
+        let response = fixture
+            .router()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/ssg/secrets/clear")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "project": &fixture.project }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let msg = body.get("message").and_then(|m| m.as_str()).unwrap_or("");
+        assert!(
+            msg.contains("already cleared") || msg.contains("Cleared"),
+            "expected reassuring message; got: {msg}"
+        );
+    }
+
+    // -------------------------------------------------------------------
     // SSG Local Page endpoints: images, volumes, ws-terminal, ws-logs,
     // ws-stats. Real-Docker happy paths require `make verify`-style
     // integration; these tests focus on validation + 404/409 paths.

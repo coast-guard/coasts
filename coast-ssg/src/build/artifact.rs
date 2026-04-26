@@ -34,6 +34,36 @@ pub struct SsgManifest {
     pub built_at: DateTime<Utc>,
     pub coastfile_hash: String,
     pub services: Vec<SsgManifestService>,
+    /// Phase 33: declared `[secrets.<name>]` injection targets.
+    /// Empty when the Coastfile has no `[secrets]` block. Drives
+    /// the run-time `materialize_secrets` overlay path. Values
+    /// themselves are NOT stored here — they live encrypted in
+    /// the keystore. This list is a manifest-of-shape only:
+    /// `(secret_name, inject_type, inject_target, services)`.
+    /// `serde(default)` keeps older manifests forward-compatible.
+    /// See `DESIGN.md §33`.
+    #[serde(default)]
+    pub secret_injects: Vec<SsgManifestSecretInject>,
+}
+
+/// Per-secret injection record captured in the manifest.
+///
+/// `services` lists the inner compose service names the secret
+/// must be injected into. v1 always equals every service in the
+/// manifest (mirrors the existing shared-service inject contract);
+/// a future refinement could scope per-service via syntax like
+/// `inject = "env:postgres:NAME"`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SsgManifestSecretInject {
+    pub secret_name: String,
+    /// `"env"` or `"file"` — string form so old manifests stay
+    /// forward-compatible across enum changes.
+    pub inject_type: String,
+    /// Env var name (for `inject_type = "env"`) or absolute
+    /// container path (for `inject_type = "file"`).
+    pub inject_target: String,
+    /// Inner compose service names that receive the inject.
+    pub services: Vec<String>,
 }
 
 /// Per-service snapshot captured in the manifest.
@@ -115,6 +145,37 @@ fn compute_coastfile_hash(raw: &str, cf: &SsgCoastfile) -> String {
             format_volume_entry(entry).hash(&mut hasher);
         }
         svc.auto_create_db.hash(&mut hasher);
+    }
+    // Phase 33: fold `[secrets.*]` into the hash so a Coastfile
+    // edit that only changes the secret config (extractor, inject
+    // target, params, ttl) still produces a fresh build_id. Param
+    // VALUES are hashed too — for the `extractor = "env"` shape
+    // the param key like `var = "MY_PG_PASSWORD"` selects WHICH
+    // env var is consulted, so its identity must invalidate the
+    // build cache. The actual extracted secret value never reaches
+    // this hash; only the Coastfile's textual config.
+    let mut secret_entries: Vec<&coast_core::types::SecretConfig> = cf.secrets.iter().collect();
+    secret_entries.sort_by(|a, b| a.name.cmp(&b.name));
+    for sec in secret_entries {
+        sec.name.hash(&mut hasher);
+        sec.extractor.hash(&mut hasher);
+        match &sec.inject {
+            coast_core::types::InjectType::Env(name) => {
+                "env".hash(&mut hasher);
+                name.hash(&mut hasher);
+            }
+            coast_core::types::InjectType::File(path) => {
+                "file".hash(&mut hasher);
+                path.display().to_string().hash(&mut hasher);
+            }
+        }
+        sec.ttl.hash(&mut hasher);
+        let mut params: Vec<(&String, &String)> = sec.params.iter().collect();
+        params.sort_by_key(|(k, _)| k.as_str());
+        for (k, v) in params {
+            k.hash(&mut hasher);
+            v.hash(&mut hasher);
+        }
     }
     format!("{:x}", hasher.finish())
 }
@@ -313,11 +374,38 @@ pub fn build_manifest(build_id: &str, coastfile_hash: &str, cf: &SsgCoastfile) -
     let mut services: Vec<SsgManifestService> =
         cf.services.iter().map(SsgManifestService::from).collect();
     services.sort_by(|a, b| a.name.cmp(&b.name));
+
+    // Phase 33: capture secret-injection shape so the run-time
+    // overlay path doesn't have to re-parse the Coastfile. Names
+    // and inject targets only — values stay encrypted in the
+    // keystore.
+    let all_service_names: Vec<String> = services.iter().map(|s| s.name.clone()).collect();
+    let mut secret_injects: Vec<SsgManifestSecretInject> = cf
+        .secrets
+        .iter()
+        .map(|sec| {
+            let (inject_type, inject_target) = match &sec.inject {
+                coast_core::types::InjectType::Env(name) => ("env".to_string(), name.clone()),
+                coast_core::types::InjectType::File(path) => {
+                    ("file".to_string(), path.display().to_string())
+                }
+            };
+            SsgManifestSecretInject {
+                secret_name: sec.name.clone(),
+                inject_type,
+                inject_target,
+                services: all_service_names.clone(),
+            }
+        })
+        .collect();
+    secret_injects.sort_by(|a, b| a.secret_name.cmp(&b.secret_name));
+
     SsgManifest {
         build_id: build_id.to_string(),
         built_at: Utc::now(),
         coastfile_hash: coastfile_hash.to_string(),
         services,
+        secret_injects,
     }
 }
 
@@ -394,6 +482,114 @@ image = "redis:7"
         assert_eq!(back.services.len(), 1);
         assert_eq!(back.services[0].name, "postgres");
         assert_eq!(back.services[0].ports, vec![5432]);
+        // Phase 33: secret_injects defaults to empty when no
+        // [secrets] block is present.
+        assert!(back.secret_injects.is_empty());
+    }
+
+    #[test]
+    fn manifest_captures_secret_injects_when_secrets_declared() {
+        let cf = SsgCoastfile::parse(
+            r#"
+[shared_services.postgres]
+image = "postgres:16"
+ports = [5432]
+
+[shared_services.redis]
+image = "redis:7"
+
+[secrets.pg_password]
+extractor = "env"
+inject = "env:POSTGRES_PASSWORD"
+var = "MY_PG"
+
+[secrets.api_jwt]
+extractor = "file"
+path = "/etc/secrets/jwt"
+inject = "file:/run/secrets/jwt"
+"#,
+            Path::new("/tmp"),
+        )
+        .unwrap();
+        let manifest = build_manifest("xyz_20260101", "xyz", &cf);
+
+        // Sorted alphabetically by name.
+        assert_eq!(manifest.secret_injects.len(), 2);
+        assert_eq!(manifest.secret_injects[0].secret_name, "api_jwt");
+        assert_eq!(manifest.secret_injects[0].inject_type, "file");
+        assert_eq!(manifest.secret_injects[0].inject_target, "/run/secrets/jwt");
+        assert_eq!(
+            manifest.secret_injects[0].services,
+            vec!["postgres".to_string(), "redis".to_string()]
+        );
+        assert_eq!(manifest.secret_injects[1].secret_name, "pg_password");
+        assert_eq!(manifest.secret_injects[1].inject_type, "env");
+        assert_eq!(
+            manifest.secret_injects[1].inject_target,
+            "POSTGRES_PASSWORD"
+        );
+    }
+
+    #[test]
+    fn manifest_secret_injects_round_trip_through_json() {
+        let cf = SsgCoastfile::parse(
+            r#"
+[shared_services.postgres]
+image = "postgres:16"
+
+[secrets.pg]
+extractor = "env"
+inject = "env:POSTGRES_PASSWORD"
+var = "PG"
+"#,
+            Path::new("/tmp"),
+        )
+        .unwrap();
+        let manifest = build_manifest("xyz_20260101", "xyz", &cf);
+        let json = serde_json::to_string(&manifest).unwrap();
+        let back: SsgManifest = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.secret_injects.len(), 1);
+        assert_eq!(back.secret_injects[0].secret_name, "pg");
+    }
+
+    #[test]
+    fn build_id_changes_when_secret_block_changes() {
+        let cf_a = SsgCoastfile::parse(
+            r#"
+[shared_services.postgres]
+image = "postgres:16"
+
+[secrets.pg]
+extractor = "env"
+inject = "env:POSTGRES_PASSWORD"
+var = "ONE"
+"#,
+            Path::new("/tmp"),
+        )
+        .unwrap();
+        let cf_b = SsgCoastfile::parse(
+            r#"
+[shared_services.postgres]
+image = "postgres:16"
+
+[secrets.pg]
+extractor = "env"
+inject = "env:POSTGRES_PASSWORD"
+var = "TWO"
+"#,
+            Path::new("/tmp"),
+        )
+        .unwrap();
+        let now = DateTime::<Utc>::from_timestamp(1_700_000_000, 0).unwrap();
+        // Same `raw` argument but different parsed param values → must
+        // produce different build ids since the hash folds in
+        // `cf.secrets`.
+        let a = compute_build_id("same", &cf_a, now);
+        let b = compute_build_id("same", &cf_b, now);
+        assert_ne!(
+            a, b,
+            "build_id must change when a secret's extractor params change"
+        );
     }
 
     #[test]
@@ -482,6 +678,7 @@ env = { POSTGRES_USER = "coast", POSTGRES_PASSWORD = "secret" }
                         .unwrap(),
                     coastfile_hash: format!("h{i}"),
                     services: vec![],
+                    secret_injects: vec![],
                 };
                 std::fs::write(
                     dir.join("manifest.json"),
@@ -563,6 +760,7 @@ env = { POSTGRES_USER = "coast", POSTGRES_PASSWORD = "secret" }
                         .unwrap(),
                     coastfile_hash: format!("h{i}"),
                     services: vec![],
+                    secret_injects: vec![],
                 };
                 std::fs::write(
                     dir.join("manifest.json"),
@@ -603,6 +801,7 @@ env = { POSTGRES_USER = "coast", POSTGRES_PASSWORD = "secret" }
                         .unwrap(),
                     coastfile_hash: format!("h{i}"),
                     services: vec![],
+                    secret_injects: vec![],
                 };
                 std::fs::write(
                     dir.join("manifest.json"),

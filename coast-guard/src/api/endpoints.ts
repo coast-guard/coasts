@@ -683,6 +683,19 @@ export const api = {
   },
 
   /**
+   * Inspect a single image inside the project's SSG outer DinD.
+   * Returns the full `docker inspect` JSON plus a list of
+   * containers using this image. Same response shape as
+   * {@link inspectImage} for instance-level images, so the SPA's
+   * `ImageDetailPage` can be reused without modification.
+   */
+  ssgImageInspect(project: string, image: string): Promise<ImageInspectResponse> {
+    return get<ImageInspectResponse>(
+      `/ssg/images/inspect?project=${encodeURIComponent(project)}&image=${encodeURIComponent(image)}`,
+    );
+  },
+
+  /**
    * List named volumes inside the project's SSG outer DinD (i.e.,
    * the inner Docker daemon's volumes: cg_postgres_data, etc.).
    * Backs the SSG Volumes tab.
@@ -690,6 +703,31 @@ export const api = {
   ssgVolumes(project: string): Promise<SsgVolumesHttpResponse> {
     return get<SsgVolumesHttpResponse>(
       `/ssg/volumes?project=${encodeURIComponent(project)}`,
+    );
+  },
+
+  /**
+   * Inspect a single named volume inside the project's SSG outer
+   * DinD. Returns `docker volume inspect` JSON, the containers
+   * using it, and the matching `[shared_services.<svc>]` Coastfile
+   * declaration if any. Same shape as {@link inspectVolume}.
+   */
+  ssgVolumeInspect(project: string, volume: string): Promise<VolumeInspectResponse> {
+    return get<VolumeInspectResponse>(
+      `/ssg/volumes/inspect?project=${encodeURIComponent(project)}&volume=${encodeURIComponent(volume)}`,
+    );
+  },
+
+  /**
+   * Inspect a single inner compose service running inside the
+   * SSG outer DinD. Returns `docker inspect <inner_container>`
+   * JSON. Same `ServiceInspectResponse` shape as
+   * {@link serviceInspect} so the SPA's existing inspect-rendering
+   * helpers can be reused.
+   */
+  ssgServiceInspect(project: string, service: string): Promise<ServiceInspectResponse> {
+    return get<ServiceInspectResponse>(
+      `/ssg/services/inspect?project=${encodeURIComponent(project)}&service=${encodeURIComponent(service)}`,
     );
   },
 
@@ -778,6 +816,42 @@ export const api = {
   },
 
   /**
+   * Restart every inner compose service inside the SSG outer
+   * DinD without bouncing the outer DinD itself. Mirror of the
+   * per-instance "Restart Services" action.
+   */
+  ssgRestartServices(project: string): Promise<{ message: string }> {
+    return post<{ project: string }, { message: string }>(
+      '/ssg/services/restart-all',
+      { project },
+    );
+  },
+
+  /**
+   * Bind every SSG service's canonical port on the host. Maps to
+   * `coast ssg checkout --all`. Toggle counterpart of
+   * {@link ssgUncheckoutAll}.
+   */
+  ssgCheckoutAll(project: string): Promise<{ message: string }> {
+    return post<{ project: string }, { message: string }>(
+      '/ssg/checkout',
+      { project },
+    );
+  },
+
+  /**
+   * Release every SSG service's canonical-port binding on the
+   * host. Maps to `coast ssg uncheckout --all`. Toggle counterpart
+   * of {@link ssgCheckoutAll}.
+   */
+  ssgUncheckoutAll(project: string): Promise<{ message: string }> {
+    return post<{ project: string }, { message: string }>(
+      '/ssg/uncheckout',
+      { project },
+    );
+  },
+
+  /**
    * Trigger an SSG build. Streams progress via SSE; resolves once
    * the build completes (or errors). Use `onProgress` to render
    * incremental status. Mirrors {@link buildProject} +
@@ -858,6 +932,90 @@ export const api = {
       SsgServiceActionRequestBody,
       SsgServiceActionHttpResponse
     >('/ssg/services/rm', { project, service });
+  },
+
+  /**
+   * Phase 33: drop every encrypted keystore entry whose
+   * `coast_image == "ssg:<project>"`. Idempotent.
+   *
+   * Backs the SsgSecretsTab "Clear secrets" button. Mirrors the
+   * `coast ssg secrets clear` CLI verb. The next `coast ssg run`
+   * will start the SSG container but services that depend on a
+   * missing env-var or file path will fail at compose-up time —
+   * the user typically re-runs `coast ssg build` after a clear.
+   *
+   * See `coast-ssg/DESIGN.md §33`.
+   */
+  ssgSecretsClear(project: string): Promise<{ message: string }> {
+    return post<{ project: string }, { message: string }>(
+      '/ssg/secrets/clear',
+      { project },
+    );
+  },
+
+  /**
+   * Phase 33: list every secret known to the SSG keystore for
+   * `project`. Mirrors {@link listSecrets} for the per-project
+   * SSG namespace (`ssg:<project>` + `ssg:<project>/override`).
+   * Backs the SsgSecretsTab DataTable.
+   */
+  ssgListSecrets(project: string): Promise<readonly SecretInfo[]> {
+    return get<readonly SecretInfo[]>(
+      `/ssg/secrets?project=${encodeURIComponent(project)}`,
+    );
+  },
+
+  /**
+   * Phase 33: reveal a single SSG secret's plaintext value.
+   * Override row wins over base row when both exist. Backs the
+   * SsgSecretsTab eye-icon reveal modal.
+   */
+  ssgRevealSecret(
+    project: string,
+    secret: string,
+  ): Promise<RevealSecretResponse> {
+    return get<RevealSecretResponse>(
+      `/ssg/secrets/reveal?project=${encodeURIComponent(project)}&secret=${encodeURIComponent(secret)}`,
+    );
+  },
+
+  /**
+   * Phase 33: write a user-supplied override into the SSG
+   * keystore. Subsequent `coast ssg run` / `start` will inject
+   * this value (the run-time materializer prefers overrides over
+   * base values). Persists across `coast ssg build` since
+   * rebuild only resets the base namespace. Backs the
+   * SsgSecretsTab "Override" button.
+   */
+  ssgOverrideSecret(
+    project: string,
+    secret: string,
+    value: string,
+  ): Promise<{ message: string }> {
+    return post<
+      { project: string; name: string; value: string },
+      { message: string }
+    >('/ssg/secrets/override', { project, name: secret, value });
+  },
+
+  /**
+   * Phase 33: re-run the SSG `[secrets.*]` extractor pass against
+   * the cached `ssg-coastfile.toml` from the active build. Streams
+   * a 2-step plan ("Resolving cached SSG Coastfile" + "Extracting
+   * secrets") plus per-secret items. The user must restart the
+   * SSG (stop + start) for refreshed values to propagate into the
+   * inner compose stack. Backs the SsgSecretsTab "Re-run
+   * extractors" button.
+   */
+  ssgRerunExtractors(
+    project: string,
+    onProgress?: (event: BuildProgressEvent) => void,
+  ): Promise<{ complete?: RerunExtractorsResponse; error?: { error: string } }> {
+    return consumeSSE<BuildProgressEvent, RerunExtractorsResponse>(
+      '/api/v1/stream/ssg-rerun-extractors',
+      { project },
+      onProgress,
+    );
   },
 
   /**

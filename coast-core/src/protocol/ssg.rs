@@ -142,6 +142,14 @@ pub enum SsgAction {
         #[serde(default)]
         apply: bool,
     },
+    /// Phase 33: clear every encrypted keystore entry for this
+    /// project's SSG (`coast_image = "ssg:<project>"`). Idempotent.
+    ///
+    /// `coast ssg rm` and `coast ssg rm --with-data` deliberately
+    /// do NOT touch the keystore — this is the only verb that
+    /// drops SSG secrets, by user-explicit request. See
+    /// `DESIGN.md §33`.
+    SecretsClear,
 }
 
 /// Response for SSG operations.

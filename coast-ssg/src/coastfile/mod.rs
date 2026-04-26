@@ -23,9 +23,11 @@ use std::path::{Path, PathBuf};
 
 use coast_core::coastfile::interpolation::interpolate_env_vars;
 use coast_core::error::{CoastError, Result};
-use coast_core::types::RuntimeType;
+use coast_core::types::{InjectType, RuntimeType, SecretConfig};
 
-use self::raw_types::{RawSsgCoastfile, RawSsgSection, RawSsgSharedServiceConfig};
+use self::raw_types::{
+    RawSsgCoastfile, RawSsgSecretConfig, RawSsgSection, RawSsgSharedServiceConfig,
+};
 
 /// A fully parsed and validated SSG Coastfile.
 ///
@@ -36,6 +38,12 @@ pub struct SsgCoastfile {
     pub section: SsgSection,
     /// `[shared_services.*]` entries, deterministically sorted by name.
     pub services: Vec<SsgSharedServiceConfig>,
+    /// Phase 33: `[secrets.*]` entries, deterministically sorted by
+    /// name. Drives the build-time extractor pass and run-time
+    /// inject overlay. Reuses [`coast_core::types::SecretConfig`]
+    /// so the same `coast_secrets::extractor::ExtractorRegistry`
+    /// can resolve them. See `DESIGN.md §33`.
+    pub secrets: Vec<SecretConfig>,
     /// Directory the Coastfile was parsed from. Currently kept for
     /// parity with [`coast_core::coastfile::Coastfile::project_root`];
     /// v1 does not resolve any relative paths from it, but later
@@ -265,6 +273,7 @@ impl SsgCoastfile {
         RawSsgCoastfile {
             ssg: RawSsgSection::default(),
             shared_services: HashMap::new(),
+            secrets: HashMap::new(),
             unset: None,
         }
     }
@@ -297,6 +306,28 @@ impl SsgCoastfile {
             );
         }
 
+        // Phase 33: round-trip `[secrets.*]` through the raw form.
+        // Extractor params live in a flat HashMap on `SecretConfig`;
+        // they're hoisted back into the `#[serde(flatten)]` block on
+        // the raw shape so the merged file re-parses identically.
+        let mut secrets = HashMap::with_capacity(cf.secrets.len());
+        for sec in cf.secrets {
+            let inject = inject_type_to_string(&sec.inject);
+            let mut params = HashMap::with_capacity(sec.params.len());
+            for (k, v) in sec.params {
+                params.insert(k, toml::Value::String(v));
+            }
+            secrets.insert(
+                sec.name,
+                RawSsgSecretConfig {
+                    extractor: sec.extractor,
+                    inject,
+                    ttl: sec.ttl,
+                    params,
+                },
+            );
+        }
+
         RawSsgCoastfile {
             ssg: RawSsgSection {
                 runtime: Some(cf.section.runtime.as_str().to_string()),
@@ -305,6 +336,7 @@ impl SsgCoastfile {
                 project: cf.section.project.clone(),
             },
             shared_services,
+            secrets,
             unset: None,
         }
     }
@@ -349,11 +381,60 @@ impl SsgCoastfile {
             services.push(Self::build_shared_service(&name, raw_svc)?);
         }
 
+        // Phase 33: validate `[secrets.*]`. Same deterministic sort
+        // by name; mirrors the regular Coastfile's behaviour.
+        let mut secret_entries: Vec<_> = raw.secrets.into_iter().collect();
+        secret_entries.sort_by(|a, b| a.0.cmp(&b.0));
+        let mut secrets = Vec::with_capacity(secret_entries.len());
+        for (name, raw_sec) in secret_entries {
+            secrets.push(Self::build_secret(name, raw_sec)?);
+        }
+
         Ok(Self {
             section,
             services,
+            secrets,
             project_root: project_root.to_path_buf(),
             interpolation_warnings: Vec::new(),
+        })
+    }
+
+    /// Validate a single `[secrets.<name>]` block. Mirrors
+    /// [`coast_core::coastfile::Coastfile::parse_secrets`] but lives
+    /// here so the SSG schema doesn't depend on the (private) raw
+    /// type from `coast-core`.
+    fn build_secret(name: String, raw: RawSsgSecretConfig) -> Result<SecretConfig> {
+        if raw.extractor.trim().is_empty() {
+            return Err(CoastError::coastfile(format!(
+                "secret '{name}': extractor cannot be empty"
+            )));
+        }
+        let inject = InjectType::parse(&raw.inject)
+            .map_err(|e| CoastError::coastfile(format!("secret '{name}': {e}")))?;
+
+        // Hoist the flattened params into a `String → String` map.
+        // Skip the three structured keys serde already consumed, but
+        // re-using the regular Coastfile's filter for parity in case
+        // a future refactor changes the raw shape.
+        let mut params: std::collections::HashMap<String, String> =
+            std::collections::HashMap::with_capacity(raw.params.len());
+        for (key, value) in raw.params {
+            if key == "extractor" || key == "inject" || key == "ttl" {
+                continue;
+            }
+            let string_value = match value {
+                toml::Value::String(s) => s,
+                other => other.to_string(),
+            };
+            params.insert(key, string_value);
+        }
+
+        Ok(SecretConfig {
+            name,
+            extractor: raw.extractor,
+            params,
+            inject,
+            ttl: raw.ttl,
         })
     }
 
@@ -492,7 +573,44 @@ impl SsgCoastfile {
             }
         }
 
+        // Phase 33: emit `[secrets.<name>]` blocks. Deterministic
+        // sort by name (already sorted in the validated form, but
+        // re-iterate over a sorted view to make this explicit and
+        // robust against future changes to the field's ordering).
+        let mut secret_entries: Vec<&SecretConfig> = self.secrets.iter().collect();
+        secret_entries.sort_by(|a, b| a.name.cmp(&b.name));
+        for sec in secret_entries {
+            out.push('\n');
+            out.push_str(&format!("[secrets.{}]\n", toml_key(&sec.name)));
+            out.push_str(&format!("extractor = {}\n", toml_quote(&sec.extractor)));
+            out.push_str(&format!(
+                "inject = {}\n",
+                toml_quote(&inject_type_to_string(&sec.inject))
+            ));
+            if let Some(ref ttl) = sec.ttl {
+                out.push_str(&format!("ttl = {}\n", toml_quote(ttl)));
+            }
+            // Extractor params (flat key/value pairs) — sorted by
+            // key for determinism. Round-trips through `toml::Value`
+            // as plain strings, matching how `build_secret` coerces
+            // them on parse.
+            let mut params: Vec<(&String, &String)> = sec.params.iter().collect();
+            params.sort_by_key(|(k, _)| k.as_str());
+            for (k, v) in params {
+                out.push_str(&format!("{} = {}\n", toml_key(k), toml_quote(v)));
+            }
+        }
+
         out
+    }
+}
+
+/// Render a validated [`InjectType`] back into its
+/// `"env:VAR"` / `"file:/path"` wire form.
+fn inject_type_to_string(inject: &InjectType) -> String {
+    match inject {
+        InjectType::Env(name) => format!("env:{name}"),
+        InjectType::File(path) => format!("file:{}", path.display()),
     }
 }
 
@@ -675,12 +793,16 @@ fn merge_raw_onto(mut base: RawSsgCoastfile, layer: RawSsgCoastfile) -> RawSsgCo
     }
 
     base.shared_services.extend(layer.shared_services);
+    // Phase 33: secrets follow the same whole-entry replace policy as
+    // shared_services. `HashMap::extend` overwrites by key.
+    base.secrets.extend(layer.secrets);
 
     base.unset = match (base.unset, layer.unset) {
         (None, other) => other,
         (existing, None) => existing,
         (Some(mut a), Some(b)) => {
             a.shared_services.extend(b.shared_services);
+            a.secrets.extend(b.secrets);
             Some(a)
         }
     };
@@ -699,6 +821,9 @@ fn apply_unset(raw: &mut RawSsgCoastfile) {
     if let Some(unset) = raw.unset.take() {
         for name in unset.shared_services {
             raw.shared_services.remove(&name);
+        }
+        for name in unset.secrets {
+            raw.secrets.remove(&name);
         }
     }
 }
@@ -1046,6 +1171,246 @@ image = "mu:1"
 
         let names: Vec<&str> = cf.services.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(names, vec!["alpha", "mu", "zeta"]);
+    }
+
+    // -----------------------------------------------------------
+    // Phase 33: `[secrets.<name>]` parse + round-trip + inheritance
+    // -----------------------------------------------------------
+
+    #[test]
+    fn parses_secrets_block_with_env_extractor_and_env_inject() {
+        let cf = parse(
+            r#"
+[shared_services.postgres]
+image = "postgres:16"
+
+[secrets.pg_password]
+extractor = "env"
+inject = "env:POSTGRES_PASSWORD"
+var = "MY_PG_PASSWORD"
+"#,
+        )
+        .unwrap();
+        assert_eq!(cf.secrets.len(), 1);
+        let s = &cf.secrets[0];
+        assert_eq!(s.name, "pg_password");
+        assert_eq!(s.extractor, "env");
+        match &s.inject {
+            InjectType::Env(v) => assert_eq!(v, "POSTGRES_PASSWORD"),
+            other => panic!("expected env inject, got {other:?}"),
+        }
+        assert_eq!(
+            s.params.get("var").map(String::as_str),
+            Some("MY_PG_PASSWORD")
+        );
+        assert!(s.ttl.is_none());
+    }
+
+    #[test]
+    fn parses_secrets_block_with_file_inject() {
+        let cf = parse(
+            r#"
+[shared_services.api]
+image = "myapp:latest"
+
+[secrets.jwt]
+extractor = "file"
+path = "/etc/secrets/jwt"
+inject = "file:/run/secrets/jwt"
+ttl = "1h"
+"#,
+        )
+        .unwrap();
+        assert_eq!(cf.secrets.len(), 1);
+        let s = &cf.secrets[0];
+        assert_eq!(s.extractor, "file");
+        match &s.inject {
+            InjectType::File(p) => assert_eq!(p, Path::new("/run/secrets/jwt")),
+            other => panic!("expected file inject, got {other:?}"),
+        }
+        assert_eq!(
+            s.params.get("path").map(String::as_str),
+            Some("/etc/secrets/jwt")
+        );
+        assert_eq!(s.ttl.as_deref(), Some("1h"));
+    }
+
+    #[test]
+    fn secrets_are_sorted_alphabetically_by_name() {
+        let cf = parse(
+            r#"
+[shared_services.postgres]
+image = "postgres:16"
+
+[secrets.zeta]
+extractor = "env"
+inject = "env:Z"
+var = "Z"
+
+[secrets.alpha]
+extractor = "env"
+inject = "env:A"
+var = "A"
+
+[secrets.mu]
+extractor = "env"
+inject = "env:M"
+var = "M"
+"#,
+        )
+        .unwrap();
+        let names: Vec<&str> = cf.secrets.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, vec!["alpha", "mu", "zeta"]);
+    }
+
+    #[test]
+    fn rejects_secret_with_empty_extractor() {
+        assert_parse_err_contains(
+            r#"
+[secrets.x]
+extractor = ""
+inject = "env:X"
+"#,
+            "extractor cannot be empty",
+        );
+    }
+
+    #[test]
+    fn rejects_secret_with_invalid_inject() {
+        assert_parse_err_contains(
+            r#"
+[secrets.x]
+extractor = "env"
+inject = "garbage"
+var = "X"
+"#,
+            "secret 'x'",
+        );
+    }
+
+    #[test]
+    fn rejects_secret_with_empty_env_target() {
+        assert_parse_err_contains(
+            r#"
+[secrets.x]
+extractor = "env"
+inject = "env:"
+var = "X"
+"#,
+            "inject env target cannot be empty",
+        );
+    }
+
+    #[test]
+    fn round_trip_secrets_block_preserves_extractor_inject_and_params() {
+        let reparsed = roundtrip(
+            r#"
+[shared_services.postgres]
+image = "postgres:16"
+
+[secrets.pg]
+extractor = "command"
+inject = "env:POSTGRES_PASSWORD"
+run = "echo hello"
+ttl = "30m"
+"#,
+        );
+        assert_eq!(reparsed.secrets.len(), 1);
+        let s = &reparsed.secrets[0];
+        assert_eq!(s.extractor, "command");
+        assert_eq!(s.params.get("run").map(String::as_str), Some("echo hello"));
+        assert_eq!(s.ttl.as_deref(), Some("30m"));
+        match &s.inject {
+            InjectType::Env(v) => assert_eq!(v, "POSTGRES_PASSWORD"),
+            other => panic!("expected env inject, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn extends_secrets_inherit_and_override_by_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_file(
+            tmp.path(),
+            "Coastfile.base",
+            r#"
+[shared_services.postgres]
+image = "postgres:16"
+
+[secrets.pg_password]
+extractor = "env"
+inject = "env:POSTGRES_PASSWORD"
+var = "PARENT_PG"
+
+[secrets.api_key]
+extractor = "env"
+inject = "env:API_KEY"
+var = "PARENT_API"
+"#,
+        );
+        let child = write_file(
+            tmp.path(),
+            "Coastfile.shared_service_groups",
+            r#"
+[ssg]
+extends = "Coastfile.base"
+
+[secrets.pg_password]
+extractor = "env"
+inject = "env:POSTGRES_PASSWORD"
+var = "CHILD_PG"
+"#,
+        );
+
+        let cf = SsgCoastfile::from_file(&child).unwrap();
+        let by_name: std::collections::HashMap<_, _> = cf
+            .secrets
+            .iter()
+            .map(|s| {
+                (
+                    s.name.as_str(),
+                    s.params.get("var").cloned().unwrap_or_default(),
+                )
+            })
+            .collect();
+        assert_eq!(by_name.get("pg_password"), Some(&"CHILD_PG".to_string()));
+        assert_eq!(by_name.get("api_key"), Some(&"PARENT_API".to_string()));
+    }
+
+    #[test]
+    fn unset_secrets_drops_inherited_entry() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_file(
+            tmp.path(),
+            "Coastfile.base",
+            r#"
+[shared_services.postgres]
+image = "postgres:16"
+
+[secrets.pg]
+extractor = "env"
+inject = "env:PG"
+var = "PG"
+
+[secrets.redis]
+extractor = "env"
+inject = "env:REDIS"
+var = "REDIS"
+"#,
+        );
+        let child = write_file(
+            tmp.path(),
+            "Coastfile.child",
+            r#"
+[ssg]
+extends = "Coastfile.base"
+
+[unset]
+secrets = ["redis"]
+"#,
+        );
+        let cf = SsgCoastfile::from_file(&child).unwrap();
+        let names: Vec<&str> = cf.secrets.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, vec!["pg"]);
     }
 
     // -----------------------------------------------------------

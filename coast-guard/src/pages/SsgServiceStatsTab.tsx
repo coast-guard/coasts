@@ -1,12 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { ContainerStats } from '../../types/api';
-import StatsChart, { type StatsPoint as ChartPoint } from '../StatsChart';
-import { CHART_COLORS } from '../../lib/chart-colors';
-import { ssgStatsWsUrl } from '../../api/ssgWsUrls';
+import type { ContainerStats } from '../types/api';
+import StatsChart, { type StatsPoint as ChartPoint } from '../components/StatsChart';
+import { CHART_COLORS } from '../lib/chart-colors';
+import { ssgServiceStatsWsUrl } from '../api/ssgWsUrls';
 
 interface Props {
     readonly project: string;
+    readonly service: string;
 }
 
 interface FullStatsPoint {
@@ -47,47 +48,41 @@ function formatBytes(bytes: number): string {
 }
 
 /**
- * Live `docker stats` for the SSG outer DinD container.
+ * SSG flavor of {@link ServiceStatsTab}: same 4-panel chart grid
+ * (CPU / Memory / Disk I/O / Network I/O) and same status pill.
+ * Wire shape matches: both endpoints emit `ContainerStats` JSON
+ * frames so a single `parseContainerStats` helper handles both.
  *
- * Visually identical to {@link InstanceStatsTab}: same status
- * indicator, same 4-panel chart grid (CPU / Memory / Disk I/O /
- * Network I/O), same WebSocket-driven history buffer (~300 points
- * = 5 minutes at 1Hz). The wire protocol matches the instance
- * stats stream — both endpoints emit `ContainerStats` JSON frames
- * (Phase 33+) so the same `parseContainerStats` + `StatsChart`
- * helpers consume both.
- *
- * The daemon also replays its in-memory history buffer at the
- * top of the WS stream so a reconnect after a brief network blip
- * doesn't blank the chart.
+ * The daemon polls `docker stats <inner_name> --no-stream` inside
+ * the SSG outer DinD every ~2s and replays the per-(project,
+ * service) history buffer at the start of each WS connection.
  */
-export default function SsgStatsTab({ project }: Props) {
+export default function SsgServiceStatsTab({ project, service }: Props) {
     const { t } = useTranslation();
     const [points, setPoints] = useState<FullStatsPoint[]>([]);
-    const [status, setStatus] = useState<'connecting' | 'streaming' | 'closed' | 'error'>('connecting');
+    const [status, setStatus] = useState<
+        'connecting' | 'streaming' | 'closed' | 'error'
+    >('connecting');
     const [latest, setLatest] = useState<FullStatsPoint | null>(null);
     const wsRef = useRef<WebSocket | null>(null);
-
     const newestTimeRef = useRef<number>(0);
 
-    // Reset when the project changes (e.g. user navigates to a
-    // different SSG via the project switcher).
     useEffect(() => {
         setPoints([]);
         setLatest(null);
         setStatus('connecting');
         newestTimeRef.current = 0;
-    }, [project]);
+    }, [project, service]);
 
     useEffect(() => {
-        const ws = new WebSocket(ssgStatsWsUrl(project));
+        const ws = new WebSocket(ssgServiceStatsWsUrl(project, service));
         wsRef.current = ws;
 
         ws.addEventListener('open', () => setStatus('streaming'));
-
         ws.addEventListener('message', (event: MessageEvent<string>) => {
             try {
                 const raw = JSON.parse(event.data) as ContainerStats;
+                if ('error' in raw) return;
                 const point = parseContainerStats(raw);
                 if (point.time.getTime() <= newestTimeRef.current) return;
                 newestTimeRef.current = point.time.getTime();
@@ -96,14 +91,13 @@ export default function SsgStatsTab({ project }: Props) {
                     const next = [...prev, point];
                     return next.length > MAX_POINTS ? next.slice(-MAX_POINTS) : next;
                 });
-            } catch { /* ignore parse errors (e.g. plaintext error frames) */ }
+            } catch { /* ignore parse errors */ }
         });
-
         ws.addEventListener('close', () => setStatus('closed'));
         ws.addEventListener('error', () => setStatus('error'));
 
         return () => ws.close();
-    }, [project]);
+    }, [project, service]);
 
     const cpuData: ChartPoint[] = points.map(p => ({ time: p.time, value: p.cpuPercent }));
     const memData: ChartPoint[] = points.map(p => ({ time: p.time, value: p.memoryUsed }));
@@ -139,12 +133,7 @@ export default function SsgStatsTab({ project }: Props) {
                         <span className="text-sm font-semibold text-main">{latest ? `${latest.cpuPercent.toFixed(1)}%` : '--'}</span>
                     </div>
                     <div className="flex-1 min-h-0">
-                        <StatsChart
-                            data={cpuData}
-                            color={CHART_COLORS.cpu}
-                            label="CPU"
-                            formatY={(v) => `${v.toFixed(0)}%`}
-                        />
+                        <StatsChart data={cpuData} color={CHART_COLORS.cpu} label="CPU" formatY={(v) => `${v.toFixed(0)}%`} />
                     </div>
                 </div>
 
@@ -154,12 +143,7 @@ export default function SsgStatsTab({ project }: Props) {
                         <span className="text-sm font-semibold text-main">{latest ? `${formatBytes(latest.memoryUsed)} / ${formatBytes(latest.memoryLimit)}` : '--'}</span>
                     </div>
                     <div className="flex-1 min-h-0">
-                        <StatsChart
-                            data={memData}
-                            color={CHART_COLORS.memory}
-                            label={t('stats.memUsed')}
-                            formatY={formatBytes}
-                        />
+                        <StatsChart data={memData} color={CHART_COLORS.memory} label={t('stats.memUsed')} formatY={formatBytes} />
                     </div>
                 </div>
 
@@ -169,14 +153,7 @@ export default function SsgStatsTab({ project }: Props) {
                         <span className="text-sm font-semibold text-main">{latest ? `${formatBytes(latest.diskRead)} / ${formatBytes(latest.diskWrite)}` : '--'}</span>
                     </div>
                     <div className="flex-1 min-h-0">
-                        <StatsChart
-                            data={diskData}
-                            color={CHART_COLORS.diskRead}
-                            label={t('stats.diskRead')}
-                            color2={CHART_COLORS.diskWrite}
-                            label2={t('stats.diskWrite')}
-                            formatY={formatBytes}
-                        />
+                        <StatsChart data={diskData} color={CHART_COLORS.diskRead} label={t('stats.diskRead')} color2={CHART_COLORS.diskWrite} label2={t('stats.diskWrite')} formatY={formatBytes} />
                     </div>
                 </div>
 
@@ -186,14 +163,7 @@ export default function SsgStatsTab({ project }: Props) {
                         <span className="text-sm font-semibold text-main">{latest ? `${formatBytes(latest.networkRx)} / ${formatBytes(latest.networkTx)}` : '--'}</span>
                     </div>
                     <div className="flex-1 min-h-0">
-                        <StatsChart
-                            data={netData}
-                            color={CHART_COLORS.netRx}
-                            label={t('stats.netRx')}
-                            color2={CHART_COLORS.netTx}
-                            label2={t('stats.netTx')}
-                            formatY={formatBytes}
-                        />
+                        <StatsChart data={netData} color={CHART_COLORS.netRx} label={t('stats.netRx')} color2={CHART_COLORS.netTx} label2={t('stats.netTx')} formatY={formatBytes} />
                     </div>
                 </div>
             </div>

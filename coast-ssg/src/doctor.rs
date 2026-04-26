@@ -230,6 +230,56 @@ where
     findings
 }
 
+/// Phase 33: emit findings about declared `[secrets.<name>]` blocks
+/// vs. encrypted entries actually present in the keystore.
+///
+/// Pure planner: takes `manifest.secret_injects` (the snapshot of
+/// declared injects captured at build time) and a closure that
+/// reports the set of secret names currently in the keystore for
+/// `coast_image = "ssg:<project>"`. The closure shape lets the
+/// daemon-side doctor handler do the actual `coast_secrets`
+/// lookup without dragging the keystore dependency into this pure
+/// module.
+///
+/// Findings:
+/// - `info`: declared in manifest but missing from keystore. The
+///   user probably ran `coast ssg secrets clear` since the last
+///   `ssg build`. Suggests a fix.
+/// - `ok`: declared and present.
+/// - No finding emitted for keystore rows that aren't in the
+///   manifest — those are stale entries from a previous build but
+///   harmless (run-time matches by manifest, not keystore).
+///
+/// Returns an empty vec when the manifest declares no secrets.
+pub fn evaluate_secrets_doctor(
+    manifest: &SsgManifest,
+    stored_secret_names: &std::collections::HashSet<String>,
+) -> Vec<SsgDoctorFinding> {
+    let mut findings = Vec::with_capacity(manifest.secret_injects.len());
+    for inject in &manifest.secret_injects {
+        if stored_secret_names.contains(&inject.secret_name) {
+            findings.push(SsgDoctorFinding {
+                service: inject.secret_name.clone(),
+                path: format!("{}:{}", inject.inject_type, inject.inject_target),
+                severity: "ok".to_string(),
+                message: "Secret extracted and present in the keystore.".to_string(),
+            });
+        } else {
+            findings.push(SsgDoctorFinding {
+                service: inject.secret_name.clone(),
+                path: format!("{}:{}", inject.inject_type, inject.inject_target),
+                severity: "info".to_string(),
+                message: "Declared in Coastfile but missing from the keystore. \
+                     Run `coast ssg build` to re-extract (services that \
+                     reference this secret will fail at compose-up time \
+                     until then)."
+                    .to_string(),
+            });
+        }
+    }
+    findings
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -243,6 +293,7 @@ mod tests {
             built_at: Utc::now(),
             coastfile_hash: "deadbeef".to_string(),
             services,
+            secret_injects: vec![],
         }
     }
 

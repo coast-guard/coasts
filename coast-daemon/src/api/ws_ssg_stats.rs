@@ -1,15 +1,25 @@
 //! WebSocket endpoint: streams `docker stats` for the outer DinD
 //! container of a project's SSG. Backs the SPA's SSG → Stats tab.
 //!
-//! Wire shape:
-//! - `GET /api/v1/ws/ssg-stats?project=<p>` with `Upgrade:
+//! Wire shape (Phase 33+):
+//! - `GET /api/v1/ssg/stats/stream?project=<p>` with `Upgrade:
 //!   websocket`.
-//! - Server emits one JSON frame per second containing
-//!   `{cpu_pct, mem_used_bytes, mem_limit_bytes, net_rx_bytes,
-//!   net_tx_bytes, block_read_bytes, block_write_bytes}` derived
-//!   from bollard's `stats` API.
-//! - Connection closes when the client disconnects or the
-//!   container exits.
+//! - Server emits one JSON [`ContainerStats`] frame per second
+//!   (the same shape used by the per-instance `/api/v1/stats/stream`
+//!   endpoint), so the SPA's `InstanceStatsTab`-shaped chart
+//!   renderer can consume both endpoints with identical code.
+//! - On connect the server first replays a small in-memory history
+//!   buffer (so reconnects after a brief network blip show prior
+//!   data) and then streams live samples until the client
+//!   disconnects or the container exits.
+//!
+//! The legacy `SsgStatsSample` shape — `{cpu_pct, mem_used_bytes,
+//! ...}` with snake_case + the `at_unix` field — has been replaced
+//! by `ContainerStats` for parity with the instance stream. There
+//! were no out-of-tree consumers (the only callers were
+//! `coast-guard/src/components/ssg/SsgStatsTab.tsx` and the
+//! re-export in `coast-guard/src/types/api.ts`, both updated in
+//! the same change).
 
 use std::sync::Arc;
 
@@ -19,36 +29,27 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::{Json, Router};
-use bollard::container::{Stats, StatsOptions};
+use bollard::container::StatsOptions;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 use ts_rs::TS;
 
+use coast_core::protocol::ContainerStats;
+
 use crate::api::query::ssg::resolve_ssg_container_id;
+use crate::api::ws_stats::extract_stats;
 use crate::server::AppState;
+
+/// Cap on the per-project in-memory history buffer. Same value as
+/// the instance stats path (`HISTORY_CAP` in `ws_stats.rs`) so a
+/// reconnect renders the same ~5 minutes of 1Hz samples.
+const HISTORY_CAP: usize = 300;
 
 #[derive(Deserialize, Serialize, TS)]
 #[ts(export)]
 pub struct SsgStatsParams {
     pub project: String,
-}
-
-/// One stats sample. Wire shape matches the per-instance
-/// `ContainerStats` format closely so the SPA's existing
-/// stats-rendering helpers can be reused if desired.
-#[derive(Serialize, TS)]
-#[ts(export)]
-pub struct SsgStatsSample {
-    pub cpu_pct: f64,
-    pub mem_used_bytes: u64,
-    pub mem_limit_bytes: u64,
-    pub net_rx_bytes: u64,
-    pub net_tx_bytes: u64,
-    pub block_read_bytes: u64,
-    pub block_write_bytes: u64,
-    /// Unix epoch seconds at the time of the sample.
-    pub at_unix: i64,
 }
 
 pub fn router() -> Router<Arc<AppState>> {
@@ -71,12 +72,31 @@ async fn handle_socket(
     project: String,
 ) {
     debug!(project = %project, "ssg stats websocket connected");
+
     let Some(docker) = state.docker.as_ref() else {
         let _ = socket
             .send(Message::Text("Docker is unavailable".into()))
             .await;
         return;
     };
+
+    // Replay any history we already buffered for this project so
+    // the SPA's chart isn't blank for the first ~1s. Mirrors the
+    // instance path's REST `/stats/history` priming.
+    let history: Vec<ContainerStats> = {
+        let map = state.ssg_stats_history.lock().await;
+        map.get(&project)
+            .map(|q| q.iter().cloned().collect())
+            .unwrap_or_default()
+    };
+    for sample in &history {
+        let Ok(json) = serde_json::to_string(sample) else {
+            continue;
+        };
+        if socket.send(Message::Text(json.into())).await.is_err() {
+            return;
+        }
+    }
 
     let mut stream = docker.stats(
         &container_id,
@@ -86,6 +106,9 @@ async fn handle_socket(
         }),
     );
 
+    let mut prev_cpu_total: u64 = 0;
+    let mut prev_cpu_system: u64 = 0;
+
     while let Some(chunk) = stream.next().await {
         let stats = match chunk {
             Ok(s) => s,
@@ -94,68 +117,27 @@ async fn handle_socket(
                 break;
             }
         };
-        let sample = sample_from_stats(&stats);
+        let sample = extract_stats(&stats, &mut prev_cpu_total, &mut prev_cpu_system);
+
+        // Append to the per-project history buffer (1Hz cap). We
+        // only buffer here (not in a background collector) because
+        // there's exactly one SSG per project and no replay-after-
+        // close requirement: the history is just a "previous N
+        // samples" view for reconnects on the same WS.
+        {
+            let mut map = state.ssg_stats_history.lock().await;
+            let q = map.entry(project.clone()).or_default();
+            q.push_back(sample.clone());
+            while q.len() > HISTORY_CAP {
+                q.pop_front();
+            }
+        }
+
         let Ok(json) = serde_json::to_string(&sample) else {
             continue;
         };
         if socket.send(Message::Text(json.into())).await.is_err() {
             break;
         }
-    }
-}
-
-fn sample_from_stats(s: &Stats) -> SsgStatsSample {
-    let cpu_total = s.cpu_stats.cpu_usage.total_usage as i128;
-    let cpu_total_prev = s.precpu_stats.cpu_usage.total_usage as i128;
-    let cpu_delta = cpu_total - cpu_total_prev;
-
-    let sys_now = s.cpu_stats.system_cpu_usage.unwrap_or(0) as i128;
-    let sys_prev = s.precpu_stats.system_cpu_usage.unwrap_or(0) as i128;
-    let sys_delta = sys_now - sys_prev;
-
-    let online_cpus = s.cpu_stats.online_cpus.unwrap_or(1) as f64;
-    let cpu_pct = if sys_delta > 0 && cpu_delta > 0 {
-        (cpu_delta as f64 / sys_delta as f64) * online_cpus * 100.0
-    } else {
-        0.0
-    };
-
-    let mem_used_bytes = s.memory_stats.usage.unwrap_or(0);
-    let mem_limit_bytes = s.memory_stats.limit.unwrap_or(0);
-
-    let (net_rx_bytes, net_tx_bytes) = s
-        .networks
-        .as_ref()
-        .map(|nets| {
-            nets.values().fold((0_u64, 0_u64), |(rx, tx), n| {
-                (rx + n.rx_bytes, tx + n.tx_bytes)
-            })
-        })
-        .unwrap_or((0, 0));
-
-    let (block_read_bytes, block_write_bytes) = s
-        .blkio_stats
-        .io_service_bytes_recursive
-        .as_ref()
-        .map(|entries| {
-            entries.iter().fold((0_u64, 0_u64), |(read, write), e| {
-                match e.op.to_lowercase().as_str() {
-                    "read" => (read + e.value, write),
-                    "write" => (read, write + e.value),
-                    _ => (read, write),
-                }
-            })
-        })
-        .unwrap_or((0, 0));
-
-    SsgStatsSample {
-        cpu_pct,
-        mem_used_bytes,
-        mem_limit_bytes,
-        net_rx_bytes,
-        net_tx_bytes,
-        block_read_bytes,
-        block_write_bytes,
-        at_unix: chrono::Utc::now().timestamp(),
     }
 }

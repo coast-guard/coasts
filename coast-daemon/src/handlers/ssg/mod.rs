@@ -153,7 +153,73 @@ pub async fn handle(state: Arc<AppState>, req: SsgRequest) -> Result<SsgResponse
         // `~/.coast/ssg/<project>/builds/`. Backs the SPA's "SHARED
         // SERVICE GROUPS" subsection on the project detail page.
         SsgAction::BuildsLs => handle_builds_ls(&project, &state).await,
+
+        // Phase 33: drop every encrypted keystore entry for this
+        // project's SSG. Idempotent. See `DESIGN.md §33`.
+        SsgAction::SecretsClear => handle_secrets_clear(&project).await,
     }
+}
+
+/// `coast ssg secrets clear` — wipe every keystore row whose
+/// `coast_image == "ssg:<project>"`.
+///
+/// Returns a one-line confirmation in `SsgResponse.message`. Errors
+/// from `keystore.delete_secrets_for_image` propagate so the user
+/// sees a clear failure (e.g. keystore.db missing → "no secrets to
+/// clear" success path; permissions error → propagated).
+async fn handle_secrets_clear(project: &str) -> Result<SsgResponse> {
+    let home = coast_core::artifact::coast_home()?;
+    let keystore_db = home.join("keystore.db");
+    let keystore_key = home.join("keystore.key");
+
+    // If the keystore was never created (no regular instance has
+    // ever called `coast build` AND no SSG has ever extracted),
+    // there's nothing to clear. Treat as a no-op success — the
+    // user-facing semantic is "after this call, your project's SSG
+    // has no stored secrets," which is true by absence.
+    if !keystore_db.exists() {
+        return Ok(SsgResponse {
+            message: format!(
+                "No keystore present; SSG secrets for project '{project}' are already cleared."
+            ),
+            ..SsgResponse::default()
+        });
+    }
+
+    let keystore =
+        coast_secrets::keystore::Keystore::open(&keystore_db, &keystore_key).map_err(|e| {
+            CoastError::Secret {
+                message: format!("failed to open keystore: {e}"),
+                source: Some(Box::new(e)),
+            }
+        })?;
+    let base_key = coast_ssg::build::keystore_image_key(project);
+    let override_key = format!("{base_key}/override");
+    let base_removed =
+        keystore
+            .delete_secrets_for_image(&base_key)
+            .map_err(|e| CoastError::Secret {
+                message: format!("failed to clear SSG secrets for '{base_key}': {e}"),
+                source: Some(Box::new(e)),
+            })?;
+    // Phase 33: also drop user-set overrides. The verb is "clear
+    // ALL secrets for this SSG", which includes overrides written
+    // via the SPA's "Override" button.
+    let override_removed = keystore
+        .delete_secrets_for_image(&override_key)
+        .map_err(|e| CoastError::Secret {
+            message: format!("failed to clear SSG secret overrides for '{override_key}': {e}"),
+            source: Some(Box::new(e)),
+        })?;
+    let removed = base_removed + override_removed;
+
+    Ok(SsgResponse {
+        message: format!(
+            "Cleared {removed} SSG secret(s) for project '{project}'. \
+             Run `coast ssg build` to re-extract."
+        ),
+        ..SsgResponse::default()
+    })
 }
 
 /// `coast ssg ls` — list every per-project SSG known to the daemon.

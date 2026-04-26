@@ -22,7 +22,7 @@ use std::sync::Arc;
 use coast_core::error::Result;
 use coast_core::protocol::SsgResponse;
 use coast_ssg::build::artifact::SsgManifest;
-use coast_ssg::doctor::{evaluate_doctor, StatResult};
+use coast_ssg::doctor::{evaluate_doctor, evaluate_secrets_doctor, StatResult};
 
 use crate::server::AppState;
 
@@ -30,7 +30,39 @@ use crate::server::AppState;
 /// manifest, stats every host bind mount, and returns findings.
 pub async fn handle_doctor(project: &str, state: &Arc<AppState>) -> Result<SsgResponse> {
     let manifest = load_project_ssg_manifest(project, state).await?;
-    Ok(build_doctor_response(manifest, real_stat))
+    let stored = load_stored_secret_names(project);
+    Ok(build_doctor_response(manifest, real_stat, &stored))
+}
+
+/// Read the set of secret names currently in the keystore for
+/// `coast_image = "ssg:<project>"`.
+///
+/// Phase 33: powers `evaluate_secrets_doctor` so the doctor can
+/// report when a `[secrets.<name>]` block was declared at build
+/// time but the keystore row has since been wiped (e.g. via
+/// `coast ssg secrets clear`). Returns an empty set on any error
+/// so a missing or corrupt keystore degrades to "no secrets
+/// found" rather than failing the entire doctor run.
+fn load_stored_secret_names(project: &str) -> std::collections::HashSet<String> {
+    let mut out = std::collections::HashSet::new();
+    let Ok(home) = coast_core::artifact::coast_home() else {
+        return out;
+    };
+    let db_path = home.join("keystore.db");
+    if !db_path.exists() {
+        return out;
+    }
+    let key_path = home.join("keystore.key");
+    let Ok(keystore) = coast_secrets::keystore::Keystore::open(&db_path, &key_path) else {
+        return out;
+    };
+    let image_key = coast_ssg::build::keystore_image_key(project);
+    if let Ok(rows) = keystore.get_all_secrets(&image_key) {
+        for row in rows {
+            out.insert(row.secret_name);
+        }
+    }
+    out
 }
 
 async fn load_project_ssg_manifest(
@@ -75,7 +107,16 @@ async fn load_project_ssg_manifest(
 /// `stat_fn` is the injected stat closure that
 /// [`evaluate_doctor`](coast_ssg::doctor::evaluate_doctor) calls for
 /// each host bind-mount source.
-fn build_doctor_response<F>(manifest: Option<(String, SsgManifest)>, stat_fn: F) -> SsgResponse
+///
+/// `stored_secret_names` is the set of secret names currently
+/// present in the keystore for `ssg:<project>`. Phase 33: appended
+/// onto the bind-mount findings via
+/// [`evaluate_secrets_doctor`](coast_ssg::doctor::evaluate_secrets_doctor).
+fn build_doctor_response<F>(
+    manifest: Option<(String, SsgManifest)>,
+    stat_fn: F,
+    stored_secret_names: &std::collections::HashSet<String>,
+) -> SsgResponse
 where
     F: FnMut(&Path) -> StatResult,
 {
@@ -91,7 +132,11 @@ where
         };
     };
 
-    let findings = evaluate_doctor(&manifest, stat_fn);
+    let mut findings = evaluate_doctor(&manifest, stat_fn);
+    // Phase 33: secret-extraction findings appended onto the
+    // bind-mount findings list. Same `severity` taxonomy so the
+    // SPA renderer doesn't need to know the difference.
+    findings.extend(evaluate_secrets_doctor(&manifest, stored_secret_names));
 
     let (ok, warn, info) = summarize(&findings);
     let message = if warn == 0 && info == 0 && ok == 0 {
@@ -211,12 +256,17 @@ mod tests {
                     auto_create_db: false,
                 })
                 .collect(),
+            secret_injects: vec![],
         }
+    }
+
+    fn empty_secret_set() -> std::collections::HashSet<String> {
+        std::collections::HashSet::new()
     }
 
     #[test]
     fn build_doctor_response_no_manifest_returns_build_hint() {
-        let resp = build_doctor_response(None, |_| StatResult::Missing);
+        let resp = build_doctor_response(None, |_| StatResult::Missing, &empty_secret_set());
         assert_eq!(
             resp.message,
             "No SSG build found. Run `coast ssg build` first.",
@@ -231,10 +281,11 @@ mod tests {
             ("web", "nginx:1", vec!["/var/web:/var/www"]),
             ("cache", "memcached:1", vec!["/var/cache:/var/cache"]),
         ]);
-        let resp = build_doctor_response(Some(("b9".to_string(), m)), |_| StatResult::Ok {
-            uid: 0,
-            gid: 0,
-        });
+        let resp = build_doctor_response(
+            Some(("b9".to_string(), m)),
+            |_| StatResult::Ok { uid: 0, gid: 0 },
+            &empty_secret_set(),
+        );
         assert!(
             resp.message.contains("nothing to check"),
             "got: {}",
@@ -253,9 +304,11 @@ mod tests {
             "postgres:16",
             vec!["/var/coast-data/pg:/var/lib/postgresql/data"],
         )]);
-        let resp = build_doctor_response(Some(("b9_20260420120000".to_string(), m)), |_| {
-            StatResult::Ok { uid: 999, gid: 999 }
-        });
+        let resp = build_doctor_response(
+            Some(("b9_20260420120000".to_string(), m)),
+            |_| StatResult::Ok { uid: 999, gid: 999 },
+            &empty_secret_set(),
+        );
         assert!(
             resp.message.contains("looks healthy"),
             "got: {}",
@@ -273,9 +326,11 @@ mod tests {
             "postgres:16",
             vec!["/var/coast-data/pg:/var/lib/postgresql/data"],
         )]);
-        let resp = build_doctor_response(Some(("b9_20260420120000".to_string(), m)), |_| {
-            StatResult::Ok { uid: 0, gid: 0 }
-        });
+        let resp = build_doctor_response(
+            Some(("b9_20260420120000".to_string(), m)),
+            |_| StatResult::Ok { uid: 0, gid: 0 },
+            &empty_secret_set(),
+        );
         assert!(
             resp.message.contains("1 warning(s)"),
             "got: {}",
@@ -291,6 +346,57 @@ mod tests {
     }
 
     #[test]
+    fn build_doctor_response_emits_info_for_unextracted_secret() {
+        // Phase 33: a manifest declaring a secret whose keystore
+        // entry is missing produces an `info`-level finding so the
+        // user knows to rebuild before running.
+        use coast_ssg::build::artifact::{SsgManifestSecretInject, SsgManifestService};
+        let m = SsgManifest {
+            build_id: "b9_20260420120000".to_string(),
+            built_at: chrono::Utc::now(),
+            coastfile_hash: "b9".to_string(),
+            services: vec![SsgManifestService {
+                name: "postgres".to_string(),
+                image: "postgres:16".to_string(),
+                ports: vec![5432],
+                env_keys: vec!["POSTGRES_PASSWORD".to_string()],
+                volumes: vec!["/var/coast-data/pg:/var/lib/postgresql/data".to_string()],
+                auto_create_db: false,
+            }],
+            secret_injects: vec![SsgManifestSecretInject {
+                secret_name: "pg_password".to_string(),
+                inject_type: "env".to_string(),
+                inject_target: "POSTGRES_PASSWORD".to_string(),
+                services: vec!["postgres".to_string()],
+            }],
+        };
+        // Empty stored set ⇒ secret declared but missing.
+        let resp = build_doctor_response(
+            Some(("b9_20260420120000".to_string(), m)),
+            |_| StatResult::Ok { uid: 999, gid: 999 },
+            &empty_secret_set(),
+        );
+        let info_findings: Vec<_> = resp
+            .findings
+            .iter()
+            .filter(|f| f.severity == "info" && f.service == "pg_password")
+            .collect();
+        assert_eq!(
+            info_findings.len(),
+            1,
+            "expected one info finding for the missing secret; got: {:?}",
+            resp.findings
+        );
+        assert!(
+            info_findings[0]
+                .message
+                .contains("missing from the keystore"),
+            "got: {}",
+            info_findings[0].message
+        );
+    }
+
+    #[test]
     fn build_doctor_response_build_id_appears_in_message() {
         // Regression: message must cite the exact build_id so operators
         // can tell which SSG artifact was just audited.
@@ -299,9 +405,11 @@ mod tests {
             "postgres:16",
             vec!["/var/coast-data/pg:/var/lib/postgresql/data"],
         )]);
-        let resp = build_doctor_response(Some(("deadbeef_20260101".to_string(), m)), |_| {
-            StatResult::Ok { uid: 999, gid: 999 }
-        });
+        let resp = build_doctor_response(
+            Some(("deadbeef_20260101".to_string(), m)),
+            |_| StatResult::Ok { uid: 999, gid: 999 },
+            &empty_secret_set(),
+        );
         assert!(
             resp.message.contains("deadbeef_20260101"),
             "build_id must appear in message; got: {}",

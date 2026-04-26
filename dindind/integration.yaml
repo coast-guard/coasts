@@ -424,6 +424,37 @@ tests:
     script: integrated-examples/test_ssg_inject_file.sh
     timeout: 600
     note: "consumer app container receives the canonical connection URL at inject = \"file:<path>\"; env var unset; round-trip psql lands in the per-instance DB"
+
+  # --- Phase 33: SSG-native [secrets.<name>] support ---
+  # `Coastfile.shared_service_groups` accepts the same `[secrets.*]`
+  # block as the regular Coastfile. `coast ssg build` extracts via
+  # the existing extractor registry and stores values encrypted in
+  # the keystore under `coast_image = "ssg:<project>"`.
+  # `coast ssg run` decrypts and writes a per-run
+  # `compose.override.yml` that compose layers on top of
+  # `/coast-artifact/compose.yml`. Keystore is never auto-purged —
+  # only `coast ssg secrets clear` removes entries.
+  test_ssg_secrets_env_inject:
+    script: integrated-examples/test_ssg_secrets_env_inject.sh
+    timeout: 600
+    note: "[secrets.*] with env extractor + env inject lands in the postgres container as POSTGRES_PASSWORD via compose.override.yml"
+  test_ssg_secrets_file_inject:
+    script: integrated-examples/test_ssg_secrets_file_inject.sh
+    timeout: 600
+    note: "[secrets.*] with file inject writes to host scratch dir + bind-mounts read-only into postgres at /run/secrets/jwt"
+  test_ssg_secrets_rebuild_reextracts:
+    script: integrated-examples/test_ssg_secrets_rebuild_reextracts.sh
+    timeout: 600
+    note: "rebuild after the source env var changes re-extracts the new value; old value gone from the keystore"
+  test_ssg_secrets_rm_keeps_keystore:
+    script: integrated-examples/test_ssg_secrets_rm_keeps_keystore.sh
+    timeout: 600
+    note: "ssg rm and ssg rm --with-data leave the keystore alone; only `ssg secrets clear` removes SSG keystore rows"
+  test_ssg_secrets_clear:
+    script: integrated-examples/test_ssg_secrets_clear.sh
+    timeout: 600
+    note: "explicit `ssg secrets clear` empties keystore for ssg:<project>; idempotent; doctor surfaces info finding when declared but missing"
+
   test_shared_service_auto_create_db:
     script: integrated-examples/test_shared_service_auto_create_db.sh
     timeout: 600

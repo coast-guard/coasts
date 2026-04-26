@@ -274,6 +274,40 @@ pub enum SsgAction {
         #[arg(short = 'f', long)]
         file: Option<PathBuf>,
     },
+    /// Manage the SSG's encrypted secret store.
+    ///
+    /// Phase 33: SSGs declare `[secrets.<name>]` blocks the same
+    /// way regular Coastfiles do. `coast ssg build` extracts and
+    /// encrypts the values into the shared keystore under
+    /// `coast_image = "ssg:<project>"`; `coast ssg run` decrypts
+    /// and injects them via a per-run `compose.override.yml`. The
+    /// keystore is NEVER auto-purged: only the explicit
+    /// `coast ssg secrets clear` verb removes entries. See
+    /// `DESIGN.md §33`.
+    Secrets {
+        #[command(subcommand)]
+        cmd: SsgSecretsCommand,
+    },
+}
+
+/// Subcommands of `coast ssg secrets`.
+#[derive(Debug, Clone, clap::Subcommand)]
+pub enum SsgSecretsCommand {
+    /// Clear every encrypted SSG secret for this project.
+    /// Idempotent. Subsequent `coast ssg run` will still start
+    /// the SSG container, but services that depend on a missing
+    /// env-var or file path will fail at compose-up time.
+    Clear {
+        /// Project name override. Defaults to `[coast].name`
+        /// read from the consumer Coastfile in `--working-dir` /
+        /// cwd. Same fallback chain as `coast ssg show-pin`.
+        #[arg(long)]
+        project: Option<String>,
+        #[arg(long = "working-dir")]
+        working_dir: Option<PathBuf>,
+        #[arg(short = 'f', long)]
+        file: Option<PathBuf>,
+    },
 }
 
 pub async fn execute(args: &SsgArgs, cli_working_dir: &Option<PathBuf>) -> Result<()> {
@@ -302,6 +336,21 @@ pub async fn execute(args: &SsgArgs, cli_working_dir: &Option<PathBuf>) -> Resul
             let resolved_working_dir = working_dir.clone().or_else(|| cli_working_dir.clone());
             let resolved_project = resolve_consumer_project(project, &resolved_working_dir, file)?;
             execute_builds_ls(resolved_project, args.silent).await
+        }
+        // Phase 33: SSG-native secrets. `secrets clear` is the only
+        // verb today; future additions (e.g. `secrets list`) slot
+        // into the same `Secrets { cmd }` enum.
+        SsgAction::Secrets {
+            cmd:
+                SsgSecretsCommand::Clear {
+                    project,
+                    working_dir,
+                    file,
+                },
+        } => {
+            let resolved_working_dir = working_dir.clone().or_else(|| cli_working_dir.clone());
+            let resolved_project = resolve_consumer_project(project, &resolved_working_dir, file)?;
+            execute_secrets_clear(resolved_project, args.silent).await
         }
         other => dispatch_simple_or_lifecycle(other, args.silent, cli_working_dir).await,
     }
@@ -507,7 +556,8 @@ async fn dispatch_simple_or_lifecycle(
         | SsgAction::UncheckoutBuild { .. }
         | SsgAction::ShowPin { .. }
         | SsgAction::Ls
-        | SsgAction::BuildsLs { .. } => {
+        | SsgAction::BuildsLs { .. }
+        | SsgAction::Secrets { .. } => {
             unreachable!("dispatch_simple_or_lifecycle only handles non-build/non-pin/non-ls verbs")
         }
     }
@@ -1169,6 +1219,26 @@ async fn execute_builds_ls(project: String, silent: bool) -> Result<()> {
                     println!();
                     println!("{}", format_builds_table(&resp.builds));
                 }
+            }
+            Ok(())
+        }
+        Response::Error(e) => bail!("{}", e.error),
+        other => bail!("unexpected response from daemon: {other:?}"),
+    }
+}
+
+/// `coast ssg secrets clear` — drop every keystore entry whose
+/// `coast_image == "ssg:<project>"`. Idempotent. Phase 33.
+async fn execute_secrets_clear(project: String, silent: bool) -> Result<()> {
+    let response = super::send_request(Request::Ssg(SsgRequest {
+        project,
+        action: ProtoSsgAction::SecretsClear,
+    }))
+    .await?;
+    match response {
+        Response::Ssg(resp) => {
+            if !silent {
+                println!("{}", resp.message);
             }
             Ok(())
         }

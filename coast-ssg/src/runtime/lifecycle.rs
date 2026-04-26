@@ -28,7 +28,7 @@ use coast_core::artifact;
 use coast_core::error::{CoastError, Result};
 use coast_core::protocol::{BuildProgressEvent, SsgPortInfo, SsgResponse, SsgServiceInfo};
 use coast_docker::dind::{build_dind_config, DindConfigParams};
-use coast_docker::runtime::PortPublish;
+use coast_docker::runtime::{BindMount, PortPublish};
 
 use crate::build::artifact::SsgManifest;
 use crate::coastfile::SsgCoastfile;
@@ -66,15 +66,29 @@ pub(crate) const INNER_ARTIFACT_DIR: &str = "/coast-artifact";
 /// [`DindConfigParams::image_cache_path`]).
 const INNER_IMAGE_CACHE_DIR: &str = "/image-cache";
 
+/// Inner path the per-run scratch dir is bind-mounted at.
+///
+/// Phase 33: holds the run-time `compose.override.yml` (decrypted
+/// secret env-vars + volume mounts) and `secrets/<basename>` files
+/// for the `inject = "file:..."` shape. Lives at
+/// `~/.coast/ssg/runs/<project>/` on the host. The dir is created
+/// fresh in `create_ssg_container` so a stale directory from a
+/// previous SSG container can't leak file-secret payloads into the
+/// new one.
+pub(crate) const INNER_RUNTIME_DIR: &str = "/coast-runtime";
+
 /// Inner daemon readiness timeout. Matches the default used for
 /// regular coasts.
 const INNER_DAEMON_TIMEOUT_SECS: u64 = 120;
 
 /// Total steps in the `run_ssg` progress plan.
 ///
-/// Fixed: prepare (1), create container (2), start container (3), wait
-/// for daemon (4), load images (5), compose up (6).
-const RUN_STEPS: u32 = 6;
+/// Fixed: prepare (1), create container (2), start container (3),
+/// wait for daemon (4), load images (5), materialize secrets (6),
+/// compose up (7). Step 6 is silently skipped (no progress event)
+/// when the manifest declares no secrets — keeps the SPA's plan
+/// rendering stable. See `DESIGN.md §33`.
+const RUN_STEPS: u32 = 7;
 
 /// Result of `run_ssg`: all data the caller needs to write state and
 /// build a final `SsgResponse`. Separating this from the async Docker
@@ -173,6 +187,11 @@ pub async fn run_ssg_with_build_id(
             "Starting SSG container".to_string(),
             "Waiting for inner daemon".to_string(),
             "Loading cached images".to_string(),
+            // Phase 33: secret materialization slot. Always
+            // advertised in the plan so the SPA renders a stable
+            // 7-step checklist; the actual `started`/`done` events
+            // are skipped when the build has no `[secrets]` block.
+            "Materializing secrets".to_string(),
             "Starting inner services".to_string(),
         ]))
         .await;
@@ -241,11 +260,43 @@ pub async fn run_ssg_with_build_id(
     )
     .await;
 
+    // --- materialize secrets (Phase 33) ---
+    //
+    // When the manifest declares any `[secrets.<name>]` injects,
+    // decrypt them from the keystore (`coast_image = "ssg:<project>"`)
+    // and write a per-run `compose.override.yml` to
+    // `~/.coast/ssg/runs/<project>/`. That dir is bind-mounted into
+    // the outer DinD at `/coast-runtime/`, so compose can layer the
+    // override on top of `/coast-artifact/compose.yml`. When no
+    // secrets are declared, this returns an empty extras list and
+    // the step emits no progress event — keeps the existing
+    // `RUN_STEPS = 7` plan stable. See `DESIGN.md §33`.
+    let extra_compose_files = if manifest.secret_injects.is_empty() {
+        Vec::new()
+    } else {
+        emit(&progress, "Materializing secrets", 6, RUN_STEPS).await;
+        let extras = crate::runtime::secrets_inject::materialize_secrets(
+            project,
+            ops,
+            &container_id,
+            &manifest,
+        )
+        .await?;
+        done(
+            &progress,
+            "Materializing secrets",
+            &format!("{} ok", manifest.secret_injects.len()),
+        )
+        .await;
+        extras
+    };
+
     // --- compose up ---
-    emit(&progress, "Starting inner services", 6, RUN_STEPS).await;
+    emit(&progress, "Starting inner services", 7, RUN_STEPS).await;
     ops.inner_compose_up(
         &container_id,
         &inner_compose_path(),
+        &extra_compose_files,
         &ssg_compose_project(project),
     )
     .await?;
@@ -365,17 +416,34 @@ pub async fn start_ssg(
         .await?;
     done(&progress, "Waiting for inner daemon", "ready").await;
 
+    // Phase 33: re-materialize secrets on start so any change to
+    // the keystore (e.g. a `coast ssg secrets clear` between stop
+    // and start, or a fresh `coast ssg build` that re-extracted
+    // values) takes effect at compose-up time. The override file
+    // gets rewritten in place at `~/.coast/ssg/runs/<project>/`.
+    let build_dir = paths::ssg_build_dir(&build_id)?;
+    let manifest = read_manifest(&build_dir)?;
+    let extra_compose_files = if manifest.secret_injects.is_empty() {
+        Vec::new()
+    } else {
+        crate::runtime::secrets_inject::materialize_secrets(
+            &record.project,
+            ops,
+            &container_id,
+            &manifest,
+        )
+        .await?
+    };
+
     emit(&progress, "Starting inner services", 3, 3).await;
     ops.inner_compose_up(
         &container_id,
         &inner_compose_path(),
+        &extra_compose_files,
         &ssg_compose_project(&record.project),
     )
     .await?;
     done(&progress, "Starting inner services", "ok").await;
-
-    let build_dir = paths::ssg_build_dir(&build_id)?;
-    let manifest = read_manifest(&build_dir)?;
 
     Ok(SsgStartOutcome {
         container_id,
@@ -632,7 +700,27 @@ async fn create_ssg_container(
     coastfile: &SsgCoastfile,
     plans: &[SsgServicePortPlan],
 ) -> Result<String> {
-    let bind_mounts = outer_bind_mounts(coastfile);
+    let mut bind_mounts = outer_bind_mounts(coastfile);
+
+    // Phase 33: bind-mount the per-run scratch dir at
+    // `INNER_RUNTIME_DIR`. Always mounted (even when no secrets are
+    // declared) so the path exists for any future overlay payloads
+    // and the container layout is uniform across projects.
+    let runtime_dir = paths::ssg_run_dir(project)?;
+    std::fs::create_dir_all(&runtime_dir).map_err(|e| CoastError::Io {
+        message: format!(
+            "failed to create SSG runtime dir '{}': {e}",
+            runtime_dir.display()
+        ),
+        path: runtime_dir.clone(),
+        source: Some(e),
+    })?;
+    bind_mounts.push(BindMount {
+        host_path: runtime_dir,
+        container_path: INNER_RUNTIME_DIR.to_string(),
+        read_only: false,
+        propagation: None,
+    });
 
     let mut config = build_dind_config(DindConfigParams {
         bind_mounts,
@@ -820,6 +908,7 @@ mod tests {
                     auto_create_db: false,
                 })
                 .collect(),
+            secret_injects: vec![],
         }
     }
 

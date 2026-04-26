@@ -23,6 +23,11 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/remote-build", post(remote_build_sse))
         .route("/ssg-build", post(ssg_build_sse))
         .route("/ssg-run", post(ssg_run_sse))
+        // Phase 33: SSG-native re-extract. Mirrors `rerun-extractors`
+        // for regular instances but targets the SSG `[secrets.*]`
+        // block in `Coastfile.shared_service_groups`. Backs the
+        // SsgSecretsTab "Re-run extractors" button.
+        .route("/ssg-rerun-extractors", post(ssg_rerun_extractors_sse))
         .route("/rerun-extractors", post(rerun_extractors_sse))
         .route("/run", post(run_sse))
         .route("/assign", post(assign_sse))
@@ -457,6 +462,174 @@ async fn run_ssg_run_with_progress(
         .await;
     resp.message = format!("SSG running on build {build_id}");
     Ok(resp)
+}
+
+/// Phase 33: request body for `POST /api/v1/stream/ssg-rerun-extractors`.
+///
+/// Re-runs the SSG's `[secrets.*]` extractor pass against the
+/// Coastfile baked into the active build artifact. Mirrors the
+/// regular `RerunExtractorsRequest` but doesn't take a `build_id`
+/// since the SSG always re-extracts against the current
+/// `latest_build_id` (per-project SSG, §23).
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize, ts_rs::TS)]
+#[ts(export)]
+pub struct SsgRerunExtractorsSseRequest {
+    pub project: String,
+}
+
+async fn ssg_rerun_extractors_sse(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<SsgRerunExtractorsSseRequest>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let (tx, rx) = mpsc::channel::<BuildProgressEvent>(64);
+
+    let state_clone = Arc::clone(&state);
+    let (result_tx, result_rx) = tokio::sync::oneshot::channel();
+
+    tokio::spawn(async move {
+        let result = run_ssg_rerun_extractors_with_progress(req, &state_clone, tx).await;
+        let _ = result_tx.send(result);
+    });
+
+    let stream = ssg_rerun_extractors_event_stream(rx, result_rx);
+    Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
+/// Drive the SSG re-extract to completion, emitting a 2-step plan
+/// ("Resolving cached SSG Coastfile" + "Extracting secrets") so
+/// the SPA's `SsgRunModal`-style checklist renderer displays a
+/// proper progress trail. The actual extraction runs through the
+/// shared `coast_ssg::build::secrets::extract_ssg_secrets` helper,
+/// keyed on `coast_image = "ssg:<project>"`. Overrides written via
+/// the SPA's "Override" button live in the parallel
+/// `ssg:<project>/override` namespace and are NOT touched here —
+/// the run-time `materialize_secrets` path merges them back in.
+async fn run_ssg_rerun_extractors_with_progress(
+    req: SsgRerunExtractorsSseRequest,
+    state: &Arc<AppState>,
+    tx: mpsc::Sender<BuildProgressEvent>,
+) -> coast_core::error::Result<coast_core::protocol::RerunExtractorsResponse> {
+    use coast_core::error::CoastError;
+    use coast_ssg::state::SsgStateExt;
+
+    if req.project.is_empty() {
+        return Err(CoastError::protocol(
+            "ssg-rerun-extractors: 'project' is required",
+        ));
+    }
+
+    let _operation_guard = state.begin_update_operation(
+        crate::server::UpdateOperationKind::RerunExtractors,
+        Some(&req.project),
+        None,
+    )?;
+    let _ssg_lock = state.ssg_mutex.lock().await;
+
+    let plan = vec![
+        "Resolving cached SSG Coastfile".to_string(),
+        "Extracting secrets".to_string(),
+    ];
+    let total_steps = plan.len() as u32;
+    let _ = tx.try_send(BuildProgressEvent::build_plan(plan));
+
+    // --- Step 1: resolve build ---
+    let _ = tx
+        .send(BuildProgressEvent::started(
+            "Resolving cached SSG Coastfile",
+            1,
+            total_steps,
+        ))
+        .await;
+
+    let resolved_build_id = {
+        let db = state.db.lock().await;
+        let pin = db.get_ssg_consumer_pin(&req.project)?.map(|p| p.build_id);
+        let latest = db.get_ssg(&req.project)?.and_then(|r| r.latest_build_id);
+        pin.or(latest)
+    };
+    let build_id = resolved_build_id.ok_or_else(|| {
+        CoastError::coastfile(format!(
+            "no SSG build for project '{}'. Run `coast ssg build` first.",
+            req.project,
+        ))
+    })?;
+    let build_dir = coast_ssg::paths::ssg_build_dir(&build_id)?;
+    let coastfile_path = build_dir.join("ssg-coastfile.toml");
+    if !coastfile_path.exists() {
+        return Err(CoastError::coastfile(format!(
+            "build artifact missing `ssg-coastfile.toml` at '{}'. \
+             Re-run `coast ssg build`.",
+            coastfile_path.display()
+        )));
+    }
+    let cf = coast_ssg::coastfile::SsgCoastfile::from_file(&coastfile_path)?;
+    let _ = tx
+        .send(
+            BuildProgressEvent::done("Resolving cached SSG Coastfile", "ok")
+                .with_verbose(coastfile_path.display().to_string()),
+        )
+        .await;
+
+    // --- Step 2: extract ---
+    if cf.secrets.is_empty() {
+        let _ = tx
+            .send(BuildProgressEvent::skip(
+                "Extracting secrets",
+                2,
+                total_steps,
+            ))
+            .await;
+        return Ok(coast_core::protocol::RerunExtractorsResponse {
+            project: req.project,
+            secrets_extracted: 0,
+            warnings: vec![
+                "No `[secrets]` declared in this SSG's Coastfile.shared_service_groups."
+                    .to_string(),
+            ],
+        });
+    }
+
+    // `extract_ssg_secrets` emits its own `started` + per-item +
+    // `done` events for the "Extracting secrets" step.
+    let outcome =
+        coast_ssg::build::extract_ssg_secrets(&req.project, &cf, &tx, 2, total_steps).await;
+
+    Ok(coast_core::protocol::RerunExtractorsResponse {
+        project: req.project,
+        secrets_extracted: outcome.secrets_extracted,
+        warnings: outcome.warnings,
+    })
+}
+
+fn ssg_rerun_extractors_event_stream(
+    mut rx: mpsc::Receiver<BuildProgressEvent>,
+    result_rx: tokio::sync::oneshot::Receiver<
+        coast_core::error::Result<coast_core::protocol::RerunExtractorsResponse>,
+    >,
+) -> impl Stream<Item = Result<Event, Infallible>> {
+    async_stream::stream! {
+        while let Some(event) = rx.recv().await {
+            if let Ok(data) = serde_json::to_string(&event) {
+                yield Ok(Event::default().event("progress").data(data));
+            }
+        }
+
+        match result_rx.await {
+            Ok(Ok(resp)) => {
+                if let Ok(data) = serde_json::to_string(&resp) {
+                    yield Ok(Event::default().event("complete").data(data));
+                }
+            }
+            Ok(Err(e)) => {
+                let err = serde_json::json!({ "error": e.to_string() });
+                yield Ok(Event::default().event("error").data(err.to_string()));
+            }
+            Err(_) => {
+                let err = serde_json::json!({ "error": "handler dropped unexpectedly" });
+                yield Ok(Event::default().event("error").data(err.to_string()));
+            }
+        }
+    }
 }
 
 fn ssg_build_event_stream(

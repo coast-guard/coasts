@@ -57,3 +57,14 @@ export function ssgLogsWsUrl(
 export function ssgStatsWsUrl(project: string): string {
     return `${wsBase()}/api/v1/ssg/stats/stream?project=${encodeURIComponent(project)}`;
 }
+
+/**
+ * Streaming docker-stats samples for a single inner compose
+ * service running inside the SSG outer DinD. Same wire shape as
+ * the per-instance `/api/v1/service/stats/stream` endpoint
+ * (`ContainerStats` JSON frames at ~2s cadence).
+ */
+export function ssgServiceStatsWsUrl(project: string, service: string): string {
+    const params = new URLSearchParams({ project, service });
+    return `${wsBase()}/api/v1/ssg/services/stats/stream?${params.toString()}`;
+}

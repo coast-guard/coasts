@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Link } from 'react-router';
 import { Warning } from '@phosphor-icons/react';
 import type { SsgServiceInfo, SsgPortInfo } from '../../types/api';
 import {
@@ -125,6 +126,8 @@ export default function SsgServicesTab({ project }: SsgServicesTabProps) {
         [batchAction, stopMut, startMut, restartMut, rmMut, t, i18n.language],
     );
 
+    const basePath = `/project/${project}/ssg/local`;
+
     const columns: readonly Column<SsgServiceInfo>[] = useMemo(
         () => [
             {
@@ -136,7 +139,13 @@ export default function SsgServicesTab({ project }: SsgServicesTabProps) {
                     const isDown = r.status !== 'running';
                     return (
                         <span className="inline-flex items-center gap-2">
-                            <span className="font-medium">{r.name}</span>
+                            <Link
+                                to={`${basePath}/services/${encodeURIComponent(r.name)}`}
+                                className="font-medium text-[var(--primary)] hover:underline"
+                                onClick={(e) => e.stopPropagation()}
+                            >
+                                {r.name}
+                            </Link>
                             {isDown && (
                                 <Warning
                                     size={14}
@@ -231,7 +240,7 @@ export default function SsgServicesTab({ project }: SsgServicesTabProps) {
                 },
             },
         ],
-        [t, portByService],
+        [t, portByService, basePath],
     );
 
     const downSvcs = useMemo(
@@ -278,6 +287,9 @@ export default function SsgServicesTab({ project }: SsgServicesTabProps) {
                     selectable
                     selectedIds={selectedIds}
                     onSelectionChange={setSelectedIds}
+                    onRowClick={(r) => {
+                        window.location.hash = `${basePath}/services/${encodeURIComponent(r.name)}`;
+                    }}
                     emptyMessage={t('ssg.noServices')}
                 />
             </div>

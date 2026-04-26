@@ -94,6 +94,7 @@ mod tests {
                     auto_create_db: false,
                 })
                 .collect(),
+            secret_injects: vec![],
         }
     }
 

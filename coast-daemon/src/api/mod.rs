@@ -17,6 +17,8 @@ pub mod ws_remote_stats;
 pub mod ws_service_exec;
 pub mod ws_service_stats;
 pub mod ws_ssg_logs;
+pub mod ws_ssg_service_exec;
+pub mod ws_ssg_service_stats;
 pub mod ws_ssg_stats;
 pub mod ws_ssg_terminal;
 pub mod ws_stats;
@@ -79,6 +81,8 @@ pub fn api_router(state: Arc<AppState>) -> Router {
         .merge(ws_remote_logs::router())
         .merge(ws_ssg_terminal::router())
         .merge(ws_ssg_logs::router())
+        .merge(ws_ssg_service_exec::router())
+        .merge(ws_ssg_service_stats::router())
         .merge(ws_ssg_stats::router());
 
     let mut router = Router::new()

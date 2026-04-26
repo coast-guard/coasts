@@ -97,7 +97,6 @@ export type {
   SsgImagesHttpResponse,
   SsgVolumeInfo,
   SsgVolumesHttpResponse,
-  SsgStatsSample,
   StartResponse,
   StopResponse,
   SuccessResponse,

@@ -219,6 +219,28 @@ pub struct AppState {
     /// Read-only verbs (`ps`, `ports`, `logs`, `exec`) do not take the
     /// mutex. See `coast-ssg/DESIGN.md §17-5`.
     pub ssg_mutex: Mutex<()>,
+    /// Phase 33: per-project SSG container stats history. Backs
+    /// the SSG → Stats tab the same way `stats_history` backs the
+    /// Instance → Stats tab, but keyed by `project` since there's
+    /// exactly one SSG per project (§23). Buffer is populated by
+    /// the `/api/v1/ssg/stats/stream` WebSocket handler and
+    /// replayed on reconnect.
+    pub ssg_stats_history: Mutex<
+        std::collections::HashMap<
+            String,
+            std::collections::VecDeque<coast_core::protocol::ContainerStats>,
+        >,
+    >,
+    /// Phase 33: per-(project, service) inner-container stats
+    /// history. Backs the SSG service detail page's Stats tab.
+    /// Keyed by `"<project>:<service>"`. Buffer is populated by
+    /// the `/api/v1/ssg/services/stats/stream` WebSocket handler
+    /// and replayed on reconnect. Stored as `serde_json::Value`
+    /// (vs. typed `ContainerStats`) because the backing
+    /// `parse_docker_stats_json` helper in `ws_service_stats.rs`
+    /// already emits a `ContainerStats`-shaped JSON value.
+    pub ssg_service_stats_history:
+        Mutex<std::collections::HashMap<String, std::collections::VecDeque<serde_json::Value>>>,
     /// Tracks the PIDs of reverse-tunnel ssh children spawned by
     /// `setup_shared_service_tunnels` for each remote coast instance.
     /// Keyed by `(project, instance_name)`. In-memory only — reverse
@@ -299,6 +321,8 @@ impl AppState {
             port_health_cache: Mutex::new(std::collections::HashMap::new()),
             project_ops: Mutex::new(std::collections::HashMap::new()),
             ssg_mutex: Mutex::new(()),
+            ssg_stats_history: Mutex::new(std::collections::HashMap::new()),
+            ssg_service_stats_history: Mutex::new(std::collections::HashMap::new()),
             shared_service_tunnel_pids: Mutex::new(std::collections::HashMap::new()),
             language_tx,
             language_rx,
@@ -341,6 +365,8 @@ impl AppState {
             port_health_cache: Mutex::new(std::collections::HashMap::new()),
             project_ops: Mutex::new(std::collections::HashMap::new()),
             ssg_mutex: Mutex::new(()),
+            ssg_stats_history: Mutex::new(std::collections::HashMap::new()),
+            ssg_service_stats_history: Mutex::new(std::collections::HashMap::new()),
             shared_service_tunnel_pids: Mutex::new(std::collections::HashMap::new()),
             language_tx,
             language_rx,

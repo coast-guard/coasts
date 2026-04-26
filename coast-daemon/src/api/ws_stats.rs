@@ -437,7 +437,7 @@ async fn handle_stats_socket(mut socket: WebSocket, state: Arc<AppState>, key: S
 // Stats extraction (unchanged)
 // ---------------------------------------------------------------------------
 
-fn extract_stats(
+pub(crate) fn extract_stats(
     stats: &bollard::container::Stats,
     prev_cpu_total: &mut u64,
     prev_cpu_system: &mut u64,

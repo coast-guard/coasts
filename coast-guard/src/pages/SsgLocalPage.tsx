@@ -1,9 +1,17 @@
-import { useMemo } from 'react';
-import { useNavigate, useParams } from 'react-router';
+import { useCallback, useMemo, useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
+import { ArrowClockwise } from '@phosphor-icons/react';
 import Breadcrumb from '../components/Breadcrumb';
 import TabBar, { type TabDef } from '../components/TabBar';
+import SsgStatusBadge from '../components/SsgStatusBadge';
+import ConfirmModal from '../components/ConfirmModal';
+import Modal from '../components/Modal';
 import { useSsgState } from '../api/hooks';
+import { api } from '../api/endpoints';
+import { ApiError } from '../api/client';
+import { useQueryClient } from '@tanstack/react-query';
+import { qk } from '../api/hooks';
 import SsgExecTab from '../components/ssg/SsgExecTab';
 import SsgPortsTab from '../components/ssg/SsgPortsTab';
 import SsgServicesTab from '../components/ssg/SsgServicesTab';
@@ -84,18 +92,21 @@ export default function SsgLocalPage() {
 
     return (
         <div className="page-shell">
-            <Breadcrumb
-                className="flex items-center gap-1.5 text-sm text-muted-ui mb-4"
-                items={[
-                    { label: t('nav.projects'), to: '/' },
-                    { label: project_, to: `/project/${project_}` },
-                    // Trailing tab is intentionally omitted: the
-                    // tab nav below is already the source-of-truth
-                    // for the active tab, and the breadcrumb stays
-                    // visually identical across all 8 sub-tabs.
-                    { label: t('build.ssgBuilds') },
-                ]}
-            />
+            <div className="flex items-start justify-between mb-4">
+                <Breadcrumb
+                    className="flex items-center gap-1.5 text-sm text-muted-ui"
+                    items={[
+                        { label: t('nav.projects'), to: '/' },
+                        { label: project_, to: `/project/${project_}` },
+                        // Trailing tab is intentionally omitted: the
+                        // tab nav below is already the source-of-truth
+                        // for the active tab, and the breadcrumb stays
+                        // visually identical across all 8 sub-tabs.
+                        { label: t('build.ssgBuilds') },
+                    ]}
+                />
+                {!noBuildYet && <SsgActionButtons project={project_} />}
+            </div>
 
             {noBuildYet ? (
                 <section className="glass-panel p-6 text-sm text-subtle-ui">
@@ -103,7 +114,7 @@ export default function SsgLocalPage() {
                 </section>
             ) : (
                 <>
-                    <StatusBanner project={project_} />
+                    <SsgHeader project={project_} />
                     <TabBar tabs={tabs} active={activeTab} />
                     <div className="mt-1">
                         {activeTab === 'exec' && <SsgExecTab project={project_} />}
@@ -124,94 +135,203 @@ export default function SsgLocalPage() {
                 </>
             )}
 
-            {/* Hidden anchor for navigate() callbacks (used by status
-                  banner's pinned/latest links). */}
+            {/* Hidden anchor used by header navigate() callbacks. */}
             <span hidden onClick={() => navigate('#')} />
         </div>
     );
 }
 
-function StatusBanner({ project }: { readonly project: string }) {
+/**
+ * Top-right action cluster on the SSG Local page. Mirrors the
+ * `InstanceDetailPage` button row exactly:
+ *
+ * 1. **Restart Services** (`btn-outline`, danger-confirm modal) —
+ *    bounces every inner compose service inside the outer DinD
+ *    via `docker compose -p <project>-ssg restart` (no service
+ *    arg). Does NOT bounce the outer DinD itself.
+ * 2. **Stop / Start** (`btn-outline`) — toggles the outer DinD
+ *    container based on `data.status`. Calls `api.ssgStop` /
+ *    `api.ssgStart`.
+ * 3. **Checkout / Uncheckout** (`btn-primary` for checkout,
+ *    `btn-outline` for uncheckout) — toggles canonical-port
+ *    binding for ALL services. Maps to `coast ssg checkout --all`
+ *    / `coast ssg uncheckout --all`. Hidden when the SSG isn't
+ *    running.
+ *
+ * Toggle state for Checkout/Uncheckout: "checked out" means at
+ * least one service has a canonical-port binding (`port.checked_out`
+ * in `data.ports`). Same any-true rule the SSG ports tab uses.
+ */
+function SsgActionButtons({ project }: { readonly project: string }) {
     const { t } = useTranslation();
-    const navigate = useNavigate();
+    const queryClient = useQueryClient();
     const { data } = useSsgState(project);
+
+    const [confirmRestart, setConfirmRestart] = useState(false);
+    const [opPending, setOpPending] = useState(false);
+    const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+    const isRunning = data?.status === 'running';
+    const hasCheckout = (data?.ports ?? []).some((p) => p.checked_out);
+
+    const invalidate = useCallback(() => {
+        void queryClient.invalidateQueries({ queryKey: qk.ssgState(project) });
+    }, [queryClient, project]);
+
+    const act = useCallback(
+        async (fn: () => Promise<unknown>) => {
+            setOpPending(true);
+            try {
+                await fn();
+                invalidate();
+            } catch (e) {
+                setErrorMsg(e instanceof ApiError ? e.body.error : String(e));
+            } finally {
+                setOpPending(false);
+            }
+        },
+        [invalidate],
+    );
 
     if (data == null) {
         return null;
     }
 
     return (
-        <div className="glass-panel p-4 mb-4">
-            <div className="flex items-center gap-3 flex-wrap">
-                <h2 className="text-base font-semibold text-main">
-                    {t('ssg.statusHeader')}
-                </h2>
-                <StatusPill status={data.status} t={t} />
-                {data.latest_build_id != null && (
+        <div className="flex items-center gap-2">
+            {isRunning && (
+                <>
                     <button
                         type="button"
-                        className="font-mono text-xs text-[var(--primary)] hover:text-[var(--primary-strong)] hover:underline transition-colors cursor-pointer bg-transparent border-0 p-0"
-                        onClick={() =>
-                            navigate(
-                                `/project/${project}/ssg-builds/${encodeURIComponent(
-                                    data.latest_build_id ?? '',
-                                )}`,
-                            )
-                        }
+                        className="btn btn-outline !h-8 !px-3.5 !py-1.5 !text-[14px] !font-semibold"
+                        disabled={opPending}
+                        onClick={() => setConfirmRestart(true)}
                     >
-                        <span className="text-subtle-ui mr-1.5">
-                            {t('build.ssgLatestBadge')}:
-                        </span>
-                        {data.latest_build_id}
+                        {t('ssg.action.restartServices')}
                     </button>
-                )}
-                {data.pinned_build_id != null && (
                     <button
                         type="button"
-                        className="font-mono text-xs text-[var(--primary)] hover:text-[var(--primary-strong)] hover:underline transition-colors cursor-pointer bg-transparent border-0 p-0"
-                        onClick={() =>
-                            navigate(
-                                `/project/${project}/ssg-builds/${encodeURIComponent(
-                                    data.pinned_build_id ?? '',
-                                )}`,
-                            )
-                        }
+                        className="btn btn-outline !h-8 !px-3.5 !py-1.5 !text-[14px] !font-semibold"
+                        disabled={opPending}
+                        onClick={() => void act(() => api.ssgStop(project))}
                     >
-                        <span className="text-subtle-ui mr-1.5">
-                            {t('build.ssgPinnedBadge')}:
-                        </span>
-                        {data.pinned_build_id}
+                        {t('action.stop')}
                     </button>
-                )}
-            </div>
-            {data.message && (
-                <p className="mt-2 text-xs text-subtle-ui">{data.message}</p>
+                </>
             )}
+
+            {!isRunning && (
+                <button
+                    type="button"
+                    className="btn btn-primary !h-8 !px-3.5 !py-1.5 !text-[14px] !font-semibold"
+                    disabled={opPending}
+                    onClick={() => void act(() => api.ssgStart(project))}
+                >
+                    {t('action.start')}
+                </button>
+            )}
+
+            {isRunning &&
+                (hasCheckout ? (
+                    <button
+                        type="button"
+                        className="btn btn-outline !h-8 !px-3.5 !py-1.5 !text-[14px] !font-semibold"
+                        disabled={opPending}
+                        onClick={() => void act(() => api.ssgUncheckoutAll(project))}
+                    >
+                        {t('action.uncheckout')}
+                    </button>
+                ) : (
+                    <button
+                        type="button"
+                        className="btn btn-primary !h-8 !px-3.5 !py-1.5 !text-[14px] !font-semibold"
+                        disabled={opPending}
+                        onClick={() => void act(() => api.ssgCheckoutAll(project))}
+                    >
+                        {t('action.checkout')}
+                    </button>
+                ))}
+
+            {opPending && (
+                <span className="inline-flex items-center text-subtle-ui">
+                    <ArrowClockwise size={16} className="animate-spin" />
+                </span>
+            )}
+
+            <ConfirmModal
+                open={confirmRestart}
+                title={t('ssg.action.restartServicesTitle')}
+                body={t('ssg.action.restartServicesBody', { project })}
+                confirmLabel={t('ssg.action.restartServices')}
+                danger
+                onConfirm={() => {
+                    setConfirmRestart(false);
+                    void act(() => api.ssgRestartServices(project));
+                }}
+                onCancel={() => setConfirmRestart(false)}
+            />
+
+            <Modal
+                open={errorMsg != null}
+                title={t('error.title')}
+                onClose={() => setErrorMsg(null)}
+            >
+                <p className="text-rose-600 dark:text-rose-400">{errorMsg}</p>
+            </Modal>
         </div>
     );
 }
 
-function StatusPill({
-    status,
-    t,
-}: {
-    readonly status: string | null;
-    readonly t: ReturnType<typeof useTranslation>['t'];
-}) {
-    if (status == null) {
-        return <span className="text-subtle-ui text-xs">{t('ssg.statusAbsent')}</span>;
+/**
+ * SSG-flavored header that mirrors the layout of
+ * `InstanceDetailPage`: a single h1 + status pill row, followed
+ * by a "Build:" line linking to the active SSG build artifact.
+ *
+ * The pre-Phase-33 `StatusBanner` wrapped everything in a
+ * `glass-panel` rectangle, which made the SSG header visually
+ * distinct from the rest of the project's detail pages. Switching
+ * to the bare h1 + pill + build line keeps the SPA's instance and
+ * SSG navs visually consistent.
+ */
+function SsgHeader({ project }: { readonly project: string }) {
+    const { t } = useTranslation();
+    const { data } = useSsgState(project);
+    if (data == null) {
+        return null;
     }
-    const color =
-        status === 'running'
-            ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
-            : status === 'stopped'
-                ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400'
-                : 'bg-amber-500/10 text-amber-600 dark:text-amber-400';
+
+    const activeBuildId = data.pinned_build_id ?? data.latest_build_id;
+
     return (
-        <span
-            className={`px-1.5 py-0.5 rounded font-mono text-[10px] uppercase ${color}`}
-        >
-            {status}
-        </span>
+        <>
+            <div className="flex items-center gap-3 mb-2 flex-wrap">
+                <h1 className="text-2xl font-bold text-main">
+                    {t('ssg.detail.title')}
+                </h1>
+                <SsgStatusBadge status={data.status} />
+            </div>
+
+            {activeBuildId != null && (
+                <div className="flex items-center gap-2 text-sm mb-4 flex-wrap">
+                    <span className="text-subtle-ui">{t('col.build')}:</span>
+                    <Link
+                        to={`/project/${project}/ssg-builds/${encodeURIComponent(activeBuildId)}`}
+                        className="font-mono text-xs text-[var(--primary)] hover:text-[var(--primary-strong)] hover:underline"
+                    >
+                        {activeBuildId}
+                    </Link>
+                    {data.pinned_build_id != null && (
+                        <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[var(--primary)]/10 text-[var(--primary-strong)] dark:text-[var(--primary)] border border-[var(--primary)]/20">
+                            {t('build.ssgPinnedBadge')}
+                        </span>
+                    )}
+                    {data.pinned_build_id == null && data.latest_build_id != null && (
+                        <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                            {t('build.ssgLatestBadge')}
+                        </span>
+                    )}
+                </div>
+            )}
+        </>
     );
 }
