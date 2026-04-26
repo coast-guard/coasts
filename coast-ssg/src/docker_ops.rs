@@ -162,6 +162,22 @@ pub trait SsgDockerOps: Send + Sync {
         argv: &[String],
     ) -> Result<SsgExecOutput>;
 
+    /// Run a per-service `docker compose <verb> <service>` command
+    /// inside `container_id`. Used for the toolbar Stop / Start /
+    /// Restart / Remove actions on the SSG services tab. `verb`
+    /// must be one of `stop`, `start`, `restart`, or `rm` (with
+    /// `rm -sf` semantics implemented as `rm -s -f`). On failure
+    /// returns a descriptive `CoastError::Docker` so the caller can
+    /// surface stderr verbatim.
+    async fn inner_compose_service_action(
+        &self,
+        container_id: &str,
+        compose_path: &str,
+        project: &str,
+        verb: &str,
+        service: &str,
+    ) -> Result<()>;
+
     /// Run `docker compose -f <compose_path> -p <project> logs --tail N <service>`
     /// inside `container_id`. Returns the combined output.
     async fn inner_compose_logs(
@@ -256,6 +272,34 @@ pub fn build_inner_compose_logs_argv(
         tail.unwrap_or(200).to_string(),
         service.to_string(),
     ]
+}
+
+/// `docker compose -f <path> -p <project> <verb> <service>` for
+/// the per-service Stop/Start/Restart/Remove buttons on the SSG
+/// services tab. `rm` is sent as `rm -s -f` so a stopped or
+/// running service is force-removed in one call (matches the
+/// semantics of `coast service rm` on regular instances).
+pub fn build_inner_compose_service_action_argv(
+    compose_path: &str,
+    project: &str,
+    verb: &str,
+    service: &str,
+) -> Vec<String> {
+    let mut argv: Vec<String> = vec![
+        "docker".to_string(),
+        "compose".to_string(),
+        "-f".to_string(),
+        compose_path.to_string(),
+        "-p".to_string(),
+        project.to_string(),
+        verb.to_string(),
+    ];
+    if verb == "rm" {
+        argv.push("-s".to_string());
+        argv.push("-f".to_string());
+    }
+    argv.push(service.to_string());
+    argv
 }
 
 /// `logs --tail N <container_id>` — the args passed to the host
@@ -468,6 +512,34 @@ impl SsgDockerOps for BollardSsgDockerOps {
         self.exec_inner(container_id, &full).await
     }
 
+    async fn inner_compose_service_action(
+        &self,
+        container_id: &str,
+        compose_path: &str,
+        project: &str,
+        verb: &str,
+        service: &str,
+    ) -> Result<()> {
+        // Reject anything that isn't a known compose verb to
+        // prevent the SPA from sending arbitrary docker compose
+        // subcommands through this path.
+        if !matches!(verb, "stop" | "start" | "restart" | "rm") {
+            return Err(CoastError::docker(format!(
+                "inner_compose_service_action: unsupported verb '{verb}' \
+                 (expected stop|start|restart|rm)"
+            )));
+        }
+        let argv = build_inner_compose_service_action_argv(compose_path, project, verb, service);
+        let out = self.exec_inner(container_id, &argv).await?;
+        if !out.success() {
+            return Err(CoastError::docker(format!(
+                "docker compose {verb} {service} failed (exit {}). stderr: {}",
+                out.exit_code, out.stderr,
+            )));
+        }
+        Ok(())
+    }
+
     async fn inner_compose_logs(
         &self,
         container_id: &str,
@@ -621,6 +693,13 @@ mod mock {
             service: String,
             tail: Option<u32>,
         },
+        InnerComposeServiceAction {
+            container_id: String,
+            compose_path: String,
+            project: String,
+            verb: String,
+            service: String,
+        },
         HostContainerLogs {
             container_id: String,
             tail: Option<u32>,
@@ -649,6 +728,7 @@ mod mock {
         compose_down_results: Mutex<std::collections::VecDeque<Result<()>>>,
         compose_exec_results: Mutex<std::collections::VecDeque<Result<SsgExecOutput>>>,
         compose_logs_results: Mutex<std::collections::VecDeque<Result<String>>>,
+        compose_service_action_results: Mutex<std::collections::VecDeque<Result<()>>>,
         host_logs_results: Mutex<std::collections::VecDeque<Result<String>>>,
     }
 
@@ -702,6 +782,12 @@ mod mock {
         }
         pub fn push_compose_logs_result(&self, r: Result<String>) {
             self.compose_logs_results.lock().unwrap().push_back(r);
+        }
+        pub fn push_compose_service_action_result(&self, r: Result<()>) {
+            self.compose_service_action_results
+                .lock()
+                .unwrap()
+                .push_back(r);
         }
         pub fn push_host_logs_result(&self, r: Result<String>) {
             self.host_logs_results.lock().unwrap().push_back(r);
@@ -929,6 +1015,31 @@ mod mock {
                 .unwrap_or_else(|| Ok(String::new()))
         }
 
+        async fn inner_compose_service_action(
+            &self,
+            cid: &str,
+            compose_path: &str,
+            project: &str,
+            verb: &str,
+            service: &str,
+        ) -> Result<()> {
+            self.log
+                .lock()
+                .unwrap()
+                .push(MockCall::InnerComposeServiceAction {
+                    container_id: cid.to_string(),
+                    compose_path: compose_path.to_string(),
+                    project: project.to_string(),
+                    verb: verb.to_string(),
+                    service: service.to_string(),
+                });
+            self.compose_service_action_results
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or(Ok(()))
+        }
+
         async fn host_container_logs(&self, cid: &str, tail: Option<u32>) -> Result<String> {
             self.log.lock().unwrap().push(MockCall::HostContainerLogs {
                 container_id: cid.to_string(),
@@ -1075,6 +1186,55 @@ mod tests {
     }
 
     // --- argv builders ---
+
+    #[test]
+    fn build_inner_compose_service_action_argv_stop_is_stable() {
+        assert_eq!(
+            build_inner_compose_service_action_argv(
+                "/coast-artifact/compose.yml",
+                "cg-ssg",
+                "stop",
+                "postgres",
+            ),
+            vec![
+                "docker",
+                "compose",
+                "-f",
+                "/coast-artifact/compose.yml",
+                "-p",
+                "cg-ssg",
+                "stop",
+                "postgres",
+            ]
+        );
+    }
+
+    #[test]
+    fn build_inner_compose_service_action_argv_rm_includes_force_and_stop_flags() {
+        // `rm` must be `rm -s -f` so a still-running service is
+        // force-removed in one call. Mirrors the semantics of
+        // `coast service rm` on regular instances.
+        assert_eq!(
+            build_inner_compose_service_action_argv(
+                "/coast-artifact/compose.yml",
+                "cg-ssg",
+                "rm",
+                "redis",
+            ),
+            vec![
+                "docker",
+                "compose",
+                "-f",
+                "/coast-artifact/compose.yml",
+                "-p",
+                "cg-ssg",
+                "rm",
+                "-s",
+                "-f",
+                "redis",
+            ]
+        );
+    }
 
     #[test]
     fn build_inner_compose_up_argv_is_stable() {

@@ -176,6 +176,16 @@ pub trait SsgStateExt {
     /// Delete the row for `project`. Idempotent.
     fn clear_ssg(&self, project: &str) -> Result<()>;
 
+    /// Null out the runtime columns (`container_id`, `status`,
+    /// `build_id`) but preserve `latest_build_id` so a subsequent
+    /// `Run` can pick up where we left off without forcing the
+    /// user to rebuild. Used by `handle_rm` when `with_data` is
+    /// false; the full `clear_ssg` is reserved for `--with-data`
+    /// (identity wipe). Idempotent: returns `Ok(())` when no row
+    /// exists. See `coast-ssg/DESIGN.md §32` for the
+    /// rm/run-cycle preservation rules.
+    fn clear_ssg_runtime_only(&self, project: &str) -> Result<()>;
+
     /// List every SSG row, ordered alphabetically by project.
     /// Used by `coast ssg ls` and for cross-project audits.
     fn list_ssgs(&self) -> Result<Vec<SsgRecord>>;
@@ -188,6 +198,14 @@ pub trait SsgStateExt {
     /// `build_id`, `status`, and `created_at` are preserved so a
     /// running SSG stays running even after a rebuild.
     fn set_latest_build_id(&self, project: &str, build_id: &str) -> Result<()>;
+
+    /// Clear the project's `latest_build_id` (set the column to NULL).
+    /// Returns `Ok(true)` when a row was updated, `Ok(false)` when the
+    /// project has no `ssg` row at all. Other `ssg` columns
+    /// (`container_id`, `status`, `created_at`) are preserved so a
+    /// running SSG container can still be tracked even after its
+    /// build artifact was deleted.
+    fn clear_latest_build_id(&self, project: &str) -> Result<bool>;
 
     // --- ssg_services ---
 

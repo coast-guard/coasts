@@ -240,7 +240,20 @@ async fn builds_coastfile_types(
                 types.push("default".to_string());
             } else if let Some(suffix) = fname.strip_prefix("Coastfile.") {
                 let effective = suffix.strip_suffix(".toml").unwrap_or(suffix);
-                if !effective.is_empty() && effective != "default" && effective != "toml" {
+                // Exclude:
+                // - empty / `default` / `toml` (degenerate filenames)
+                // - remote variants (built via `coast remote build`, surfaced
+                //   to the SPA through a separate "Remote Build" affordance)
+                // - SSG variants (built via `coast ssg build`; surfaced to
+                //   the SPA through a separate "SSG Build" affordance —
+                //   `Coastfile.shared_service_groups` is not a valid input
+                //   to `coast build`).
+                if !effective.is_empty()
+                    && effective != "default"
+                    && effective != "toml"
+                    && !coast_core::coastfile::Coastfile::is_remote_type(Some(effective))
+                    && !coast_core::coastfile::Coastfile::is_ssg_type(Some(effective))
+                {
                     types.push(effective.to_string());
                 }
             }

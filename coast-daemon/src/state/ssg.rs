@@ -132,6 +132,39 @@ impl SsgStateExt for StateDb {
     }
 
     #[instrument(skip(self))]
+    fn clear_ssg_runtime_only(&self, project: &str) -> Result<()> {
+        // UPDATE (not DELETE) so `latest_build_id` survives. See the
+        // trait docstring for the rm/run-cycle rationale.
+        //
+        // `status` is `NOT NULL` in the schema, so we set it to the
+        // sentinel `"absent"` to signal "no runtime container, but
+        // a build pointer is still present". This is the same
+        // string the SPA already coerces null statuses to in
+        // `SsgListPanel`, so consumers naturally treat it as the
+        // "no container" state.
+        self.conn
+            .execute(
+                "UPDATE ssg
+                 SET container_id = NULL,
+                     status       = 'absent',
+                     build_id     = NULL
+                 WHERE project = ?1",
+                params![project],
+            )
+            .map_err(|e| {
+                state_err(
+                    format!("failed to clear ssg runtime cols for '{project}': {e}"),
+                    e,
+                )
+            })?;
+        debug!(
+            project,
+            "cleared ssg runtime cols (preserved latest_build_id)"
+        );
+        Ok(())
+    }
+
+    #[instrument(skip(self))]
     fn set_latest_build_id(&self, project: &str, build_id: &str) -> Result<()> {
         let created_at = chrono::Utc::now().to_rfc3339();
         // Phase 23: creates a row with `status = "built"` when absent;
@@ -157,6 +190,24 @@ impl SsgStateExt for StateDb {
             })?;
         debug!(project, build_id, "set ssg.latest_build_id");
         Ok(())
+    }
+
+    #[instrument(skip(self))]
+    fn clear_latest_build_id(&self, project: &str) -> Result<bool> {
+        let affected = self
+            .conn
+            .execute(
+                "UPDATE ssg SET latest_build_id = NULL WHERE project = ?1",
+                params![project],
+            )
+            .map_err(|e| {
+                state_err(
+                    format!("failed to clear latest_build_id for project '{project}': {e}"),
+                    e,
+                )
+            })?;
+        debug!(project, affected, "cleared ssg.latest_build_id");
+        Ok(affected > 0)
     }
 
     #[instrument(skip(self))]

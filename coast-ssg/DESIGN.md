@@ -1208,9 +1208,12 @@ Host Docker daemon
 |     +-- published ports: <dyn>:5432, <dyn>:6379           <-- ephemeral; daemon-internal only
 |                              ^
 |                              |
-+-- daemon-managed host socat (one per service+container_port)   <-- Phase 27/28
++-- daemon-managed host socat (one per service+container_port)   <-- Phase 27/28 (Phase 32: upstream is host loopback)
 |     LISTEN:   0.0.0.0:<virtual_port>                      (stable per (project, service, port))
-|     UPSTREAM: host.docker.internal:<dyn>                  (refreshed on every ssg run/start/restart)
+|     UPSTREAM: 127.0.0.1:<dyn>                             (refreshed on every ssg run/start/restart;
+|                                                            host loopback because this socat runs on
+|                                                            the host — `host.docker.internal` is in-
+|                                                            container-only and would NXDOMAIN here)
 |                              ^
 |                              |
 +-- {project}/inst-a  (consumer DinD)                       <-- regular coast
@@ -3489,14 +3492,14 @@ flowchart TB
     app -->|"DNS: postgres -> alias IP"| aliasIp
     aliasIp --> consumerSocat
     consumerSocat -->|"host.docker.internal:42001"| hostSocat
-    hostSocat -->|"host.docker.internal:61851"| hostProxy
+    hostSocat -->|"127.0.0.1:61851"| hostProxy
     hostProxy --> ssgInnerProxy
     ssgInnerProxy --> innerPg
 ```
 
 Only two argv's in this chain contain a mutable number:
 
-- The **host socat**'s upstream is `host.docker.internal:<current_ssg_dyn>`. This is what the daemon rewrites on every SSG lifecycle verb (kill pidfile-recorded pid, spawn new `socat`). Daemon always knows the current dyn port — it just wrote it into `ssg_services` as part of the same lifecycle transaction.
+- The **host socat**'s upstream is `127.0.0.1:<current_ssg_dyn>`. This is what the daemon rewrites on every SSG lifecycle verb (kill pidfile-recorded pid, spawn new `socat`). Daemon always knows the current dyn port — it just wrote it into `ssg_services` as part of the same lifecycle transaction. The upstream binds to host loopback (not `host.docker.internal`) because the socat runs on the host itself, where the in-container alias is unresolvable; see `host_socat::socat_spawn_args` and the §32 fix note.
 - Docker's own host-side `docker-proxy` is managed by `docker run -p <dyn>:<canonical>` and remakes itself on every SSG run. No Coast involvement.
 
 Everything downstream of those two is compiled-in or stable-by-identity:

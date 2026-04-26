@@ -111,6 +111,14 @@ pub enum SsgAction {
     /// ignored (CLI sends an empty string). See `coast-ssg/DESIGN.md
     /// §23` — Phase 22.
     Ls,
+    /// List the SSG build artifacts for `project` (one row per
+    /// `build_id` under `~/.coast/ssg/<project>/builds/`). Unlike
+    /// [`Ls`], the `project` field on the enclosing [`SsgRequest`]
+    /// IS used here to scope the response to a single project. The
+    /// SPA's "SHARED SERVICE GROUPS" subsection on the project
+    /// detail page consumes this verb via the
+    /// `GET /api/v1/ssg/builds?project=<p>` endpoint.
+    BuildsLs,
     /// Zero-copy migration helper: resolve a host Docker named
     /// volume's mountpoint and emit (or apply) the equivalent SSG
     /// Coastfile bind-mount entry. See `DESIGN.md §10.7`.
@@ -155,6 +163,47 @@ pub struct SsgResponse {
     /// See `coast-ssg/DESIGN.md §23` — Phase 22.
     #[serde(default)]
     pub listings: Vec<SsgListing>,
+    /// SSG build artifacts surfaced by [`SsgAction::BuildsLs`]. One
+    /// entry per `build_id` directory under
+    /// `~/.coast/ssg/<project>/builds/`. Empty for every other verb.
+    /// `#[serde(default)]` keeps older clients forward-compatible.
+    #[serde(default)]
+    pub builds: Vec<SsgBuildEntry>,
+}
+
+/// One row produced by [`SsgAction::BuildsLs`]. Mirrors the shape of
+/// regular coast `BuildSummary` rows but scoped to SSG artifacts; the
+/// SPA renders these in the "SHARED SERVICE GROUPS" subsection.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[ts(export)]
+pub struct SsgBuildEntry {
+    /// Build id (matches the directory name under
+    /// `~/.coast/ssg/<project>/builds/`).
+    pub build_id: String,
+    /// Owning project (the project supplied via the enclosing
+    /// [`SsgRequest`]).
+    pub project: String,
+    /// Build creation timestamp (Unix epoch seconds), parsed from
+    /// the artifact's `manifest.json` `created_at` field. `0` when
+    /// the manifest lacks a usable timestamp.
+    pub created_at_unix: i64,
+    /// Inner service names declared in this build (e.g.
+    /// `["postgres", "redis"]`).
+    #[serde(default)]
+    pub services: Vec<String>,
+    /// Number of services in this build (denormalized for clients
+    /// that only render the count). Always equal to
+    /// `services.len()`; serialized for forward-compat with clients
+    /// that may have skipped the array.
+    pub services_count: u32,
+    /// True if this is the project's currently-pinned SSG build
+    /// (per `SsgAction::CheckoutBuild`).
+    #[serde(default)]
+    pub pinned: bool,
+    /// True if this is the project's most recent build (per
+    /// `state.db.ssg.latest_build_id`).
+    #[serde(default)]
+    pub latest: bool,
 }
 
 /// One finding emitted by `coast ssg doctor`.

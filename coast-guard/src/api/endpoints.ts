@@ -1,5 +1,11 @@
 import type { ProjectName, InstanceName } from '../types/branded';
 import type {
+  SsgBuildInspectResponse,
+  SsgBuildsLsHttpResponse,
+  SsgBuildsRmResponse,
+  SsgImagesHttpResponse,
+  SsgStateResponse,
+  SsgVolumesHttpResponse,
   UpdateCheckResponse,
   UpdateApplyResponse,
   LsResponse,
@@ -69,6 +75,49 @@ import { get, post, del, beacon } from './client';
 import { consumeSSE } from './sse';
 
 type AnalyticsMetadata = Record<string, string>;
+
+/**
+ * Request body for the lifecycle endpoints `/api/v1/ssg/{run,start}`.
+ * Mirrors `SsgLifecycleRequest` on the daemon side. Kept local so
+ * the SPA does not need a generated TS binding for a one-field
+ * struct.
+ */
+interface SsgLifecycleRequestBody {
+  project: string;
+}
+
+/**
+ * Lightweight client-side shape for the SsgResponse the daemon
+ * returns from the lifecycle endpoints. The daemon emits a much
+ * richer SsgResponse (services, ports, runtime status, …) but the
+ * SPA only needs `status` + `message` to render toasts and trigger
+ * a list refresh — the post-action state is fetched fresh via
+ * {@link ssgState}.
+ */
+export interface SsgLifecycleHttpResponse {
+  status: string;
+  message: string;
+}
+
+/**
+ * Request body for the per-service inner-compose endpoints
+ * `/api/v1/ssg/services/{stop,start,restart,rm}`. Mirrors
+ * `SsgServiceActionRequest` on the daemon side.
+ */
+interface SsgServiceActionRequestBody {
+  project: string;
+  service: string;
+}
+
+/**
+ * Response shape for the per-service inner-compose endpoints.
+ */
+export interface SsgServiceActionHttpResponse {
+  project: string;
+  service: string;
+  verb: string;
+  message: string;
+}
 
 export interface DocsSearchResult {
   path: string;
@@ -578,6 +627,257 @@ export const api = {
     return consumeSSE<BuildProgressEvent, unknown>(
       '/api/v1/stream/remote-build',
       { coastfile_path: coastfilePath, refresh, remote },
+      onProgress,
+    );
+  },
+
+  /**
+   * List SSG (Shared Service Group) build artifacts for `project`.
+   * Backs the "SHARED SERVICE GROUPS" subsection on the project
+   * detail page. Returns `{ project, builds: [] }` when the project
+   * has no SSG builds yet (no error).
+   */
+  ssgBuildsLs(project: string): Promise<SsgBuildsLsHttpResponse> {
+    return get<SsgBuildsLsHttpResponse>(
+      `/ssg/builds?project=${encodeURIComponent(project)}`,
+    );
+  },
+
+  /**
+   * Inspect a single SSG build artifact: manifest contents +
+   * raw `ssg-coastfile.toml` + `compose.yml`. Backs the per-SSG-
+   * build detail page. Returns 404 when the build_id is unknown.
+   */
+  ssgBuildInspect(
+    project: string,
+    buildId: string,
+  ): Promise<SsgBuildInspectResponse> {
+    return get<SsgBuildInspectResponse>(
+      `/ssg/builds/inspect?project=${encodeURIComponent(project)}&build_id=${encodeURIComponent(buildId)}`,
+    );
+  },
+
+  /**
+   * Combined SSG runtime view for `project`: container status,
+   * services, port mapping (canonical + dynamic + virtual),
+   * latest_build_id, and consumer pin. Backs the `/project/<p>/ssg`
+   * SPA tab. Returns 200 with empty services + null status when the
+   * project has no SSG yet — the SPA renders that as the "not built
+   * yet" empty state.
+   */
+  ssgState(project: string): Promise<SsgStateResponse> {
+    return get<SsgStateResponse>(
+      `/ssg/state?project=${encodeURIComponent(project)}`,
+    );
+  },
+
+  /**
+   * List images inside the project's SSG outer DinD (i.e., the
+   * inner Docker daemon's image set: postgres:15, redis:7, etc.).
+   * Backs the SSG Images tab.
+   */
+  ssgImages(project: string): Promise<SsgImagesHttpResponse> {
+    return get<SsgImagesHttpResponse>(
+      `/ssg/images?project=${encodeURIComponent(project)}`,
+    );
+  },
+
+  /**
+   * List named volumes inside the project's SSG outer DinD (i.e.,
+   * the inner Docker daemon's volumes: cg_postgres_data, etc.).
+   * Backs the SSG Volumes tab.
+   */
+  ssgVolumes(project: string): Promise<SsgVolumesHttpResponse> {
+    return get<SsgVolumesHttpResponse>(
+      `/ssg/volumes?project=${encodeURIComponent(project)}`,
+    );
+  },
+
+  /**
+   * Remove SSG build artifacts. Pinned builds are skipped (never
+   * deleted); missing artifact dirs are treated as already-removed
+   * (idempotent). Response splits results into `removed`,
+   * `skipped_pinned`, and `errors` so the SPA can surface partial
+   * failures.
+   */
+  ssgBuildsRm(
+    project: string,
+    buildIds: readonly string[],
+  ): Promise<SsgBuildsRmResponse> {
+    return post<{ project: string; build_ids: readonly string[] }, SsgBuildsRmResponse>(
+      '/ssg/builds/rm',
+      { project, build_ids: buildIds },
+    );
+  },
+
+  /**
+   * Run the project's SSG (`docker create` + `docker start` of the
+   * outer DinD). Idempotent: if the SSG is already running, returns
+   * a no-op success. Mirrors `coast ssg run` from the CLI but
+   * blocks until the operation completes (no SSE — progress events
+   * are discarded server-side).
+   */
+  ssgRun(project: string): Promise<SsgLifecycleHttpResponse> {
+    return post<SsgLifecycleRequestBody, SsgLifecycleHttpResponse>(
+      '/ssg/run',
+      { project },
+    );
+  },
+
+  /**
+   * Start a previously-stopped SSG. Reuses the existing
+   * `ssg.container_id` and previously-allocated dynamic ports.
+   * Returns 409 if no SSG record exists for the project.
+   */
+  ssgStart(project: string): Promise<SsgLifecycleHttpResponse> {
+    return post<SsgLifecycleRequestBody, SsgLifecycleHttpResponse>(
+      '/ssg/start',
+      { project },
+    );
+  },
+
+  /**
+   * Stop the project's SSG (sends SIGSTOP to the outer DinD and
+   * preserves the container so `Start` can resume it). When `force`
+   * is true, tears down any remote-shadow tunnels first instead of
+   * refusing if other instances reference the SSG.
+   */
+  ssgStop(
+    project: string,
+    options?: { force?: boolean },
+  ): Promise<SsgLifecycleHttpResponse> {
+    return post<
+      { project: string; force: boolean },
+      SsgLifecycleHttpResponse
+    >('/ssg/stop', {
+      project,
+      force: Boolean(options?.force),
+    });
+  },
+
+  /**
+   * Remove the project's SSG (deletes the outer DinD container,
+   * frees its virtual-port allocation, and clears the runtime row
+   * from `ssg_services`). Build artifacts under `~/.coast/ssg/builds/`
+   * are unaffected — use {@link ssgBuildsRm} for those. When
+   * `with_data` is true, also drops inner named volumes (postgres
+   * WAL etc.).
+   */
+  ssgRm(
+    project: string,
+    options?: { with_data?: boolean; force?: boolean },
+  ): Promise<SsgLifecycleHttpResponse> {
+    return post<
+      { project: string; with_data: boolean; force: boolean },
+      SsgLifecycleHttpResponse
+    >('/ssg/rm', {
+      project,
+      with_data: Boolean(options?.with_data),
+      force: Boolean(options?.force),
+    });
+  },
+
+  /**
+   * Trigger an SSG build. Streams progress via SSE; resolves once
+   * the build completes (or errors). Use `onProgress` to render
+   * incremental status. Mirrors {@link buildProject} +
+   * {@link remoteBuild} for the regular and remote build flows.
+   */
+  ssgBuild(
+    project: string,
+    workingDir?: string,
+    file?: string,
+    config?: string,
+    onProgress?: (event: BuildProgressEvent) => void,
+  ): Promise<{ complete?: unknown; error?: { error: string } }> {
+    const body: {
+      project: string;
+      working_dir?: string;
+      file?: string;
+      config?: string;
+    } = { project };
+    if (workingDir != null) {
+      body.working_dir = workingDir;
+    }
+    if (file != null) {
+      body.file = file;
+    }
+    if (config != null) {
+      body.config = config;
+    }
+    return consumeSSE<BuildProgressEvent, unknown>(
+      '/api/v1/stream/ssg-build',
+      body,
+      onProgress,
+    );
+  },
+
+  /**
+   * Run a per-service compose verb (stop/start/restart/rm) on
+   * one of the SSG's inner services (postgres, redis, etc.).
+   * The daemon `docker exec`s into the outer DinD container and
+   * runs `docker compose <verb> <service>` against the inner
+   * compose stack. Backs the toolbar buttons on the SSG → Services
+   * tab.
+   */
+  ssgServiceStop(
+    project: string,
+    service: string,
+  ): Promise<SsgServiceActionHttpResponse> {
+    return post<
+      SsgServiceActionRequestBody,
+      SsgServiceActionHttpResponse
+    >('/ssg/services/stop', { project, service });
+  },
+
+  ssgServiceStart(
+    project: string,
+    service: string,
+  ): Promise<SsgServiceActionHttpResponse> {
+    return post<
+      SsgServiceActionRequestBody,
+      SsgServiceActionHttpResponse
+    >('/ssg/services/start', { project, service });
+  },
+
+  ssgServiceRestart(
+    project: string,
+    service: string,
+  ): Promise<SsgServiceActionHttpResponse> {
+    return post<
+      SsgServiceActionRequestBody,
+      SsgServiceActionHttpResponse
+    >('/ssg/services/restart', { project, service });
+  },
+
+  ssgServiceRm(
+    project: string,
+    service: string,
+  ): Promise<SsgServiceActionHttpResponse> {
+    return post<
+      SsgServiceActionRequestBody,
+      SsgServiceActionHttpResponse
+    >('/ssg/services/rm', { project, service });
+  },
+
+  /**
+   * Run the project's SSG with progress streaming. Mirrors
+   * {@link ssgBuild} for the run lifecycle: emits a sequence of
+   * {@link BuildProgressEvent}s ("Preparing SSG", "Pulling image",
+   * "Creating container", "Waiting for inner daemon", "Starting
+   * inner services") and resolves with `{ complete }` on success
+   * or `{ error }` on failure. Use this from the SSG Run modal to
+   * render step progress; the synchronous {@link ssgRun} variant
+   * exists for fire-and-forget use cases (e.g. the toolbar
+   * button on the SSG list panel).
+   */
+  ssgRunStreaming(
+    project: string,
+    onProgress?: (event: BuildProgressEvent) => void,
+  ): Promise<{ complete?: unknown; error?: { error: string } }> {
+    return consumeSSE<BuildProgressEvent, unknown>(
+      '/api/v1/stream/ssg-run',
+      { project },
       onProgress,
     );
   },

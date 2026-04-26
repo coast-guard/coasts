@@ -1,7 +1,7 @@
 import { useState, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useQueryClient } from '@tanstack/react-query';
-import type { BuildSummary } from '../types/api';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import type { BuildSummary, SsgBuildEntry } from '../types/api';
 import { api } from '../api/endpoints';
 import { ApiError } from '../api/client';
 import { useRemovingProjects } from '../providers/RemovingProjectsProvider';
@@ -41,11 +41,24 @@ interface BuildsListPanelProps {
 export default function BuildsListPanel({ project, builds, t, navigate }: BuildsListPanelProps) {
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
   const [remoteSelectedIds, setRemoteSelectedIds] = useState<ReadonlySet<string>>(new Set());
+  const [ssgSelectedIds, setSsgSelectedIds] = useState<ReadonlySet<string>>(new Set());
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [confirmRemoteRemove, setConfirmRemoteRemove] = useState(false);
+  const [confirmSsgRemove, setConfirmSsgRemove] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const queryClient = useQueryClient();
   const { removingBuilds } = useRemovingProjects();
+
+  // SSG (Shared Service Group) build artifacts for this project.
+  const ssgBuildsQuery = useQuery({
+    queryKey: ['ssgBuilds', project],
+    queryFn: () => api.ssgBuildsLs(project),
+    // Don't retry on 4xx; an empty response is normal so the only
+    // failure mode is a transient network issue.
+    retry: 1,
+    staleTime: 30_000,
+  });
+  const ssgBuilds: readonly SsgBuildEntry[] = ssgBuildsQuery.data?.builds ?? [];
 
   const allSorted = useMemo(
     () => [...builds].sort((a, b) => {
@@ -153,6 +166,124 @@ export default function BuildsListPanel({ project, builds, t, navigate }: Builds
         label: t('action.remove'),
         variant: 'danger' as const,
         onClick: () => setConfirmRemoteRemove(true),
+      },
+    ],
+    [t],
+  );
+
+  // SSG selection + Remove flow. Mirrors the REMOTE BUILDS shape:
+  // checkbox column on the table, danger-style "Remove" action on
+  // the toolbar, ConfirmModal before delete. The daemon endpoint
+  // skips pinned builds server-side, so we don't need client-side
+  // gating beyond the standard confirm dialog.
+  const ssgSelectedCount = ssgSelectedIds.size;
+  const ssgSelectedBuildIds = useMemo(
+    () =>
+      ssgBuilds
+        .filter((b) => ssgSelectedIds.has(b.build_id))
+        .map((b) => b.build_id),
+    [ssgBuilds, ssgSelectedIds],
+  );
+  const ssgPinnedSelected = useMemo(
+    () =>
+      ssgBuilds.some((b) => b.pinned && ssgSelectedIds.has(b.build_id)),
+    [ssgBuilds, ssgSelectedIds],
+  );
+  const ssgLatestSelected = useMemo(
+    () =>
+      ssgBuilds.some((b) => b.latest && ssgSelectedIds.has(b.build_id)),
+    [ssgBuilds, ssgSelectedIds],
+  );
+
+  const handleSsgRemove = useCallback(async () => {
+    setConfirmSsgRemove(false);
+    if (ssgSelectedBuildIds.length === 0) {
+      return;
+    }
+    try {
+      const result = await api.ssgBuildsRm(project, ssgSelectedBuildIds);
+      // Surface partial failures (errors[]) but don't block the UI
+      // refresh — successfully-removed builds should drop off the
+      // list immediately.
+      if (result.errors.length > 0) {
+        setError(
+          result.errors
+            .map((e) => `${e.build_id}: ${e.error}`)
+            .join('\n'),
+        );
+      } else {
+        setSsgSelectedIds(new Set());
+      }
+      void queryClient.invalidateQueries({ queryKey: ['ssgBuilds', project] });
+    } catch (e) {
+      setError(e instanceof ApiError ? e.body.error : String(e));
+    }
+  }, [ssgSelectedBuildIds, project, queryClient]);
+
+  const ssgToolbarActions: readonly ToolbarAction[] = useMemo(
+    () => [
+      {
+        label: t('action.remove'),
+        variant: 'danger' as const,
+        onClick: () => setConfirmSsgRemove(true),
+      },
+    ],
+    [t],
+  );
+
+  const ssgColumns: readonly Column<SsgBuildEntry>[] = useMemo(
+    () => [
+      {
+        key: 'buildId',
+        header: t('build.buildId'),
+        className: 'w-auto',
+        headerClassName: 'w-auto',
+        render: (b: SsgBuildEntry) => (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-mono text-xs text-[var(--primary)]">
+              {b.build_id}
+            </span>
+            {b.latest && (
+              <span className="inline-block whitespace-nowrap px-1.5 py-0.5 rounded text-[10px] font-medium bg-green-500/15 text-green-700 dark:text-green-300">
+                {t('build.ssgLatestBadge')}
+              </span>
+            )}
+            {b.pinned && (
+              <span className="inline-block whitespace-nowrap px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/15 text-amber-700 dark:text-amber-300">
+                {t('build.ssgPinnedBadge')}
+              </span>
+            )}
+          </div>
+        ),
+      },
+      {
+        key: 'services',
+        header: t('build.ssgServicesHeader'),
+        className: 'w-64',
+        headerClassName: 'w-64',
+        render: (b: SsgBuildEntry) => (
+          <span className="text-subtle-ui font-mono text-xs">
+            {b.services.length > 0
+              ? b.services.join(', ')
+              : `${b.services_count}`}
+          </span>
+        ),
+      },
+      {
+        key: 'created',
+        header: t('build.ssgCreatedHeader'),
+        className: 'w-44',
+        headerClassName: 'w-44',
+        render: (b: SsgBuildEntry) => (
+          <span className="text-subtle-ui">
+            {b.created_at_unix > 0
+              ? relativeTime(
+                  new Date(b.created_at_unix * 1000).toISOString(),
+                  t,
+                )
+              : '—'}
+          </span>
+        ),
       },
     ],
     [t],
@@ -430,6 +561,36 @@ export default function BuildsListPanel({ project, builds, t, navigate }: Builds
         </div>
       )}
 
+      {ssgBuilds.length > 0 && (
+        <div className="mt-4">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-subtle-ui mb-2">
+            {t('build.ssgBuilds')}
+          </h3>
+          <div className="space-y-3">
+            <div className="glass-panel overflow-hidden">
+              <Toolbar
+                actions={ssgToolbarActions}
+                selectedCount={ssgSelectedCount}
+              />
+              <DataTable
+                columns={ssgColumns}
+                data={ssgBuilds as SsgBuildEntry[]}
+                getRowId={(b) => b.build_id}
+                selectable
+                selectedIds={ssgSelectedIds}
+                onSelectionChange={setSsgSelectedIds}
+                onRowClick={(b) =>
+                  navigate(
+                    `/project/${project}/ssg-builds/${encodeURIComponent(b.build_id)}`,
+                  )
+                }
+                emptyMessage={t('build.noBuild')}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
       <ConfirmModal
         open={confirmRemove}
         title={t('build.removeTitle')}
@@ -450,6 +611,20 @@ export default function BuildsListPanel({ project, builds, t, navigate }: Builds
         body={t('build.removeConfirm', { count: remoteSelectedBuildIds.length })}
         onConfirm={() => void handleRemoteRemove()}
         onCancel={() => setConfirmRemoteRemove(false)}
+      />
+
+      <ConfirmModal
+        open={confirmSsgRemove}
+        title={t('build.removeTitle')}
+        body={[
+          t('build.removeConfirm', { count: ssgSelectedBuildIds.length }),
+          ssgPinnedSelected ? t('build.ssgPinnedSkipNote') : '',
+          ssgLatestSelected ? t('build.ssgLatestRemoveNote') : '',
+        ]
+          .filter(Boolean)
+          .join(' ')}
+        onConfirm={() => void handleSsgRemove()}
+        onCancel={() => setConfirmSsgRemove(false)}
       />
 
       {error != null && (

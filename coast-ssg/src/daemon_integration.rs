@@ -296,6 +296,7 @@ pub fn ps_ssg(project: &str, state: Option<&dyn crate::state::SsgStateExt>) -> R
             ports: Vec::new(),
             findings: Vec::new(),
             listings: Vec::new(),
+            builds: Vec::new(),
         });
     };
 
@@ -315,6 +316,7 @@ pub fn ps_ssg(project: &str, state: Option<&dyn crate::state::SsgStateExt>) -> R
             ports: Vec::new(),
             findings: Vec::new(),
             listings: Vec::new(),
+            builds: Vec::new(),
         });
     };
 
@@ -392,6 +394,7 @@ pub fn ps_ssg(project: &str, state: Option<&dyn crate::state::SsgStateExt>) -> R
         ports,
         findings: Vec::new(),
         listings: Vec::new(),
+        builds: Vec::new(),
     })
 }
 
@@ -1083,5 +1086,6 @@ fn build_response_from_manifest(
         ports: Vec::new(),
         findings: Vec::new(),
         listings: Vec::new(),
+        builds: Vec::new(),
     }
 }

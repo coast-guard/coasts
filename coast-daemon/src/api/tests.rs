@@ -77,6 +77,25 @@ mod tests {
         }
     }
 
+    /// Write a flat `~/.coast/images/<project>/manifest.json` whose
+    /// `project_root` field points at the given on-disk directory. The
+    /// flat-manifest fallback in `builds_coastfile_types` makes this the
+    /// minimal fixture for endpoint tests that don't care about a full
+    /// build_id/symlink tree.
+    fn write_project_root_manifest(project: &str, project_root: &std::path::Path) {
+        let home = dirs::home_dir().unwrap();
+        let dir = home.join(".coast").join("images").join(project);
+        fs::create_dir_all(&dir).unwrap();
+        let manifest = serde_json::json!({
+            "project_root": project_root.to_string_lossy(),
+        });
+        fs::write(
+            dir.join("manifest.json"),
+            serde_json::to_string_pretty(&manifest).unwrap(),
+        )
+        .unwrap();
+    }
+
     #[tokio::test]
     async fn test_index_returns_html() {
         let app = test_app();
@@ -1768,5 +1787,1627 @@ mod tests {
             );
             assert!(first.get("score").is_some(), "result should have 'score'");
         }
+    }
+
+    // -------------------------------------------------------------------
+    // SSG endpoints (`GET /api/v1/ssg/builds`)
+    // -------------------------------------------------------------------
+
+    /// Fixture for SSG-endpoint router-level tests. Acquires the
+    /// crate-wide `coast_home_env_lock`, points `COAST_HOME` at a
+    /// fresh tempdir, and exposes helpers to seed
+    /// `~/.coast/ssg/<project>/builds/<build_id>/manifest.json`.
+    struct SsgEndpointFixture {
+        _coast_home_guard: std::sync::MutexGuard<'static, ()>,
+        prev_coast_home: Option<std::ffi::OsString>,
+        _home: tempfile::TempDir,
+        coast_home: std::path::PathBuf,
+        state: Arc<crate::server::AppState>,
+        project: String,
+    }
+
+    impl SsgEndpointFixture {
+        fn new(project: &str) -> Self {
+            let guard = crate::test_support::coast_home_env_lock();
+            let prev_coast_home = std::env::var_os("COAST_HOME");
+            let home = tempfile::tempdir().unwrap();
+            let coast_home = home.path().join(".coast");
+            fs::create_dir_all(&coast_home).unwrap();
+            // Safety: serialized by `coast_home_env_lock`.
+            unsafe {
+                std::env::set_var("COAST_HOME", &coast_home);
+            }
+
+            let db = StateDb::open_in_memory().unwrap();
+            let state = Arc::new(crate::server::AppState::new_for_testing(db));
+
+            Self {
+                _coast_home_guard: guard,
+                prev_coast_home,
+                _home: home,
+                coast_home,
+                state,
+                project: project.to_string(),
+            }
+        }
+
+        fn router(&self) -> axum::Router {
+            api::api_router(self.state.clone())
+        }
+
+        fn builds_dir(&self) -> std::path::PathBuf {
+            // Global pool — SSG artifacts are not per-project on disk.
+            self.coast_home.join("ssg").join("builds")
+        }
+
+        /// Write a fully-formed manifest with the given
+        /// `coastfile_hash`. The build_id is derived as
+        /// `{coastfile_hash}_{built_at_compact}`. Returns the
+        /// build_id so callers can wire `latest_build_id` / pins.
+        ///
+        /// The manifest matches the schema `SsgManifest` expects
+        /// (every service includes `image`, `ports`, `env_keys`,
+        /// `volumes`, `auto_create_db`) so consumers like
+        /// `ps_ssg` that strict-parse the file can read it.
+        fn write_manifest_full(
+            &self,
+            coastfile_hash: &str,
+            built_at_rfc3339: &str,
+            built_at_compact: &str,
+            services: &[&str],
+        ) -> String {
+            let build_id = format!("{coastfile_hash}_{built_at_compact}");
+            let dir = self.builds_dir().join(&build_id);
+            fs::create_dir_all(&dir).unwrap();
+            let services_json: Vec<serde_json::Value> = services
+                .iter()
+                .map(|name| {
+                    serde_json::json!({
+                        "name": name,
+                        "image": format!("{name}:latest"),
+                        "ports": [],
+                        "env_keys": [],
+                        "volumes": [],
+                        "auto_create_db": false,
+                    })
+                })
+                .collect();
+            let manifest = serde_json::json!({
+                "build_id": build_id,
+                "coastfile_hash": coastfile_hash,
+                "built_at": built_at_rfc3339,
+                "services": services_json,
+            });
+            fs::write(
+                dir.join("manifest.json"),
+                serde_json::to_string_pretty(&manifest).unwrap(),
+            )
+            .unwrap();
+            build_id
+        }
+    }
+
+    impl Drop for SsgEndpointFixture {
+        fn drop(&mut self) {
+            // Safety: serialized by `_coast_home_guard`.
+            match self.prev_coast_home.take() {
+                Some(value) => unsafe { std::env::set_var("COAST_HOME", value) },
+                None => unsafe { std::env::remove_var("COAST_HOME") },
+            }
+        }
+    }
+
+    async fn parse_json_body(response: axum::response::Response) -> serde_json::Value {
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        serde_json::from_slice(&body).unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_ssg_builds_ls_empty_project_returns_ok_empty_list() {
+        let fixture = SsgEndpointFixture::new("empty-cg");
+        let response = fixture
+            .router()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/ssg/builds?project={}", fixture.project))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = parse_json_body(response).await;
+        assert_eq!(json["project"], fixture.project);
+        assert!(json["builds"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_ssg_builds_ls_returns_entries_sorted_desc() {
+        let fixture = SsgEndpointFixture::new("sorted-cg");
+        // Three builds, all sharing `coastfile_hash = "abc"`.
+        let _old = fixture.write_manifest_full(
+            "abc",
+            "2026-04-20T00:00:00+00:00",
+            "20260420000000",
+            &["postgres"],
+        );
+        let _mid = fixture.write_manifest_full(
+            "abc",
+            "2026-04-21T00:00:00+00:00",
+            "20260421000000",
+            &["postgres", "redis"],
+        );
+        let new = fixture.write_manifest_full(
+            "abc",
+            "2026-04-22T00:00:00+00:00",
+            "20260422000000",
+            &["postgres"],
+        );
+
+        // Anchor the project's hash via `latest_build_id`.
+        {
+            use coast_ssg::state::SsgStateExt;
+            let db = fixture.state.db.lock().await;
+            db.set_latest_build_id(&fixture.project, &new).unwrap();
+        }
+
+        let response = fixture
+            .router()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/ssg/builds?project={}", fixture.project))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = parse_json_body(response).await;
+        let builds = json["builds"].as_array().unwrap();
+        assert_eq!(builds.len(), 3);
+        assert_eq!(builds[0]["build_id"], "abc_20260422000000");
+        assert_eq!(builds[1]["build_id"], "abc_20260421000000");
+        assert_eq!(builds[2]["build_id"], "abc_20260420000000");
+        assert_eq!(builds[1]["services_count"], 2);
+        assert_eq!(builds[1]["services"][0], "postgres");
+    }
+
+    #[tokio::test]
+    async fn test_ssg_builds_ls_marks_latest_and_pinned() {
+        let fixture = SsgEndpointFixture::new("flags-cg");
+        let a = fixture.write_manifest_full(
+            "abc",
+            "2026-04-20T00:00:00+00:00",
+            "20260420000000",
+            &["postgres"],
+        );
+        let b = fixture.write_manifest_full(
+            "abc",
+            "2026-04-21T00:00:00+00:00",
+            "20260421000000",
+            &["postgres"],
+        );
+        let c = fixture.write_manifest_full(
+            "abc",
+            "2026-04-22T00:00:00+00:00",
+            "20260422000000",
+            &["postgres"],
+        );
+
+        // Seed `latest_build_id = c` and pin `b`.
+        {
+            let db = fixture.state.db.lock().await;
+            use coast_ssg::state::SsgStateExt;
+            db.set_latest_build_id(&fixture.project, &c).unwrap();
+            db.upsert_ssg_consumer_pin(&coast_ssg::state::SsgConsumerPinRecord {
+                project: fixture.project.clone(),
+                build_id: b.clone(),
+                created_at: "2026-04-21T00:01:00+00:00".to_string(),
+            })
+            .unwrap();
+        }
+
+        let response = fixture
+            .router()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/ssg/builds?project={}", fixture.project))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = parse_json_body(response).await;
+        let builds = json["builds"].as_array().unwrap();
+        let by_id: std::collections::HashMap<&str, &serde_json::Value> = builds
+            .iter()
+            .map(|e| (e["build_id"].as_str().unwrap(), e))
+            .collect();
+        assert_eq!(by_id[c.as_str()]["latest"], true);
+        assert_eq!(by_id[c.as_str()]["pinned"], false);
+        assert_eq!(by_id[b.as_str()]["pinned"], true);
+        assert_eq!(by_id[b.as_str()]["latest"], false);
+        assert_eq!(by_id[a.as_str()]["latest"], false);
+        assert_eq!(by_id[a.as_str()]["pinned"], false);
+    }
+
+    #[tokio::test]
+    async fn test_ssg_builds_ls_filters_to_requested_project() {
+        // Two distinct SSG Coastfile families share one global
+        // `~/.coast/ssg/builds/` pool. The endpoint must only
+        // return builds belonging to `scope-cg`'s coastfile_hash.
+        let fixture = SsgEndpointFixture::new("scope-cg");
+        let cg_a = fixture.write_manifest_full(
+            "aaa",
+            "2026-04-22T00:00:00+00:00",
+            "20260422000000",
+            &["postgres"],
+        );
+        let cg_b = fixture.write_manifest_full(
+            "aaa",
+            "2026-04-21T00:00:00+00:00",
+            "20260421000000",
+            &["redis"],
+        );
+        let _other_a = fixture.write_manifest_full(
+            "bbb",
+            "2026-04-23T00:00:00+00:00",
+            "20260423000000",
+            &["mongo"],
+        );
+
+        // Anchor `scope-cg` on hash `aaa`.
+        {
+            use coast_ssg::state::SsgStateExt;
+            let db = fixture.state.db.lock().await;
+            db.set_latest_build_id(&fixture.project, &cg_a).unwrap();
+        }
+
+        let response = fixture
+            .router()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/ssg/builds?project=scope-cg")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = parse_json_body(response).await;
+        let builds = json["builds"].as_array().unwrap();
+        let ids: Vec<&str> = builds
+            .iter()
+            .map(|e| e["build_id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, vec![cg_a.as_str(), cg_b.as_str()]);
+        for entry in builds {
+            assert_eq!(entry["project"], "scope-cg");
+        }
+    }
+
+    // -------------------------------------------------------------------
+    // SSG inspect endpoint (`GET /api/v1/ssg/builds/inspect`)
+    // -------------------------------------------------------------------
+
+    impl SsgEndpointFixture {
+        /// Write the artifact triplet (`manifest.json` +
+        /// `ssg-coastfile.toml` + `compose.yml`) for one build_id.
+        /// Returns the build_id.
+        fn write_artifact_full(
+            &self,
+            coastfile_hash: &str,
+            built_at_rfc3339: &str,
+            built_at_compact: &str,
+            services_json: serde_json::Value,
+            coastfile_toml: &str,
+            compose_yml: &str,
+        ) -> String {
+            let build_id = format!("{coastfile_hash}_{built_at_compact}");
+            let dir = self.builds_dir().join(&build_id);
+            fs::create_dir_all(&dir).unwrap();
+            let manifest = serde_json::json!({
+                "build_id": build_id,
+                "coastfile_hash": coastfile_hash,
+                "built_at": built_at_rfc3339,
+                "services": services_json,
+            });
+            fs::write(
+                dir.join("manifest.json"),
+                serde_json::to_string_pretty(&manifest).unwrap(),
+            )
+            .unwrap();
+            fs::write(dir.join("ssg-coastfile.toml"), coastfile_toml).unwrap();
+            fs::write(dir.join("compose.yml"), compose_yml).unwrap();
+            build_id
+        }
+    }
+
+    #[tokio::test]
+    async fn test_ssg_builds_inspect_returns_full_payload() {
+        let fixture = SsgEndpointFixture::new("inspect-cg");
+        let services_json = serde_json::json!([
+            {
+                "name": "postgres",
+                "image": "postgres:15",
+                "ports": [5432],
+                "env_keys": ["POSTGRES_USER", "POSTGRES_PASSWORD"],
+                "volumes": ["pg_data:/var/lib/postgresql/data"],
+                "auto_create_db": true,
+            },
+            {
+                "name": "redis",
+                "image": "redis:7",
+                "ports": [6379],
+                "env_keys": [],
+                "volumes": [],
+                "auto_create_db": false,
+            },
+        ]);
+        let build_id = fixture.write_artifact_full(
+            "abc",
+            "2026-04-22T00:00:00+00:00",
+            "20260422000000",
+            services_json,
+            "[ssg]\nruntime = \"dind\"\n",
+            "services:\n  postgres:\n    image: postgres:15\n",
+        );
+
+        let response = fixture
+            .router()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/v1/ssg/builds/inspect?project={}&build_id={}",
+                        fixture.project, build_id,
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = parse_json_body(response).await;
+        assert_eq!(json["project"], fixture.project);
+        assert_eq!(json["build_id"], build_id);
+        assert_eq!(json["coastfile_hash"], "abc");
+        assert_eq!(json["built_at"], "2026-04-22T00:00:00+00:00");
+        assert!(json["built_at_unix"].as_i64().unwrap() > 0);
+        assert!(json["artifact_path"].as_str().unwrap().ends_with(&build_id));
+
+        let services = json["services"].as_array().unwrap();
+        assert_eq!(services.len(), 2);
+        assert_eq!(services[0]["name"], "postgres");
+        assert_eq!(services[0]["image"], "postgres:15");
+        assert_eq!(services[0]["ports"][0], 5432);
+        assert_eq!(services[0]["env_keys"][0], "POSTGRES_USER");
+        assert_eq!(
+            services[0]["volumes"][0],
+            "pg_data:/var/lib/postgresql/data"
+        );
+        assert_eq!(services[0]["auto_create_db"], true);
+        assert_eq!(services[1]["auto_create_db"], false);
+
+        assert!(json["coastfile"]
+            .as_str()
+            .unwrap()
+            .contains("runtime = \"dind\""));
+        assert!(json["compose"].as_str().unwrap().contains("postgres:15"));
+
+        // No `latest_build_id` / pin seeded -> both flags false.
+        assert_eq!(json["latest"], false);
+        assert_eq!(json["pinned"], false);
+    }
+
+    #[tokio::test]
+    async fn test_ssg_builds_inspect_marks_latest_and_pinned() {
+        let fixture = SsgEndpointFixture::new("inspect-flags");
+        let build_id = fixture.write_artifact_full(
+            "abc",
+            "2026-04-22T00:00:00+00:00",
+            "20260422000000",
+            serde_json::json!([]),
+            "",
+            "",
+        );
+
+        // Seed both flags pointing at the same build.
+        {
+            use coast_ssg::state::SsgStateExt;
+            let db = fixture.state.db.lock().await;
+            db.set_latest_build_id(&fixture.project, &build_id).unwrap();
+            db.upsert_ssg_consumer_pin(&coast_ssg::state::SsgConsumerPinRecord {
+                project: fixture.project.clone(),
+                build_id: build_id.clone(),
+                created_at: "2026-04-22T00:01:00+00:00".to_string(),
+            })
+            .unwrap();
+        }
+
+        let response = fixture
+            .router()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/v1/ssg/builds/inspect?project={}&build_id={}",
+                        fixture.project, build_id,
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = parse_json_body(response).await;
+        assert_eq!(json["latest"], true);
+        assert_eq!(json["pinned"], true);
+    }
+
+    #[tokio::test]
+    async fn test_ssg_builds_inspect_returns_404_for_missing_build() {
+        let fixture = SsgEndpointFixture::new("inspect-missing");
+        let response = fixture
+            .router()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/v1/ssg/builds/inspect?project={}&build_id=does_not_exist",
+                        fixture.project,
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_ssg_builds_inspect_handles_missing_optional_files() {
+        // Manifest only — no `ssg-coastfile.toml`, no `compose.yml`.
+        let fixture = SsgEndpointFixture::new("inspect-partial");
+        let build_id = "abc_20260422000000".to_string();
+        let dir = fixture.builds_dir().join(&build_id);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("manifest.json"),
+            serde_json::to_string_pretty(&serde_json::json!({
+                "build_id": build_id,
+                "coastfile_hash": "abc",
+                "built_at": "2026-04-22T00:00:00+00:00",
+                "services": [],
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let response = fixture
+            .router()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/v1/ssg/builds/inspect?project={}&build_id={}",
+                        fixture.project, build_id,
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = parse_json_body(response).await;
+        assert!(json["coastfile"].is_null());
+        assert!(json["compose"].is_null());
+    }
+
+    #[tokio::test]
+    async fn test_ssg_builds_inspect_missing_param_returns_400() {
+        let fixture = SsgEndpointFixture::new("inspect-bad-args");
+
+        // Missing build_id.
+        let response = fixture
+            .router()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/ssg/builds/inspect?project=x")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        // Missing project.
+        let response = fixture
+            .router()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/ssg/builds/inspect?build_id=abc")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_ssg_builds_ls_missing_project_param_returns_400() {
+        let fixture = SsgEndpointFixture::new("missing-param");
+        let response = fixture
+            .router()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/ssg/builds")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // axum's `Query` extractor returns 400 when a required field is
+        // missing from the querystring; that's what we want here.
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    // -------------------------------------------------------------------
+    // SSG SSE endpoint (`POST /api/v1/stream/ssg-build`)
+    // -------------------------------------------------------------------
+
+    /// Parse an SSE response body into `(event_name, data)` frames.
+    /// The daemon emits each frame as `event: <name>\ndata: <json>\n\n`.
+    /// Comment / heartbeat lines (`:keep-alive`) are skipped. Returns
+    /// `(name, data)` pairs in stream order.
+    fn parse_sse_frames(bytes: &[u8]) -> Vec<(String, String)> {
+        let body = String::from_utf8_lossy(bytes);
+        let mut frames: Vec<(String, String)> = Vec::new();
+        for raw_frame in body.split("\n\n") {
+            let raw_frame = raw_frame.trim();
+            if raw_frame.is_empty() {
+                continue;
+            }
+            let mut event = String::new();
+            let mut data = String::new();
+            for line in raw_frame.lines() {
+                let line = line.trim_end_matches('\r');
+                if let Some(rest) = line.strip_prefix("event:") {
+                    event = rest.trim().to_string();
+                } else if let Some(rest) = line.strip_prefix("data:") {
+                    if !data.is_empty() {
+                        data.push('\n');
+                    }
+                    data.push_str(rest.trim_start());
+                }
+                // Ignore `:keep-alive` and any other field types.
+            }
+            if !event.is_empty() {
+                frames.push((event, data));
+            }
+        }
+        frames
+    }
+
+    #[test]
+    fn test_parse_sse_frames_handles_progress_and_complete() {
+        let body = b"event: progress\ndata: {\"step\":\"a\"}\n\nevent: complete\ndata: {\"build_id\":\"x\"}\n\n";
+        let frames = parse_sse_frames(body);
+        assert_eq!(
+            frames,
+            vec![
+                ("progress".to_string(), "{\"step\":\"a\"}".to_string()),
+                ("complete".to_string(), "{\"build_id\":\"x\"}".to_string()),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ssg_build_stream_rejects_get() {
+        // `/api/v1/stream/ssg-build` is POST-only, mirroring `/build`
+        // and `/remote-build`. Axum returns 405 for the wrong verb.
+        let fixture = SsgEndpointFixture::new("ssg-build-get");
+        let response = fixture
+            .router()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/api/v1/stream/ssg-build")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+    }
+
+    #[tokio::test]
+    async fn test_ssg_run_stream_get_returns_405() {
+        let fixture = SsgEndpointFixture::new("ssg-run-get");
+        let response = fixture
+            .router()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/api/v1/stream/ssg-run")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+    }
+
+    #[tokio::test]
+    async fn test_ssg_run_stream_rejects_missing_project() {
+        let fixture = SsgEndpointFixture::new("ssg-run-missing-project");
+        let response = fixture
+            .router()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/stream/ssg-run")
+                    .header("content-type", "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(
+            response.status().is_client_error(),
+            "expected 4xx for missing project; got {}",
+            response.status()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ssg_run_stream_emits_error_frame_when_no_build() {
+        // No SSG runtime row + no build → the run pipeline emits a
+        // single `event: error` SSE frame with a clear message and
+        // closes the stream. SSE endpoints always return 200 OK
+        // (the stream itself opens successfully); the error is
+        // surfaced inside the stream body.
+        let fixture = SsgEndpointFixture::new("ssg-run-no-build");
+        let body = serde_json::json!({ "project": fixture.project });
+
+        let response = fixture
+            .router()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/stream/ssg-run")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .unwrap();
+        let frames = parse_sse_frames(&bytes);
+        let error_frame = frames
+            .iter()
+            .find(|(event, _)| event == "error")
+            .expect("expected an `error` SSE frame");
+        assert!(
+            error_frame.1.contains("no SSG build"),
+            "expected error to mention the missing build; got {}",
+            error_frame.1,
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ssg_build_stream_rejects_missing_project() {
+        // axum's `Json` extractor returns 4xx when the required
+        // `project` field is missing from the body. The exact status
+        // is implementation-defined (typically 422 UNPROCESSABLE_ENTITY
+        // for serde failures); both 400 and 422 are acceptable as
+        // "client error".
+        let fixture = SsgEndpointFixture::new("ssg-build-missing-project");
+        let response = fixture
+            .router()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/stream/ssg-build")
+                    .header("content-type", "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(
+            response.status().is_client_error(),
+            "expected 4xx for missing project; got {}",
+            response.status()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ssg_build_stream_rejects_when_no_ssg_coastfile() {
+        // Point `working_dir` at a tempdir that has no SSG Coastfile.
+        // SSE returns 200 (the stream itself starts), then emits a
+        // single `event: error` frame with a clear message before
+        // closing.
+        let fixture = SsgEndpointFixture::new("ssg-build-no-coastfile");
+        let empty_dir = tempfile::tempdir().unwrap();
+
+        let body = serde_json::json!({
+            "project": fixture.project,
+            "working_dir": empty_dir.path(),
+        });
+
+        let response = fixture
+            .router()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/stream/ssg-build")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .unwrap();
+        let frames = parse_sse_frames(&bytes);
+
+        // We expect exactly one error frame and no `complete` frame.
+        // Any number of `progress` frames are tolerated as long as
+        // the stream terminates with an `error`.
+        assert!(
+            frames.iter().any(|(ev, _)| ev == "error"),
+            "no `error` frame in SSE body: {frames:?}"
+        );
+        assert!(
+            !frames.iter().any(|(ev, _)| ev == "complete"),
+            "unexpected `complete` frame: {frames:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ssg_build_stream_rejects_empty_project_string() {
+        // The handler also enforces a non-empty `project` server-side
+        // (in addition to whatever serde does). An empty string
+        // bypasses serde but should still be rejected.
+        let fixture = SsgEndpointFixture::new("ssg-build-empty-project");
+        let body = serde_json::json!({ "project": "" });
+
+        let response = fixture
+            .router()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/stream/ssg-build")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // The stream itself opens (200 OK); the failure is reported
+        // inside the SSE body as an `error` event.
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .unwrap();
+        let frames = parse_sse_frames(&bytes);
+        assert!(
+            frames
+                .iter()
+                .any(|(ev, data)| ev == "error" && data.contains("project")),
+            "missing project-related error frame: {frames:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ssg_build_stream_unknown_fields_are_ignored() {
+        // Forward-compat: extra request fields not declared on
+        // `SsgBuildSseRequest` must NOT cause deserialization to
+        // fail. Serde's default behaviour permits unknown fields.
+        let fixture = SsgEndpointFixture::new("ssg-build-unknown-fields");
+        let empty_dir = tempfile::tempdir().unwrap();
+
+        let body = serde_json::json!({
+            "project": fixture.project,
+            "working_dir": empty_dir.path(),
+            "this_field_does_not_exist": 123,
+            "another_extra": "string",
+        });
+
+        let response = fixture
+            .router()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/stream/ssg-build")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // Body deserialization succeeded (200), and we get an SSE
+        // stream that ultimately errors on the missing Coastfile —
+        // that's fine, what we're verifying is that the unknown
+        // fields didn't cause a 4xx.
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    // -------------------------------------------------------------------
+    // SSG lifecycle endpoints (run/start/stop/rm). Real-Docker happy
+    // paths require integration tests; these focus on validation +
+    // pre-Docker error paths.
+    // -------------------------------------------------------------------
+
+    fn lifecycle_body(project: &str) -> Body {
+        Body::from(serde_json::json!({ "project": project }).to_string())
+    }
+
+    fn rm_body(project: &str, with_data: bool, force: bool) -> Body {
+        Body::from(
+            serde_json::json!({
+                "project": project,
+                "with_data": with_data,
+                "force": force,
+            })
+            .to_string(),
+        )
+    }
+
+    #[tokio::test]
+    async fn test_ssg_run_missing_project_returns_400() {
+        let fixture = SsgEndpointFixture::new("run-missing");
+        let response = fixture
+            .router()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/ssg/run")
+                    .header("content-type", "application/json")
+                    .body(lifecycle_body(""))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_ssg_run_returns_409_when_no_build() {
+        let fixture = SsgEndpointFixture::new("run-no-build");
+        let response = fixture
+            .router()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/ssg/run")
+                    .header("content-type", "application/json")
+                    .body(lifecycle_body(&fixture.project))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn test_ssg_start_missing_project_returns_400() {
+        let fixture = SsgEndpointFixture::new("start-missing");
+        let response = fixture
+            .router()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/ssg/start")
+                    .header("content-type", "application/json")
+                    .body(lifecycle_body(""))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_ssg_start_returns_409_when_no_ssg_row() {
+        let fixture = SsgEndpointFixture::new("start-no-ssg");
+        let response = fixture
+            .router()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/ssg/start")
+                    .header("content-type", "application/json")
+                    .body(lifecycle_body(&fixture.project))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn test_ssg_stop_missing_project_returns_400() {
+        let fixture = SsgEndpointFixture::new("stop-missing");
+        let response = fixture
+            .router()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/ssg/stop")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "project": "", "force": false }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    // -------------------------------------------------------------------
+    // Per-service inner-compose endpoints (services/{stop,start,
+    // restart,rm}). Validation paths only — actual `docker compose`
+    // invocations need a running SSG and are exercised in the live
+    // smoke tests against `cg-ssg`.
+    // -------------------------------------------------------------------
+
+    fn service_action_body(project: &str, service: &str) -> Body {
+        Body::from(serde_json::json!({ "project": project, "service": service }).to_string())
+    }
+
+    #[tokio::test]
+    async fn test_ssg_service_stop_missing_project_returns_400() {
+        let fixture = SsgEndpointFixture::new("svc-stop-missing-project");
+        let response = fixture
+            .router()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/ssg/services/stop")
+                    .header("content-type", "application/json")
+                    .body(service_action_body("", "postgres"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_ssg_service_start_missing_service_returns_400() {
+        let fixture = SsgEndpointFixture::new("svc-start-missing-service");
+        let response = fixture
+            .router()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/ssg/services/start")
+                    .header("content-type", "application/json")
+                    .body(service_action_body(&fixture.project, ""))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_ssg_service_restart_returns_404_when_no_ssg_row() {
+        // No SSG runtime row → resolve_ssg_container_id returns
+        // 404 with a clear message.
+        let fixture = SsgEndpointFixture::new("svc-restart-no-ssg");
+        let response = fixture
+            .router()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/ssg/services/restart")
+                    .header("content-type", "application/json")
+                    .body(service_action_body(&fixture.project, "postgres"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_ssg_service_rm_missing_project_returns_400() {
+        let fixture = SsgEndpointFixture::new("svc-rm-missing-project");
+        let response = fixture
+            .router()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/ssg/services/rm")
+                    .header("content-type", "application/json")
+                    .body(service_action_body("", "redis"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_ssg_rm_missing_project_returns_400() {
+        let fixture = SsgEndpointFixture::new("rm-lifecycle-missing");
+        let response = fixture
+            .router()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/ssg/rm")
+                    .header("content-type", "application/json")
+                    .body(rm_body("", false, false))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    // -------------------------------------------------------------------
+    // SSG Local Page endpoints: images, volumes, ws-terminal, ws-logs,
+    // ws-stats. Real-Docker happy paths require `make verify`-style
+    // integration; these tests focus on validation + 404/409 paths.
+    // -------------------------------------------------------------------
+
+    /// Seed the in-memory state.db with a fake `ssg` row so the
+    /// `resolve_ssg_container_id` helper finds a valid container_id.
+    /// Used for tests that need a "running SSG" precondition (the
+    /// actual Docker exec then fails since the container doesn't
+    /// exist — that's intentional, the test stops before that).
+    async fn seed_ssg_row(state: &Arc<crate::server::AppState>, project: &str, container_id: &str) {
+        use coast_ssg::state::SsgStateExt;
+        let db = state.db.lock().await;
+        db.upsert_ssg(project, "running", Some(container_id), Some("abc_x"))
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_ssg_images_missing_project_returns_400() {
+        let fixture = SsgEndpointFixture::new("images-missing");
+        let response = fixture
+            .router()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/ssg/images")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_ssg_images_returns_404_when_no_ssg_row() {
+        let fixture = SsgEndpointFixture::new("images-no-ssg");
+        let response = fixture
+            .router()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/ssg/images?project={}", fixture.project))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_ssg_volumes_missing_project_returns_400() {
+        let fixture = SsgEndpointFixture::new("volumes-missing");
+        let response = fixture
+            .router()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/ssg/volumes")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_ssg_volumes_returns_404_when_no_ssg_row() {
+        let fixture = SsgEndpointFixture::new("volumes-no-ssg");
+        let response = fixture
+            .router()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/ssg/volumes?project={}", fixture.project))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_ssg_images_returns_409_when_ssg_row_has_no_container() {
+        let fixture = SsgEndpointFixture::new("images-no-cid");
+        // Seed an `ssg` row but with `container_id = NULL` (the
+        // `built` status with no run yet).
+        {
+            use coast_ssg::state::SsgStateExt;
+            let db = fixture.state.db.lock().await;
+            db.upsert_ssg(&fixture.project, "built", None, Some("abc_x"))
+                .unwrap();
+        }
+        let response = fixture
+            .router()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/ssg/images?project={}", fixture.project))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn test_ws_ssg_terminal_rejects_get_without_upgrade_header() {
+        let fixture = SsgEndpointFixture::new("ws-term");
+        seed_ssg_row(&fixture.state, &fixture.project, "fake-container").await;
+        // Plain GET (no `Upgrade: websocket`) — axum's
+        // `WebSocketUpgrade` extractor returns 400/426/upgrade-required.
+        let response = fixture
+            .router()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/ssg/terminal?project={}", fixture.project))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(
+            response.status().is_client_error()
+                || response.status() == StatusCode::UPGRADE_REQUIRED,
+            "expected 4xx for non-WS request; got {}",
+            response.status()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ws_ssg_logs_rejects_get_without_upgrade_header() {
+        let fixture = SsgEndpointFixture::new("ws-logs");
+        seed_ssg_row(&fixture.state, &fixture.project, "fake-container").await;
+        let response = fixture
+            .router()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/v1/ssg/logs/stream?project={}",
+                        fixture.project
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(
+            response.status().is_client_error()
+                || response.status() == StatusCode::UPGRADE_REQUIRED,
+            "expected 4xx for non-WS request; got {}",
+            response.status()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ws_ssg_stats_rejects_get_without_upgrade_header() {
+        let fixture = SsgEndpointFixture::new("ws-stats");
+        seed_ssg_row(&fixture.state, &fixture.project, "fake-container").await;
+        let response = fixture
+            .router()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/v1/ssg/stats/stream?project={}",
+                        fixture.project
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(
+            response.status().is_client_error()
+                || response.status() == StatusCode::UPGRADE_REQUIRED,
+            "expected 4xx for non-WS request; got {}",
+            response.status()
+        );
+    }
+
+    // Note on missing-SSG behavior for WS endpoints: axum's
+    // `WebSocketUpgrade` extractor runs BEFORE our `Query`
+    // extractor, so a plain GET without an `Upgrade: websocket`
+    // header returns 400 from the WS-extractor regardless of
+    // whether the project has an SSG row. The 404 path is
+    // exercised by the live SPA flow (real WS handshake →
+    // resolver runs → 404 if no SSG). For unit tests that
+    // particular path requires a real websocket client, which is
+    // out of scope here (consistent with the rest of the daemon's
+    // ws_* test conventions).
+
+    // -------------------------------------------------------------------
+    // SSG state endpoint (`GET /api/v1/ssg/state`)
+    // -------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_ssg_state_returns_empty_for_unknown_project() {
+        // No `ssg` row for the project -> `Ps` returns "No SSG for
+        // project '...'" with empty services + null status. The
+        // endpoint should still respond 200 with a structured
+        // empty-ish payload (not 404), so the SPA can render an
+        // "SSG not built yet" empty state without a dedicated
+        // error path.
+        let fixture = SsgEndpointFixture::new("state-empty");
+        let response = fixture
+            .router()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/ssg/state?project={}", fixture.project))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = parse_json_body(response).await;
+        assert_eq!(json["project"], fixture.project);
+        assert!(json["services"].as_array().unwrap().is_empty());
+        assert!(json["ports"].as_array().unwrap().is_empty());
+        assert!(json["latest_build_id"].is_null());
+        assert!(json["pinned_build_id"].is_null());
+    }
+
+    #[tokio::test]
+    async fn test_ssg_state_includes_latest_and_pin_info() {
+        let fixture = SsgEndpointFixture::new("state-flags");
+        let build_id = fixture.write_manifest_full(
+            "abc",
+            "2026-04-22T00:00:00+00:00",
+            "20260422000000",
+            &["postgres"],
+        );
+
+        {
+            use coast_ssg::state::SsgStateExt;
+            let db = fixture.state.db.lock().await;
+            db.set_latest_build_id(&fixture.project, &build_id).unwrap();
+            db.upsert_ssg_consumer_pin(&coast_ssg::state::SsgConsumerPinRecord {
+                project: fixture.project.clone(),
+                build_id: build_id.clone(),
+                created_at: "2026-04-22T00:01:00+00:00".to_string(),
+            })
+            .unwrap();
+        }
+
+        let response = fixture
+            .router()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/ssg/state?project={}", fixture.project))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = parse_json_body(response).await;
+        assert_eq!(json["latest_build_id"], build_id);
+        assert_eq!(json["pinned_build_id"], build_id);
+    }
+
+    #[tokio::test]
+    async fn test_ssg_state_missing_project_returns_400() {
+        let fixture = SsgEndpointFixture::new("state-bad-args");
+        let response = fixture
+            .router()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/ssg/state")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    // -------------------------------------------------------------------
+    // SSG remove endpoint (`POST /api/v1/ssg/builds/rm`)
+    // -------------------------------------------------------------------
+
+    fn rm_request_body(project: &str, build_ids: &[&str]) -> Body {
+        let body = serde_json::json!({
+            "project": project,
+            "build_ids": build_ids,
+        });
+        Body::from(body.to_string())
+    }
+
+    #[tokio::test]
+    async fn test_ssg_builds_rm_removes_artifact_dirs() {
+        let fixture = SsgEndpointFixture::new("rm-cg");
+        let a = fixture.write_manifest_full(
+            "abc",
+            "2026-04-20T00:00:00+00:00",
+            "20260420000000",
+            &["postgres"],
+        );
+        let b = fixture.write_manifest_full(
+            "abc",
+            "2026-04-21T00:00:00+00:00",
+            "20260421000000",
+            &["postgres"],
+        );
+        // Confirm artifacts exist on disk.
+        assert!(fixture.builds_dir().join(&a).exists());
+        assert!(fixture.builds_dir().join(&b).exists());
+
+        let response = fixture
+            .router()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/ssg/builds/rm")
+                    .header("content-type", "application/json")
+                    .body(rm_request_body(&fixture.project, &[&a, &b]))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = parse_json_body(response).await;
+        let removed: Vec<&str> = json["removed"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert_eq!(removed.len(), 2);
+        assert!(removed.contains(&a.as_str()));
+        assert!(removed.contains(&b.as_str()));
+        assert!(json["skipped_pinned"].as_array().unwrap().is_empty());
+        assert!(json["errors"].as_array().unwrap().is_empty());
+
+        // Filesystem actually emptied.
+        assert!(!fixture.builds_dir().join(&a).exists());
+        assert!(!fixture.builds_dir().join(&b).exists());
+    }
+
+    #[tokio::test]
+    async fn test_ssg_builds_rm_skips_pinned() {
+        let fixture = SsgEndpointFixture::new("rm-pin");
+        let a = fixture.write_manifest_full(
+            "abc",
+            "2026-04-20T00:00:00+00:00",
+            "20260420000000",
+            &["postgres"],
+        );
+        let b = fixture.write_manifest_full(
+            "abc",
+            "2026-04-21T00:00:00+00:00",
+            "20260421000000",
+            &["postgres"],
+        );
+
+        // Pin `b` so the deletion request must skip it.
+        {
+            use coast_ssg::state::SsgStateExt;
+            let db = fixture.state.db.lock().await;
+            db.upsert_ssg_consumer_pin(&coast_ssg::state::SsgConsumerPinRecord {
+                project: fixture.project.clone(),
+                build_id: b.clone(),
+                created_at: "2026-04-21T00:01:00+00:00".to_string(),
+            })
+            .unwrap();
+        }
+
+        let response = fixture
+            .router()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/ssg/builds/rm")
+                    .header("content-type", "application/json")
+                    .body(rm_request_body(&fixture.project, &[&a, &b]))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = parse_json_body(response).await;
+        let removed: Vec<&str> = json["removed"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        let skipped: Vec<&str> = json["skipped_pinned"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert_eq!(removed, vec![a.as_str()]);
+        assert_eq!(skipped, vec![b.as_str()]);
+        // Pinned artifact still on disk.
+        assert!(fixture.builds_dir().join(&b).exists());
+        assert!(!fixture.builds_dir().join(&a).exists());
+    }
+
+    #[tokio::test]
+    async fn test_ssg_builds_rm_clears_latest_when_removed() {
+        let fixture = SsgEndpointFixture::new("rm-latest");
+        let a = fixture.write_manifest_full(
+            "abc",
+            "2026-04-20T00:00:00+00:00",
+            "20260420000000",
+            &["postgres"],
+        );
+        // Anchor `latest_build_id = a`.
+        {
+            use coast_ssg::state::SsgStateExt;
+            let db = fixture.state.db.lock().await;
+            db.set_latest_build_id(&fixture.project, &a).unwrap();
+        }
+
+        let response = fixture
+            .router()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/ssg/builds/rm")
+                    .header("content-type", "application/json")
+                    .body(rm_request_body(&fixture.project, &[&a]))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = parse_json_body(response).await;
+        assert_eq!(json["cleared_latest"], true);
+
+        // Verify `latest_build_id` is now NULL in state.db.
+        {
+            use coast_ssg::state::SsgStateExt;
+            let db = fixture.state.db.lock().await;
+            let row = db.get_ssg(&fixture.project).unwrap();
+            assert!(row.is_some());
+            assert!(row.unwrap().latest_build_id.is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_ssg_builds_rm_idempotent_for_missing_dir() {
+        // Removing a build that doesn't exist on disk is treated as
+        // success (idempotent) so refreshes after concurrent deletes
+        // don't surface spurious errors.
+        let fixture = SsgEndpointFixture::new("rm-idempotent");
+        let response = fixture
+            .router()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/ssg/builds/rm")
+                    .header("content-type", "application/json")
+                    .body(rm_request_body(&fixture.project, &["abc_doesnotexist"]))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = parse_json_body(response).await;
+        assert_eq!(json["removed"][0], "abc_doesnotexist");
+        assert!(json["errors"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_ssg_builds_rm_missing_project_returns_400() {
+        let fixture = SsgEndpointFixture::new("rm-bad-args");
+        let body = serde_json::json!({
+            "project": "",
+            "build_ids": ["abc_x"],
+        });
+        let response = fixture
+            .router()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/ssg/builds/rm")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    /// Regression test for the user-reported bug where the SPA build picker
+    /// listed `shared_service_groups` alongside the regular Coastfile. The
+    /// daemon must filter both `shared_service_groups` (SSG variant, built
+    /// via `coast ssg build`) and `remote*` (remote variant, built via
+    /// `coast remote build`) out of the response so the picker only sees
+    /// types that `coast build` accepts.
+    #[tokio::test]
+    async fn test_builds_coastfile_types_omits_shared_service_groups_and_remote() {
+        let project = format!("ctypes-filter-{}", uuid::Uuid::new_v4().simple());
+
+        let project_root = tempfile::tempdir().unwrap();
+        for fname in [
+            "Coastfile",
+            "Coastfile.light",
+            "Coastfile.remote.toml",
+            "Coastfile.shared_service_groups",
+        ] {
+            fs::write(project_root.path().join(fname), b"# fixture").unwrap();
+        }
+        write_project_root_manifest(&project, project_root.path());
+
+        let app = test_app();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/builds/coastfile-types?project={project}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let types: Vec<String> = json["types"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
+
+        assert_eq!(
+            types,
+            vec!["default".to_string(), "light".to_string()],
+            "expected only buildable variants; got {types:?}"
+        );
+
+        remove_project_images_dir(&project);
     }
 }

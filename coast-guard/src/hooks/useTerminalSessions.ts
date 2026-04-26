@@ -10,6 +10,32 @@ export interface PersistentTerminalConfig {
   readonly configKey: string;
 }
 
+export function buildSsgTerminalConfig(project: string): PersistentTerminalConfig {
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const host = window.location.host;
+  const ep = encodeURIComponent(project);
+  return {
+    // SSG terminal sessions are NOT persisted server-side today —
+    // the daemon's `/api/v1/ssg/sessions` endpoint always returns
+    // an empty list and DELETE is a no-op. PersistentTerminal
+    // will spawn a fresh shell on first mount and treat each
+    // disconnect as terminal. If we add session persistence
+    // later, only the daemon side needs to change.
+    listSessionsUrl: `/api/v1/ssg/sessions?project=${ep}`,
+    deleteSessionUrl: (id) => `/api/v1/ssg/sessions?id=${encodeURIComponent(id)}`,
+    wsUrl: (sid) => {
+      let url = `${proto}//${host}/api/v1/ssg/terminal?project=${ep}`;
+      if (sid != null) {
+        url += `&session_id=${encodeURIComponent(sid)}`;
+      }
+      return url;
+    },
+    uploadUrl: null,
+    uploadMeta: null,
+    configKey: `ssg:${project}`,
+  };
+}
+
 export function buildHostTerminalConfig(project: string): PersistentTerminalConfig {
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const host = window.location.host;

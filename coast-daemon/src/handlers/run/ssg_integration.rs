@@ -341,7 +341,7 @@ async fn start_and_apply(
 /// shared services but doesn't fail the consumer's `coast run` —
 /// they'll see ECONNREFUSED on connect, which is the same signal
 /// any other shared-service outage would surface.
-async fn refresh_host_socats_for_project(project: &str, state: &AppState) {
+pub(crate) async fn refresh_host_socats_for_project(project: &str, state: &AppState) {
     use crate::handlers::ssg::host_socat;
     use crate::handlers::ssg::virtual_port_allocator::AllocatorConfig;
 

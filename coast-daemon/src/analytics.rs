@@ -525,6 +525,7 @@ pub fn request_command_name(req: &Request) -> String {
             SsgAction::ShowPin => "ssg/show-pin",
             SsgAction::ImportHostVolume { .. } => "ssg/import-host-volume",
             SsgAction::Ls => "ssg/ls",
+            SsgAction::BuildsLs => "ssg/builds-ls",
         }
         .into(),
     }

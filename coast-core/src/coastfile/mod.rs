@@ -197,6 +197,27 @@ impl Coastfile {
             .unwrap_or(false)
     }
 
+    /// Returns `true` if the given coastfile type string represents a Shared
+    /// Service Group (SSG) Coastfile (`Coastfile.shared_service_groups`).
+    ///
+    /// SSGs are a separate build product from regular coast images: they are
+    /// built via `coast ssg build`, not `coast build`. UIs that offer build
+    /// variants (the SPA build picker, the CLI's `--type` flag) must filter
+    /// SSG variants out so users don't accidentally route an SSG Coastfile
+    /// through the coast image-build pipeline.
+    pub fn is_ssg_type(coastfile_type: Option<&str>) -> bool {
+        coastfile_type
+            .map(|t| t == "shared_service_groups")
+            .unwrap_or(false)
+    }
+
+    /// Returns `true` if a Coastfile of the given type can be built via
+    /// `coast build`. Excludes both remote variants (built via remote build)
+    /// and SSG variants (built via `coast ssg build`).
+    pub fn is_buildable_via_coast_build(coastfile_type: Option<&str>) -> bool {
+        !Self::is_remote_type(coastfile_type) && !Self::is_ssg_type(coastfile_type)
+    }
+
     /// Find a Coastfile on disk, trying the `.toml` variant first.
     ///
     /// Given `base_name` (e.g. `"Coastfile"` or `"Coastfile.light"`), checks for
@@ -1171,4 +1192,45 @@ pub struct ResolvedExternalDir {
     pub raw_pattern: String,
     /// The fully resolved absolute path on the host.
     pub resolved_path: PathBuf,
+}
+
+#[cfg(test)]
+mod tests_type_helpers {
+    use super::*;
+
+    #[test]
+    fn is_remote_type_matrix() {
+        assert!(Coastfile::is_remote_type(Some("remote")));
+        assert!(Coastfile::is_remote_type(Some("remote.light")));
+        assert!(!Coastfile::is_remote_type(Some("default")));
+        assert!(!Coastfile::is_remote_type(Some("light")));
+        assert!(!Coastfile::is_remote_type(Some("shared_service_groups")));
+        assert!(!Coastfile::is_remote_type(None));
+    }
+
+    #[test]
+    fn is_ssg_type_only_matches_shared_service_groups() {
+        assert!(Coastfile::is_ssg_type(Some("shared_service_groups")));
+        assert!(!Coastfile::is_ssg_type(Some("default")));
+        assert!(!Coastfile::is_ssg_type(Some("remote")));
+        assert!(!Coastfile::is_ssg_type(Some("remote.light")));
+        assert!(!Coastfile::is_ssg_type(Some("light")));
+        assert!(!Coastfile::is_ssg_type(None));
+    }
+
+    #[test]
+    fn is_buildable_via_coast_build_excludes_remote_and_ssg() {
+        assert!(Coastfile::is_buildable_via_coast_build(Some("default")));
+        assert!(Coastfile::is_buildable_via_coast_build(Some("light")));
+        assert!(Coastfile::is_buildable_via_coast_build(Some("e2e")));
+        assert!(Coastfile::is_buildable_via_coast_build(None));
+
+        assert!(!Coastfile::is_buildable_via_coast_build(Some("remote")));
+        assert!(!Coastfile::is_buildable_via_coast_build(Some(
+            "remote.light"
+        )));
+        assert!(!Coastfile::is_buildable_via_coast_build(Some(
+            "shared_service_groups"
+        )));
+    }
 }

@@ -1724,6 +1724,7 @@ fn test_ssg_response_roundtrip() {
         ],
         findings: vec![],
         listings: vec![],
+        builds: vec![],
     }));
 
     // Minimal response (only message set) — defaulted fields must round-trip.
@@ -1734,6 +1735,7 @@ fn test_ssg_response_roundtrip() {
         ports: vec![],
         findings: vec![],
         listings: vec![],
+        builds: vec![],
     }));
 }
 
@@ -1824,6 +1826,7 @@ fn test_ssg_doctor_findings_response_roundtrip() {
             },
         ],
         listings: vec![],
+        builds: vec![],
     }));
 }
 
@@ -1841,6 +1844,90 @@ fn test_ssg_response_findings_default_when_absent_in_json() {
         }
         other => panic!("expected Response::Ssg, got {other:?}"),
     }
+}
+
+// --- SsgAction::BuildsLs + SsgBuildEntry (SHARED SERVICE GROUPS panel) ---
+
+#[test]
+fn test_ssg_request_builds_ls_roundtrip() {
+    // `BuildsLs` is project-scoped, unlike `Ls` — the enclosing
+    // request's `project` field MUST round-trip.
+    roundtrip_request(Request::Ssg(SsgRequest {
+        project: "cg".to_string(),
+        action: SsgAction::BuildsLs,
+    }));
+}
+
+#[test]
+fn test_ssg_builds_response_roundtrip_full() {
+    roundtrip_response(Response::Ssg(SsgResponse {
+        message: "2 SSG build(s) for cg.".to_string(),
+        builds: vec![
+            SsgBuildEntry {
+                build_id: "abc_20260423225356".to_string(),
+                project: "cg".to_string(),
+                created_at_unix: 1_745_457_236,
+                services: vec!["postgres".to_string(), "redis".to_string()],
+                services_count: 2,
+                pinned: false,
+                latest: true,
+            },
+            SsgBuildEntry {
+                build_id: "def_20260422051132".to_string(),
+                project: "cg".to_string(),
+                created_at_unix: 1_745_293_892,
+                services: vec!["postgres".to_string()],
+                services_count: 1,
+                pinned: true,
+                latest: false,
+            },
+        ],
+        ..Default::default()
+    }));
+}
+
+#[test]
+fn test_ssg_builds_response_roundtrip_empty() {
+    roundtrip_response(Response::Ssg(SsgResponse {
+        message: "No SSG builds for cg.".to_string(),
+        builds: vec![],
+        ..Default::default()
+    }));
+}
+
+#[test]
+fn test_ssg_response_builds_default_when_absent_in_json() {
+    // Older daemons won't serialize `builds`; `#[serde(default)]`
+    // must deserialize an empty vec so new clients stay forward-compat.
+    let json = r#"{"type":"Ssg","message":"ok"}"#;
+    let resp: Response = serde_json::from_str(json).expect("legacy SsgResponse should parse");
+    match resp {
+        Response::Ssg(r) => {
+            assert_eq!(r.message, "ok");
+            assert!(r.builds.is_empty());
+        }
+        other => panic!("expected Response::Ssg, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_ssg_build_entry_optional_flags_default_when_absent() {
+    // Forward-compat: a daemon that omits `pinned` / `latest` /
+    // `services` should still deserialize cleanly into the
+    // standard defaults (`false` / `false` / empty vec).
+    let json = r#"{
+        "build_id": "abc_20260423225356",
+        "project": "cg",
+        "created_at_unix": 1745457236,
+        "services_count": 0
+    }"#;
+    let entry: SsgBuildEntry =
+        serde_json::from_str(json).expect("partial SsgBuildEntry should parse");
+    assert_eq!(entry.build_id, "abc_20260423225356");
+    assert_eq!(entry.project, "cg");
+    assert!(!entry.pinned);
+    assert!(!entry.latest);
+    assert!(entry.services.is_empty());
 }
 
 // --- Phase 16: SsgRequest::CheckoutBuild / UncheckoutBuild / ShowPin ---

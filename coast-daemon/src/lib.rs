@@ -1460,7 +1460,15 @@ async fn restore_host_socats(state: &Arc<server::AppState>) {
                 "restore: host socat supervisor reconciled SSG services"
             );
         }
-        Ok(_) => {}
+        Ok(_) => {
+            // Empty list is the steady-state when no SSG is
+            // running, but it's also what we'd see if a future
+            // refactor accidentally short-circuited the reconcile
+            // (e.g. wrong status filter). Log it explicitly so a
+            // missing reconcile is visibly different from "we
+            // don't have any work to do".
+            tracing::info!("restore: host socat supervisor found no running SSGs to reconcile");
+        }
         Err(err) => {
             tracing::warn!(
                 error = %err,

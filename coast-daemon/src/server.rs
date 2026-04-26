@@ -1266,12 +1266,16 @@ async fn run_streaming_run(
                     // ssg_services, allocate (or reuse) each
                     // service's stable virtual port and start /
                     // refresh the host socat that forwards
-                    // virtual_port → host.docker.internal:<dyn>. The
+                    // virtual_port → 127.0.0.1:<dyn>. The host
+                    // socat runs on the host (not inside a
+                    // container), so the upstream binds to host
+                    // loopback rather than `host.docker.internal`
+                    // — see `host_socat::socat_spawn_args`. The
                     // virtual port stays the same across SSG
                     // rebuilds, so consumer in-DinD socats never
                     // need re-execing — replaces the Phase 11
                     // refresh entirely. See
-                    // `coast-ssg/DESIGN.md §24`.
+                    // `coast-ssg/DESIGN.md §24` and §32.
                     append_host_socat_refresh_messages(project, state, &mut resp).await;
                     Response::Ssg(resp)
                 }
@@ -1622,6 +1626,7 @@ async fn handle_ssg_logs_streaming(
         ports: Vec::new(),
         findings: Vec::new(),
         listings: Vec::new(),
+        builds: Vec::new(),
     });
     write_response(writer, &final_resp).await
 }

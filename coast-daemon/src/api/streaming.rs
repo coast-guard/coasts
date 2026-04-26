@@ -21,6 +21,8 @@ pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/build", post(build_sse))
         .route("/remote-build", post(remote_build_sse))
+        .route("/ssg-build", post(ssg_build_sse))
+        .route("/ssg-run", post(ssg_run_sse))
         .route("/rerun-extractors", post(rerun_extractors_sse))
         .route("/run", post(run_sse))
         .route("/assign", post(assign_sse))
@@ -174,6 +176,318 @@ async fn remote_build_sse(
 
     let stream = build_event_stream(rx, result_rx);
     Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
+/// Request shape for `POST /api/v1/stream/ssg-build`.
+///
+/// Mirrors the `Build` action variant of [`coast_core::protocol::SsgAction`]
+/// but flat-shaped for easier JSON construction in TS clients. The
+/// daemon resolves the SSG `Coastfile.shared_service_groups` from
+/// `working_dir` (or from the project's existing build manifest's
+/// `project_root` if `working_dir` is omitted).
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize, ts_rs::TS)]
+#[ts(export)]
+pub struct SsgBuildSseRequest {
+    /// Project name. Required — used to scope the build outcome
+    /// (`set_latest_build_id`) and to resolve `project_root` when
+    /// `working_dir` is omitted.
+    pub project: String,
+    /// Optional explicit path to a `Coastfile.shared_service_groups`
+    /// (or a custom-named SSG Coastfile). When `None`, the daemon
+    /// uses standard `Coastfile.shared_service_groups` discovery in
+    /// `working_dir`.
+    #[serde(default)]
+    pub file: Option<std::path::PathBuf>,
+    /// Optional working directory — the project root containing the
+    /// SSG Coastfile. When `None`, the daemon resolves it from the
+    /// project's most recent regular build manifest (`project_root`
+    /// field). The latter falls back to the daemon's own cwd if no
+    /// such manifest exists.
+    #[serde(default)]
+    pub working_dir: Option<std::path::PathBuf>,
+    /// Optional inline TOML overrides (forwarded to
+    /// [`coast_ssg::daemon_integration::SsgBuildInputs::config`]).
+    #[serde(default)]
+    pub config: Option<String>,
+}
+
+async fn ssg_build_sse(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<SsgBuildSseRequest>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let (tx, rx) = mpsc::channel::<BuildProgressEvent>(64);
+
+    let state_clone = Arc::clone(&state);
+    let (result_tx, result_rx) = tokio::sync::oneshot::channel();
+
+    tokio::spawn(async move {
+        let result = run_ssg_build_with_progress(req, &state_clone, tx).await;
+        let _ = result_tx.send(result);
+    });
+
+    let stream = ssg_build_event_stream(rx, result_rx);
+    Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
+/// Drive an SSG build to completion, emitting progress events to
+/// `tx`. Returns the final [`coast_core::protocol::SsgResponse`]
+/// payload (the same shape the socket-protocol path emits) on
+/// success.
+///
+/// This intentionally duplicates a minimal slice of
+/// `handle_ssg_build_streaming` (server.rs) rather than refactoring
+/// the streaming-protocol entry point — the socket path and the SSE
+/// path have different cancellation + framing semantics, and
+/// extracting a shared helper would force both paths to converge on
+/// the lowest-common-denominator API. We can revisit if a third
+/// caller appears.
+async fn run_ssg_build_with_progress(
+    req: SsgBuildSseRequest,
+    state: &AppState,
+    tx: mpsc::Sender<BuildProgressEvent>,
+) -> coast_core::error::Result<coast_core::protocol::SsgResponse> {
+    use coast_core::error::CoastError;
+
+    if req.project.is_empty() {
+        return Err(CoastError::protocol("ssg-build: 'project' is required"));
+    }
+
+    let _operation_guard = state.begin_update_operation(
+        crate::server::UpdateOperationKind::Build,
+        Some(&req.project),
+        None,
+    )?;
+
+    let docker = state
+        .docker
+        .as_ref()
+        .ok_or_else(|| {
+            CoastError::docker(
+                "coast ssg build requires Docker to be available on the host daemon. \
+                 Start Docker Desktop / Colima / OrbStack and restart coastd.",
+            )
+        })?
+        .clone();
+
+    let working_dir = req
+        .working_dir
+        .clone()
+        .or_else(|| resolve_project_root_for(&req.project));
+
+    let inputs = coast_ssg::daemon_integration::SsgBuildInputs {
+        project: req.project.clone(),
+        file: req.file.clone(),
+        working_dir,
+        config: req.config.clone(),
+    };
+
+    // Pre-read pinned build ids so `auto_prune` inside `build_ssg`
+    // can preserve them. Scoped block — guard must drop before any
+    // `.await` we don't own.
+    let pinned_build_ids: std::collections::HashSet<String> = {
+        use coast_ssg::state::SsgStateExt;
+        let db = state.db.lock().await;
+        db.list_ssg_consumer_pins()?
+            .into_iter()
+            .map(|p| p.build_id)
+            .collect()
+    };
+
+    let ops = coast_ssg::docker_ops::BollardSsgDockerOps::new(docker);
+    let outcome =
+        coast_ssg::daemon_integration::build_ssg(inputs, &ops, pinned_build_ids, tx).await?;
+
+    // Mirror `handle_ssg_build_streaming`: record the new build as
+    // the project's `latest_build_id`. Failure to record is an
+    // error — consumers would otherwise hit "no SSG build for
+    // project" right after the SPA's "build complete" toast.
+    {
+        use coast_ssg::state::SsgStateExt;
+        let db = state.db.lock().await;
+        db.set_latest_build_id(&outcome.project, &outcome.build_id)
+            .map_err(|err| {
+                CoastError::state(format!(
+                    "build succeeded but failed to record latest_build_id for project '{}': {err}",
+                    outcome.project,
+                ))
+            })?;
+    }
+
+    Ok(outcome.response)
+}
+
+/// Resolve `project_root` for `project` from its most recent regular
+/// coast image build manifest. Mirrors the resolution logic in
+/// `coast-daemon/src/api/query/builds.rs` (`builds_coastfile_types`).
+/// Returns `None` when the project has no regular build yet — in
+/// which case the SSG build will use `coastd`'s own cwd, matching
+/// CLI behaviour.
+fn resolve_project_root_for(project: &str) -> Option<std::path::PathBuf> {
+    use coast_core::artifact::coast_home;
+
+    let project_dir = coast_home().ok()?.join("images").join(project);
+
+    let manifest_path = std::fs::read_link(project_dir.join("latest"))
+        .ok()
+        .map(|t| project_dir.join(t).join("manifest.json"))
+        .filter(|p| p.exists())
+        .or_else(|| {
+            let flat = project_dir.join("manifest.json");
+            flat.exists().then_some(flat)
+        })?;
+
+    let raw = std::fs::read_to_string(manifest_path).ok()?;
+    let manifest: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    manifest
+        .get("project_root")?
+        .as_str()
+        .map(std::path::PathBuf::from)
+}
+
+/// Request shape for `POST /api/v1/stream/ssg-run`.
+///
+/// Streams progress events while the daemon brings the project's
+/// SSG up: pull/create the outer DinD container, wait for the
+/// inner Docker daemon, run `docker compose up` for the inner
+/// services, refresh host socats. The final `complete` SSE event
+/// carries the post-run [`coast_core::protocol::SsgResponse`] so
+/// the SPA can replace its cached `/ssg/state` payload without a
+/// refetch round-trip.
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize, ts_rs::TS)]
+#[ts(export)]
+pub struct SsgRunSseRequest {
+    /// Project name. Required — used to resolve the build_id from
+    /// the SSG runtime row (`pin > latest_build_id`) and to scope
+    /// the operation guard / ssg_mutex.
+    pub project: String,
+}
+
+async fn ssg_run_sse(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<SsgRunSseRequest>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let (tx, rx) = mpsc::channel::<BuildProgressEvent>(64);
+
+    let state_clone = Arc::clone(&state);
+    let (result_tx, result_rx) = tokio::sync::oneshot::channel();
+
+    tokio::spawn(async move {
+        let result = run_ssg_run_with_progress(req, &state_clone, tx).await;
+        let _ = result_tx.send(result);
+    });
+
+    let stream = ssg_build_event_stream(rx, result_rx);
+    Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
+/// Drive an SSG `run` lifecycle to completion, emitting progress
+/// events to `tx`. Mirrors `run_ssg_build_with_progress` for the
+/// run path: resolve build_id, acquire ssg_mutex, run the outer
+/// DinD bring-up, apply the outcome to state, refresh host socats.
+/// The synchronous `POST /ssg/run` endpoint in
+/// `api/query/ssg.rs::ssg_run` runs the same orchestration with
+/// the progress channel discarded — the two callers are kept
+/// parallel rather than fused so each has its own cancellation
+/// and framing semantics. See `coast-ssg/DESIGN.md §32` for the
+/// rm/run cycle preservation rules driven by `latest_build_id`.
+async fn run_ssg_run_with_progress(
+    req: SsgRunSseRequest,
+    state: &Arc<AppState>,
+    tx: mpsc::Sender<BuildProgressEvent>,
+) -> coast_core::error::Result<coast_core::protocol::SsgResponse> {
+    use coast_core::error::CoastError;
+    use coast_ssg::state::SsgStateExt;
+
+    if req.project.is_empty() {
+        return Err(CoastError::protocol("ssg-run: 'project' is required"));
+    }
+
+    let _operation_guard = state.begin_update_operation(
+        crate::server::UpdateOperationKind::Build,
+        Some(&req.project),
+        None,
+    )?;
+    let _ssg_lock = state.ssg_mutex.lock().await;
+
+    let resolved_build_id = {
+        let db = state.db.lock().await;
+        let pin = db.get_ssg_consumer_pin(&req.project)?.map(|p| p.build_id);
+        let latest = db.get_ssg(&req.project)?.and_then(|r| r.latest_build_id);
+        pin.or(latest)
+    };
+    let build_id = resolved_build_id.ok_or_else(|| {
+        CoastError::coastfile(format!(
+            "no SSG build for project '{}'. Run `coast ssg build` first.",
+            req.project,
+        ))
+    })?;
+
+    let docker = state
+        .docker
+        .as_ref()
+        .ok_or_else(|| {
+            CoastError::docker(
+                "coast ssg run requires Docker to be available on the host daemon. \
+                 Start Docker Desktop / Colima / OrbStack and restart coastd.",
+            )
+        })?
+        .clone();
+
+    let outcome = {
+        let ops = coast_ssg::docker_ops::BollardSsgDockerOps::new(docker);
+        coast_ssg::runtime::lifecycle::run_ssg_with_build_id(
+            &req.project,
+            &ops,
+            Some(build_id.as_str()),
+            tx,
+        )
+        .await?
+    };
+
+    let mut resp = {
+        let db = state.db.lock().await;
+        outcome.apply_to_state_and_response(
+            &req.project,
+            &*db,
+            "running",
+            format!("SSG running on build {build_id}"),
+        )?
+    };
+    crate::handlers::run::ssg_integration::refresh_host_socats_for_project(&req.project, state)
+        .await;
+    resp.message = format!("SSG running on build {build_id}");
+    Ok(resp)
+}
+
+fn ssg_build_event_stream(
+    mut rx: mpsc::Receiver<BuildProgressEvent>,
+    result_rx: tokio::sync::oneshot::Receiver<
+        coast_core::error::Result<coast_core::protocol::SsgResponse>,
+    >,
+) -> impl Stream<Item = Result<Event, Infallible>> {
+    async_stream::stream! {
+        while let Some(event) = rx.recv().await {
+            if let Ok(data) = serde_json::to_string(&event) {
+                yield Ok(Event::default().event("progress").data(data));
+            }
+        }
+
+        match result_rx.await {
+            Ok(Ok(resp)) => {
+                if let Ok(data) = serde_json::to_string(&resp) {
+                    yield Ok(Event::default().event("complete").data(data));
+                }
+            }
+            Ok(Err(e)) => {
+                let err = serde_json::json!({ "error": e.to_string() });
+                yield Ok(Event::default().event("error").data(err.to_string()));
+            }
+            Err(_) => {
+                let err = serde_json::json!({ "error": "handler dropped unexpectedly" });
+                yield Ok(Event::default().event("error").data(err.to_string()));
+            }
+        }
+    }
 }
 
 fn build_event_stream(

@@ -761,23 +761,93 @@ pub fn kill_socat(pid: u32) -> Result<()> {
 /// Detection: uses `pkill` to kill socat processes matching our command pattern
 /// (`fork,reuseaddr` in the arguments — unique to coast's socat usage).
 pub fn cleanup_orphaned_socat() {
-    // Use pkill to kill all matching socat processes in one shot.
-    // The pattern "fork,reuseaddr" is specific to coast's socat forwarding commands.
-    match Command::new("pkill")
+    // Coast spawns two distinct kinds of long-lived socat:
+    //
+    //   1) Per-instance dynamic/canonical port forwarders (managed
+    //      by `port_manager`). When the daemon restarts they are
+    //      genuinely orphaned because their pids live only in
+    //      memory + state.db rows that point at dead pids — a
+    //      blanket pkill is the correct cleanup.
+    //
+    //   2) Per-(project, service, container_port) **host SSG
+    //      socats** (managed by `handlers::ssg::host_socat`). Their
+    //      pids are persisted to `~/.coast/socats/*.pid` files and
+    //      the daemon EXPECTS to find them alive across a restart
+    //      so consumers' shared-service routing keeps working. If
+    //      we kill them indiscriminately, every consumer in-DinD
+    //      socat sees ECONNREFUSED on its virtual-port upstream
+    //      until the next `ssg run/start` lifecycle event.
+    //
+    // Approach: enumerate the managed pidfiles first, build a
+    // skip-set, then walk `pgrep` output and only kill pids that
+    // are NOT in the skip-set. Falls back to the old broad pkill
+    // when `pgrep` is unavailable (matches existing best-effort
+    // behaviour).
+    let skip_pids = read_managed_host_socat_pids();
+
+    let Ok(pgrep_out) = Command::new("pgrep")
         .args(["-f", "socat TCP-LISTEN.*fork,reuseaddr"])
         .output()
-    {
-        Ok(output) => {
-            if output.status.success() {
-                info!("Cleaned up orphaned socat processes from previous session");
-            } else {
-                debug!("No orphaned socat processes found");
-            }
+    else {
+        debug!("pgrep not available, skipping orphaned socat cleanup");
+        return;
+    };
+    if !pgrep_out.status.success() && pgrep_out.stdout.is_empty() {
+        debug!("No orphaned socat processes found");
+        return;
+    }
+
+    let mut killed = 0usize;
+    let mut skipped = 0usize;
+    for line in String::from_utf8_lossy(&pgrep_out.stdout).lines() {
+        let Ok(pid) = line.trim().parse::<i32>() else {
+            continue;
+        };
+        if skip_pids.contains(&pid) {
+            skipped += 1;
+            continue;
         }
-        Err(_) => {
-            debug!("pkill not available, skipping orphaned socat cleanup");
+        // Best-effort SIGTERM. We don't bother escalating to SIGKILL
+        // because the cleanup runs before the new daemon is
+        // dispatching requests and a stuck socat will get killed
+        // by the next reconcile via `host_socat::spawn_or_update`.
+        unsafe {
+            let _ = libc::kill(pid as libc::pid_t, libc::SIGTERM);
+        }
+        killed += 1;
+    }
+    if killed > 0 || skipped > 0 {
+        info!(
+            killed = killed,
+            skipped_managed = skipped,
+            "cleaned up orphaned socat processes from previous session"
+        );
+    }
+}
+
+/// Walk `~/.coast/socats/` and return the pids that the daemon's
+/// host-socat supervisor is currently managing. These pids must
+/// be exempted from `cleanup_orphaned_socat`'s broad pkill so that
+/// SSG shared-service routing survives a daemon restart.
+fn read_managed_host_socat_pids() -> std::collections::HashSet<i32> {
+    let dir = crate::handlers::run::paths::host_socats_dir();
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return std::collections::HashSet::new();
+    };
+    let mut pids = std::collections::HashSet::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("pid") {
+            continue;
+        }
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        if let Ok(pid) = content.trim().parse::<i32>() {
+            pids.insert(pid);
         }
     }
+    pids
 }
 
 /// A socat command to restore during daemon startup.

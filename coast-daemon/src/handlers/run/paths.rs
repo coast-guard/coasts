@@ -8,7 +8,7 @@ fn fallback_coast_home() -> PathBuf {
     dirs::home_dir().unwrap_or_default().join(".coast")
 }
 
-pub(super) fn active_coast_home() -> PathBuf {
+pub(crate) fn active_coast_home() -> PathBuf {
     coast_home().unwrap_or_else(|_| fallback_coast_home())
 }
 
@@ -42,7 +42,7 @@ pub(super) fn shared_caddy_pki_host_dir() -> PathBuf {
 /// the Phase 27 host socat supervisor. Automatically follows
 /// `COAST_HOME` — so `coastd` writes under `~/.coast/socats/` and
 /// `coastd-dev` under `~/.coast-dev/socats/`.
-pub(crate) fn host_socats_dir() -> PathBuf {
+pub fn host_socats_dir() -> PathBuf {
     active_coast_home().join("socats")
 }
 

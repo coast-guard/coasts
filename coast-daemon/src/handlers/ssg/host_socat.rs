@@ -4,11 +4,20 @@
 //! `(project, service_name, container_port)` SSG service port.
 //! Listens on the stable `virtual_port` (from `ssg_virtual_ports`,
 //! allocated in Phase 26) and forwards to
-//! `host.docker.internal:<current_ssg_dyn_port>`. Consumers always
-//! resolve their socat upstream to this virtual port — the host
-//! supervisor is the single place where "current SSG dyn port"
-//! surfaces, so an SSG rebuild is a one-process-argv swap here and
-//! invisible to consumers.
+//! `127.0.0.1:<current_ssg_dyn_port>`. Consumers always resolve
+//! their socat upstream to this virtual port — the host supervisor
+//! is the single place where "current SSG dyn port" surfaces, so
+//! an SSG rebuild is a one-process-argv swap here and invisible
+//! to consumers.
+//!
+//! NOTE: this socat runs on the **host** (Darwin / Linux / WSL),
+//! NOT inside any container. We forward to `127.0.0.1:<dyn_port>`
+//! because the SSG dyn port is bound on the host loopback by
+//! Docker's port publisher (`docker run -p <dyn>:<canonical>`).
+//! Earlier revisions used `host.docker.internal` here, which only
+//! resolves *inside* containers — on Darwin the host's resolver
+//! returns NXDOMAIN, so socat would fail with "unexpected EOF" the
+//! moment a consumer connection arrived.
 //!
 //! Phase 28 keys on `container_port` (not just service name) so
 //! multi-port services (e.g. minio's 9000+9001) get one host socat
@@ -37,7 +46,8 @@ use crate::server::AppState;
 
 /// Spawn (or update) the host socat for
 /// `(project, service, container_port)` so it forwards
-/// `virtual_port` → `host.docker.internal:<dyn_port>`.
+/// `virtual_port` → `127.0.0.1:<dyn_port>`. See module docs for
+/// why we bind to host loopback rather than `host.docker.internal`.
 ///
 /// Idempotent. If a live pid already holds the target virtual port
 /// AND its recorded upstream matches `dyn_port`, the call is a
@@ -305,16 +315,37 @@ async fn collect_project_plans(
 }
 
 /// Reconciliation sweep: for every project with a running SSG,
-/// join `ssg_services` × `ssg_virtual_ports` on `(service_name,
-/// container_port)` and ensure a host socat is running with the
-/// correct argv. Used at daemon startup to repair state after a
-/// daemon crash or host reboot.
+/// ensure a host socat is running for each `ssg_services` row
+/// with the correct argv. Used at daemon startup to repair state
+/// after a daemon crash or host reboot.
 ///
-/// Returns the list of `"<project>/<service>"` labels that were
-/// successfully reconciled. Per-service errors are logged at `warn!`
-/// and swallowed — one broken service must not block the rest.
+/// Self-healing for `ssg_virtual_ports`: if a service has a row in
+/// `ssg_services` but no matching row in `ssg_virtual_ports`, the
+/// reconcile **allocates** one via `allocate_or_reuse` and then
+/// spawns the host socat against it. This is critical because:
+///
+/// - Daemon shutdown does NOT persist any guarantee that
+///   `ssg_virtual_ports` has been written for every service —
+///   ports are written by `reconcile_project` during the SSG
+///   run/start lifecycle, but a daemon crash mid-lifecycle can
+///   leave the table partially populated.
+/// - A user-initiated `coast ssg rm --with-data` clears the table
+///   on purpose; if the SSG row itself wasn't also wiped (a partial
+///   recovery), reconcile must repopulate the vports rather than
+///   silently producing zero socats.
+///
+/// Without this, the symptom is invisible: `restore_host_socats`
+/// returns `Ok(empty)`, no log distinguishes "nothing to do" from
+/// "missed everything," and consumers see ECONNREFUSED on shared
+/// services until the next manual `coast ssg run/start`.
+///
+/// Returns the list of `"<project>/<service>:<container_port>"`
+/// labels that were successfully reconciled. Per-service errors
+/// are logged at `warn!` and swallowed — one broken service must
+/// not block the rest.
 pub async fn reconcile_all(state: &AppState) -> Result<Vec<String>> {
-    let entries = collect_reconcile_entries(state).await?;
+    let cfg = AllocatorConfig::from_env();
+    let entries = collect_or_allocate_reconcile_entries(state, &cfg).await?;
     let mut reconciled = Vec::with_capacity(entries.len());
     for entry in entries {
         let ReconcileEntry {
@@ -337,6 +368,57 @@ pub async fn reconcile_all(state: &AppState) -> Result<Vec<String>> {
         }
     }
     Ok(reconciled)
+}
+
+/// Like `collect_reconcile_entries` but allocates a virtual port
+/// when one is missing instead of skipping the service. Used by
+/// `reconcile_all` for self-healing on daemon startup.
+async fn collect_or_allocate_reconcile_entries(
+    state: &AppState,
+    cfg: &AllocatorConfig,
+) -> Result<Vec<ReconcileEntry>> {
+    let db = state.db.lock().await;
+    let ssgs = db.list_ssgs()?;
+    let mut out = Vec::new();
+    for ssg in ssgs {
+        if ssg.status != "running" {
+            continue;
+        }
+        let services = db.list_ssg_services(&ssg.project)?;
+        for svc in services {
+            // `allocate_or_reuse` returns the persisted port when
+            // present; otherwise picks a free port in the band and
+            // upserts the row. Either way `ssg_virtual_ports` has
+            // a fresh row by the time we go to spawn.
+            let virtual_port = match allocate_or_reuse(
+                &*db,
+                &ssg.project,
+                &svc.service_name,
+                svc.container_port,
+                cfg,
+            ) {
+                Ok(p) => p,
+                Err(err) => {
+                    warn!(
+                        project = %ssg.project,
+                        service = %svc.service_name,
+                        container_port = svc.container_port,
+                        error = %err,
+                        "host socat reconcile: virtual port allocation failed"
+                    );
+                    continue;
+                }
+            };
+            out.push(ReconcileEntry {
+                project: ssg.project.clone(),
+                service: svc.service_name,
+                container_port: svc.container_port,
+                virtual_port,
+                dyn_port: svc.dynamic_host_port,
+            });
+        }
+    }
+    Ok(out)
 }
 
 /// One row in the reconcile join. Joining `ssg` × `ssg_services` ×
@@ -379,7 +461,9 @@ fn socat_spawn_args(
     logfile: &Path,
 ) -> SpawnArgs {
     let listen = format!("TCP-LISTEN:{virtual_port},fork,reuseaddr");
-    let upstream = format!("TCP:host.docker.internal:{dyn_port}");
+    // 127.0.0.1 (not host.docker.internal): the host socat runs on
+    // the host, not inside a container. See the module docstring.
+    let upstream = format!("TCP:127.0.0.1:{dyn_port}");
     SpawnArgs {
         binary_path: "/usr/bin/env".to_string(),
         extra_args: vec!["socat".to_string(), listen, upstream],
@@ -549,16 +633,41 @@ fn tail_logfile(logfile: &Path) -> String {
 ///
 /// The join key is `(project, service_name, container_port)` —
 /// matching the per-port allocator and host socat keying.
+// Read-only sibling of `collect_or_allocate_reconcile_entries`.
+// Production code uses the self-healing variant; this function is
+// retained to back the read-only behavior tests below
+// (`collect_reconcile_entries_skips_services_without_virtual_port`
+// etc.) which encode the historical "skip if no vport" contract
+// for documentation purposes.
+#[allow(dead_code)]
 async fn collect_reconcile_entries(state: &AppState) -> Result<Vec<ReconcileEntry>> {
     let db = state.db.lock().await;
     let ssgs = db.list_ssgs()?;
+    debug!(
+        ssg_count = ssgs.len(),
+        ssgs = ?ssgs.iter().map(|s| (s.project.clone(), s.status.clone())).collect::<Vec<_>>(),
+        "collect_reconcile_entries: scanned ssg rows"
+    );
     let mut out = Vec::new();
     for ssg in ssgs {
         if ssg.status != "running" {
+            debug!(
+                project = %ssg.project,
+                status = %ssg.status,
+                "collect_reconcile_entries: skipping non-running SSG"
+            );
             continue;
         }
         let services = db.list_ssg_services(&ssg.project)?;
         let vports = db.list_ssg_virtual_ports(&ssg.project)?;
+        debug!(
+            project = %ssg.project,
+            service_count = services.len(),
+            vport_count = vports.len(),
+            services = ?services.iter().map(|s| (s.service_name.clone(), s.container_port, s.dynamic_host_port)).collect::<Vec<_>>(),
+            vports = ?vports.iter().map(|v| (v.service_name.clone(), v.container_port, v.port)).collect::<Vec<_>>(),
+            "collect_reconcile_entries: per-project state"
+        );
         // Build a (service, container_port) → port lookup for the
         // virtual ports so the O(N*M) loop collapses to O(N + M).
         let vport_by_key: std::collections::HashMap<(String, u16), u16> = vports
@@ -737,7 +846,7 @@ mod tests {
             extra_args: vec![
                 "socat".to_string(),
                 "TCP-LISTEN:42001,fork,reuseaddr".to_string(),
-                "TCP:host.docker.internal:61851".to_string(),
+                "TCP:127.0.0.1:61851".to_string(),
             ],
             pidfile: PathBuf::from("/tmp/coast/socats/cg--postgres--5432.pid"),
             logfile: PathBuf::from("/tmp/coast/socats/cg--postgres--5432.log"),
@@ -746,7 +855,7 @@ mod tests {
 
         assert!(script.contains("'/usr/bin/env' 'socat'"));
         assert!(script.contains("TCP-LISTEN:42001,fork,reuseaddr"));
-        assert!(script.contains("TCP:host.docker.internal:61851"));
+        assert!(script.contains("TCP:127.0.0.1:61851"));
         assert!(script.contains("'/tmp/coast/socats/cg--postgres--5432.pid'"));
         assert!(script.contains("'/tmp/coast/socats/cg--postgres--5432.log'"));
         assert!(script.contains("cg--postgres--5432.pid.argv"));
@@ -932,6 +1041,75 @@ mod tests {
 
         let entries = collect_reconcile_entries(&state).await.unwrap();
         assert!(entries.is_empty(), "no virtual port => skipped");
+    }
+
+    #[tokio::test]
+    async fn collect_or_allocate_reconcile_entries_allocates_missing_virtual_port() {
+        // The production restart path uses the self-healing
+        // `collect_or_allocate_reconcile_entries` so a missing
+        // `ssg_virtual_ports` row gets repaired, not skipped.
+        // Without this, a partial-state recovery (e.g. after a
+        // user-initiated `ssg rm --with-data` followed by a fresh
+        // run that crashed before persisting vports) would leave
+        // consumers seeing ECONNREFUSED forever.
+        let db = StateDb::open_in_memory().unwrap();
+        db.upsert_ssg("cg", "running", Some("cid"), Some("b1"))
+            .unwrap();
+        db.upsert_ssg_service(&svc("cg", "postgres", 5432, 61851))
+            .unwrap();
+        // Deliberately NO upsert_ssg_virtual_port call. The
+        // production path must allocate one.
+        let state = app_state_with(db);
+        let cfg = AllocatorConfig {
+            band_start: 42500,
+            band_end: 42600,
+        };
+
+        let entries = collect_or_allocate_reconcile_entries(&state, &cfg)
+            .await
+            .unwrap();
+        assert_eq!(entries.len(), 1, "vport must be allocated, not skipped");
+        let entry = &entries[0];
+        assert_eq!(entry.project, "cg");
+        assert_eq!(entry.service, "postgres");
+        assert_eq!(entry.container_port, 5432);
+        assert_eq!(entry.dyn_port, 61851);
+        assert!(
+            (cfg.band_start..=cfg.band_end).contains(&entry.virtual_port),
+            "virtual port must be inside the band"
+        );
+
+        // Verify the allocation persisted: a second call must
+        // return the same vport (reuse path).
+        let entries2 = collect_or_allocate_reconcile_entries(&state, &cfg)
+            .await
+            .unwrap();
+        assert_eq!(entries2.len(), 1);
+        assert_eq!(
+            entries2[0].virtual_port, entry.virtual_port,
+            "second sweep must reuse the persisted vport"
+        );
+    }
+
+    #[tokio::test]
+    async fn collect_or_allocate_reconcile_entries_skips_ssgs_not_running() {
+        // Self-healing must still respect the running-only filter
+        // — a stopped SSG has no business getting host socats.
+        let db = StateDb::open_in_memory().unwrap();
+        db.upsert_ssg("cg", "stopped", Some("cid"), Some("b1"))
+            .unwrap();
+        db.upsert_ssg_service(&svc("cg", "postgres", 5432, 61851))
+            .unwrap();
+        let state = app_state_with(db);
+        let cfg = AllocatorConfig {
+            band_start: 42700,
+            band_end: 42800,
+        };
+
+        let entries = collect_or_allocate_reconcile_entries(&state, &cfg)
+            .await
+            .unwrap();
+        assert!(entries.is_empty(), "stopped SSG => no entries");
     }
 
     #[tokio::test]

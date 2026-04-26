@@ -253,6 +253,27 @@ pub enum SsgAction {
         #[arg(short = 'f', long)]
         file: Option<PathBuf>,
     },
+    /// List SSG build artifacts for this project.
+    ///
+    /// Walks `~/.coast/ssg/builds/` (the globally-shared SSG
+    /// artifact pool) and filters to builds whose
+    /// `coastfile_hash` matches the project's current
+    /// `latest_build_id`'s hash. Marks the latest build with
+    /// `LATEST` and the currently-pinned build (if any) with
+    /// `PINNED`. The same data backs the SPA's "SHARED SERVICE
+    /// GROUPS" subsection. See `coast-ssg/DESIGN.md §9.1` for
+    /// the artifact layout.
+    BuildsLs {
+        /// Project name override. Defaults to `[coast].name`
+        /// read from the consumer Coastfile in `--working-dir` /
+        /// cwd. Same fallback chain as `coast ssg show-pin`.
+        #[arg(long)]
+        project: Option<String>,
+        #[arg(long = "working-dir")]
+        working_dir: Option<PathBuf>,
+        #[arg(short = 'f', long)]
+        file: Option<PathBuf>,
+    },
 }
 
 pub async fn execute(args: &SsgArgs, cli_working_dir: &Option<PathBuf>) -> Result<()> {
@@ -273,6 +294,15 @@ pub async fn execute(args: &SsgArgs, cli_working_dir: &Option<PathBuf>) -> Resul
         // Cross-project: no `resolve_consumer_project` call, no cwd
         // Coastfile required. Daemon handler ignores `req.project`.
         SsgAction::Ls => execute_ls(args.silent).await,
+        SsgAction::BuildsLs {
+            project,
+            working_dir,
+            file,
+        } => {
+            let resolved_working_dir = working_dir.clone().or_else(|| cli_working_dir.clone());
+            let resolved_project = resolve_consumer_project(project, &resolved_working_dir, file)?;
+            execute_builds_ls(resolved_project, args.silent).await
+        }
         other => dispatch_simple_or_lifecycle(other, args.silent, cli_working_dir).await,
     }
 }
@@ -476,7 +506,8 @@ async fn dispatch_simple_or_lifecycle(
         | SsgAction::CheckoutBuild { .. }
         | SsgAction::UncheckoutBuild { .. }
         | SsgAction::ShowPin { .. }
-        | SsgAction::Ls => {
+        | SsgAction::Ls
+        | SsgAction::BuildsLs { .. } => {
             unreachable!("dispatch_simple_or_lifecycle only handles non-build/non-pin/non-ls verbs")
         }
     }
@@ -827,6 +858,125 @@ compose = "docker-compose.yml"
         );
     }
 
+    // --- format_builds_table (coast ssg builds-ls) ---
+
+    fn build_entry(
+        build_id: &str,
+        services: &[&str],
+        latest: bool,
+        pinned: bool,
+        created_at_unix: i64,
+    ) -> coast_core::protocol::SsgBuildEntry {
+        coast_core::protocol::SsgBuildEntry {
+            build_id: build_id.to_string(),
+            project: "cg".to_string(),
+            created_at_unix,
+            services: services.iter().map(|s| (*s).to_string()).collect(),
+            services_count: services.len() as u32,
+            pinned,
+            latest,
+        }
+    }
+
+    #[test]
+    fn format_builds_table_header_has_expected_columns() {
+        let table = format_builds_table(&[]);
+        let plain = strip_ansi(&table);
+        for col in ["BUILD", "SERVICES", "CREATED", "STATUS"] {
+            assert!(plain.contains(col), "header missing {col}: {plain}");
+        }
+    }
+
+    #[test]
+    fn format_builds_table_marks_latest_and_pinned() {
+        let table = format_builds_table(&[
+            build_entry("abc_20260422000000", &["postgres", "redis"], true, false, 1),
+            build_entry("abc_20260421000000", &["postgres"], false, true, 0),
+            build_entry("abc_20260420000000", &["postgres"], false, false, 0),
+        ]);
+        let plain = strip_ansi(&table);
+        let latest_line = plain
+            .lines()
+            .find(|l| l.contains("abc_20260422000000"))
+            .expect("missing latest row");
+        assert!(latest_line.contains("LATEST"), "got: {latest_line}");
+        let pinned_line = plain
+            .lines()
+            .find(|l| l.contains("abc_20260421000000"))
+            .expect("missing pinned row");
+        assert!(pinned_line.contains("PINNED"), "got: {pinned_line}");
+        assert!(
+            !pinned_line.contains("LATEST"),
+            "pinned row should not be LATEST: {pinned_line}"
+        );
+        let plain_line = plain
+            .lines()
+            .find(|l| l.contains("abc_20260420000000"))
+            .expect("missing plain row");
+        assert!(
+            !plain_line.contains("LATEST") && !plain_line.contains("PINNED"),
+            "plain row should not be flagged: {plain_line}"
+        );
+    }
+
+    #[test]
+    fn format_builds_table_renders_services_csv() {
+        let table = format_builds_table(&[build_entry(
+            "abc_20260422000000",
+            &["postgres", "redis"],
+            false,
+            false,
+            0,
+        )]);
+        let plain = strip_ansi(&table);
+        assert!(
+            plain.contains("postgres,redis"),
+            "expected services CSV in row: {plain}"
+        );
+    }
+
+    #[test]
+    fn format_builds_table_truncates_long_service_list() {
+        // 6 service names of 8 chars each + commas = > 24 chars.
+        let table = format_builds_table(&[build_entry(
+            "abc_20260422000000",
+            &[
+                "postgres", "redis123", "mongo123", "kafka123", "elastic1", "minio123",
+            ],
+            false,
+            false,
+            0,
+        )]);
+        let plain = strip_ansi(&table);
+        let row = plain
+            .lines()
+            .find(|l| l.contains("abc_20260422000000"))
+            .expect("row missing");
+        assert!(row.contains("..."), "expected truncation marker in: {row}");
+    }
+
+    #[test]
+    fn format_builds_table_renders_dash_when_no_timestamp() {
+        let table = format_builds_table(&[build_entry(
+            "abc_20260422000000",
+            &["postgres"],
+            false,
+            false,
+            0, // missing built_at -> falls back to 0 -> "-"
+        )]);
+        let plain = strip_ansi(&table);
+        let row = plain
+            .lines()
+            .find(|l| l.contains("abc_20260422000000"))
+            .expect("row missing");
+        // Two-space gap before STATUS column means the CREATED slot
+        // contains a literal "-" character.
+        assert!(
+            row.contains(" - "),
+            "expected '-' placeholder when timestamp is 0: {row}"
+        );
+    }
+
     #[test]
     fn format_ports_table_renders_dash_when_virtual_port_none() {
         let table = format_ports_table(&[port_with(None)]);
@@ -989,6 +1139,35 @@ async fn execute_ls(silent: bool) -> Result<()> {
                 if !resp.listings.is_empty() {
                     println!();
                     println!("{}", format_listings_table(&resp.listings));
+                }
+            }
+            Ok(())
+        }
+        Response::Error(e) => bail!("{}", e.error),
+        other => bail!("unexpected response from daemon: {other:?}"),
+    }
+}
+
+/// `coast ssg builds-ls` — list build artifacts for a single
+/// project. Uses [`resolve_consumer_project`]'s same fallback chain
+/// as the pin verbs so the user can omit `--project` from inside
+/// their consumer checkout. The daemon scopes the response to
+/// builds whose `coastfile_hash` matches the project's anchor (the
+/// `coastfile_hash` of its current `latest_build_id`); see
+/// `handle_builds_ls` in `coast-daemon/src/handlers/ssg/mod.rs`.
+async fn execute_builds_ls(project: String, silent: bool) -> Result<()> {
+    let response = super::send_request(Request::Ssg(SsgRequest {
+        project,
+        action: ProtoSsgAction::BuildsLs,
+    }))
+    .await?;
+    match response {
+        Response::Ssg(resp) => {
+            if !silent {
+                println!("{}", resp.message);
+                if !resp.builds.is_empty() {
+                    println!();
+                    println!("{}", format_builds_table(&resp.builds));
                 }
             }
             Ok(())
@@ -1242,4 +1421,58 @@ fn truncate_for_table(value: &str) -> String {
     } else {
         format!("{}...", &value[..MAX.saturating_sub(3)])
     }
+}
+
+/// Render `coast ssg builds-ls` rows. One row per build artifact
+/// belonging to the requested project (filtered server-side by
+/// `coastfile_hash`). The CREATED column shows the build's
+/// `built_at` timestamp converted to local time; STATUS shows
+/// `LATEST` / `PINNED` / both / blank.
+fn format_builds_table(builds: &[coast_core::protocol::SsgBuildEntry]) -> String {
+    let mut lines = Vec::with_capacity(builds.len() + 1);
+    lines.push(format!(
+        "  {:<35} {:<24} {:<22}  {}",
+        "BUILD".bold(),
+        "SERVICES".bold(),
+        "CREATED".bold(),
+        "STATUS".bold(),
+    ));
+    for row in builds {
+        let services = if row.services.is_empty() {
+            row.services_count.to_string()
+        } else {
+            row.services.join(",")
+        };
+        // Truncate at the field width minus the trailing ellipsis so
+        // a service list like `postgres,redis,mongo,elasticsearch`
+        // doesn't blow out the column. Full list is in the JSON.
+        let services = if services.chars().count() > 24 {
+            let mut shorter: String = services.chars().take(21).collect();
+            shorter.push_str("...");
+            shorter
+        } else {
+            services
+        };
+        let created = if row.created_at_unix > 0 {
+            chrono::DateTime::<chrono::Local>::from(
+                chrono::DateTime::<chrono::Utc>::from_timestamp(row.created_at_unix, 0)
+                    .unwrap_or_default(),
+            )
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string()
+        } else {
+            "-".to_string()
+        };
+        let status = match (row.latest, row.pinned) {
+            (true, true) => "LATEST PINNED".green().to_string(),
+            (true, false) => "LATEST".green().to_string(),
+            (false, true) => "PINNED".yellow().to_string(),
+            (false, false) => String::new(),
+        };
+        lines.push(format!(
+            "  {:<35} {:<24} {:<22}  {}",
+            row.build_id, services, created, status,
+        ));
+    }
+    lines.join("\n")
 }

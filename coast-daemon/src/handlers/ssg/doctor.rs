@@ -87,6 +87,7 @@ where
             ports: Vec::new(),
             findings: Vec::new(),
             listings: Vec::new(),
+            builds: Vec::new(),
         };
     };
 
@@ -114,6 +115,7 @@ where
         ports: Vec::new(),
         findings,
         listings: Vec::new(),
+        builds: Vec::new(),
     }
 }
 

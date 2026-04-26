@@ -159,6 +159,23 @@ pub async fn run_ssg_with_build_id(
     build_id: Option<&str>,
     progress: Sender<BuildProgressEvent>,
 ) -> Result<SsgRunOutcome> {
+    // Emit the full plan upfront so the SPA's run modal can render
+    // a checklist with all six steps as `pending` before the first
+    // `started` event arrives. Mirrors how `build_ssg` advertises
+    // its plan; previously `run_ssg_with_build_id` only emitted
+    // step-by-step `started`/`ok` frames, forcing the UI to
+    // accumulate the plan as events trickled in. See
+    // `coast-ssg/DESIGN.md §32`.
+    let _ = progress
+        .send(BuildProgressEvent::build_plan(vec![
+            "Preparing SSG".to_string(),
+            "Creating SSG container".to_string(),
+            "Starting SSG container".to_string(),
+            "Waiting for inner daemon".to_string(),
+            "Loading cached images".to_string(),
+            "Starting inner services".to_string(),
+        ]))
+        .await;
     emit(&progress, "Preparing SSG", 1, RUN_STEPS).await;
 
     let build_id = build_id
@@ -597,12 +614,13 @@ pub fn ports_ssg(project: &str, state: &dyn SsgStateExt) -> Result<SsgResponse> 
         ports,
         findings: Vec::new(),
         listings: Vec::new(),
+        builds: Vec::new(),
     })
 }
 
 // --- internals -------------------------------------------------------------
 
-pub(crate) fn inner_compose_path() -> String {
+pub fn inner_compose_path() -> String {
     format!("{INNER_ARTIFACT_DIR}/compose.yml")
 }
 
@@ -775,6 +793,7 @@ fn build_response(
         ports,
         findings: Vec::new(),
         listings: Vec::new(),
+        builds: Vec::new(),
     }
 }
 
