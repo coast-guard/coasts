@@ -38,6 +38,16 @@ coast rm-build my-project
 
 Isso exclui o diretório de artefatos do projeto, imagens do Docker, volumes e contêineres. Ele pede confirmação primeiro. Passe `--force` para pular o prompt.
 
+## Incompatibilidades de permissão de SSG
+
+Se um Postgres (ou MySQL / MariaDB / MongoDB) de [Shared Service Group](../shared_service_groups/README.md) encerrar na inicialização com um erro do tipo "data directory has wrong ownership", o diretório de bind-mount no host foi criado com o UID/GID errado. Execute:
+
+```bash
+coast ssg doctor
+```
+
+Ele relata uma ocorrência por par `(service, host-bind-mount)` e inclui o comando `chown` exato para corrigir qualquer incompatibilidade. O Doctor é somente leitura -- ele nunca modifica o diretório por conta própria. Veja [SSG Volumes](../shared_service_groups/VOLUMES.md#coast-ssg-doctor) para a semântica completa.
+
 ## Imagens ausentes de serviços compartilhados
 
 Se `coast run` falhar ao criar um serviço compartilhado com um erro como `No such image: postgres:15`, a imagem está ausente do daemon do Docker no seu host.

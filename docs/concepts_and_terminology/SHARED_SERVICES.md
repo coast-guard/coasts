@@ -66,12 +66,15 @@ When running [remote coasts](REMOTES.md), shared services still run on your loca
 
 ## See Also: Shared Service Groups
 
-Inline shared services scale to one project cleanly but collide across projects: two Coastfiles that both declare `postgres:5432` cannot run at the same time on the same host. [Shared Service Groups](../shared_service_groups/README.md) generalize the pattern across projects by running one singleton SSG DinD that hosts Postgres, Redis, MongoDB, etc. for every project that references it via `[shared_services.<name>] from_group = true`.
+Inline shared services scale fine within one project (sibling instances `dev-1`, `dev-2` ... share the single host-side container drawn above). The friction shows up **across projects**: two different Coast projects that each declare `[shared_services.postgres] ports = [5432]` both try to bind host port 5432, and the second one fails. [Shared Service Groups](../shared_service_groups/README.md) lift the infrastructure into a per-project DinD (named `<project>-ssg`) so each project's Postgres listens on inner `:5432` without binding the host port directly. Two projects can each have a Postgres on canonical 5432 because neither one binds host 5432 -- consumers route through stable virtual ports.
+
+Each project gets its own SSG -- two different projects get their own `<p1>-ssg` and `<p2>-ssg` and never share state. The SSG model is the inline pattern's structured cousin: same `[shared_services.<name>]` Coastfile shape, but with build-time secret extraction, stable virtual ports across SSG rebuilds, host-side checkout, and lifecycle verbs (`coast ssg run` / `start` / `stop` / `rm`).
 
 When to migrate from inline shared services to an SSG:
 
-- You run more than one project that needs the same infrastructure service and want them to share data.
-- You hit host-port conflicts between projects that each declare the same canonical port.
-- You want a single place to manage infrastructure images, volumes, and lifecycle across projects.
+- You run more than one Coast project on this machine and they need the same canonical port (e.g. both want a Postgres on 5432) -- inline can't run them concurrently; SSG can.
+- You want host-side tools (`psql`, GUI clients, MCPs) to reach the project's Postgres at canonical `localhost:5432` (`coast ssg checkout`).
+- You want to extract service credentials from a keychain or env var at build time (`[secrets.<name>]` in the SSG Coastfile).
+- You want a single place to declare infrastructure images, volumes, and secrets for the project.
 
 Migration is opt-in per service. Existing inline `[shared_services.*]` blocks keep working unchanged.

@@ -38,6 +38,16 @@ coast rm-build my-project
 
 이는 프로젝트의 아티팩트 디렉터리, Docker 이미지, 볼륨, 컨테이너를 삭제합니다. 먼저 확인을 요청합니다. 프롬프트를 건너뛰려면 `--force`를 전달하세요.
 
+## SSG Permission Mismatches
+
+[Shared Service Group](../shared_service_groups/README.md)의 Postgres(또는 MySQL / MariaDB / MongoDB)가 시작 시 `"data directory has wrong ownership"` 오류와 함께 종료된다면, 호스트 bind-mount 디렉터리가 잘못된 UID/GID로 생성된 것입니다. 다음을 실행하세요:
+
+```bash
+coast ssg doctor
+```
+
+이 명령은 `(service, host-bind-mount)` 쌍마다 하나의 발견 사항을 보고하고, 불일치를 수정하기 위한 정확한 `chown` 명령도 함께 제공합니다. Doctor는 읽기 전용이므로 디렉터리 자체를 절대 수정하지 않습니다. 전체 의미 체계는 [SSG Volumes](../shared_service_groups/VOLUMES.md#coast-ssg-doctor)를 참조하세요.
+
 ## Missing Shared Service Images
 
 `coast run`이 공유 서비스를 생성하는 중 `No such image: postgres:15` 같은 오류로 실패한다면, 해당 이미지는 호스트 Docker 데몬에 없습니다.

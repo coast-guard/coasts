@@ -68,6 +68,10 @@ Coasts는 dev container가 아니며, 같은 것도 아닙니다.
 
 Dev container는 일반적으로 IDE를 단일 컨테이너화된 개발 워크스페이스에 마운트하도록 설계됩니다. Coasts는 헤드리스이며, worktree를 사용하는 병렬 에이전트 사용을 위한 경량 환경으로 최적화되어 있습니다 — 여러 개의 격리된, worktree 인지형 런타임 환경이 나란히 실행되며, 빠른 체크아웃 전환과 각 인스턴스별 런타임 격리 제어를 제공합니다.
 
+## 프로젝트 간 인프라 공유
+
+각기 동일한 데이터베이스나 캐시가 필요한 여러 프로젝트가 있다면, 해당 서비스들을 [Shared Service Group](shared_service_groups/README.md)이라고 하는 싱글턴 DinD에 한 번만 선언하고 각 프로젝트의 Coastfile이 그것을 가리키도록 할 수 있습니다. 이렇게 하면 프로젝트별 호스트 포트 충돌을 피할 수 있고 여러 프로젝트가 데이터를 공유할 수 있습니다.
+
 ## Demo Repo
 
 Coasts로 시험해 볼 수 있는 작은 예제 프로젝트를 원한다면, [`coasts-demo` repository](https://github.com/coast-guard/coasts-demo)로 시작하세요.

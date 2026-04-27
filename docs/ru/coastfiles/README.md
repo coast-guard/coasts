@@ -2,7 +2,9 @@
 
 Coastfile — это конфигурационный файл TOML, который находится в корне вашего проекта. Он сообщает Coast всё, что нужно знать для сборки и запуска изолированных сред разработки для этого проекта — какие сервисы запускать, какие порты пробрасывать, как обрабатывать данные и как управлять секретами.
 
-Каждому проекту Coast нужен как минимум один Coastfile. Файл всегда называется `Coastfile` (с заглавной C, без расширения). Если вам нужны варианты для разных рабочих процессов, вы создаёте типизированные Coastfiles, например `Coastfile.light` или `Coastfile.snap`, которые [наследуются от базового](INHERITANCE.md).
+Файл всегда называется `Coastfile` (с заглавной C, без расширения). Если вам нужны варианты для разных рабочих процессов, вы создаёте типизированные Coastfiles, например `Coastfile.light` или `Coastfile.snap`, которые [наследуются от базового](INHERITANCE.md).
+
+Coastfiles необязательны. Вы можете собрать проект полностью с помощью флагов CLI, передав `--name` и `--compose` напрямую в `coast build`. Подробности см. в разделе [Coastfile-less Builds](../concepts_and_terminology/BUILDS.md#coastfile-less-builds).
 
 Чтобы глубже понять, как Coastfiles связаны с остальной частью Coast, см. [Coasts](../concepts_and_terminology/COASTS.md) и [Builds](../concepts_and_terminology/BUILDS.md).
 
@@ -202,8 +204,10 @@ mount = "/data/db"
 | [Worktree Directories](WORKTREE_DIR.md) | `worktree_dir`, `default_worktree_dir` | Локальные и внешние каталоги worktree, пути с тильдой, интеграция с Codex/Claude |
 | [Ports](PORTS.md) | `[ports]`, `[egress]` | Проброс портов, объявления egress, основной порт |
 | [Volumes](VOLUMES.md) | `[volumes.*]` | Стратегии томов: изолированные, общие и инициализированные из snapshot |
-| [Shared Services](SHARED_SERVICES.md) | `[shared_services.*]` | Базы данных и инфраструктурные сервисы на уровне хоста |
+| [Shared Services](SHARED_SERVICES.md) | `[shared_services.*]` | Базы данных и инфраструктурные сервисы на уровне хоста (`from_group = true` включает [Shared Service Group](../shared_service_groups/README.md)) |
+| [Shared Service Groups](SHARED_SERVICE_GROUPS.md) | `Coastfile.shared_service_groups` | Типизированный Coastfile для singleton SSG, который размещает инфраструктурные сервисы для нескольких проектов |
 | [Secrets](SECRETS.md) | `[secrets.*]`, `[inject]` | Извлечение секретов, внедрение и проброс env/файлов хоста |
+| [Variables](VARIABLES.md) | `${VAR}`, `${VAR:-default}` | Интерполяция переменных окружения в значениях Coastfile |
 | [Bare Services](SERVICES.md) | `[services.*]` | Запуск процессов напрямую без Docker Compose |
 | [Agent Shell](AGENT_SHELL.md) | `[agent_shell]` | Контейнеризированные TUI-рантаймы агента |
 | [MCP Servers](MCP.md) | `[mcp.*]`, `[mcp_clients.*]` | Внутренние и проксируемые с хоста MCP-серверы, клиентские коннекторы |

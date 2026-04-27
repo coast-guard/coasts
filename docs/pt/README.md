@@ -68,6 +68,10 @@ Coasts não são dev containers, e não são a mesma coisa.
 
 Dev containers geralmente são projetados para montar uma IDE em um único workspace de desenvolvimento conteinerizado. Coasts são headless e otimizados como ambientes leves para uso paralelo de agentes com worktrees — múltiplos ambientes de runtime isolados, com consciência de worktree, rodando lado a lado, com alternância rápida de checkout e controles de isolamento de runtime para cada instância.
 
+## Compartilhando infraestrutura entre projetos
+
+Se você tiver múltiplos projetos que precisem do mesmo banco de dados ou cache, poderá declarar esses serviços uma única vez em um DinD singleton chamado [Shared Service Group](shared_service_groups/README.md) e apontar o Coastfile de cada projeto para ele. Isso evita colisões de portas de host entre projetos e permite que múltiplos projetos compartilhem dados.
+
 ## Demo Repo
 
 Se você quiser um pequeno projeto de exemplo para experimentar com Coasts, comece com o repositório [`coasts-demo`](https://github.com/coast-guard/coasts-demo).

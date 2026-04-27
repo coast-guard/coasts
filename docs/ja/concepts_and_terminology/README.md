@@ -16,7 +16,7 @@
 - [Checkout](CHECKOUT.md) - 正式ポートを Coast インスタンスにマッピングすることと、それが必要になる場面です。
 - [Lookup](LOOKUP.md) - エージェントの現在の worktree に一致する Coast インスタンスを見つけます。
 - [Volume Topology](VOLUMES.md) - 共有サービス、共有ボリューム、分離ボリューム、およびスナップショットです。
-- [Shared Services](SHARED_SERVICES.md) - ホスト管理のインフラサービスとボリュームの曖昧性解消です。
+- [Shared Services](SHARED_SERVICES.md) - ホスト管理のインフラサービスとボリュームの曖昧性解消です。複数のプロジェクト間でインフラを共有する方法については、[Shared Service Groups](../shared_service_groups/README.md) も参照してください。
 - [Secrets and Extractors](SECRETS.md) - ホストのシークレットを抽出し、それらを Coast コンテナに注入します。
 - [Builds](BUILDS.md) - coast build の構造、アーティファクトの保存場所、自動 pruning、および型付きビルドです。
 - [Coastfile Types](COASTFILE_TYPES.md) - extends、unset、omit、および autostart を備えた、組み合わせ可能な Coastfile バリアントです。

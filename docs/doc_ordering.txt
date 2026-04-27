@@ -77,10 +77,11 @@ coastfiles/MCP.md
 shared_service_groups/README.md
 shared_service_groups/BUILDING.md
 shared_service_groups/LIFECYCLE.md
+shared_service_groups/ROUTING.md
 shared_service_groups/VOLUMES.md
 shared_service_groups/CONSUMING.md
+shared_service_groups/SECRETS.md
 shared_service_groups/CHECKOUT.md
-shared_service_groups/PINNING.md
 shared_service_groups/CLI.md
 
 # Remote Coasts

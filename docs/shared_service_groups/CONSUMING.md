@@ -1,6 +1,8 @@
 # Consuming a Shared Service Group
 
-Projects opt into an SSG-owned service per service, per project, using a one-line flag in the consumer's Coastfile. Inside the Coast, app containers still see `postgres:5432`; the socat-based routing layer that already handles inline shared services just points at the SSG's dynamic host port instead.
+A consumer Coast opts into its project's SSG-owned services per service, using a one-line flag in the consumer's `Coastfile`. Inside the Coast, app containers still see `postgres:5432`; the daemon's routing layer redirects that traffic into the project's `<project>-ssg` outer DinD via a stable virtual port.
+
+The SSG that `from_group = true` references is **always the consumer project's own SSG**. There is no cross-project sharing. If the consumer's `[coast].name` is `cg`, `from_group = true` resolves against `cg-ssg`'s `Coastfile.shared_service_groups`.
 
 ## Syntax
 
@@ -20,7 +22,7 @@ inject = "env:DATABASE_URL"
 # auto_create_db = true       # overrides the SSG service's default
 ```
 
-The TOML key (`postgres` in this example) must match a service name declared in the active SSG's `Coastfile.shared_service_groups`. The SSG is the single source of truth for the image, ports, env, and volumes of that service.
+The TOML key (`postgres` in this example) must match a service name declared in the project's `Coastfile.shared_service_groups`.
 
 ## Forbidden Fields
 
@@ -31,39 +33,41 @@ With `from_group = true`, the following fields are rejected at parse time:
 - `env`
 - `volumes`
 
-These all live on the SSG side. A consumer cannot override them because multiple consumers point at the same running container. If any of these fields appear alongside `from_group = true`, `coast build` fails with:
+These all live on the SSG side. If any appear alongside `from_group = true`, `coast build` fails with:
 
 ```text
-error: shared service 'postgres' has from_group = true; the following fields are forbidden: image, ports.
+error: shared service 'postgres' has from_group = true; the following fields are forbidden: image, ports, env, volumes.
 ```
 
 ## Allowed Overrides
 
 Two fields are still legal per consumer:
 
-- `inject` -- the env-var or file name through which the connection string is exposed. Projects can expose the same SSG Postgres under different env-var names.
+- `inject` -- the env-var or file path through which the connection string is exposed. Different consumer projects can expose the same shape under different env-var names.
 - `auto_create_db` -- whether Coast should create a per-instance database inside this service at `coast run` time. Overrides the SSG service's own `auto_create_db` value.
 
 ## Conflict Detection
 
-Two blocks with the same name in a single Coastfile are already rejected today. That rule stays.
+Two `[shared_services.<name>]` blocks with the same name in a single Coastfile are rejected at parse time. That rule stays.
 
-A block with `from_group = true` that references a name not in the active SSG fails at `coast run` time:
+A block with `from_group = true` that references a name not declared in the project's `Coastfile.shared_service_groups` fails at `coast build` time:
 
 ```text
-error: shared service 'postgres' references the shared service group, but no service 'postgres' exists in ~/.coast/ssg/latest.
+error: shared service 'postgres' has from_group = true but no service named 'postgres' is declared in Coastfile.shared_service_groups for project 'my-app'.
 ```
+
+This is the typo check. There is no separate runtime "drift" check -- shape mismatches between consumer and SSG manifest at the build-time check, and any further mismatch at run time surfaces naturally as a connection error from the app's perspective.
 
 ## Auto-start
 
-`coast run` on a consumer auto-starts the SSG when it is not already running:
+`coast run` on a consumer auto-starts the project's SSG when it isn't already running:
 
-- SSG build exists, container not running -> daemon runs the equivalent of `coast ssg start` (or `run` if the container was never created), guarded by the SSG-wide mutex.
+- SSG build exists, container not running -> daemon runs the equivalent of `coast ssg start` (or `run` if the container was never created), guarded by the project's SSG mutex.
 - No SSG build exists at all -> hard error:
 
-```text
-Project 'my-app' references shared service 'postgres' from the Shared Service Group, but no SSG build exists. Run `coast ssg build` in the directory containing your Coastfile.shared_service_groups.
-```
+  ```text
+  Project 'my-app' references shared service 'postgres' from the Shared Service Group, but no SSG build exists. Run `coast ssg build` in the directory containing your Coastfile.shared_service_groups.
+  ```
 
 - SSG already running -> no-op, `coast run` continues immediately.
 
@@ -71,51 +75,19 @@ Progress events `SsgStarting` and `SsgStarted` fire on the run stream so [Coastg
 
 ## How Routing Works
 
-Inside a consumer Coast, app containers still believe their services live at canonical ports (`postgres:5432`). The daemon builds that illusion in two steps:
+Inside a consumer Coast, the app container resolves `postgres:5432` to the project's SSG via three pieces:
 
-1. It resolves the consumer's `from_group = true` services against the SSG state DB and grabs their `(inner_port, dynamic_host_port)` pairs.
-2. It spawns a docker0-alias-IP socat forwarder inside the Coast's DinD: `TCP-LISTEN:5432,bind=<alias>` -> `TCP:host.docker.internal:<dynamic>`, then adds `extra_hosts: {postgres: <alias>}` to the inner compose. The app container's DNS lookup for `postgres` resolves to the alias IP; the socat forwards to the SSG's published host port.
+1. **Alias IP + `extra_hosts`** add `postgres -> <docker0 alias IP>` to the consumer's inner compose, so DNS lookups for `postgres` succeed.
+2. **In-DinD socat** listens on `<alias>:5432` and forwards to `host.docker.internal:<virtual_port>`. The virtual port is stable for `(project, service, container_port)` -- it doesn't change when the SSG is rebuilt.
+3. **Host socat** on `<virtual_port>` forwards to `127.0.0.1:<dynamic>`, where `<dynamic>` is the SSG container's currently-published port. The host socat updates when the SSG is rebuilt; the consumer's in-DinD socat never has to change.
 
-The inline-start path that the classic `[shared_services]` pattern uses is skipped for `from_group = true` services. No container is started on the host daemon -- the SSG is already running.
+App code and compose DNS don't change. Migrating a project from inline Postgres to SSG Postgres is a small Coastfile edit (remove `image`/`ports`/`env`, add `from_group = true`) plus a rebuild.
 
-Net effect: app code and compose DNS do not change. Migrating a project from inline Postgres to SSG Postgres is a two-line Coastfile edit (remove image/ports/env, add `from_group = true`) plus a rebuild.
-
-## Drift Detection
-
-A consumer's `coast build` records the active SSG's state in the consumer's own `manifest.json`:
-
-```json
-{
-  "ssg": {
-    "build_id": "b455787d95cfdeb_20260420061903",
-    "services": ["postgres", "redis"],
-    "images": {
-      "postgres": "postgres:16",
-      "redis": "redis:7-alpine"
-    }
-  }
-}
-```
-
-At `coast run` time, the daemon compares that snapshot against the active SSG's `latest` manifest:
-
-- **Match.** `build_id`s are identical. Proceed silently.
-- **Same-image warn.** `build_id`s differ but every referenced service still resolves to the same image. The daemon warns and proceeds:
-  ```text
-  SSG build differs (was b455787d95cfdeb_20260420061903, now 7812aa4...e6c2_20260421091255) but image refs still match for every referenced service. Proceeding.
-  ```
-- **Hard error.** An image ref changed for a referenced service, or a referenced service is missing from the active SSG:
-  ```text
-  SSG has changed since this coast was built. Re-run `coast build` to pick up the new SSG, or pin the SSG to the old build. (service 'postgres' image changed: postgres:15 -> postgres:16)
-  ```
-
-Drift always evaluates against the active SSG's `latest` build, not the currently-running one. Users who rebuilt the SSG but did not restart it still see the drift they introduced, so they cannot silently consume a stale SSG.
-
-Pinning a consumer to an older SSG build (`coast ssg checkout-build <id>`) is tracked as a future enhancement. The current release requires `coast build` to pick up SSG changes.
+For the full hop-by-hop walkthrough, port concepts, and rationale, see [Routing](ROUTING.md).
 
 ## `auto_create_db`
 
-`auto_create_db = true` on an SSG Postgres or MySQL service causes the daemon to create a `{instance}_{project}` database inside that service for every consumer Coast that runs. The database name mirrors what the existing inline `[shared_services]` pattern produces, so inject URLs agree with what `auto_create_db` produces out of the box. Naming details live in [Coastfile: Shared Services](../coastfiles/SHARED_SERVICES.md) and [DESIGN.md §13](../../coast-ssg/DESIGN.md#13-auto_create_db).
+`auto_create_db = true` on an SSG Postgres or MySQL service causes the daemon to create a `{instance}_{project}` database inside that service for every consumer Coast that runs. The database name matches what the inline `[shared_services]` pattern produces, so `inject` URLs agree with the database `auto_create_db` creates.
 
 Creation is idempotent. Re-running `coast run` on an instance whose database already exists is a no-op. The underlying SQL is identical to the inline path, so DDL output is byte-for-byte the same regardless of which pattern your project uses.
 
@@ -130,28 +102,33 @@ auto_create_db = false
 
 ## `inject`
 
-`inject` exposes a connection string to the app container. Same format as [Secrets](../coastfiles/SECRETS.md): `"env:NAME"` creates an environment variable, `"file:/path"` writes a file.
+`inject` exposes a connection string to the app container. Same format as [Secrets](../coastfiles/SECRETS.md): `"env:NAME"` creates an environment variable, `"file:/path"` writes a file inside the consumer's coast container and bind-mounts it read-only into every non-stubbed inner compose service.
 
-The resolved string uses the canonical service name and port, not the dynamic host port. That invariance is the whole point -- app containers always see `postgres://coast:coast@postgres:5432/{db}` regardless of what dynamic port the SSG happens to be publishing on.
+The resolved string uses the canonical service name and canonical port, not the dynamic host port. That invariance is the whole point -- app containers always see `postgres://coast:coast@postgres:5432/{db}` regardless of what dynamic port the SSG happens to be publishing on.
 
-Phase 5 wires up `env:NAME` fully end to end. `file:/path` is recognized by the parser but the runtime does not yet write the file; expect that to land in a later release.
+Both `env:NAME` and `file:/path` are fully implemented.
+
+This `inject` is the **consumer-side** secret pipeline: the value is computed from canonical SSG metadata at `coast build` time and injected into the consumer's coast DinD. It is independent of the **SSG-side** `[secrets.*]` pipeline (see [Secrets](SECRETS.md)) which extracts values for the SSG's *own* services to consume.
 
 ## Remote Coasts
 
-Remote Coasts consume a local SSG through the pre-existing `SharedServicePortForward` protocol. The local daemon establishes a reverse SSH tunnel (`ssh -R`) from the remote machine back to the local SSG's dynamic host port. Inside the remote DinD, `extra_hosts: postgres: host-gateway` resolves `postgres` to the remote's host-gateway IP, and the SSH tunnel puts the local SSG on the other side.
+A remote Coast (one created with `coast assign --remote ...`) reaches a local SSG through a reverse SSH tunnel. The local daemon spawns `ssh -N -R <vport>:localhost:<vport>` from the remote machine back to the local virtual port; inside the remote DinD, `extra_hosts: postgres: host-gateway` resolves `postgres` to the remote's host-gateway IP, and the SSH tunnel puts the local SSG on the other side at the same virtual port number.
 
-The remote side (`coast-service`) stays SSG-agnostic. It speaks the same daemon-agnostic `shared_service_ports: Vec<SharedServicePortForward>` vocabulary it has always spoken; the local daemon simply puts different numbers on the wire.
+Both sides of the tunnel use the **virtual** port, not the dynamic port. This means rebuilding the SSG locally never invalidates the remote tunnel.
+
+Tunnels are coalesced per `(project, remote_host, service, container_port)` -- multiple consumer instances of the same project on the same remote share one `ssh -R` process. Removing one consumer doesn't tear down the tunnel; only the last consumer's removal does.
 
 Practical consequences:
 
-- `coast ssg stop` / `rm` refuse while a remote shadow Coast is currently consuming the SSG. The daemon lists the blocking shadows so you know what is using the SSG.
-- `coast ssg stop --force` (or `rm --force`) tears down the reverse-tunnel `ssh` children first, then proceeds. Use this when you accept that remote consumers will lose connectivity.
-- SSH tunnel rewriting on the local daemon means you cannot point a remote Coast at an SSG that is already bound to canonical ports with `coast ssg checkout`. Checkout is a host-side convenience for the local user; remote consumers always go through the dynamic port.
+- `coast ssg stop` / `rm` refuse while a remote shadow Coast is currently consuming the SSG. The daemon lists the blocking shadows so you know what's using the SSG.
+- `coast ssg stop --force` (or `rm --force`) tears down the shared `ssh -R` first, then proceeds. Use this when you accept that remote consumers will lose connectivity.
 
-See [Remote Coasts](../remote_coasts/README.md) for the broader architecture.
+See [Routing](ROUTING.md) for the full remote-tunnel architecture and [Remote Coasts](../remote_coasts/README.md) for the broader remote-machine setup.
 
 ## See Also
 
+- [Routing](ROUTING.md) -- canonical / dynamic / virtual port concepts and the full routing chain
+- [Secrets](SECRETS.md) -- SSG-native `[secrets.*]` for service-side credentials (orthogonal to consumer-side `inject`)
 - [Coastfile: Shared Services](../coastfiles/SHARED_SERVICES.md) -- full `[shared_services.*]` schema including `from_group = true`
 - [Lifecycle](LIFECYCLE.md) -- what `coast run` does behind the scenes, including auto-start
 - [Checkout](CHECKOUT.md) -- host-side canonical-port binding for ad-hoc tools

@@ -1,6 +1,6 @@
 # Builds
 
-Piensa en un build de coast como una imagen de Docker con ayuda adicional. Un build es un artefacto basado en directorios que agrupa todo lo necesario para crear instancias de Coast: un [Coastfile](COASTFILE_TYPES.md) resuelto, un archivo compose reescrito, tarballs de imágenes OCI precargadas e archivos del host inyectados. No es una imagen de Docker en sí, pero contiene imágenes de Docker (como tarballs) además de los metadatos que Coast necesita para conectarlas entre sí.
+Piensa en un build de coast como una imagen de Docker con ayuda adicional. Un build es un artefacto basado en directorios que agrupa todo lo necesario para crear instancias de Coast: un [Coastfile](COASTFILE_TYPES.md) resuelto, un archivo compose reescrito, tarballs de imágenes OCI precargadas y archivos del host inyectados. No es una imagen de Docker en sí, pero contiene imágenes de Docker (como tarballs) además de los metadatos que Coast necesita para conectarlas entre sí.
 
 ## Qué Hace `coast build`
 
@@ -16,6 +16,45 @@ Cuando ejecutas `coast build`, el daemon ejecuta estos pasos en orden:
 8. Escribe el directorio del artefacto de build con el manifiesto, el coastfile resuelto, el compose reescrito y los archivos inyectados.
 9. Actualiza el symlink `latest` para que apunte al nuevo build.
 10. Elimina automáticamente builds antiguos que excedan el límite de conservación.
+
+## Builds Sin Coastfile
+
+Puedes construir un proyecto sin un Coastfile pasando la configuración directamente como flags de la CLI:
+
+```bash
+coast build --name my-project --compose ./docker-compose.yml
+```
+
+Flags requeridos cuando no hay un Coastfile presente:
+- `--name <NAME>` -- el nombre del proyecto
+- `--compose <PATH>` -- ruta a un archivo docker-compose
+
+Flags adicionales para configuraciones comunes:
+- `--port NAME=PORT` -- mapeo de puertos (repetible)
+- `--runtime <dind|sysbox|podman>` -- runtime de contenedor
+- `--no-autostart` -- desactiva el autoarranque de los servicios compose
+- `--primary-port <NAME>` -- nombre del servicio del puerto primario
+
+Para configuraciones complejas (secrets, volúmenes, servicios compartidos), usa `--config` con TOML en línea:
+
+```bash
+coast build --name my-project --compose ./dc.yml \
+  --port web=3000 \
+  --config '[secrets.api_key]
+extractor = "env"
+var = "MY_API_KEY"
+inject = "env:API_KEY"'
+```
+
+### Sobrescribir un Coastfile
+
+Cuando existe un Coastfile en disco, los flags de la CLI sobrescriben sus valores. El Coastfile proporciona la configuración base, y los flags tienen prioridad:
+
+```bash
+coast build --name custom-name --port api=9090
+```
+
+Esto lee el Coastfile existente pero reemplaza `coast.name` por `custom-name` y agrega (o sobrescribe) el puerto `api`.
 
 ## Dónde Se Almacenan los Builds
 
@@ -103,6 +142,20 @@ coast build --type snap  # uses Coastfile.snap, updates "latest-snap"
 ```
 
 La eliminación de un build `snap` nunca afecta a los builds `default`, y viceversa.
+
+## Directorio de Trabajo Personalizado
+
+Por defecto, `coast build` registra el proyecto en el directorio padre del Coastfile. El flag `--working-dir` sobrescribe esto, desacoplando la raíz de proyecto registrada del build de la ubicación del Coastfile:
+
+```bash
+coast --working-dir /home/user/my-project build -f /ci/configs/Coastfile
+```
+
+Esto construye usando el Coastfile en `/ci/configs/Coastfile` pero registra la raíz del proyecto como `/home/user/my-project`. El `project_root` almacenado en el manifiesto determina dónde `coast lookup` encuentra instancias, así que ejecutar `coast lookup` desde `/home/user/my-project` encontrará instancias de este build.
+
+`--working-dir` acepta rutas relativas o absolutas. Las rutas relativas se resuelven respecto al directorio actual.
+
+Esto es útil para pipelines de CI, configuraciones de monorepo o cualquier escenario en el que el Coastfile viva en un directorio distinto al código fuente del proyecto.
 
 ## Builds Remotos
 

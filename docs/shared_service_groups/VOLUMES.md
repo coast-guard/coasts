@@ -1,120 +1,22 @@
 # SSG Volumes
 
-Volumes are the most opinionated part of the SSG design. The SSG runs inside a singleton DinD container, and the services it manages run one level deeper, inside the SSG's own inner Docker daemon. Two layers of bind mounts have to agree for host data to actually reach the inner Postgres / Redis / MongoDB process. This page documents the rules.
-
-## Declaration Shapes
-
-Inside `[shared_services.<name>]`, the `volumes` array accepts two forms:
+Inside `[shared_services.<name>]`, the `volumes` array uses the standard Docker Compose syntax:
 
 ```toml
 [shared_services.postgres]
 image = "postgres:16"
-volumes = [
-    "/var/coast-data/postgres:/var/lib/postgresql/data",   # host bind mount
-    "pg_wal:/var/lib/postgresql/wal",                       # inner named volume
-]
+ports = [5432]
+volumes = ["/var/coast-data/postgres:/var/lib/postgresql/data"]
+env = { POSTGRES_USER = "coast", POSTGRES_PASSWORD = "coast" }
 ```
 
-- **Host bind mount.** The source starts with `/`. Bytes live on your real host filesystem. Host agents, `ls`, `du`, backups all see the same bytes the inner service sees.
-- **Inner named volume.** The source is a Docker volume name (no `/`). The volume lives inside the SSG's inner Docker daemon. It survives SSG restarts (the inner daemon's `/var/lib/docker` is a named host volume), but is opaque to the host.
+A leading `/` means a **host bind path** -- bytes live on the host filesystem and the inner service reads and writes them in place. Without a leading slash, e.g. `pg_wal:/var/lib/postgresql/wal`, the source is a **Docker named volume that lives inside the SSG's nested Docker daemon** -- it survives `coast ssg rm` and is dropped by `coast ssg rm --with-data`. Both forms are accepted.
 
-Rejected at parse time: relative paths (`./data:/...`), `..` components, duplicate targets within one service, and container-only volumes with no source.
+Rejected at parse: relative paths (`./data:/...`), `..` components, container-only volumes (no source), and duplicate targets within one service.
 
-## The Symmetric-Path Plan
+## Reusing a Docker volume from docker-compose or an inline shared service
 
-When you write `"/var/coast-data/postgres:/var/lib/postgresql/data"`, the daemon uses the same host path string in both bind hops.
-
-**Hop 1 -- outer DinD creation.** The `coast-ssg` container is created with `-v /var/coast-data/postgres:/var/coast-data/postgres`. The host source and the DinD-visible destination are the same string. After this hop, `/var/coast-data/postgres` exists inside the DinD and reads and writes pass through to the host.
-
-**Hop 2 -- inner compose.** The synthesized `compose.yml` declares `- /var/coast-data/postgres:/var/lib/postgresql/data` for the Postgres service. The inner Docker daemon resolves `/var/coast-data/postgres` in its own filesystem view, which is the DinD container's filesystem, which is the host directory thanks to hop 1. Same inode, same bytes, three names for one thing.
-
-```text
-+-- Host filesystem ----------------------------------+
-| /var/coast-data/postgres/         (real dir)        |
-| |-- base/  PG_VERSION  ...                          |
-+-----------------------------------------------------+
-    | Hop 1: -v /var/coast-data/postgres:/var/coast-data/postgres
-    v
-+-- coast-ssg DinD container -------------------------+
-| /var/coast-data/postgres/         (same inodes)     |
-| /var/lib/docker/                  (named volume)    |
-| Inner dockerd runs here.                            |
-+-----------------------------------------------------+
-    | Hop 2: - /var/coast-data/postgres:/var/lib/postgresql/data
-    v
-+-- Inner postgres container -------------------------+
-| /var/lib/postgresql/data/         (same inodes)     |
-+-----------------------------------------------------+
-```
-
-Why symmetric paths, rather than remapping to `/coast-ssg-vols/{svc}/{i}`:
-
-- Log legibility. Postgres errors that cite `/var/lib/postgresql/data/base/1/...` are traceable by `ls /var/coast-data/postgres/base/1/...` on the host without any mental translation.
-- Error messages echo user intent.
-- No synth-side naming scheme to maintain.
-- `grep` friendly. The user's path appears verbatim in their Coastfile and everywhere else.
-
-## Inner Named Volumes
-
-Named-volume entries (`"pg_wal:/var/lib/postgresql/wal"`) persist inside the SSG's own Docker daemon. Their on-disk representation lives under `/var/lib/docker/volumes/` inside the DinD container, which the SSG's outer named volume (`coast-dind--coast--ssg`) backs to the host. Practical consequences:
-
-- Named volumes survive `coast ssg stop` and `coast ssg start`.
-- Named volumes survive `coast ssg rm` by default.
-- `coast ssg rm --with-data` drops them before removing the DinD.
-- Named volumes are opaque to the host -- you cannot `ls` into them from outside the SSG.
-
-Use named volumes when you want a clean, Docker-managed home for auxiliary state (write-ahead logs, temporary indexes) and do not need host visibility. Use host bind mounts for data you want to inspect, back up, or share with host tools.
-
-## Permissions Caveat
-
-Several images refuse to start when their data directory is owned by the wrong user. Postgres (UID 999 in the debian tag, UID 70 in the alpine tag), MySQL/MariaDB (UID 999), and MongoDB (UID 999) are the common offenders. If the host directory is owned by root, Postgres exits at startup with a terse "data directory has wrong ownership".
-
-The fix is one command:
-
-```bash
-# postgres:16 (debian)
-sudo chown -R 999:999 /var/coast-data/postgres
-
-# postgres:16-alpine
-sudo chown -R 70:70 /var/coast-data/postgres
-```
-
-Run this before `coast ssg run`. If the directory does not exist yet, `coast ssg run` creates it with default ownership (root on Linux, your user on macOS through Docker Desktop). That default is usually wrong for Postgres.
-
-## `coast ssg doctor`
-
-`coast ssg doctor` is a read-only check that prints one finding per `(service, host-bind-mount)` pair in the active SSG build. It consults a built-in table of known images (Postgres, MySQL, MariaDB, MongoDB) and their expected UID/GID, compares against `stat(2)` on each host path, and emits:
-
-- `ok` when the owner matches the image's expectation.
-- `warn` when it diverges. The message includes the `chown` command to fix it.
-- `info` when the directory does not exist yet, or when the matching image has only named volumes (nothing to check from the host side).
-
-Services whose images are not in the known-image table are silently skipped. Forks like `ghcr.io/baosystems/postgis` are not flagged -- the doctor would rather say nothing than emit a wrong warning.
-
-```bash
-coast ssg doctor
-```
-
-Sample output with a mismatched Postgres directory:
-
-```text
-SSG 'b455787d95cfdeb_20260420061903': 1 warning(s), 0 ok, 0 info. Fix the warnings before `coast ssg run`.
-
-  LEVEL   SERVICE              PATH                                     MESSAGE
-  warn    postgres             /var/coast-data/postgres                 Owner 0:0 but postgres expects 999:999. Run `sudo chown -R 999:999 /var/coast-data/postgres` before `coast ssg run`.
-```
-
-Doctor does not modify anything. Permissions on bytes you put on your host filesystem are not something Coast silently mutates. Run the `chown` command it suggests and re-run doctor to verify.
-
-## Platform Notes
-
-- **macOS Docker Desktop.** Host paths must be listed under Settings -> Resources -> File Sharing. Defaults include `/Users`, `/Volumes`, `/private`, `/tmp`. `/var/coast-data` is **not** in the default list on macOS. Prefer `$HOME/coast-data/...` in your Coastfile on macOS, or add `/var/coast-data` to File Sharing.
-- **WSL2.** Prefer WSL-native paths (`~`, `/mnt/wsl/...`). `/mnt/c/...` works but is slow because of the 9P protocol that bridges the Windows host filesystem.
-- **Linux.** No gotchas.
-
-## Host-Volume Migration Recipe
-
-If you already have data inside a host Docker named volume (for example `infra_postgres_data:/var/lib/postgresql/data`), you can migrate to the SSG without copying any bytes. Bind-mount the volume's underlying host directory directly:
+If you already have data sitting inside a host Docker named volume -- from `docker-compose up`, from an inline `[shared_services.postgres] volumes = ["infra_postgres_data:/..."]`, or from a hand-rolled `docker volume create` -- you can have the SSG read the same bytes by bind-mounting the volume's underlying host directory:
 
 ```toml
 [shared_services.postgres]
@@ -126,15 +28,13 @@ volumes = [
 env = { POSTGRES_USER = "coast", POSTGRES_PASSWORD = "coast" }
 ```
 
-Caveats:
+The left side is the host filesystem path of an existing Docker volume; `docker volume inspect <name>` reports it as the `Mountpoint` field. Coast doesn't copy bytes -- the SSG reads and writes the same files docker-compose did. `coast ssg rm` (without `--with-data`) leaves the volume untouched, so docker-compose can keep using it too.
 
-- `/var/lib/docker/volumes/<name>/_data` is an internal Docker path. It exists today but is not an API Docker promises to keep stable. Treat the migration as one-time, not as a long-term deployment shape.
-- Postgres running as UID 999 still needs the directory's ownership to match. If `docker-compose` previously chown'd the volume, you are already fine. If not, run `sudo chown -R 999:999 /var/lib/docker/volumes/infra_postgres_data/_data` first.
-- After the migration, consider copying the data out to a dedicated path (`/var/coast-data/postgres`) once you have confirmed the SSG is serving correctly. That decouples the SSG from Docker's internal volume layout.
+> **Why not just `infra_postgres_data:/var/lib/postgresql/data`?** That works for inline `[shared_services.*]` (the volume gets created on the host Docker daemon, where docker-compose can see it). It does *not* work the same way inside an SSG -- a name without a leading slash creates a fresh volume inside the SSG's nested Docker daemon, isolated from the host. Use the volume's mountpoint path instead when you want to share data with anything that runs on the host daemon.
 
-### Automating the recipe: `coast ssg import-host-volume`
+### `coast ssg import-host-volume`
 
-`coast ssg import-host-volume` resolves the volume's `Mountpoint` via `docker volume inspect` and emits (or applies) the equivalent bind-mount line for you, so you do not have to hand-construct the `/var/lib/docker/volumes/<name>/_data` path.
+`coast ssg import-host-volume` resolves the volume's `Mountpoint` via `docker volume inspect` and emits (or applies) the equivalent `volumes` line, so you don't hand-construct the `/var/lib/docker/volumes/<name>/_data` path.
 
 Snippet mode (default) prints the TOML fragment to paste:
 
@@ -144,7 +44,7 @@ coast ssg import-host-volume infra_postgres_data \
     --mount /var/lib/postgresql/data
 ```
 
-The output is a `[shared_services.postgres]` block with the new `volumes = [...]` entry already merged in, plus a one-line summary of the resolved bind:
+The output is a `[shared_services.postgres]` block with the new `volumes = [...]` entry already merged in:
 
 ```text
 # Add the following to Coastfile.shared_service_groups (infra_postgres_data -> /var/lib/postgresql/data):
@@ -153,7 +53,6 @@ The output is a `[shared_services.postgres]` block with the new `volumes = [...]
 image = "postgres:16-alpine"
 ports = [5432]
 volumes = [
-    "pg_data:/var/lib/postgresql/data-existing",
     "/var/lib/docker/volumes/infra_postgres_data/_data:/var/lib/postgresql/data",
 ]
 env = { POSTGRES_PASSWORD = "coast" }
@@ -173,21 +72,70 @@ coast ssg import-host-volume infra_postgres_data \
 Flags:
 
 - `<VOLUME>` (positional) -- host Docker named volume. Must already exist (`docker volume inspect` is the check); create or rename with `docker volume create` first otherwise.
-- `--service` -- the `[shared_services.<name>]` section to edit. The section must already exist; this command adds to an existing service, not a new one.
-- `--mount` -- absolute container path. Relative paths are rejected. Duplicate mount paths on the same service are hard-errors (remove the existing entry first or pick a different container path).
+- `--service` -- the `[shared_services.<name>]` section to edit. The section must already exist.
+- `--mount` -- absolute container path. Relative paths are rejected. Duplicate mount paths on the same service are hard-errors.
 - `--file` / `--working-dir` / `--config` -- SSG Coastfile discovery, same rules as `coast ssg build`.
 - `--apply` -- rewrite the Coastfile in place. Cannot be combined with `--config` (inline text has nothing to write back to).
 
-The `.bak` file contains the original bytes verbatim (not the re-serialized output), so you can recover the exact pre-apply state if needed.
+The `.bak` file contains the original bytes verbatim, so you can recover the exact pre-apply state.
 
-See [DESIGN §10.7](https://github.com/coasts-dev/coasts/blob/main/coast-ssg/DESIGN.md) for the full design and [SETTLED #40](https://github.com/coasts-dev/coasts/blob/main/coast-ssg/DESIGN.md) for the design decisions (bollard vs. subprocess, reuse of the parser+serializer round-trip for apply mode, duplicate-rejection policy).
+`/var/lib/docker/volumes/<name>/_data` is the path Docker has used as a volume mountpoint for many years and is what `docker volume inspect` reports today. Docker doesn't formally promise to keep this path forever; if a future Docker release moves volumes elsewhere, re-run `coast ssg import-host-volume` to pick up the new path.
 
-## Lifecycle Summary
+## Permissions
 
-- `coast ssg rm` -- inner named volumes survive, host bind mount contents are untouched.
-- `coast ssg rm --with-data` -- inner named volumes are dropped, host bind mount contents are untouched.
-- `coast ssg build` -- never touches volumes. Only writes a manifest.
-- `coast ssg run` / `start` / `restart` -- creates host bind mount directories if they do not exist (with default ownership -- see the permissions caveat).
+Several images refuse to start when their data directory is owned by the wrong user. Postgres (UID 999 in the debian tag, UID 70 in the alpine tag), MySQL/MariaDB (UID 999), and MongoDB (UID 999) are the common offenders. If the host directory is owned by root, Postgres exits at startup with a terse "data directory has wrong ownership".
+
+The fix is one command:
+
+```bash
+# postgres:16 (debian)
+sudo chown -R 999:999 /var/coast-data/postgres
+
+# postgres:16-alpine
+sudo chown -R 70:70 /var/coast-data/postgres
+```
+
+Run this before `coast ssg run`. If the directory does not exist yet, `coast ssg run` creates it with default ownership (root on Linux, your user on macOS through Docker Desktop). That default is usually wrong for Postgres. If you came in via `coast ssg import-host-volume` and `docker-compose up` had previously chown'd the volume on first start, you're already fine.
+
+## `coast ssg doctor`
+
+`coast ssg doctor` is a read-only check that runs against the current project's SSG (resolved from the cwd `Coastfile`'s `[coast].name` or `--working-dir`). It prints one finding per `(service, host-bind)` pair in the active build, plus secret-extraction findings (see [Secrets](SECRETS.md)).
+
+For each known image (Postgres, MySQL, MariaDB, MongoDB) it consults a built-in UID/GID table, compares against `stat(2)` on each host path, and emits:
+
+- `ok` when the owner matches the image's expectation.
+- `warn` when it diverges. The message includes the `chown` command to fix it.
+- `info` when the directory does not exist yet, or when the matching image has only named volumes (nothing to check from the host side).
+
+Services whose images aren't in the known-image table are silently skipped. Forks like `ghcr.io/baosystems/postgis` are not flagged -- the doctor would rather say nothing than emit a wrong warning.
+
+```bash
+coast ssg doctor
+```
+
+Sample output with a mismatched Postgres directory:
+
+```text
+SSG 'b455787d95cfdeb_20260420061903' (project cg): 1 warning(s), 0 ok, 0 info. Fix the warnings before `coast ssg run`.
+
+  LEVEL   SERVICE              PATH                                     MESSAGE
+  warn    postgres             /var/coast-data/postgres                 Owner 0:0 but postgres expects 999:999. Run `sudo chown -R 999:999 /var/coast-data/postgres` before `coast ssg run`.
+```
+
+Doctor doesn't modify anything. Permissions on bytes you put on your host filesystem aren't something Coast silently mutates.
+
+## Platform notes
+
+- **macOS Docker Desktop.** Raw host paths must be listed under Settings -> Resources -> File Sharing. Defaults include `/Users`, `/Volumes`, `/private`, `/tmp`. `/var/coast-data` is **not** in the default list on macOS -- prefer `$HOME/coast-data/...` for fresh paths, or add `/var/coast-data` to File Sharing. The `/var/lib/docker/volumes/<name>/_data` form is *not* a host path -- Docker resolves it inside its own VM -- so it works without a File Sharing entry.
+- **WSL2.** Prefer WSL-native paths (`~`, `/mnt/wsl/...`). `/mnt/c/...` works but is slow because of the 9P protocol bridging the Windows host filesystem.
+- **Linux.** No gotchas.
+
+## Lifecycle
+
+- `coast ssg rm` -- removes the SSG's outer DinD container. **Volume contents are untouched**, host bind-mount contents are untouched, keystore is untouched. Anything else that uses the same Docker volume keeps working.
+- `coast ssg rm --with-data` -- drops volumes that live **inside the SSG's nested Docker daemon** (the `name:path` form without a leading slash). Host bind mounts and external Docker volumes are still untouched -- Coast doesn't own them.
+- `coast ssg build` -- never touches volumes. Only writes a manifest and (when `[secrets]` is declared) keystore rows.
+- `coast ssg run` / `start` / `restart` -- creates host bind-mount directories if they don't exist (with default ownership -- see [Permissions](#permissions)).
 
 ## See Also
 
@@ -195,3 +143,4 @@ See [DESIGN §10.7](https://github.com/coasts-dev/coasts/blob/main/coast-ssg/DES
 - [Volume Topology](../concepts_and_terminology/VOLUMES.md) -- shared, isolated, and snapshot-seeded volume strategies for non-SSG services
 - [Building](BUILDING.md) -- where the manifest comes from
 - [Lifecycle](LIFECYCLE.md) -- when volumes are created, stopped, and removed
+- [Secrets](SECRETS.md) -- file-injected secrets land at `~/.coast/ssg/runs/<project>/secrets/<basename>` and bind-mount into inner services read-only

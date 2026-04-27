@@ -6,9 +6,9 @@
       "translated_at": "2026-03-30T03:02:01Z"
     },
     "README.md": {
-      "commit": "8a556b7",
-      "source_sha256": "8fe99e3134cde2c81776a8a27cc1e8185baf131673719ef9b29b1290233aa8c6",
-      "translated_at": "2026-03-24T21:12:12Z"
+      "commit": "56a8413",
+      "source_sha256": "fba49e6c7f3c200d1db099f3a2601cdabbc14cdadef2a17318cbd1c10bb9825f",
+      "translated_at": "2026-04-27T02:31:24Z"
     },
     "SKILLS_FOR_HOST_AGENTS.md": {
       "commit": "8a556b7",
@@ -51,19 +51,19 @@
       "translated_at": "2026-02-28T13:10:06Z"
     },
     "coastfiles/PROJECT.md": {
-      "commit": "2b2ae89",
-      "source_sha256": "adffeb6e53123b142acd2e38b46085ed357b99158d01730ba50875564bdb8ed8",
-      "translated_at": "2026-03-26T23:25:04Z"
+      "commit": "56a8413",
+      "source_sha256": "57484632b8d11ddec06b4787b654a13fb89e0b6829f8a581b29b8b2d48440bb1",
+      "translated_at": "2026-04-27T02:31:24Z"
     },
     "coastfiles/README.md": {
-      "commit": "0ed12e0",
-      "source_sha256": "0ab46c77f716921fd57ac11596431aff81af576b9d9502a08e63b4c08d7690af",
-      "translated_at": "2026-03-30T03:02:01Z"
+      "commit": "56a8413",
+      "source_sha256": "8040f865498f8afba0c4132fceb72d5078f4d92232ddb070b3d1fdb2181164d8",
+      "translated_at": "2026-04-27T02:31:24Z"
     },
     "coastfiles/SECRETS.md": {
-      "commit": "3357381",
-      "source_sha256": "b5e11cf56a8b94b7b6848e0d59bd2bbe4e6c0e47caecd1bf8680643ccba05190",
-      "translated_at": "2026-02-28T13:10:06Z"
+      "commit": "56a8413",
+      "source_sha256": "b5c112dc781e66717c9f8b1e7d9569b086804f2ad2941f8dd2616bcbd830841a",
+      "translated_at": "2026-04-27T02:31:24Z"
     },
     "coastfiles/SERVICES.md": {
       "commit": "3357381",
@@ -71,9 +71,19 @@
       "translated_at": "2026-02-28T13:10:06Z"
     },
     "coastfiles/SHARED_SERVICES.md": {
-      "commit": "d7ed347",
-      "source_sha256": "8f69bb7804daed0cbc98d08a6bc94a906e758c7bbb6e081b947f7175e92b2899",
-      "translated_at": "2026-03-10T20:35:46Z"
+      "commit": "56a8413",
+      "source_sha256": "967d4059b758312d2c9cb8bd43e62e3f9252ed2733382864640f3862cc7cf266",
+      "translated_at": "2026-04-27T02:31:24Z"
+    },
+    "coastfiles/SHARED_SERVICE_GROUPS.md": {
+      "commit": "56a8413",
+      "source_sha256": "8e13f9d67e6d699c2b62da6296c2fc5338674e1a1377f095e196f506d1c23138",
+      "translated_at": "2026-04-27T02:31:24Z"
+    },
+    "coastfiles/VARIABLES.md": {
+      "commit": "56a8413",
+      "source_sha256": "e61bcf9a2ada44076d7369c5dd1df3de69064018182b6abc9a537ce9fa852989",
+      "translated_at": "2026-04-27T02:31:24Z"
     },
     "coastfiles/VOLUMES.md": {
       "commit": "3357381",
@@ -106,9 +116,9 @@
       "translated_at": "2026-03-30T00:13:11Z"
     },
     "concepts_and_terminology/BUILDS.md": {
-      "commit": "f9d2dca",
-      "source_sha256": "bf3953badf5ff4dcd64999b9da6bc3ada5fa626dfb1aa99eb86dd9b9cb5eb9f2",
-      "translated_at": "2026-04-07T20:55:11Z"
+      "commit": "56a8413",
+      "source_sha256": "155fbe6223086977bef7254e2dee7ddc629339bf01eae71003cc779d9e62249d",
+      "translated_at": "2026-04-27T02:31:24Z"
     },
     "concepts_and_terminology/CHECKOUT.md": {
       "commit": "7605a21",
@@ -196,9 +206,9 @@
       "translated_at": "2026-03-30T00:13:11Z"
     },
     "concepts_and_terminology/README.md": {
-      "commit": "f9d2dca",
-      "source_sha256": "ff21766a7c56633fe775e36189bc6b6b02dd9a3139dfe22d8277b1a6957049ee",
-      "translated_at": "2026-04-07T20:55:11Z"
+      "commit": "56a8413",
+      "source_sha256": "0a4df766dd91890cace88abc476f02b2da8e83b722ad87640cf242c5e46a63bd",
+      "translated_at": "2026-04-27T02:31:24Z"
     },
     "concepts_and_terminology/REMOTES.md": {
       "commit": "f9d2dca",
@@ -226,14 +236,14 @@
       "translated_at": "2026-02-28T13:10:06Z"
     },
     "concepts_and_terminology/SHARED_SERVICES.md": {
-      "commit": "f9d2dca",
-      "source_sha256": "f65cf47584add667fac7f376021d42bbe3a834b3f705af13511e5a04cb75a439",
-      "translated_at": "2026-04-07T20:55:11Z"
+      "commit": "56a8413",
+      "source_sha256": "f87fab98a8ef490fae577b0bf517d07dbc11280b64c9719bebc7d37c4093a669",
+      "translated_at": "2026-04-27T02:31:24Z"
     },
     "concepts_and_terminology/TROUBLESHOOTING.md": {
-      "commit": "85b1396",
-      "source_sha256": "b203847f11a1b986ba6d2f552382d508ed6bc13c6031bd22382af145d208e28f",
-      "translated_at": "2026-03-09T09:08:24Z"
+      "commit": "56a8413",
+      "source_sha256": "4e479cd7aa5ad708790c9f728a1aac1733ec895091431ce6faa0999ab851d4ea",
+      "translated_at": "2026-04-27T02:31:24Z"
     },
     "concepts_and_terminology/VOLUMES.md": {
       "commit": "3357381",
@@ -241,9 +251,9 @@
       "translated_at": "2026-02-28T13:10:06Z"
     },
     "doc_ordering.txt": {
-      "commit": "f9d2dca",
-      "source_sha256": "85d01b63d79699bd89ad646e10aa21d44b98f9ba3ed3186a14c4b2123ccf1073",
-      "translated_at": "2026-04-07T20:55:11Z"
+      "commit": "56a8413",
+      "source_sha256": "bd346868d7f49345274aeac18cd0dbe2e1637fa06490079d6a4acc150e7fcf33",
+      "translated_at": "2026-04-27T02:31:24Z"
     },
     "harnesses/CLAUDE_CODE.md": {
       "commit": "8a556b7",
@@ -410,6 +420,51 @@
       "source_sha256": "55a81536dc20b567c054af9b6fbb9debfc025d4a97736bff323ab4bc3be605c8",
       "translated_at": "2026-04-07T20:55:11Z"
     },
+    "shared_service_groups/BUILDING.md": {
+      "commit": "56a8413",
+      "source_sha256": "3c9df5fff0e498bd2bbde3137ab8087bfd9aecc391d8292a981a5a3fdb52dfab",
+      "translated_at": "2026-04-27T02:31:24Z"
+    },
+    "shared_service_groups/CHECKOUT.md": {
+      "commit": "56a8413",
+      "source_sha256": "539933416474ad71a5bf18b76e8b97917e7e28fe5c495d166a6b768015f14af8",
+      "translated_at": "2026-04-27T02:31:24Z"
+    },
+    "shared_service_groups/CLI.md": {
+      "commit": "56a8413",
+      "source_sha256": "2eca951916b6d9b88233dff86fda9ce23e59ec2f7d6f4bc0ed7065febb02b104",
+      "translated_at": "2026-04-27T02:31:24Z"
+    },
+    "shared_service_groups/CONSUMING.md": {
+      "commit": "56a8413",
+      "source_sha256": "d02637989812854de664779293f2e4194aaa1a2577c2f94fdc899bc6d1caf933",
+      "translated_at": "2026-04-27T02:31:24Z"
+    },
+    "shared_service_groups/LIFECYCLE.md": {
+      "commit": "56a8413",
+      "source_sha256": "2d07f8c6ec422e268a633d4ec4c153271373fc97000bade67c5c5fd107c70d63",
+      "translated_at": "2026-04-27T02:31:24Z"
+    },
+    "shared_service_groups/README.md": {
+      "commit": "56a8413",
+      "source_sha256": "4aa969cb1aebca66cf2d1dc7de36b5bbca159892fc0eb0923952a9fb351a32bf",
+      "translated_at": "2026-04-27T02:31:24Z"
+    },
+    "shared_service_groups/ROUTING.md": {
+      "commit": "56a8413",
+      "source_sha256": "eb9c3cae20d65849b46494c226881b115b9d30280598b973876d5fceb542e8fc",
+      "translated_at": "2026-04-27T02:31:24Z"
+    },
+    "shared_service_groups/SECRETS.md": {
+      "commit": "56a8413",
+      "source_sha256": "7319bc9e22f104e94017a902a2ea504995aac459db36f0132930eda33ef2d04b",
+      "translated_at": "2026-04-27T02:31:24Z"
+    },
+    "shared_service_groups/VOLUMES.md": {
+      "commit": "56a8413",
+      "source_sha256": "b6f6b64caccd0c591cd73cce5a3c70f671f9d4d02ae04abe35f18a2c1a346bd9",
+      "translated_at": "2026-04-27T02:31:24Z"
+    },
     "skills_prompt.txt": {
       "commit": "2b2ae89",
       "source_sha256": "36f396f7296b38fbea5d88f27f025e5f134033bba40e83a643298acb3d2b1672",
@@ -423,9 +478,9 @@
       "translated_at": "2026-03-30T02:57:14Z"
     },
     "README.md": {
-      "commit": "8a556b7",
-      "source_sha256": "8fe99e3134cde2c81776a8a27cc1e8185baf131673719ef9b29b1290233aa8c6",
-      "translated_at": "2026-03-24T20:58:22Z"
+      "commit": "56a8413",
+      "source_sha256": "fba49e6c7f3c200d1db099f3a2601cdabbc14cdadef2a17318cbd1c10bb9825f",
+      "translated_at": "2026-04-27T02:02:26Z"
     },
     "SKILLS_FOR_HOST_AGENTS.md": {
       "commit": "8a556b7",
@@ -468,19 +523,19 @@
       "translated_at": "2026-02-28T12:45:25Z"
     },
     "coastfiles/PROJECT.md": {
-      "commit": "2b2ae89",
-      "source_sha256": "adffeb6e53123b142acd2e38b46085ed357b99158d01730ba50875564bdb8ed8",
-      "translated_at": "2026-03-26T23:17:09Z"
+      "commit": "56a8413",
+      "source_sha256": "57484632b8d11ddec06b4787b654a13fb89e0b6829f8a581b29b8b2d48440bb1",
+      "translated_at": "2026-04-27T02:02:26Z"
     },
     "coastfiles/README.md": {
-      "commit": "0ed12e0",
-      "source_sha256": "0ab46c77f716921fd57ac11596431aff81af576b9d9502a08e63b4c08d7690af",
-      "translated_at": "2026-03-30T02:57:14Z"
+      "commit": "56a8413",
+      "source_sha256": "8040f865498f8afba0c4132fceb72d5078f4d92232ddb070b3d1fdb2181164d8",
+      "translated_at": "2026-04-27T02:02:26Z"
     },
     "coastfiles/SECRETS.md": {
-      "commit": "3357381",
-      "source_sha256": "b5e11cf56a8b94b7b6848e0d59bd2bbe4e6c0e47caecd1bf8680643ccba05190",
-      "translated_at": "2026-02-28T12:45:25Z"
+      "commit": "56a8413",
+      "source_sha256": "b5c112dc781e66717c9f8b1e7d9569b086804f2ad2941f8dd2616bcbd830841a",
+      "translated_at": "2026-04-27T02:02:26Z"
     },
     "coastfiles/SERVICES.md": {
       "commit": "3357381",
@@ -488,9 +543,19 @@
       "translated_at": "2026-02-28T12:45:25Z"
     },
     "coastfiles/SHARED_SERVICES.md": {
-      "commit": "d7ed347",
-      "source_sha256": "8f69bb7804daed0cbc98d08a6bc94a906e758c7bbb6e081b947f7175e92b2899",
-      "translated_at": "2026-03-10T20:30:45Z"
+      "commit": "56a8413",
+      "source_sha256": "967d4059b758312d2c9cb8bd43e62e3f9252ed2733382864640f3862cc7cf266",
+      "translated_at": "2026-04-27T02:02:26Z"
+    },
+    "coastfiles/SHARED_SERVICE_GROUPS.md": {
+      "commit": "56a8413",
+      "source_sha256": "8e13f9d67e6d699c2b62da6296c2fc5338674e1a1377f095e196f506d1c23138",
+      "translated_at": "2026-04-27T02:02:26Z"
+    },
+    "coastfiles/VARIABLES.md": {
+      "commit": "56a8413",
+      "source_sha256": "e61bcf9a2ada44076d7369c5dd1df3de69064018182b6abc9a537ce9fa852989",
+      "translated_at": "2026-04-27T02:02:26Z"
     },
     "coastfiles/VOLUMES.md": {
       "commit": "3357381",
@@ -523,9 +588,9 @@
       "translated_at": "2026-03-30T00:05:54Z"
     },
     "concepts_and_terminology/BUILDS.md": {
-      "commit": "f9d2dca",
-      "source_sha256": "bf3953badf5ff4dcd64999b9da6bc3ada5fa626dfb1aa99eb86dd9b9cb5eb9f2",
-      "translated_at": "2026-04-07T20:40:20Z"
+      "commit": "56a8413",
+      "source_sha256": "155fbe6223086977bef7254e2dee7ddc629339bf01eae71003cc779d9e62249d",
+      "translated_at": "2026-04-27T02:02:26Z"
     },
     "concepts_and_terminology/CHECKOUT.md": {
       "commit": "7605a21",
@@ -613,9 +678,9 @@
       "translated_at": "2026-03-30T00:05:54Z"
     },
     "concepts_and_terminology/README.md": {
-      "commit": "f9d2dca",
-      "source_sha256": "ff21766a7c56633fe775e36189bc6b6b02dd9a3139dfe22d8277b1a6957049ee",
-      "translated_at": "2026-04-07T20:40:20Z"
+      "commit": "56a8413",
+      "source_sha256": "0a4df766dd91890cace88abc476f02b2da8e83b722ad87640cf242c5e46a63bd",
+      "translated_at": "2026-04-27T02:02:26Z"
     },
     "concepts_and_terminology/REMOTES.md": {
       "commit": "f9d2dca",
@@ -643,14 +708,14 @@
       "translated_at": "2026-02-28T12:45:25Z"
     },
     "concepts_and_terminology/SHARED_SERVICES.md": {
-      "commit": "f9d2dca",
-      "source_sha256": "f65cf47584add667fac7f376021d42bbe3a834b3f705af13511e5a04cb75a439",
-      "translated_at": "2026-04-07T20:40:20Z"
+      "commit": "56a8413",
+      "source_sha256": "f87fab98a8ef490fae577b0bf517d07dbc11280b64c9719bebc7d37c4093a669",
+      "translated_at": "2026-04-27T02:02:26Z"
     },
     "concepts_and_terminology/TROUBLESHOOTING.md": {
-      "commit": "85b1396",
-      "source_sha256": "b203847f11a1b986ba6d2f552382d508ed6bc13c6031bd22382af145d208e28f",
-      "translated_at": "2026-03-09T08:59:59Z"
+      "commit": "56a8413",
+      "source_sha256": "4e479cd7aa5ad708790c9f728a1aac1733ec895091431ce6faa0999ab851d4ea",
+      "translated_at": "2026-04-27T02:02:26Z"
     },
     "concepts_and_terminology/VOLUMES.md": {
       "commit": "3357381",
@@ -658,9 +723,9 @@
       "translated_at": "2026-02-28T12:45:25Z"
     },
     "doc_ordering.txt": {
-      "commit": "f9d2dca",
-      "source_sha256": "85d01b63d79699bd89ad646e10aa21d44b98f9ba3ed3186a14c4b2123ccf1073",
-      "translated_at": "2026-04-07T20:40:20Z"
+      "commit": "56a8413",
+      "source_sha256": "bd346868d7f49345274aeac18cd0dbe2e1637fa06490079d6a4acc150e7fcf33",
+      "translated_at": "2026-04-27T02:02:26Z"
     },
     "harnesses/CLAUDE_CODE.md": {
       "commit": "8a556b7",
@@ -827,6 +892,51 @@
       "source_sha256": "55a81536dc20b567c054af9b6fbb9debfc025d4a97736bff323ab4bc3be605c8",
       "translated_at": "2026-04-07T20:40:20Z"
     },
+    "shared_service_groups/BUILDING.md": {
+      "commit": "56a8413",
+      "source_sha256": "3c9df5fff0e498bd2bbde3137ab8087bfd9aecc391d8292a981a5a3fdb52dfab",
+      "translated_at": "2026-04-27T02:02:26Z"
+    },
+    "shared_service_groups/CHECKOUT.md": {
+      "commit": "56a8413",
+      "source_sha256": "539933416474ad71a5bf18b76e8b97917e7e28fe5c495d166a6b768015f14af8",
+      "translated_at": "2026-04-27T02:02:26Z"
+    },
+    "shared_service_groups/CLI.md": {
+      "commit": "56a8413",
+      "source_sha256": "2eca951916b6d9b88233dff86fda9ce23e59ec2f7d6f4bc0ed7065febb02b104",
+      "translated_at": "2026-04-27T02:02:26Z"
+    },
+    "shared_service_groups/CONSUMING.md": {
+      "commit": "56a8413",
+      "source_sha256": "d02637989812854de664779293f2e4194aaa1a2577c2f94fdc899bc6d1caf933",
+      "translated_at": "2026-04-27T02:02:26Z"
+    },
+    "shared_service_groups/LIFECYCLE.md": {
+      "commit": "56a8413",
+      "source_sha256": "2d07f8c6ec422e268a633d4ec4c153271373fc97000bade67c5c5fd107c70d63",
+      "translated_at": "2026-04-27T02:02:26Z"
+    },
+    "shared_service_groups/README.md": {
+      "commit": "56a8413",
+      "source_sha256": "4aa969cb1aebca66cf2d1dc7de36b5bbca159892fc0eb0923952a9fb351a32bf",
+      "translated_at": "2026-04-27T02:02:26Z"
+    },
+    "shared_service_groups/ROUTING.md": {
+      "commit": "56a8413",
+      "source_sha256": "eb9c3cae20d65849b46494c226881b115b9d30280598b973876d5fceb542e8fc",
+      "translated_at": "2026-04-27T02:02:26Z"
+    },
+    "shared_service_groups/SECRETS.md": {
+      "commit": "56a8413",
+      "source_sha256": "7319bc9e22f104e94017a902a2ea504995aac459db36f0132930eda33ef2d04b",
+      "translated_at": "2026-04-27T02:02:26Z"
+    },
+    "shared_service_groups/VOLUMES.md": {
+      "commit": "56a8413",
+      "source_sha256": "b6f6b64caccd0c591cd73cce5a3c70f671f9d4d02ae04abe35f18a2c1a346bd9",
+      "translated_at": "2026-04-27T02:02:26Z"
+    },
     "skills_prompt.txt": {
       "commit": "2b2ae89",
       "source_sha256": "36f396f7296b38fbea5d88f27f025e5f134033bba40e83a643298acb3d2b1672",
@@ -840,9 +950,9 @@
       "translated_at": "2026-03-30T02:58:32Z"
     },
     "README.md": {
-      "commit": "8a556b7",
-      "source_sha256": "8fe99e3134cde2c81776a8a27cc1e8185baf131673719ef9b29b1290233aa8c6",
-      "translated_at": "2026-03-24T21:02:24Z"
+      "commit": "56a8413",
+      "source_sha256": "fba49e6c7f3c200d1db099f3a2601cdabbc14cdadef2a17318cbd1c10bb9825f",
+      "translated_at": "2026-04-27T02:10:29Z"
     },
     "SKILLS_FOR_HOST_AGENTS.md": {
       "commit": "8a556b7",
@@ -885,19 +995,19 @@
       "translated_at": "2026-02-28T12:52:18Z"
     },
     "coastfiles/PROJECT.md": {
-      "commit": "2b2ae89",
-      "source_sha256": "adffeb6e53123b142acd2e38b46085ed357b99158d01730ba50875564bdb8ed8",
-      "translated_at": "2026-03-26T23:19:25Z"
+      "commit": "56a8413",
+      "source_sha256": "57484632b8d11ddec06b4787b654a13fb89e0b6829f8a581b29b8b2d48440bb1",
+      "translated_at": "2026-04-27T02:10:29Z"
     },
     "coastfiles/README.md": {
-      "commit": "0ed12e0",
-      "source_sha256": "0ab46c77f716921fd57ac11596431aff81af576b9d9502a08e63b4c08d7690af",
-      "translated_at": "2026-03-30T02:58:32Z"
+      "commit": "56a8413",
+      "source_sha256": "8040f865498f8afba0c4132fceb72d5078f4d92232ddb070b3d1fdb2181164d8",
+      "translated_at": "2026-04-27T02:10:29Z"
     },
     "coastfiles/SECRETS.md": {
-      "commit": "3357381",
-      "source_sha256": "b5e11cf56a8b94b7b6848e0d59bd2bbe4e6c0e47caecd1bf8680643ccba05190",
-      "translated_at": "2026-02-28T12:52:18Z"
+      "commit": "56a8413",
+      "source_sha256": "b5c112dc781e66717c9f8b1e7d9569b086804f2ad2941f8dd2616bcbd830841a",
+      "translated_at": "2026-04-27T02:10:29Z"
     },
     "coastfiles/SERVICES.md": {
       "commit": "3357381",
@@ -905,9 +1015,19 @@
       "translated_at": "2026-02-28T12:52:18Z"
     },
     "coastfiles/SHARED_SERVICES.md": {
-      "commit": "d7ed347",
-      "source_sha256": "8f69bb7804daed0cbc98d08a6bc94a906e758c7bbb6e081b947f7175e92b2899",
-      "translated_at": "2026-03-10T20:32:07Z"
+      "commit": "56a8413",
+      "source_sha256": "967d4059b758312d2c9cb8bd43e62e3f9252ed2733382864640f3862cc7cf266",
+      "translated_at": "2026-04-27T02:10:29Z"
+    },
+    "coastfiles/SHARED_SERVICE_GROUPS.md": {
+      "commit": "56a8413",
+      "source_sha256": "8e13f9d67e6d699c2b62da6296c2fc5338674e1a1377f095e196f506d1c23138",
+      "translated_at": "2026-04-27T02:10:29Z"
+    },
+    "coastfiles/VARIABLES.md": {
+      "commit": "56a8413",
+      "source_sha256": "e61bcf9a2ada44076d7369c5dd1df3de69064018182b6abc9a537ce9fa852989",
+      "translated_at": "2026-04-27T02:10:29Z"
     },
     "coastfiles/VOLUMES.md": {
       "commit": "3357381",
@@ -940,9 +1060,9 @@
       "translated_at": "2026-03-30T00:08:01Z"
     },
     "concepts_and_terminology/BUILDS.md": {
-      "commit": "f9d2dca",
-      "source_sha256": "bf3953badf5ff4dcd64999b9da6bc3ada5fa626dfb1aa99eb86dd9b9cb5eb9f2",
-      "translated_at": "2026-04-07T20:44:03Z"
+      "commit": "56a8413",
+      "source_sha256": "155fbe6223086977bef7254e2dee7ddc629339bf01eae71003cc779d9e62249d",
+      "translated_at": "2026-04-27T02:10:29Z"
     },
     "concepts_and_terminology/CHECKOUT.md": {
       "commit": "7605a21",
@@ -1030,9 +1150,9 @@
       "translated_at": "2026-03-30T00:08:01Z"
     },
     "concepts_and_terminology/README.md": {
-      "commit": "f9d2dca",
-      "source_sha256": "ff21766a7c56633fe775e36189bc6b6b02dd9a3139dfe22d8277b1a6957049ee",
-      "translated_at": "2026-04-07T20:44:03Z"
+      "commit": "56a8413",
+      "source_sha256": "0a4df766dd91890cace88abc476f02b2da8e83b722ad87640cf242c5e46a63bd",
+      "translated_at": "2026-04-27T02:10:29Z"
     },
     "concepts_and_terminology/REMOTES.md": {
       "commit": "f9d2dca",
@@ -1060,14 +1180,14 @@
       "translated_at": "2026-02-28T12:52:18Z"
     },
     "concepts_and_terminology/SHARED_SERVICES.md": {
-      "commit": "f9d2dca",
-      "source_sha256": "f65cf47584add667fac7f376021d42bbe3a834b3f705af13511e5a04cb75a439",
-      "translated_at": "2026-04-07T20:44:03Z"
+      "commit": "56a8413",
+      "source_sha256": "f87fab98a8ef490fae577b0bf517d07dbc11280b64c9719bebc7d37c4093a669",
+      "translated_at": "2026-04-27T02:10:29Z"
     },
     "concepts_and_terminology/TROUBLESHOOTING.md": {
-      "commit": "85b1396",
-      "source_sha256": "b203847f11a1b986ba6d2f552382d508ed6bc13c6031bd22382af145d208e28f",
-      "translated_at": "2026-03-09T09:02:23Z"
+      "commit": "56a8413",
+      "source_sha256": "4e479cd7aa5ad708790c9f728a1aac1733ec895091431ce6faa0999ab851d4ea",
+      "translated_at": "2026-04-27T02:10:29Z"
     },
     "concepts_and_terminology/VOLUMES.md": {
       "commit": "3357381",
@@ -1075,9 +1195,9 @@
       "translated_at": "2026-02-28T12:52:18Z"
     },
     "doc_ordering.txt": {
-      "commit": "f9d2dca",
-      "source_sha256": "85d01b63d79699bd89ad646e10aa21d44b98f9ba3ed3186a14c4b2123ccf1073",
-      "translated_at": "2026-04-07T20:44:03Z"
+      "commit": "56a8413",
+      "source_sha256": "bd346868d7f49345274aeac18cd0dbe2e1637fa06490079d6a4acc150e7fcf33",
+      "translated_at": "2026-04-27T02:10:29Z"
     },
     "harnesses/CLAUDE_CODE.md": {
       "commit": "8a556b7",
@@ -1244,6 +1364,51 @@
       "source_sha256": "55a81536dc20b567c054af9b6fbb9debfc025d4a97736bff323ab4bc3be605c8",
       "translated_at": "2026-04-07T20:44:03Z"
     },
+    "shared_service_groups/BUILDING.md": {
+      "commit": "56a8413",
+      "source_sha256": "3c9df5fff0e498bd2bbde3137ab8087bfd9aecc391d8292a981a5a3fdb52dfab",
+      "translated_at": "2026-04-27T02:10:29Z"
+    },
+    "shared_service_groups/CHECKOUT.md": {
+      "commit": "56a8413",
+      "source_sha256": "539933416474ad71a5bf18b76e8b97917e7e28fe5c495d166a6b768015f14af8",
+      "translated_at": "2026-04-27T02:10:29Z"
+    },
+    "shared_service_groups/CLI.md": {
+      "commit": "56a8413",
+      "source_sha256": "2eca951916b6d9b88233dff86fda9ce23e59ec2f7d6f4bc0ed7065febb02b104",
+      "translated_at": "2026-04-27T02:10:29Z"
+    },
+    "shared_service_groups/CONSUMING.md": {
+      "commit": "56a8413",
+      "source_sha256": "d02637989812854de664779293f2e4194aaa1a2577c2f94fdc899bc6d1caf933",
+      "translated_at": "2026-04-27T02:10:29Z"
+    },
+    "shared_service_groups/LIFECYCLE.md": {
+      "commit": "56a8413",
+      "source_sha256": "2d07f8c6ec422e268a633d4ec4c153271373fc97000bade67c5c5fd107c70d63",
+      "translated_at": "2026-04-27T02:10:29Z"
+    },
+    "shared_service_groups/README.md": {
+      "commit": "56a8413",
+      "source_sha256": "4aa969cb1aebca66cf2d1dc7de36b5bbca159892fc0eb0923952a9fb351a32bf",
+      "translated_at": "2026-04-27T02:10:29Z"
+    },
+    "shared_service_groups/ROUTING.md": {
+      "commit": "56a8413",
+      "source_sha256": "eb9c3cae20d65849b46494c226881b115b9d30280598b973876d5fceb542e8fc",
+      "translated_at": "2026-04-27T02:10:29Z"
+    },
+    "shared_service_groups/SECRETS.md": {
+      "commit": "56a8413",
+      "source_sha256": "7319bc9e22f104e94017a902a2ea504995aac459db36f0132930eda33ef2d04b",
+      "translated_at": "2026-04-27T02:10:29Z"
+    },
+    "shared_service_groups/VOLUMES.md": {
+      "commit": "56a8413",
+      "source_sha256": "b6f6b64caccd0c591cd73cce5a3c70f671f9d4d02ae04abe35f18a2c1a346bd9",
+      "translated_at": "2026-04-27T02:10:29Z"
+    },
     "skills_prompt.txt": {
       "commit": "2b2ae89",
       "source_sha256": "36f396f7296b38fbea5d88f27f025e5f134033bba40e83a643298acb3d2b1672",
@@ -1257,9 +1422,9 @@
       "translated_at": "2026-03-30T03:01:00Z"
     },
     "README.md": {
-      "commit": "8a556b7",
-      "source_sha256": "8fe99e3134cde2c81776a8a27cc1e8185baf131673719ef9b29b1290233aa8c6",
-      "translated_at": "2026-03-24T21:09:09Z"
+      "commit": "56a8413",
+      "source_sha256": "fba49e6c7f3c200d1db099f3a2601cdabbc14cdadef2a17318cbd1c10bb9825f",
+      "translated_at": "2026-04-27T02:24:57Z"
     },
     "SKILLS_FOR_HOST_AGENTS.md": {
       "commit": "8a556b7",
@@ -1302,19 +1467,19 @@
       "translated_at": "2026-02-28T13:04:30Z"
     },
     "coastfiles/PROJECT.md": {
-      "commit": "2b2ae89",
-      "source_sha256": "adffeb6e53123b142acd2e38b46085ed357b99158d01730ba50875564bdb8ed8",
-      "translated_at": "2026-03-26T23:23:16Z"
+      "commit": "56a8413",
+      "source_sha256": "57484632b8d11ddec06b4787b654a13fb89e0b6829f8a581b29b8b2d48440bb1",
+      "translated_at": "2026-04-27T02:24:57Z"
     },
     "coastfiles/README.md": {
-      "commit": "0ed12e0",
-      "source_sha256": "0ab46c77f716921fd57ac11596431aff81af576b9d9502a08e63b4c08d7690af",
-      "translated_at": "2026-03-30T03:01:00Z"
+      "commit": "56a8413",
+      "source_sha256": "8040f865498f8afba0c4132fceb72d5078f4d92232ddb070b3d1fdb2181164d8",
+      "translated_at": "2026-04-27T02:24:57Z"
     },
     "coastfiles/SECRETS.md": {
-      "commit": "3357381",
-      "source_sha256": "b5e11cf56a8b94b7b6848e0d59bd2bbe4e6c0e47caecd1bf8680643ccba05190",
-      "translated_at": "2026-02-28T13:04:30Z"
+      "commit": "56a8413",
+      "source_sha256": "b5c112dc781e66717c9f8b1e7d9569b086804f2ad2941f8dd2616bcbd830841a",
+      "translated_at": "2026-04-27T02:24:57Z"
     },
     "coastfiles/SERVICES.md": {
       "commit": "3357381",
@@ -1322,9 +1487,19 @@
       "translated_at": "2026-02-28T13:04:30Z"
     },
     "coastfiles/SHARED_SERVICES.md": {
-      "commit": "d7ed347",
-      "source_sha256": "8f69bb7804daed0cbc98d08a6bc94a906e758c7bbb6e081b947f7175e92b2899",
-      "translated_at": "2026-03-10T20:34:41Z"
+      "commit": "56a8413",
+      "source_sha256": "967d4059b758312d2c9cb8bd43e62e3f9252ed2733382864640f3862cc7cf266",
+      "translated_at": "2026-04-27T02:24:57Z"
+    },
+    "coastfiles/SHARED_SERVICE_GROUPS.md": {
+      "commit": "56a8413",
+      "source_sha256": "8e13f9d67e6d699c2b62da6296c2fc5338674e1a1377f095e196f506d1c23138",
+      "translated_at": "2026-04-27T02:24:57Z"
+    },
+    "coastfiles/VARIABLES.md": {
+      "commit": "56a8413",
+      "source_sha256": "e61bcf9a2ada44076d7369c5dd1df3de69064018182b6abc9a537ce9fa852989",
+      "translated_at": "2026-04-27T02:24:57Z"
     },
     "coastfiles/VOLUMES.md": {
       "commit": "3357381",
@@ -1357,9 +1532,9 @@
       "translated_at": "2026-03-30T00:11:31Z"
     },
     "concepts_and_terminology/BUILDS.md": {
-      "commit": "f9d2dca",
-      "source_sha256": "bf3953badf5ff4dcd64999b9da6bc3ada5fa626dfb1aa99eb86dd9b9cb5eb9f2",
-      "translated_at": "2026-04-07T20:50:28Z"
+      "commit": "56a8413",
+      "source_sha256": "155fbe6223086977bef7254e2dee7ddc629339bf01eae71003cc779d9e62249d",
+      "translated_at": "2026-04-27T02:24:57Z"
     },
     "concepts_and_terminology/CHECKOUT.md": {
       "commit": "7605a21",
@@ -1447,9 +1622,9 @@
       "translated_at": "2026-03-30T00:11:31Z"
     },
     "concepts_and_terminology/README.md": {
-      "commit": "f9d2dca",
-      "source_sha256": "ff21766a7c56633fe775e36189bc6b6b02dd9a3139dfe22d8277b1a6957049ee",
-      "translated_at": "2026-04-07T20:50:28Z"
+      "commit": "56a8413",
+      "source_sha256": "0a4df766dd91890cace88abc476f02b2da8e83b722ad87640cf242c5e46a63bd",
+      "translated_at": "2026-04-27T02:24:57Z"
     },
     "concepts_and_terminology/REMOTES.md": {
       "commit": "f9d2dca",
@@ -1477,14 +1652,14 @@
       "translated_at": "2026-02-28T13:04:30Z"
     },
     "concepts_and_terminology/SHARED_SERVICES.md": {
-      "commit": "f9d2dca",
-      "source_sha256": "f65cf47584add667fac7f376021d42bbe3a834b3f705af13511e5a04cb75a439",
-      "translated_at": "2026-04-07T20:50:28Z"
+      "commit": "56a8413",
+      "source_sha256": "f87fab98a8ef490fae577b0bf517d07dbc11280b64c9719bebc7d37c4093a669",
+      "translated_at": "2026-04-27T02:24:57Z"
     },
     "concepts_and_terminology/TROUBLESHOOTING.md": {
-      "commit": "85b1396",
-      "source_sha256": "b203847f11a1b986ba6d2f552382d508ed6bc13c6031bd22382af145d208e28f",
-      "translated_at": "2026-03-09T09:06:35Z"
+      "commit": "56a8413",
+      "source_sha256": "4e479cd7aa5ad708790c9f728a1aac1733ec895091431ce6faa0999ab851d4ea",
+      "translated_at": "2026-04-27T02:24:57Z"
     },
     "concepts_and_terminology/VOLUMES.md": {
       "commit": "3357381",
@@ -1492,9 +1667,9 @@
       "translated_at": "2026-02-28T13:04:30Z"
     },
     "doc_ordering.txt": {
-      "commit": "f9d2dca",
-      "source_sha256": "85d01b63d79699bd89ad646e10aa21d44b98f9ba3ed3186a14c4b2123ccf1073",
-      "translated_at": "2026-04-07T20:50:28Z"
+      "commit": "56a8413",
+      "source_sha256": "bd346868d7f49345274aeac18cd0dbe2e1637fa06490079d6a4acc150e7fcf33",
+      "translated_at": "2026-04-27T02:24:57Z"
     },
     "harnesses/CLAUDE_CODE.md": {
       "commit": "8a556b7",
@@ -1661,6 +1836,51 @@
       "source_sha256": "55a81536dc20b567c054af9b6fbb9debfc025d4a97736bff323ab4bc3be605c8",
       "translated_at": "2026-04-07T20:50:28Z"
     },
+    "shared_service_groups/BUILDING.md": {
+      "commit": "56a8413",
+      "source_sha256": "3c9df5fff0e498bd2bbde3137ab8087bfd9aecc391d8292a981a5a3fdb52dfab",
+      "translated_at": "2026-04-27T02:24:57Z"
+    },
+    "shared_service_groups/CHECKOUT.md": {
+      "commit": "56a8413",
+      "source_sha256": "539933416474ad71a5bf18b76e8b97917e7e28fe5c495d166a6b768015f14af8",
+      "translated_at": "2026-04-27T02:24:57Z"
+    },
+    "shared_service_groups/CLI.md": {
+      "commit": "56a8413",
+      "source_sha256": "2eca951916b6d9b88233dff86fda9ce23e59ec2f7d6f4bc0ed7065febb02b104",
+      "translated_at": "2026-04-27T02:24:57Z"
+    },
+    "shared_service_groups/CONSUMING.md": {
+      "commit": "56a8413",
+      "source_sha256": "d02637989812854de664779293f2e4194aaa1a2577c2f94fdc899bc6d1caf933",
+      "translated_at": "2026-04-27T02:24:57Z"
+    },
+    "shared_service_groups/LIFECYCLE.md": {
+      "commit": "56a8413",
+      "source_sha256": "2d07f8c6ec422e268a633d4ec4c153271373fc97000bade67c5c5fd107c70d63",
+      "translated_at": "2026-04-27T02:24:57Z"
+    },
+    "shared_service_groups/README.md": {
+      "commit": "56a8413",
+      "source_sha256": "4aa969cb1aebca66cf2d1dc7de36b5bbca159892fc0eb0923952a9fb351a32bf",
+      "translated_at": "2026-04-27T02:24:57Z"
+    },
+    "shared_service_groups/ROUTING.md": {
+      "commit": "56a8413",
+      "source_sha256": "eb9c3cae20d65849b46494c226881b115b9d30280598b973876d5fceb542e8fc",
+      "translated_at": "2026-04-27T02:24:57Z"
+    },
+    "shared_service_groups/SECRETS.md": {
+      "commit": "56a8413",
+      "source_sha256": "7319bc9e22f104e94017a902a2ea504995aac459db36f0132930eda33ef2d04b",
+      "translated_at": "2026-04-27T02:24:57Z"
+    },
+    "shared_service_groups/VOLUMES.md": {
+      "commit": "56a8413",
+      "source_sha256": "b6f6b64caccd0c591cd73cce5a3c70f671f9d4d02ae04abe35f18a2c1a346bd9",
+      "translated_at": "2026-04-27T02:24:57Z"
+    },
     "skills_prompt.txt": {
       "commit": "2b2ae89",
       "source_sha256": "36f396f7296b38fbea5d88f27f025e5f134033bba40e83a643298acb3d2b1672",
@@ -1674,9 +1894,9 @@
       "translated_at": "2026-03-30T02:59:49Z"
     },
     "README.md": {
-      "commit": "8a556b7",
-      "source_sha256": "8fe99e3134cde2c81776a8a27cc1e8185baf131673719ef9b29b1290233aa8c6",
-      "translated_at": "2026-03-24T21:05:59Z"
+      "commit": "56a8413",
+      "source_sha256": "fba49e6c7f3c200d1db099f3a2601cdabbc14cdadef2a17318cbd1c10bb9825f",
+      "translated_at": "2026-04-27T02:17:55Z"
     },
     "SKILLS_FOR_HOST_AGENTS.md": {
       "commit": "8a556b7",
@@ -1719,19 +1939,19 @@
       "translated_at": "2026-02-28T12:58:35Z"
     },
     "coastfiles/PROJECT.md": {
-      "commit": "2b2ae89",
-      "source_sha256": "adffeb6e53123b142acd2e38b46085ed357b99158d01730ba50875564bdb8ed8",
-      "translated_at": "2026-03-26T23:21:21Z"
+      "commit": "56a8413",
+      "source_sha256": "57484632b8d11ddec06b4787b654a13fb89e0b6829f8a581b29b8b2d48440bb1",
+      "translated_at": "2026-04-27T02:17:55Z"
     },
     "coastfiles/README.md": {
-      "commit": "0ed12e0",
-      "source_sha256": "0ab46c77f716921fd57ac11596431aff81af576b9d9502a08e63b4c08d7690af",
-      "translated_at": "2026-03-30T02:59:49Z"
+      "commit": "56a8413",
+      "source_sha256": "8040f865498f8afba0c4132fceb72d5078f4d92232ddb070b3d1fdb2181164d8",
+      "translated_at": "2026-04-27T02:17:55Z"
     },
     "coastfiles/SECRETS.md": {
-      "commit": "3357381",
-      "source_sha256": "b5e11cf56a8b94b7b6848e0d59bd2bbe4e6c0e47caecd1bf8680643ccba05190",
-      "translated_at": "2026-02-28T12:58:35Z"
+      "commit": "56a8413",
+      "source_sha256": "b5c112dc781e66717c9f8b1e7d9569b086804f2ad2941f8dd2616bcbd830841a",
+      "translated_at": "2026-04-27T02:17:55Z"
     },
     "coastfiles/SERVICES.md": {
       "commit": "3357381",
@@ -1739,9 +1959,19 @@
       "translated_at": "2026-02-28T12:58:35Z"
     },
     "coastfiles/SHARED_SERVICES.md": {
-      "commit": "d7ed347",
-      "source_sha256": "8f69bb7804daed0cbc98d08a6bc94a906e758c7bbb6e081b947f7175e92b2899",
-      "translated_at": "2026-03-10T20:33:19Z"
+      "commit": "56a8413",
+      "source_sha256": "967d4059b758312d2c9cb8bd43e62e3f9252ed2733382864640f3862cc7cf266",
+      "translated_at": "2026-04-27T02:17:55Z"
+    },
+    "coastfiles/SHARED_SERVICE_GROUPS.md": {
+      "commit": "56a8413",
+      "source_sha256": "8e13f9d67e6d699c2b62da6296c2fc5338674e1a1377f095e196f506d1c23138",
+      "translated_at": "2026-04-27T02:17:55Z"
+    },
+    "coastfiles/VARIABLES.md": {
+      "commit": "56a8413",
+      "source_sha256": "e61bcf9a2ada44076d7369c5dd1df3de69064018182b6abc9a537ce9fa852989",
+      "translated_at": "2026-04-27T02:17:55Z"
     },
     "coastfiles/VOLUMES.md": {
       "commit": "3357381",
@@ -1774,9 +2004,9 @@
       "translated_at": "2026-03-30T00:09:45Z"
     },
     "concepts_and_terminology/BUILDS.md": {
-      "commit": "f9d2dca",
-      "source_sha256": "bf3953badf5ff4dcd64999b9da6bc3ada5fa626dfb1aa99eb86dd9b9cb5eb9f2",
-      "translated_at": "2026-04-07T20:47:21Z"
+      "commit": "56a8413",
+      "source_sha256": "155fbe6223086977bef7254e2dee7ddc629339bf01eae71003cc779d9e62249d",
+      "translated_at": "2026-04-27T02:17:55Z"
     },
     "concepts_and_terminology/CHECKOUT.md": {
       "commit": "7605a21",
@@ -1864,9 +2094,9 @@
       "translated_at": "2026-03-30T00:09:45Z"
     },
     "concepts_and_terminology/README.md": {
-      "commit": "f9d2dca",
-      "source_sha256": "ff21766a7c56633fe775e36189bc6b6b02dd9a3139dfe22d8277b1a6957049ee",
-      "translated_at": "2026-04-07T20:47:21Z"
+      "commit": "56a8413",
+      "source_sha256": "0a4df766dd91890cace88abc476f02b2da8e83b722ad87640cf242c5e46a63bd",
+      "translated_at": "2026-04-27T02:17:55Z"
     },
     "concepts_and_terminology/REMOTES.md": {
       "commit": "f9d2dca",
@@ -1894,14 +2124,14 @@
       "translated_at": "2026-02-28T12:58:35Z"
     },
     "concepts_and_terminology/SHARED_SERVICES.md": {
-      "commit": "f9d2dca",
-      "source_sha256": "f65cf47584add667fac7f376021d42bbe3a834b3f705af13511e5a04cb75a439",
-      "translated_at": "2026-04-07T20:47:21Z"
+      "commit": "56a8413",
+      "source_sha256": "f87fab98a8ef490fae577b0bf517d07dbc11280b64c9719bebc7d37c4093a669",
+      "translated_at": "2026-04-27T02:17:55Z"
     },
     "concepts_and_terminology/TROUBLESHOOTING.md": {
-      "commit": "85b1396",
-      "source_sha256": "b203847f11a1b986ba6d2f552382d508ed6bc13c6031bd22382af145d208e28f",
-      "translated_at": "2026-03-09T09:04:33Z"
+      "commit": "56a8413",
+      "source_sha256": "4e479cd7aa5ad708790c9f728a1aac1733ec895091431ce6faa0999ab851d4ea",
+      "translated_at": "2026-04-27T02:17:55Z"
     },
     "concepts_and_terminology/VOLUMES.md": {
       "commit": "3357381",
@@ -1909,9 +2139,9 @@
       "translated_at": "2026-02-28T12:58:35Z"
     },
     "doc_ordering.txt": {
-      "commit": "f9d2dca",
-      "source_sha256": "85d01b63d79699bd89ad646e10aa21d44b98f9ba3ed3186a14c4b2123ccf1073",
-      "translated_at": "2026-04-07T20:47:21Z"
+      "commit": "56a8413",
+      "source_sha256": "bd346868d7f49345274aeac18cd0dbe2e1637fa06490079d6a4acc150e7fcf33",
+      "translated_at": "2026-04-27T02:17:55Z"
     },
     "harnesses/CLAUDE_CODE.md": {
       "commit": "8a556b7",
@@ -2078,6 +2308,51 @@
       "source_sha256": "55a81536dc20b567c054af9b6fbb9debfc025d4a97736bff323ab4bc3be605c8",
       "translated_at": "2026-04-07T20:47:21Z"
     },
+    "shared_service_groups/BUILDING.md": {
+      "commit": "56a8413",
+      "source_sha256": "3c9df5fff0e498bd2bbde3137ab8087bfd9aecc391d8292a981a5a3fdb52dfab",
+      "translated_at": "2026-04-27T02:17:55Z"
+    },
+    "shared_service_groups/CHECKOUT.md": {
+      "commit": "56a8413",
+      "source_sha256": "539933416474ad71a5bf18b76e8b97917e7e28fe5c495d166a6b768015f14af8",
+      "translated_at": "2026-04-27T02:17:55Z"
+    },
+    "shared_service_groups/CLI.md": {
+      "commit": "56a8413",
+      "source_sha256": "2eca951916b6d9b88233dff86fda9ce23e59ec2f7d6f4bc0ed7065febb02b104",
+      "translated_at": "2026-04-27T02:17:55Z"
+    },
+    "shared_service_groups/CONSUMING.md": {
+      "commit": "56a8413",
+      "source_sha256": "d02637989812854de664779293f2e4194aaa1a2577c2f94fdc899bc6d1caf933",
+      "translated_at": "2026-04-27T02:17:55Z"
+    },
+    "shared_service_groups/LIFECYCLE.md": {
+      "commit": "56a8413",
+      "source_sha256": "2d07f8c6ec422e268a633d4ec4c153271373fc97000bade67c5c5fd107c70d63",
+      "translated_at": "2026-04-27T02:17:55Z"
+    },
+    "shared_service_groups/README.md": {
+      "commit": "56a8413",
+      "source_sha256": "4aa969cb1aebca66cf2d1dc7de36b5bbca159892fc0eb0923952a9fb351a32bf",
+      "translated_at": "2026-04-27T02:17:55Z"
+    },
+    "shared_service_groups/ROUTING.md": {
+      "commit": "56a8413",
+      "source_sha256": "eb9c3cae20d65849b46494c226881b115b9d30280598b973876d5fceb542e8fc",
+      "translated_at": "2026-04-27T02:17:55Z"
+    },
+    "shared_service_groups/SECRETS.md": {
+      "commit": "56a8413",
+      "source_sha256": "7319bc9e22f104e94017a902a2ea504995aac459db36f0132930eda33ef2d04b",
+      "translated_at": "2026-04-27T02:17:55Z"
+    },
+    "shared_service_groups/VOLUMES.md": {
+      "commit": "56a8413",
+      "source_sha256": "b6f6b64caccd0c591cd73cce5a3c70f671f9d4d02ae04abe35f18a2c1a346bd9",
+      "translated_at": "2026-04-27T02:17:55Z"
+    },
     "skills_prompt.txt": {
       "commit": "2b2ae89",
       "source_sha256": "36f396f7296b38fbea5d88f27f025e5f134033bba40e83a643298acb3d2b1672",
@@ -2091,9 +2366,9 @@
       "translated_at": "2026-03-30T02:56:09Z"
     },
     "README.md": {
-      "commit": "8a556b7",
-      "source_sha256": "8fe99e3134cde2c81776a8a27cc1e8185baf131673719ef9b29b1290233aa8c6",
-      "translated_at": "2026-03-24T20:55:10Z"
+      "commit": "56a8413",
+      "source_sha256": "fba49e6c7f3c200d1db099f3a2601cdabbc14cdadef2a17318cbd1c10bb9825f",
+      "translated_at": "2026-04-27T01:55:29Z"
     },
     "SKILLS_FOR_HOST_AGENTS.md": {
       "commit": "8a556b7",
@@ -2136,19 +2411,19 @@
       "translated_at": "2026-02-28T12:39:25Z"
     },
     "coastfiles/PROJECT.md": {
-      "commit": "2b2ae89",
-      "source_sha256": "adffeb6e53123b142acd2e38b46085ed357b99158d01730ba50875564bdb8ed8",
-      "translated_at": "2026-03-26T23:15:17Z"
+      "commit": "56a8413",
+      "source_sha256": "57484632b8d11ddec06b4787b654a13fb89e0b6829f8a581b29b8b2d48440bb1",
+      "translated_at": "2026-04-27T01:55:29Z"
     },
     "coastfiles/README.md": {
-      "commit": "0ed12e0",
-      "source_sha256": "0ab46c77f716921fd57ac11596431aff81af576b9d9502a08e63b4c08d7690af",
-      "translated_at": "2026-03-30T02:56:09Z"
+      "commit": "56a8413",
+      "source_sha256": "8040f865498f8afba0c4132fceb72d5078f4d92232ddb070b3d1fdb2181164d8",
+      "translated_at": "2026-04-27T01:55:29Z"
     },
     "coastfiles/SECRETS.md": {
-      "commit": "3357381",
-      "source_sha256": "b5e11cf56a8b94b7b6848e0d59bd2bbe4e6c0e47caecd1bf8680643ccba05190",
-      "translated_at": "2026-02-28T12:39:25Z"
+      "commit": "56a8413",
+      "source_sha256": "b5c112dc781e66717c9f8b1e7d9569b086804f2ad2941f8dd2616bcbd830841a",
+      "translated_at": "2026-04-27T01:55:29Z"
     },
     "coastfiles/SERVICES.md": {
       "commit": "3357381",
@@ -2156,9 +2431,19 @@
       "translated_at": "2026-02-28T12:39:25Z"
     },
     "coastfiles/SHARED_SERVICES.md": {
-      "commit": "d7ed347",
-      "source_sha256": "8f69bb7804daed0cbc98d08a6bc94a906e758c7bbb6e081b947f7175e92b2899",
-      "translated_at": "2026-03-10T20:29:21Z"
+      "commit": "56a8413",
+      "source_sha256": "967d4059b758312d2c9cb8bd43e62e3f9252ed2733382864640f3862cc7cf266",
+      "translated_at": "2026-04-27T01:55:29Z"
+    },
+    "coastfiles/SHARED_SERVICE_GROUPS.md": {
+      "commit": "56a8413",
+      "source_sha256": "8e13f9d67e6d699c2b62da6296c2fc5338674e1a1377f095e196f506d1c23138",
+      "translated_at": "2026-04-27T01:55:29Z"
+    },
+    "coastfiles/VARIABLES.md": {
+      "commit": "56a8413",
+      "source_sha256": "e61bcf9a2ada44076d7369c5dd1df3de69064018182b6abc9a537ce9fa852989",
+      "translated_at": "2026-04-27T01:55:29Z"
     },
     "coastfiles/VOLUMES.md": {
       "commit": "3357381",
@@ -2191,9 +2476,9 @@
       "translated_at": "2026-03-30T00:04:07Z"
     },
     "concepts_and_terminology/BUILDS.md": {
-      "commit": "f9d2dca",
-      "source_sha256": "bf3953badf5ff4dcd64999b9da6bc3ada5fa626dfb1aa99eb86dd9b9cb5eb9f2",
-      "translated_at": "2026-04-07T20:37:03Z"
+      "commit": "56a8413",
+      "source_sha256": "155fbe6223086977bef7254e2dee7ddc629339bf01eae71003cc779d9e62249d",
+      "translated_at": "2026-04-27T01:55:29Z"
     },
     "concepts_and_terminology/CHECKOUT.md": {
       "commit": "7605a21",
@@ -2281,9 +2566,9 @@
       "translated_at": "2026-03-30T00:04:07Z"
     },
     "concepts_and_terminology/README.md": {
-      "commit": "f9d2dca",
-      "source_sha256": "ff21766a7c56633fe775e36189bc6b6b02dd9a3139dfe22d8277b1a6957049ee",
-      "translated_at": "2026-04-07T20:37:03Z"
+      "commit": "56a8413",
+      "source_sha256": "0a4df766dd91890cace88abc476f02b2da8e83b722ad87640cf242c5e46a63bd",
+      "translated_at": "2026-04-27T01:55:29Z"
     },
     "concepts_and_terminology/REMOTES.md": {
       "commit": "f9d2dca",
@@ -2311,14 +2596,14 @@
       "translated_at": "2026-02-28T12:39:25Z"
     },
     "concepts_and_terminology/SHARED_SERVICES.md": {
-      "commit": "f9d2dca",
-      "source_sha256": "f65cf47584add667fac7f376021d42bbe3a834b3f705af13511e5a04cb75a439",
-      "translated_at": "2026-04-07T20:37:03Z"
+      "commit": "56a8413",
+      "source_sha256": "f87fab98a8ef490fae577b0bf517d07dbc11280b64c9719bebc7d37c4093a669",
+      "translated_at": "2026-04-27T01:55:29Z"
     },
     "concepts_and_terminology/TROUBLESHOOTING.md": {
-      "commit": "85b1396",
-      "source_sha256": "b203847f11a1b986ba6d2f552382d508ed6bc13c6031bd22382af145d208e28f",
-      "translated_at": "2026-03-09T08:57:57Z"
+      "commit": "56a8413",
+      "source_sha256": "4e479cd7aa5ad708790c9f728a1aac1733ec895091431ce6faa0999ab851d4ea",
+      "translated_at": "2026-04-27T01:55:29Z"
     },
     "concepts_and_terminology/VOLUMES.md": {
       "commit": "3357381",
@@ -2326,9 +2611,9 @@
       "translated_at": "2026-02-28T12:39:25Z"
     },
     "doc_ordering.txt": {
-      "commit": "f9d2dca",
-      "source_sha256": "85d01b63d79699bd89ad646e10aa21d44b98f9ba3ed3186a14c4b2123ccf1073",
-      "translated_at": "2026-04-07T20:37:03Z"
+      "commit": "56a8413",
+      "source_sha256": "bd346868d7f49345274aeac18cd0dbe2e1637fa06490079d6a4acc150e7fcf33",
+      "translated_at": "2026-04-27T01:55:29Z"
     },
     "harnesses/CLAUDE_CODE.md": {
       "commit": "8a556b7",
@@ -2494,6 +2779,51 @@
       "commit": "f9d2dca",
       "source_sha256": "55a81536dc20b567c054af9b6fbb9debfc025d4a97736bff323ab4bc3be605c8",
       "translated_at": "2026-04-07T20:37:03Z"
+    },
+    "shared_service_groups/BUILDING.md": {
+      "commit": "56a8413",
+      "source_sha256": "3c9df5fff0e498bd2bbde3137ab8087bfd9aecc391d8292a981a5a3fdb52dfab",
+      "translated_at": "2026-04-27T01:55:29Z"
+    },
+    "shared_service_groups/CHECKOUT.md": {
+      "commit": "56a8413",
+      "source_sha256": "539933416474ad71a5bf18b76e8b97917e7e28fe5c495d166a6b768015f14af8",
+      "translated_at": "2026-04-27T01:55:29Z"
+    },
+    "shared_service_groups/CLI.md": {
+      "commit": "56a8413",
+      "source_sha256": "2eca951916b6d9b88233dff86fda9ce23e59ec2f7d6f4bc0ed7065febb02b104",
+      "translated_at": "2026-04-27T01:55:29Z"
+    },
+    "shared_service_groups/CONSUMING.md": {
+      "commit": "56a8413",
+      "source_sha256": "d02637989812854de664779293f2e4194aaa1a2577c2f94fdc899bc6d1caf933",
+      "translated_at": "2026-04-27T01:55:29Z"
+    },
+    "shared_service_groups/LIFECYCLE.md": {
+      "commit": "56a8413",
+      "source_sha256": "2d07f8c6ec422e268a633d4ec4c153271373fc97000bade67c5c5fd107c70d63",
+      "translated_at": "2026-04-27T01:55:29Z"
+    },
+    "shared_service_groups/README.md": {
+      "commit": "56a8413",
+      "source_sha256": "4aa969cb1aebca66cf2d1dc7de36b5bbca159892fc0eb0923952a9fb351a32bf",
+      "translated_at": "2026-04-27T01:55:29Z"
+    },
+    "shared_service_groups/ROUTING.md": {
+      "commit": "56a8413",
+      "source_sha256": "eb9c3cae20d65849b46494c226881b115b9d30280598b973876d5fceb542e8fc",
+      "translated_at": "2026-04-27T01:55:29Z"
+    },
+    "shared_service_groups/SECRETS.md": {
+      "commit": "56a8413",
+      "source_sha256": "7319bc9e22f104e94017a902a2ea504995aac459db36f0132930eda33ef2d04b",
+      "translated_at": "2026-04-27T01:55:29Z"
+    },
+    "shared_service_groups/VOLUMES.md": {
+      "commit": "56a8413",
+      "source_sha256": "b6f6b64caccd0c591cd73cce5a3c70f671f9d4d02ae04abe35f18a2c1a346bd9",
+      "translated_at": "2026-04-27T01:55:29Z"
     },
     "skills_prompt.txt": {
       "commit": "2b2ae89",

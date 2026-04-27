@@ -38,6 +38,16 @@ coast rm-build my-project
 
 Это удаляет каталог артефактов проекта, Docker-образы, тома и контейнеры. Сначала запрашивается подтверждение. Передайте `--force`, чтобы пропустить запрос.
 
+## SSG Permission Mismatches
+
+Если Postgres (или MySQL / MariaDB / MongoDB) из [Shared Service Group](../shared_service_groups/README.md) завершает работу при запуске с ошибкой "data directory has wrong ownership", значит каталог bind-mount на хосте был создан с неправильными UID/GID. Выполните:
+
+```bash
+coast ssg doctor
+```
+
+Он сообщает по одной проблеме на каждую пару `(service, host-bind-mount)` и включает точную команду `chown` для исправления любого несоответствия. Doctor работает только на чтение -- он никогда не изменяет сам каталог. Полное описание семантики см. в [SSG Volumes](../shared_service_groups/VOLUMES.md#coast-ssg-doctor).
+
 ## Missing Shared Service Images
 
 Если `coast run` завершается неудачей при создании общего сервиса с ошибкой вроде `No such image: postgres:15`, значит, образ отсутствует в вашем хостовом демоне Docker.

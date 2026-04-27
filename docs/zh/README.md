@@ -68,6 +68,10 @@ Coasts 不是 dev containers，它们也不是同一种东西。
 
 Dev containers 通常旨在将一个 IDE 挂载到单个容器化的开发工作区中。Coasts 则是无头的，并且针对使用 worktrees 的并行代理使用场景进行了优化——多个彼此隔离、具备 worktree 感知的运行时环境并排运行，具备快速的检出切换以及针对每个实例的运行时隔离控制。
 
+## 跨项目共享基础设施
+
+如果你有多个项目，并且每个项目都需要相同的数据库或缓存，你可以在一个称为 [Shared Service Group](shared_service_groups/README.md) 的单例 DinD 中一次性声明这些服务，并让每个项目的 Coastfile 都指向它。这样可以避免按项目划分的主机端口冲突，并让多个项目共享数据。
+
 ## 演示仓库
 
 如果你想要一个小型示例项目来试用 Coasts，可以从 [`coasts-demo` 仓库](https://github.com/coast-guard/coasts-demo)开始。

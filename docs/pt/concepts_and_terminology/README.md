@@ -16,7 +16,7 @@ Esta seção cobre os conceitos centrais e o vocabulário usados em todo o Coast
 - [Checkout](CHECKOUT.md) - mapeamento de portas canônicas para uma instância de Coast e quando você precisa disso.
 - [Lookup](LOOKUP.md) - descoberta de quais instâncias de Coast correspondem à worktree atual do agente.
 - [Volume Topology](VOLUMES.md) - serviços compartilhados, volumes compartilhados, volumes isolados e snapshotting.
-- [Shared Services](SHARED_SERVICES.md) - serviços de infraestrutura gerenciados pelo host e desambiguação de volumes.
+- [Shared Services](SHARED_SERVICES.md) - serviços de infraestrutura gerenciados pelo host e desambiguação de volumes. Veja também [Shared Service Groups](../shared_service_groups/README.md) para compartilhar infraestrutura entre vários projetos.
 - [Secrets and Extractors](SECRETS.md) - extração de segredos do host e injeção deles em contêineres Coast.
 - [Builds](BUILDS.md) - a anatomia de uma build de coast, onde os artefatos ficam, limpeza automática e builds tipadas.
 - [Coastfile Types](COASTFILE_TYPES.md) - variantes componíveis de Coastfile com extends, unset, omit e autostart.

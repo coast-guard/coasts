@@ -1,8 +1,8 @@
 # Coastfile.shared_service_groups
 
-`Coastfile.shared_service_groups` is a typed Coastfile that declares the services the Shared Service Group (SSG) will run. Exactly one SSG Coastfile is active at a time, host-wide. Multiple projects then reference its services with `[shared_services.<name>] from_group = true` in their own Coastfiles.
+`Coastfile.shared_service_groups` is a typed Coastfile that declares the services your project's Shared Service Group (SSG) will run. It sits next to a regular `Coastfile`, and the project name comes from `[coast].name` in that sibling file -- you don't repeat it here. Each project has exactly one such file (in your worktree); the `<project>-ssg` container runs the services it declares. Other consumer Coastfiles in the same project can reference these services with `[shared_services.<name>] from_group = true`.
 
-For the concept, lifecycle, volumes, and consumer wiring, see the [Shared Service Groups documentation](../shared_service_groups/README.md).
+For the concept, lifecycle, volumes, secrets, and consumer wiring, see the [Shared Service Groups documentation](../shared_service_groups/README.md).
 
 ## Discovery
 
@@ -15,7 +15,7 @@ For the concept, lifecycle, volumes, and consumer wiring, see the [Shared Servic
 
 ## Accepted Sections
 
-Only `[ssg]`, `[shared_services.<name>]`, and `[unset]` are accepted. Any other top-level key (`[coast]`, `[ports]`, `[services]`, `[volumes]`, `[secrets]`, `[assign]`, `[omit]`, ...) is rejected at parse.
+Only `[ssg]`, `[shared_services.<name>]`, `[secrets.<name>]`, and `[unset]` are accepted. Any other top-level key (`[coast]`, `[ports]`, `[services]`, `[volumes]`, `[assign]`, `[omit]`, `[inject]`, ...) is rejected at parse.
 
 `[ssg] extends = "<path>"` and `[ssg] includes = ["<path>", ...]` are supported for composition. See [Inheritance](#inheritance) below.
 
@@ -61,7 +61,7 @@ ports = [5432, 5433]
 - A `"HOST:CONTAINER"` mapping (`"5432:5432"`) is **rejected**. SSG host publications are always dynamic -- you never pick the host port.
 - An empty array (or the field omitted entirely) is allowed. Sidecars without exposed ports are fine.
 
-Each port becomes a `PUBLISHED:CONTAINER` mapping on the outer DinD at `coast ssg run` time, where `PUBLISHED` is a dynamically-allocated host port.
+Each port becomes a `PUBLISHED:CONTAINER` mapping on the outer DinD at `coast ssg run` time, where `PUBLISHED` is a dynamically-allocated host port. A separate per-project virtual port is allocated for stable consumer routing -- see [Routing](../shared_service_groups/ROUTING.md).
 
 ### `env`
 
@@ -71,7 +71,9 @@ Flat string map forwarded verbatim into the inner service container's environmen
 env = { POSTGRES_USER = "coast", POSTGRES_PASSWORD = "coast", POSTGRES_DB = "app" }
 ```
 
-Env values are **not** captured in the manifest. Only the keys are recorded, matching the safety posture of `coast build`.
+Env values are **not** captured in the build manifest. Only the keys are recorded, matching the safety posture of `coast build`.
+
+For values you don't want hardcoded in the Coastfile (passwords, API tokens), use the `[secrets.*]` section described below -- it extracts from your host at build time and injects at run time.
 
 ### `volumes`
 
@@ -111,7 +113,37 @@ A consumer Coastfile can override this value per project -- see [Consuming -> au
 
 ### `inject` (not allowed)
 
-`inject` is **not** valid on SSG service definitions. Injection is a consumer-side concern (different projects may want the same SSG Postgres exposed under different env-var names). See [Coastfile: Shared Services](SHARED_SERVICES.md#inject) for the consumer-side `inject` semantics.
+`inject` is **not** valid on SSG service definitions. Injection is a consumer-side concern (different consumer Coastfiles may want the same SSG Postgres exposed under different env-var names). See [Coastfile: Shared Services](SHARED_SERVICES.md#inject) for the consumer-side `inject` semantics.
+
+## `[secrets.<name>]`
+
+The `[secrets.*]` block in `Coastfile.shared_service_groups` extracts host-side credentials at `coast ssg build` time and injects them into the SSG's inner services at `coast ssg run` time. The schema mirrors the regular Coastfile's `[secrets.*]` (see [Secrets](SECRETS.md) for the field reference); SSG-specific behavior is documented in [SSG Secrets](../shared_service_groups/SECRETS.md).
+
+```toml
+[secrets.pg_password]
+extractor = "env"
+var = "MY_PG_PASSWORD"
+inject = "env:POSTGRES_PASSWORD"
+
+[secrets.tls_cert]
+extractor = "file"
+path = "/Users/me/certs/dev.pem"
+inject = "file:/etc/ssl/certs/server.pem"
+```
+
+The same extractors are available (`env`, `file`, `command`, `keychain`, custom `coast-extractor-<name>`). The `inject` directive selects whether the value lands as an env var or a file inside the SSG's inner service container.
+
+By default, an SSG-native secret is injected into **every** declared `[shared_services.*]`. To target a subset, list service names explicitly:
+
+```toml
+[secrets.pg_password]
+extractor = "env"
+var = "MY_PG_PASSWORD"
+inject = "env:POSTGRES_PASSWORD"
+services = ["postgres"]      # only mounted on the postgres service
+```
+
+Extracted secret values are stored encrypted in `~/.coast/keystore.db` under `coast_image = "ssg:<project>"` -- a namespace separate from regular Coast keystore entries. See [SSG Secrets](../shared_service_groups/SECRETS.md) for the full lifecycle, including the `coast ssg secrets clear` verb.
 
 ## Inheritance
 
@@ -141,15 +173,16 @@ image = "postgres:16-alpine"
 
 Fragments are merged in order before the including file itself. Fragment paths are resolved relative to the including file's parent directory (no `.toml` tie-break -- fragments are typically named exactly).
 
-**Fragments cannot themselves use `extends` or `includes`.** They must be self-contained. This keeps the dependency graph a tree rooted at a single `from_file` call.
+**Fragments cannot themselves use `extends` or `includes`.** They must be self-contained.
 
 ### Merge semantics
 
 - **`[ssg]` scalars** (`runtime`) -- child wins when present, else inherit.
 - **`[shared_services.*]`** -- by-name replace. If parent and child both define `postgres`, the child's entry fully replaces the parent's (whole-entry replacement, not field-level merge). Parent services not re-declared by the child are inherited.
+- **`[secrets.*]`** -- by-name replace, same shape as `[shared_services.*]`. A child secret with the same name fully overrides the parent's secret config.
 - **Load order** -- `extends` parent loads first, then each `includes` fragment in order, then the top-level file itself. Later layers win on collision.
 
-### `[unset]` -- drop inherited services
+### `[unset]` -- drop inherited services or secrets
 
 ```toml
 [ssg]
@@ -157,9 +190,10 @@ extends = "Coastfile.ssg-base"
 
 [unset]
 shared_services = ["mongodb"]
+secrets = ["pg_password"]
 ```
 
-Removes named entries **after** the merge, so a child can selectively drop something the parent provides. Only the `shared_services` key is supported -- no other collection exists in the SSG schema.
+Removes named entries **after** the merge, so a child can selectively drop something the parent provides. Both `shared_services` and `secrets` keys are supported.
 
 Standalone SSG Coastfiles may technically contain `[unset]`, but it is silently ignored (matches regular Coastfile behavior: unset only applies when the file participates in inheritance).
 
@@ -177,11 +211,11 @@ Regular Coastfiles support `[omit]` to strip services / volumes from the compose
 
 ### Build artifact is the flattened form
 
-`coast ssg build` writes a standalone TOML to `~/.coast/ssg/builds/<id>/ssg-coastfile.toml`. The artifact contains the post-inheritance merged result with no `extends`, `includes`, or `[unset]` directives, so the build can be inspected or re-run without the parent / fragment files being present. The `build_id` hash also reflects the flattened form, so a parent-only change invalidates the cache correctly.
+`coast ssg build` writes a standalone TOML to `~/.coast/ssg/<project>/builds/<id>/ssg-coastfile.toml`. The artifact contains the post-inheritance merged result with no `extends`, `includes`, or `[unset]` directives, so the build can be inspected or re-run without the parent / fragment files being present. The `build_id` hash also reflects the flattened form, so a parent-only change invalidates the cache correctly.
 
 ## Example
 
-Minimal Postgres + Redis:
+Postgres + Redis with an env-extracted password:
 
 ```toml
 [ssg]
@@ -191,13 +225,19 @@ runtime = "dind"
 image = "postgres:16"
 ports = [5432]
 volumes = ["/var/coast-data/postgres:/var/lib/postgresql/data"]
-env = { POSTGRES_USER = "coast", POSTGRES_PASSWORD = "coast" }
+env = { POSTGRES_USER = "coast" }
 auto_create_db = true
 
 [shared_services.redis]
 image = "redis:7-alpine"
 ports = [6379]
 volumes = ["/var/coast-data/redis:/data"]
+
+[secrets.pg_password]
+extractor = "env"
+var = "MY_PG_PASSWORD"
+inject = "env:POSTGRES_PASSWORD"
+services = ["postgres"]
 ```
 
 ## See Also
@@ -205,5 +245,8 @@ volumes = ["/var/coast-data/redis:/data"]
 - [Shared Service Groups](../shared_service_groups/README.md) -- concept overview
 - [SSG Building](../shared_service_groups/BUILDING.md) -- what `coast ssg build` does with this file
 - [SSG Volumes](../shared_service_groups/VOLUMES.md) -- volume declaration shapes, permissions, and the host-volume migration recipe
+- [SSG Secrets](../shared_service_groups/SECRETS.md) -- the build-time extract / run-time inject pipeline for `[secrets.*]`
+- [SSG Routing](../shared_service_groups/ROUTING.md) -- canonical / dynamic / virtual ports
 - [Coastfile: Shared Services](SHARED_SERVICES.md) -- consumer-side `from_group = true` syntax
+- [Coastfile: Secrets and Injection](SECRETS.md) -- the regular Coastfile `[secrets.*]` reference
 - [Coastfile Inheritance](INHERITANCE.md) -- the shared `extends` / `includes` / `[unset]` mental model

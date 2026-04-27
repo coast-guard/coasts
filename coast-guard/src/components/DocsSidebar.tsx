@@ -96,10 +96,11 @@ const DOC_TITLE_KEYS: Record<string, string> = {
   'shared_service_groups/README.md': 'docs.nav.sharedServiceGroups',
   'shared_service_groups/BUILDING.md': 'docs.nav.ssgBuilding',
   'shared_service_groups/LIFECYCLE.md': 'docs.nav.ssgLifecycle',
+  'shared_service_groups/ROUTING.md': 'docs.nav.ssgRouting',
   'shared_service_groups/VOLUMES.md': 'docs.nav.ssgVolumes',
   'shared_service_groups/CONSUMING.md': 'docs.nav.ssgConsuming',
+  'shared_service_groups/SECRETS.md': 'docs.nav.ssgSecrets',
   'shared_service_groups/CHECKOUT.md': 'docs.nav.ssgCheckout',
-  'shared_service_groups/PINNING.md': 'docs.nav.ssgPinning',
   'shared_service_groups/CLI.md': 'docs.nav.ssgCli',
 };
 

@@ -63,13 +63,26 @@ coastfiles/PROJECT.md
 coastfiles/WORKTREE_DIR.md
 coastfiles/PORTS.md
 coastfiles/SHARED_SERVICES.md
+coastfiles/SHARED_SERVICE_GROUPS.md
 coastfiles/SERVICES.md
 coastfiles/SECRETS.md
+coastfiles/VARIABLES.md
 coastfiles/VOLUMES.md
 coastfiles/ASSIGN.md
 coastfiles/INHERITANCE.md
 coastfiles/AGENT_SHELL.md
 coastfiles/MCP.md
+
+# Shared Service Groups
+shared_service_groups/README.md
+shared_service_groups/BUILDING.md
+shared_service_groups/LIFECYCLE.md
+shared_service_groups/ROUTING.md
+shared_service_groups/VOLUMES.md
+shared_service_groups/CONSUMING.md
+shared_service_groups/SECRETS.md
+shared_service_groups/CHECKOUT.md
+shared_service_groups/CLI.md
 
 # リモート Coasts
 remote_coasts/README.md
