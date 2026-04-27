@@ -16,7 +16,7 @@
 - [Checkout](CHECKOUT.md) - 将规范端口映射到某个 Coast 实例，以及你何时需要它。
 - [Lookup](LOOKUP.md) - 发现哪些 Coast 实例与代理当前的工作树匹配。
 - [Volume Topology](VOLUMES.md) - 共享服务、共享卷、隔离卷以及快照。
-- [Shared Services](SHARED_SERVICES.md) - 主机管理的基础设施服务和卷消歧。
+- [Shared Services](SHARED_SERVICES.md) - 主机管理的基础设施服务和卷消歧。另请参阅 [Shared Service Groups](../shared_service_groups/README.md)，了解如何在多个项目之间共享基础设施。
 - [Secrets and Extractors](SECRETS.md) - 提取主机密钥并将其注入到 Coast 容器中。
 - [Builds](BUILDS.md) - coast 构建的组成、产物存放位置、自动清理以及类型化构建。
 - [Coastfile Types](COASTFILE_TYPES.md) - 具有 extends、unset、omit 和 autostart 的可组合 Coastfile 变体。

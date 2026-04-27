@@ -2,7 +2,9 @@
 
 Coastfile은 프로젝트 루트에 위치하는 TOML 구성 파일입니다. 이 파일은 해당 프로젝트를 위한 격리된 개발 환경을 빌드하고 실행하는 데 Coast가 알아야 하는 모든 정보를 알려줍니다 — 어떤 서비스를 실행할지, 어떤 포트를 포워딩할지, 데이터를 어떻게 처리할지, 시크릿을 어떻게 관리할지 등을 포함합니다.
 
-모든 Coast 프로젝트에는 최소 하나의 Coastfile이 필요합니다. 파일 이름은 항상 `Coastfile`입니다(대문자 C, 확장자 없음). 서로 다른 워크플로를 위한 변형이 필요하다면, `Coastfile.light` 또는 `Coastfile.snap`처럼 타입이 지정된 Coastfile을 만들고 [기본 파일을 상속](INHERITANCE.md)할 수 있습니다.
+파일 이름은 항상 `Coastfile`입니다(대문자 C, 확장자 없음). 서로 다른 워크플로를 위한 변형이 필요하다면, `Coastfile.light` 또는 `Coastfile.snap`처럼 타입이 지정된 Coastfile을 만들고 [기본 파일을 상속](INHERITANCE.md)할 수 있습니다.
+
+Coastfile은 선택 사항입니다. `--name`과 `--compose`를 `coast build`에 직접 전달하여 CLI 플래그만으로 프로젝트를 완전히 빌드할 수 있습니다. 자세한 내용은 [Coastfile-less Builds](../concepts_and_terminology/BUILDS.md#coastfile-less-builds)를 참고하세요.
 
 Coastfile이 Coast의 나머지 부분과 어떤 관계인지 더 깊이 이해하려면 [Coasts](../concepts_and_terminology/COASTS.md) 및 [Builds](../concepts_and_terminology/BUILDS.md)를 참고하세요.
 
@@ -202,8 +204,10 @@ mount = "/data/db"
 | [Worktree Directories](WORKTREE_DIR.md) | `worktree_dir`, `default_worktree_dir` | 로컬 및 외부 worktree 디렉터리, 틸드 경로, Codex/Claude 통합 |
 | [Ports](PORTS.md) | `[ports]`, `[egress]` | 포트 포워딩, egress 선언, 기본 포트 |
 | [Volumes](VOLUMES.md) | `[volumes.*]` | 격리, 공유, 스냅샷 시드 볼륨 전략 |
-| [Shared Services](SHARED_SERVICES.md) | `[shared_services.*]` | 호스트 수준 데이터베이스 및 인프라 서비스 |
+| [Shared Services](SHARED_SERVICES.md) | `[shared_services.*]` | 호스트 수준 데이터베이스 및 인프라 서비스 (`from_group = true`는 [Shared Service Group](../shared_service_groups/README.md)에 참여하도록 설정합니다) |
+| [Shared Service Groups](SHARED_SERVICE_GROUPS.md) | `Coastfile.shared_service_groups` | 여러 프로젝트에 걸쳐 인프라 서비스를 호스팅하는 싱글턴 SSG용 타입 지정 Coastfile |
 | [Secrets](SECRETS.md) | `[secrets.*]`, `[inject]` | 시크릿 추출, 주입, 호스트 env/file 포워딩 |
+| [Variables](VARIABLES.md) | `${VAR}`, `${VAR:-default}` | Coastfile 값에서의 환경 변수 보간 |
 | [Bare Services](SERVICES.md) | `[services.*]` | Docker Compose 없이 프로세스를 직접 실행 |
 | [Agent Shell](AGENT_SHELL.md) | `[agent_shell]` | 컨테이너화된 에이전트 TUI 런타임 |
 | [MCP Servers](MCP.md) | `[mcp.*]`, `[mcp_clients.*]` | 내부 및 호스트 프록시 MCP 서버, 클라이언트 커넥터 |

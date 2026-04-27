@@ -66,6 +66,7 @@ const DOC_TITLE_KEYS: Record<string, string> = {
   'coastfiles/PROJECT.md': 'docs.nav.coastfileProject',
   'coastfiles/PORTS.md': 'docs.nav.coastfilePorts',
   'coastfiles/SHARED_SERVICES.md': 'docs.nav.coastfileSharedServices',
+  'coastfiles/SHARED_SERVICE_GROUPS.md': 'docs.nav.coastfileSharedServiceGroups',
   'coastfiles/SERVICES.md': 'docs.nav.coastfileBareServices',
   'coastfiles/SECRETS.md': 'docs.nav.coastfileSecrets',
   'coastfiles/VOLUMES.md': 'docs.nav.coastfileVolumes',
@@ -92,6 +93,15 @@ const DOC_TITLE_KEYS: Record<string, string> = {
   'recipes/README.md': 'docs.nav.recipes',
   'recipes/FULLSTACK_MONOREPO.md': 'docs.nav.recipesFullstackMonorepo',
   'recipes/NEXTJS.md': 'docs.nav.recipesNextjs',
+  'shared_service_groups/README.md': 'docs.nav.sharedServiceGroups',
+  'shared_service_groups/BUILDING.md': 'docs.nav.ssgBuilding',
+  'shared_service_groups/LIFECYCLE.md': 'docs.nav.ssgLifecycle',
+  'shared_service_groups/ROUTING.md': 'docs.nav.ssgRouting',
+  'shared_service_groups/VOLUMES.md': 'docs.nav.ssgVolumes',
+  'shared_service_groups/CONSUMING.md': 'docs.nav.ssgConsuming',
+  'shared_service_groups/SECRETS.md': 'docs.nav.ssgSecrets',
+  'shared_service_groups/CHECKOUT.md': 'docs.nav.ssgCheckout',
+  'shared_service_groups/CLI.md': 'docs.nav.ssgCli',
 };
 
 function docRoute(node: TreeNode): string {

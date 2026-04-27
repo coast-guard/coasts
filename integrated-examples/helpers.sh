@@ -114,10 +114,49 @@ clean_slate() {
 
     # Remove any leftover coast containers and volumes
     docker rm -f $(docker ps -aq --filter "label=coast.managed=true") 2>/dev/null || true
+
+    # Phase 25: sweep any `{project}-ssg` container. Under per-project
+    # SSGs (DESIGN §23) each project's SSG container is named
+    # `{project}-ssg`, so match by suffix to pick them all up.
+    # The legacy singleton `coast-ssg` literal stays as a safety net
+    # for any stale host state from pre-Phase-21.
+    docker ps -aq --filter "name=-ssg$" 2>/dev/null | xargs -r docker rm -f 2>/dev/null || true
+    docker rm -f coast-ssg 2>/dev/null || true
+
     docker volume ls -q --filter "name=coast-shared--" 2>/dev/null | xargs -r docker volume rm 2>/dev/null || true
     docker volume ls -q --filter "name=coast--" 2>/dev/null | xargs -r docker volume rm 2>/dev/null || true
+    # Phase 25: match `coast-dind--{project}--ssg` volumes for ANY project.
+    docker volume ls -q --filter "name=coast-dind--" --filter "name=--ssg$" 2>/dev/null \
+        | xargs -r docker volume rm 2>/dev/null || true
 
     echo "  Slate clean."
+}
+
+# Phase 25: tear down a specific project's SSG container AND its DinD
+# cache volume. Accepts one or more project names (for tests that
+# spin up multiple SSGs, e.g. the two-projects scenarios).
+#
+# Replaces the per-test defensive stanza:
+#
+#   docker rm -f coast-ssg 2>/dev/null || true
+#   docker volume ls -q --filter "name=coast-dind--coast--ssg" 2>/dev/null \
+#       | xargs -r docker volume rm 2>/dev/null || true
+#
+# Usage in a test's _cleanup() trap:
+#
+#   _cleanup() {
+#       ...
+#       cleanup_project_ssgs "coast-ssg-minimal"
+#   }
+#
+# See `coast-ssg/DESIGN.md §23` (per-project SSG container naming).
+cleanup_project_ssgs() {
+    local proj
+    for proj in "$@"; do
+        docker rm -f "${proj}-ssg" 2>/dev/null || true
+        docker volume ls -q --filter "name=coast-dind--${proj}--ssg" 2>/dev/null \
+            | xargs -r docker volume rm 2>/dev/null || true
+    done
 }
 
 start_daemon() {

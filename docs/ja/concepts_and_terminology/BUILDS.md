@@ -17,6 +17,45 @@ coast のビルドは、追加の支援機能が付いた Docker イメージの
 9. `latest` シンボリックリンクを新しいビルドに向けて更新します。
 10. 保持上限を超えた古いビルドを自動的に prune します。
 
+## Coastfile なしのビルド
+
+Coastfile を使わずに、設定を CLI フラグとして直接渡してプロジェクトをビルドできます:
+
+```bash
+coast build --name my-project --compose ./docker-compose.yml
+```
+
+Coastfile が存在しない場合に必要なフラグ:
+- `--name <NAME>` -- プロジェクト名
+- `--compose <PATH>` -- docker-compose ファイルへのパス
+
+一般的な設定用の追加フラグ:
+- `--port NAME=PORT` -- ポートマッピング（繰り返し指定可能）
+- `--runtime <dind|sysbox|podman>` -- コンテナランタイム
+- `--no-autostart` -- compose サービスの自動起動を無効化
+- `--primary-port <NAME>` -- プライマリポートのサービス名
+
+より複雑な設定（secrets、volumes、共有サービス）には、インライン TOML とともに `--config` を使用します:
+
+```bash
+coast build --name my-project --compose ./dc.yml \
+  --port web=3000 \
+  --config '[secrets.api_key]
+extractor = "env"
+var = "MY_API_KEY"
+inject = "env:API_KEY"'
+```
+
+### Coastfile の上書き
+
+ディスク上に Coastfile が存在する場合、CLI フラグはその値を上書きします。Coastfile はベース設定を提供し、フラグが優先されます:
+
+```bash
+coast build --name custom-name --port api=9090
+```
+
+これは既存の Coastfile を読み込みますが、`coast.name` を `custom-name` に置き換え、`api` ポートを追加（または上書き）します。
+
 ## ビルドの保存場所
 
 ```text
@@ -103,6 +142,20 @@ coast build --type snap  # uses Coastfile.snap, updates "latest-snap"
 ```
 
 `snap` ビルドの pruning が `default` ビルドに影響することはなく、その逆も同様です。
+
+## カスタム作業ディレクトリ
+
+デフォルトでは、`coast build` は Coastfile の親ディレクトリにプロジェクトを登録します。`--working-dir` フラグはこれを上書きし、ビルドの登録済みプロジェクトルートを Coastfile の場所から切り離します:
+
+```bash
+coast --working-dir /home/user/my-project build -f /ci/configs/Coastfile
+```
+
+これは `/ci/configs/Coastfile` にある Coastfile を使ってビルドしますが、プロジェクトルートは `/home/user/my-project` として登録します。manifest に保存される `project_root` によって `coast lookup` がインスタンスをどこで照合するかが決まるため、`/home/user/my-project` から `coast lookup` を実行すると、このビルドのインスタンスが見つかります。
+
+`--working-dir` には相対パスまたは絶対パスを指定できます。相対パスは現在のディレクトリを基準に解決されます。
+
+これは、CI パイプライン、モノレポ構成、あるいは Coastfile がプロジェクトソースとは別のディレクトリにあるあらゆるシナリオで役立ちます。
 
 ## リモートビルド
 

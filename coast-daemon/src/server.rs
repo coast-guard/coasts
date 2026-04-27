@@ -211,6 +211,48 @@ pub struct AppState {
     /// stop, rm, rebuild) acquire a permit before proceeding, serializing heavy
     /// Docker workflows within the same project.
     pub project_ops: Mutex<std::collections::HashMap<String, Arc<tokio::sync::Semaphore>>>,
+    /// Process-wide serialization lock for Shared Service Group mutators.
+    ///
+    /// Every SSG mutation (`run`, `start`, `stop`, `restart`, `rm`, and —
+    /// in Phase 3.5 — the `coast run` auto-start path) acquires this
+    /// mutex before touching the singleton DinD or its state rows.
+    /// Read-only verbs (`ps`, `ports`, `logs`, `exec`) do not take the
+    /// mutex. See `coast-ssg/DESIGN.md §17-5`.
+    pub ssg_mutex: Mutex<()>,
+    /// Phase 33: per-project SSG container stats history. Backs
+    /// the SSG → Stats tab the same way `stats_history` backs the
+    /// Instance → Stats tab, but keyed by `project` since there's
+    /// exactly one SSG per project (§23). Buffer is populated by
+    /// the `/api/v1/ssg/stats/stream` WebSocket handler and
+    /// replayed on reconnect.
+    pub ssg_stats_history: Mutex<
+        std::collections::HashMap<
+            String,
+            std::collections::VecDeque<coast_core::protocol::ContainerStats>,
+        >,
+    >,
+    /// Phase 33: per-(project, service) inner-container stats
+    /// history. Backs the SSG service detail page's Stats tab.
+    /// Keyed by `"<project>:<service>"`. Buffer is populated by
+    /// the `/api/v1/ssg/services/stats/stream` WebSocket handler
+    /// and replayed on reconnect. Stored as `serde_json::Value`
+    /// (vs. typed `ContainerStats`) because the backing
+    /// `parse_docker_stats_json` helper in `ws_service_stats.rs`
+    /// already emits a `ContainerStats`-shaped JSON value.
+    pub ssg_service_stats_history:
+        Mutex<std::collections::HashMap<String, std::collections::VecDeque<serde_json::Value>>>,
+    /// Tracks the PIDs of reverse-tunnel ssh children spawned by
+    /// `setup_shared_service_tunnels` for each remote coast instance.
+    /// Keyed by `(project, instance_name)`. In-memory only — reverse
+    /// tunnels are per-run child processes; a daemon restart respawns
+    /// them and repopulates this map via
+    /// `reestablish_shared_service_tunnels`.
+    ///
+    /// Used by `coast ssg stop/rm --force` to tear down tunnels for
+    /// shadow instances that are still consuming the SSG before
+    /// stopping or removing the singleton. See `coast-ssg/DESIGN.md
+    /// §20.6` and §17-19.
+    pub shared_service_tunnel_pids: Mutex<std::collections::HashMap<(String, String), Vec<u32>>>,
     /// Current display language. Updated when the user sets a language via the
     /// CLI or API. Handlers read from the `watch::Receiver` side.
     pub language_tx: tokio::sync::watch::Sender<String>,
@@ -278,6 +320,10 @@ impl AppState {
             service_health_cache: Mutex::new(std::collections::HashMap::new()),
             port_health_cache: Mutex::new(std::collections::HashMap::new()),
             project_ops: Mutex::new(std::collections::HashMap::new()),
+            ssg_mutex: Mutex::new(()),
+            ssg_stats_history: Mutex::new(std::collections::HashMap::new()),
+            ssg_service_stats_history: Mutex::new(std::collections::HashMap::new()),
+            shared_service_tunnel_pids: Mutex::new(std::collections::HashMap::new()),
             language_tx,
             language_rx,
             analytics: analytics_client,
@@ -318,6 +364,10 @@ impl AppState {
             service_health_cache: Mutex::new(std::collections::HashMap::new()),
             port_health_cache: Mutex::new(std::collections::HashMap::new()),
             project_ops: Mutex::new(std::collections::HashMap::new()),
+            ssg_mutex: Mutex::new(()),
+            ssg_stats_history: Mutex::new(std::collections::HashMap::new()),
+            ssg_service_stats_history: Mutex::new(std::collections::HashMap::new()),
+            shared_service_tunnel_pids: Mutex::new(std::collections::HashMap::new()),
             language_tx,
             language_rx,
             analytics: AnalyticsClient::noop(),
@@ -649,6 +699,41 @@ async fn dispatch_request_to_handler(
             let ok = r.is_ok();
             (r, ok, base_metadata.clone())
         }
+        Request::Ssg(ssg_req)
+            if matches!(
+                ssg_req.action,
+                coast_core::protocol::SsgAction::Build { .. }
+            ) =>
+        {
+            let r = handle_ssg_build_streaming(ssg_req, state, writer).await;
+            let ok = r.is_ok();
+            (r, ok, base_metadata.clone())
+        }
+        Request::Ssg(ssg_req)
+            if matches!(
+                ssg_req.action,
+                coast_core::protocol::SsgAction::Run
+                    | coast_core::protocol::SsgAction::Start
+                    | coast_core::protocol::SsgAction::Restart
+            ) =>
+        {
+            let r = handle_ssg_lifecycle_streaming(ssg_req, state, writer).await;
+            let ok = r.is_ok();
+            (r, ok, base_metadata.clone())
+        }
+        Request::Ssg(ssg_req)
+            if matches!(
+                ssg_req.action,
+                coast_core::protocol::SsgAction::Logs { follow: true, .. }
+            ) =>
+        {
+            // Reconstruct `request` with the full enum variant; the
+            // streaming handler destructures internally. We already
+            // moved `ssg_req` above the match guard, so rebuild it.
+            let r = handle_ssg_logs_streaming(Request::Ssg(ssg_req), state, writer).await;
+            let ok = r.is_ok();
+            (r, ok, base_metadata.clone())
+        }
         Request::RerunExtractors(req) => {
             let r = handle_rerun_extractors_streaming(req, state, writer).await;
             let ok = r.is_ok();
@@ -949,6 +1034,627 @@ async fn handle_build_streaming(
         }),
     };
     write_response(writer, &final_response).await
+}
+
+/// Handle a `coast ssg build` request with streaming progress output.
+///
+/// Mirrors [`handle_build_streaming`] but uses
+/// [`Response::SsgProgress`] + [`Response::Ssg`] for the stream and the
+/// final response. Delegates all real work to
+/// [`coast_ssg::daemon_integration::build_ssg`]. See
+/// `coast-ssg/DESIGN.md §9.1`.
+async fn handle_ssg_build_streaming(
+    req: coast_core::protocol::SsgRequest,
+    state: &AppState,
+    writer: &mut tokio::net::unix::OwnedWriteHalf,
+) -> Result<()> {
+    let coast_core::protocol::SsgRequest { project, action } = req;
+    let coast_core::protocol::SsgAction::Build {
+        file,
+        working_dir,
+        config,
+    } = action
+    else {
+        unreachable!("handle_ssg_build_streaming only handles SsgAction::Build")
+    };
+
+    let Some(_operation_guard) =
+        begin_streaming_update_operation(state, UpdateOperationKind::Build, None, None, writer)
+            .await?
+    else {
+        return Ok(());
+    };
+
+    let Some(docker) = state.docker.as_ref() else {
+        let resp = Response::Error(ErrorResponse {
+            error: "coast ssg build requires Docker to be available on the host daemon. \
+                    Start Docker Desktop / Colima / OrbStack and restart coastd."
+                .to_string(),
+        });
+        return write_response(writer, &resp).await;
+    };
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<BuildProgressEvent>(64);
+
+    let inputs = coast_ssg::daemon_integration::SsgBuildInputs {
+        project,
+        file,
+        working_dir,
+        config,
+    };
+
+    // Phase 16: read consumer pin ids before the async build so
+    // auto_prune can preserve them. Scoped block so the state guard
+    // doesn't cross any awaits below.
+    let pinned_build_ids: std::collections::HashSet<String> = {
+        use coast_ssg::state::SsgStateExt;
+        let db = state.db.lock().await;
+        db.list_ssg_consumer_pins()?
+            .into_iter()
+            .map(|p| p.build_id)
+            .collect()
+    };
+
+    let handler: std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = std::result::Result<
+                        coast_ssg::daemon_integration::SsgBuildOutcome,
+                        CoastError,
+                    >,
+                > + Send,
+        >,
+    > = Box::pin(async move {
+        let ops = coast_ssg::docker_ops::BollardSsgDockerOps::new(docker);
+        coast_ssg::daemon_integration::build_ssg(inputs, &ops, pinned_build_ids, tx).await
+    });
+
+    let build_result =
+        forward_streaming_progress(handler, &mut rx, writer, Response::SsgProgress).await;
+
+    let final_response = match build_result {
+        Ok(outcome) => {
+            // Phase 23: record the new build as the project's
+            // latest. This is what replaces the global
+            // `~/.coast/ssg/latest` fallback on the consumer side.
+            // Doing the state write here (not inside `build_ssg`)
+            // keeps the async closure state-free and lets us reuse
+            // the same `SsgStateExt` handle the daemon already holds.
+            {
+                use coast_ssg::state::SsgStateExt;
+                let db = state.db.lock().await;
+                if let Err(err) = db.set_latest_build_id(&outcome.project, &outcome.build_id) {
+                    // Surface the failure via the final response
+                    // rather than swallowing it — consumers would
+                    // otherwise hit "no SSG build for project".
+                    Response::Error(ErrorResponse {
+                        error: format!(
+                            "build succeeded but failed to record \
+                             latest_build_id for project '{}': {err}",
+                            outcome.project,
+                        ),
+                    })
+                } else {
+                    Response::Ssg(outcome.response)
+                }
+            }
+        }
+        Err(e) => Response::Error(ErrorResponse {
+            error: e.to_string(),
+        }),
+    };
+    write_response(writer, &final_response).await
+}
+
+/// Stream progress events for `coast ssg run / start / restart`.
+///
+/// Mirrors [`handle_ssg_build_streaming`]. Acquires `ssg_mutex` for
+/// the duration of the lifecycle verb (every SSG mutator serializes
+/// via this process-wide lock — see `coast-ssg/DESIGN.md §17-5`).
+///
+/// State reads happen before the async Docker section; state writes
+/// happen after. `StateDb` wraps `!Sync` rusqlite, so holding a lock
+/// guard across an `.await` would reject the `Send` bound on the
+/// streaming future.
+async fn handle_ssg_lifecycle_streaming(
+    req: coast_core::protocol::SsgRequest,
+    state: &Arc<AppState>,
+    writer: &mut tokio::net::unix::OwnedWriteHalf,
+) -> Result<()> {
+    let Some(_operation_guard) =
+        begin_streaming_update_operation(state, UpdateOperationKind::Build, None, None, writer)
+            .await?
+    else {
+        return Ok(());
+    };
+
+    let Some(docker) = state.docker.as_ref() else {
+        let resp = Response::Error(ErrorResponse {
+            error: "coast ssg lifecycle verbs require Docker to be available on the host daemon. \
+                    Start Docker Desktop / Colima / OrbStack and restart coastd."
+                .to_string(),
+        });
+        return write_response(writer, &resp).await;
+    };
+
+    let _ssg_guard = state.ssg_mutex.lock().await;
+
+    let coast_core::protocol::SsgRequest { project, action } = req;
+    let final_response = match action {
+        coast_core::protocol::SsgAction::Run => {
+            run_streaming_run(&project, state, &docker, writer).await
+        }
+        coast_core::protocol::SsgAction::Start => {
+            run_streaming_start_or_restart(
+                &project, state, &docker, writer, /*restart=*/ false,
+            )
+            .await
+        }
+        coast_core::protocol::SsgAction::Restart => {
+            run_streaming_start_or_restart(&project, state, &docker, writer, /*restart=*/ true)
+                .await
+        }
+        _ => unreachable!("handle_ssg_lifecycle_streaming only handles Run/Start/Restart"),
+    };
+
+    write_response(writer, &final_response).await
+}
+
+async fn run_streaming_run(
+    project: &str,
+    state: &Arc<AppState>,
+    docker: &bollard::Docker,
+    writer: &mut tokio::net::unix::OwnedWriteHalf,
+) -> Response {
+    // Phase 23: resolve the project's build BEFORE spawning the
+    // async build pipeline. `pin > ssg.latest_build_id > error`.
+    // No global `~/.coast/ssg/latest` fallback.
+    let resolved_build_id = {
+        use coast_ssg::state::SsgStateExt;
+        let db = state.db.lock().await;
+        let pin = match db.get_ssg_consumer_pin(project) {
+            Ok(p) => p,
+            Err(e) => {
+                return Response::Error(ErrorResponse {
+                    error: e.to_string(),
+                });
+            }
+        };
+        let latest = match db.get_ssg(project) {
+            Ok(rec) => rec.and_then(|r| r.latest_build_id),
+            Err(e) => {
+                return Response::Error(ErrorResponse {
+                    error: e.to_string(),
+                });
+            }
+        };
+        pin.map(|p| p.build_id).or(latest)
+    };
+    let Some(resolved_build_id) = resolved_build_id else {
+        return Response::Error(ErrorResponse {
+            error: format!(
+                "no SSG build found for project '{project}'. Run \
+                 `coast ssg build` in the directory containing your \
+                 Coastfile.shared_service_groups."
+            ),
+        });
+    };
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<BuildProgressEvent>(64);
+
+    let docker_clone = docker.clone();
+    let project_for_task = project.to_string();
+    let build_id_for_task = resolved_build_id.clone();
+    let handler: std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = std::result::Result<
+                        coast_ssg::daemon_integration::SsgRunOutcome,
+                        CoastError,
+                    >,
+                > + Send,
+        >,
+    > = Box::pin(async move {
+        let ops = coast_ssg::docker_ops::BollardSsgDockerOps::new(docker_clone);
+        coast_ssg::daemon_integration::run_ssg_with_build_id(
+            &project_for_task,
+            &ops,
+            Some(&build_id_for_task),
+            tx,
+        )
+        .await
+    });
+
+    let result = forward_streaming_progress(handler, &mut rx, writer, Response::SsgProgress).await;
+
+    match result {
+        Ok(outcome) => {
+            let build_id = outcome.build_id.clone();
+            let resp_or_err = {
+                let db = state.db.lock().await;
+                outcome.apply_to_state_and_response(
+                    project,
+                    &*db,
+                    "running",
+                    format!("SSG running on build {build_id}"),
+                )
+            };
+            match resp_or_err {
+                Ok(mut resp) => {
+                    // Phase 6: after the state DB has the new
+                    // ssg_services rows, re-spawn any preserved
+                    // checkout socats against the fresh dynamic
+                    // ports. Messages (e.g. "dropped stale
+                    // checkout") are appended to the response so the
+                    // CLI surfaces them.
+                    append_checkout_respawn_messages(project, state, &mut resp).await;
+                    // Phase 28: with fresh dyn ports in
+                    // ssg_services, allocate (or reuse) each
+                    // service's stable virtual port and start /
+                    // refresh the host socat that forwards
+                    // virtual_port → 127.0.0.1:<dyn>. The host
+                    // socat runs on the host (not inside a
+                    // container), so the upstream binds to host
+                    // loopback rather than `host.docker.internal`
+                    // — see `host_socat::socat_spawn_args`. The
+                    // virtual port stays the same across SSG
+                    // rebuilds, so consumer in-DinD socats never
+                    // need re-execing — replaces the Phase 11
+                    // refresh entirely. See
+                    // `coast-ssg/DESIGN.md §24` and §32.
+                    append_host_socat_refresh_messages(project, state, &mut resp).await;
+                    Response::Ssg(resp)
+                }
+                Err(e) => Response::Error(ErrorResponse {
+                    error: e.to_string(),
+                }),
+            }
+        }
+        Err(e) => Response::Error(ErrorResponse {
+            error: e.to_string(),
+        }),
+    }
+}
+
+async fn run_streaming_start_or_restart(
+    project: &str,
+    state: &Arc<AppState>,
+    docker: &bollard::Docker,
+    writer: &mut tokio::net::unix::OwnedWriteHalf,
+    restart: bool,
+) -> Response {
+    use coast_ssg::state::SsgStateExt;
+    let prepared = {
+        let db = state.db.lock().await;
+        match db.get_ssg(project) {
+            Ok(Some(record)) => match db.list_ssg_services(project) {
+                Ok(services) => {
+                    let plans: Vec<coast_ssg::runtime::ports::SsgServicePortPlan> = services
+                        .into_iter()
+                        .map(|s| coast_ssg::runtime::ports::SsgServicePortPlan {
+                            service: s.service_name,
+                            container_port: s.container_port,
+                            dynamic_host_port: s.dynamic_host_port,
+                        })
+                        .collect();
+                    Ok((record, plans))
+                }
+                Err(e) => Err(e),
+            },
+            Ok(None) => {
+                return Response::Error(ErrorResponse {
+                    error: format!(
+                        "SSG for project '{project}' has not been created. \
+                         Run `coast ssg run` to create and start it."
+                    ),
+                });
+            }
+            Err(e) => Err(e),
+        }
+    };
+    let (record, existing_plans) = match prepared {
+        Ok(pair) => pair,
+        Err(e) => {
+            return Response::Error(ErrorResponse {
+                error: e.to_string(),
+            });
+        }
+    };
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<BuildProgressEvent>(64);
+
+    let docker_clone = docker.clone();
+    let record_clone = record.clone();
+    let plans_clone = existing_plans;
+    let handler: std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = std::result::Result<
+                        coast_ssg::daemon_integration::SsgStartOutcome,
+                        CoastError,
+                    >,
+                > + Send,
+        >,
+    > = if restart {
+        Box::pin(async move {
+            let ops = coast_ssg::docker_ops::BollardSsgDockerOps::new(docker_clone);
+            coast_ssg::daemon_integration::restart_ssg(&ops, &record_clone, plans_clone, tx).await
+        })
+    } else {
+        Box::pin(async move {
+            let ops = coast_ssg::docker_ops::BollardSsgDockerOps::new(docker_clone);
+            coast_ssg::daemon_integration::start_ssg(&ops, &record_clone, plans_clone, tx).await
+        })
+    };
+
+    let result = forward_streaming_progress(handler, &mut rx, writer, Response::SsgProgress).await;
+
+    match result {
+        Ok(outcome) => {
+            let build_id = outcome.build_id.clone();
+            let resp_or_err = {
+                let db = state.db.lock().await;
+                outcome.apply_to_state_and_response(
+                    project,
+                    &*db,
+                    format!("SSG started on build {build_id}"),
+                )
+            };
+            match resp_or_err {
+                Ok(mut resp) => {
+                    // Phase 6: re-spawn preserved checkouts against
+                    // the refreshed dynamic ports. `start` keeps
+                    // existing ports; `restart` may allocate new
+                    // ones. Either way this is the correct moment.
+                    append_checkout_respawn_messages(project, state, &mut resp).await;
+                    // Phase 28: spawn / update the per-service host
+                    // socats so the stable virtual ports keep
+                    // forwarding to whatever dyn port `start` /
+                    // `restart` resolved. Idempotent when ports did
+                    // not change (`spawn_or_update` short-circuits
+                    // on matching argv). See
+                    // `coast-ssg/DESIGN.md §24`.
+                    append_host_socat_refresh_messages(project, state, &mut resp).await;
+                    Response::Ssg(resp)
+                }
+                Err(e) => Response::Error(ErrorResponse {
+                    error: e.to_string(),
+                }),
+            }
+        }
+        Err(e) => Response::Error(ErrorResponse {
+            error: e.to_string(),
+        }),
+    }
+}
+
+/// Append any re-spawn messages emitted by the Phase 6 checkout
+/// re-hydration step onto an existing `SsgResponse.message`. If there
+/// are no messages the response is returned unchanged.
+async fn append_checkout_respawn_messages(
+    project: &str,
+    state: &Arc<AppState>,
+    resp: &mut coast_core::protocol::SsgResponse,
+) {
+    let messages =
+        crate::handlers::ssg::checkout::respawn_checkouts_after_lifecycle(project, state).await;
+    if messages.is_empty() {
+        return;
+    }
+    if resp.message.is_empty() {
+        resp.message = messages.join("\n");
+    } else {
+        resp.message = format!("{}\n{}", resp.message, messages.join("\n"));
+    }
+}
+
+/// Phase 28: bring up (or refresh) the per-service host socats for
+/// `project` after an SSG lifecycle verb writes fresh dyn ports.
+/// Each surviving virtual port keeps forwarding to the new dyn
+/// port, so any local-running consumer's in-DinD socat continues to
+/// resolve `host.docker.internal:<virtual_port>` → SSG without ever
+/// being re-execed. See `coast-ssg/DESIGN.md §24`.
+///
+/// Appends a single-line `"Refreshed host socats for: <labels>."`
+/// summary to the response so the CLI surfaces the result. No-op
+/// (no message change) when the project has no `ssg_services`
+/// rows. Allocator errors are logged at `warn!` and swallowed —
+/// the SSG itself is already up at this point, so the host socat
+/// failure is a degraded-but-non-fatal mode.
+async fn append_host_socat_refresh_messages(
+    project: &str,
+    state: &Arc<AppState>,
+    resp: &mut coast_core::protocol::SsgResponse,
+) {
+    use crate::handlers::ssg::host_socat;
+    use crate::handlers::ssg::virtual_port_allocator::AllocatorConfig;
+
+    let cfg = AllocatorConfig::from_env();
+    let report = match host_socat::reconcile_project(state, project, &cfg).await {
+        Ok(v) => v,
+        Err(err) => {
+            tracing::warn!(
+                project = %project,
+                error = %err,
+                "host socat reconcile_project failed; consumers may see ECONNREFUSED on \
+                 shared services until the next ssg run/start/restart"
+            );
+            return;
+        }
+    };
+    if report.reconciled.is_empty() {
+        return;
+    }
+    let mut lines = vec![format!(
+        "Refreshed host socats for: {}.",
+        report.reconciled.join(", ")
+    )];
+    // Phase 28 collision-rebind: surface any virtual-port reassignments
+    // so the user knows which running consumers must be re-run.
+    for notice in &report.rebound {
+        lines.push(format!(
+            "WARNING: {} virtual port rebound from {} to {} (an external process took \
+             the old port). Re-run any local consumer that was already running so its \
+             in-DinD socat targets the new port.",
+            notice.label, notice.old_virtual_port, notice.new_virtual_port
+        ));
+    }
+    let block = lines.join("\n");
+    if resp.message.is_empty() {
+        resp.message = block;
+    } else {
+        resp.message = format!("{}\n{}", resp.message, block);
+    }
+}
+
+/// Handle `coast ssg logs --follow` by streaming subprocess output
+/// chunks back to the client.
+///
+/// Spawns either `docker logs -f {container_id}` (when no service is
+/// specified) or an `exec_in_coast` running `docker compose logs -f
+/// {service}` against the outer DinD. Each line arrives as one
+/// [`Response::SsgLogChunk`]. A final [`Response::Ssg`] closes the
+/// stream after the subprocess exits or the SSG is stopped.
+async fn handle_ssg_logs_streaming(
+    request: Request,
+    state: &Arc<AppState>,
+    writer: &mut tokio::net::unix::OwnedWriteHalf,
+) -> Result<()> {
+    let Request::Ssg(coast_core::protocol::SsgRequest {
+        project,
+        action:
+            coast_core::protocol::SsgAction::Logs {
+                service,
+                tail,
+                follow,
+            },
+    }) = request
+    else {
+        unreachable!("handle_ssg_logs_streaming only handles SsgAction::Logs")
+    };
+    debug_assert!(follow);
+
+    use coast_ssg::state::SsgStateExt;
+
+    // Fetch container_id synchronously before any `.await` that might
+    // outlive the lock guard.
+    let container_id = {
+        let db = state.db.lock().await;
+        match db.get_ssg(&project) {
+            Ok(Some(r)) => r.container_id,
+            Ok(None) => {
+                let resp = Response::Error(ErrorResponse {
+                    error: format!(
+                        "SSG for project '{project}' has not been created. \
+                         Run `coast ssg run` first."
+                    ),
+                });
+                return write_response(writer, &resp).await;
+            }
+            Err(e) => {
+                let resp = Response::Error(ErrorResponse {
+                    error: e.to_string(),
+                });
+                return write_response(writer, &resp).await;
+            }
+        }
+    };
+    let Some(container_id) = container_id else {
+        let resp = Response::Error(ErrorResponse {
+            error: "SSG record has no container id; nothing to tail.".to_string(),
+        });
+        return write_response(writer, &resp).await;
+    };
+
+    let tail_value = tail.unwrap_or(200).to_string();
+
+    let mut cmd = tokio::process::Command::new("docker");
+    let inner_compose_project = coast_ssg::runtime::lifecycle::ssg_compose_project(&project);
+    match service {
+        Some(ref svc) => {
+            cmd.args([
+                "exec",
+                &container_id,
+                "docker",
+                "compose",
+                "-f",
+                "/coast-artifact/compose.yml",
+                "-p",
+                &inner_compose_project,
+                "logs",
+                "--tail",
+                &tail_value,
+                "-f",
+                svc,
+            ]);
+        }
+        None => {
+            cmd.args(["logs", "--tail", &tail_value, "-f", &container_id]);
+        }
+    }
+
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            let resp = Response::Error(ErrorResponse {
+                error: format!("failed to spawn docker logs: {e}"),
+            });
+            return write_response(writer, &resp).await;
+        }
+    };
+
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+
+    use tokio::io::{AsyncBufReadExt, BufReader as TokioBufReader};
+
+    if let Some(stdout) = stdout {
+        let mut reader = TokioBufReader::new(stdout).lines();
+        loop {
+            match reader.next_line().await {
+                Ok(Some(line)) => {
+                    let chunk = coast_core::protocol::SsgLogChunk { chunk: line };
+                    if let Err(e) = write_response(writer, &Response::SsgLogChunk(chunk)).await {
+                        // Client disconnected; terminate the child.
+                        let _ = child.kill().await;
+                        return Err(e);
+                    }
+                }
+                Ok(None) => break,
+                Err(e) => {
+                    warn!(error = %e, "error reading docker logs stdout");
+                    break;
+                }
+            }
+        }
+    }
+
+    // Drain stderr so the subprocess can exit cleanly.
+    if let Some(stderr) = stderr {
+        let mut reader = TokioBufReader::new(stderr).lines();
+        while let Ok(Some(line)) = reader.next_line().await {
+            let chunk = coast_core::protocol::SsgLogChunk {
+                chunk: format!("[stderr] {line}"),
+            };
+            let _ = write_response(writer, &Response::SsgLogChunk(chunk)).await;
+        }
+    }
+
+    let _ = child.wait().await;
+
+    let final_resp = Response::Ssg(coast_core::protocol::SsgResponse {
+        message: "log stream closed.".to_string(),
+        status: None,
+        services: Vec::new(),
+        ports: Vec::new(),
+        findings: Vec::new(),
+        listings: Vec::new(),
+        builds: Vec::new(),
+    });
+    write_response(writer, &final_resp).await
 }
 
 /// Handle a logs request with streaming output chunks.
@@ -1693,6 +2399,33 @@ async fn dispatch_request(request: Request, state: &Arc<AppState>) -> Response {
         Request::Remote(req) => handlers::handle_remote(req, state).await,
         Request::IsSafeToUpdate(req) => handlers::handle_is_safe_to_update(req, state).await,
         Request::PrepareForUpdate(req) => handlers::handle_prepare_for_update(req, state).await,
+        Request::Ssg(ssg_req) => dispatch_ssg_request(ssg_req, state).await,
+    }
+}
+
+/// Non-streaming SSG dispatch. Extracted out of
+/// [`dispatch_request`] to keep its cognitive complexity under the
+/// clippy gate — the streaming variants (Build, Run, Start, Restart,
+/// Logs { follow: true }) are intercepted upstream in the top-level
+/// match; anything that reaches here is a blocking verb.
+async fn dispatch_ssg_request(
+    ssg_req: coast_core::protocol::SsgRequest,
+    state: &Arc<AppState>,
+) -> Response {
+    use coast_core::protocol::SsgAction;
+    match ssg_req.action {
+        SsgAction::Build { .. } => {
+            unreachable!("ssg build requests handled by handle_ssg_build_streaming")
+        }
+        SsgAction::Run | SsgAction::Start | SsgAction::Restart => {
+            unreachable!("ssg run/start/restart handled by handle_ssg_lifecycle_streaming")
+        }
+        _ => match handlers::ssg::handle(state.clone(), ssg_req).await {
+            Ok(resp) => Response::Ssg(resp),
+            Err(e) => Response::Error(ErrorResponse {
+                error: e.to_string(),
+            }),
+        },
     }
 }
 

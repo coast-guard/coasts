@@ -378,26 +378,49 @@ impl ProgressDisplay {
     }
 }
 
+/// Validate a user-supplied `--type <coastfile_type>` argument.
+///
+/// Rejects:
+/// - `default` / `toml` — reserved degenerate names.
+/// - SSG variants (`shared_service_groups`) — built via `coast ssg build`,
+///   not through this command. See `coast-ssg/DESIGN.md`.
+///
+/// Remote variants (`remote*`) are intentionally NOT rejected here:
+/// `coast build --type remote.foo` is a valid invocation that the
+/// downstream pipeline handles. Only SSG is fundamentally incompatible
+/// with `coast build`.
+pub(crate) fn validate_coastfile_type_arg(t: &str) -> Result<()> {
+    if t == "default" {
+        bail!(
+            "'--type default' is not allowed. \
+             The base 'Coastfile' is the default type. \
+             Run 'coast build' without --type."
+        );
+    }
+    if t == "toml" {
+        bail!(
+            "'--type toml' is not allowed. \
+             'toml' is a reserved name. Use 'Coastfile.toml' for the default type \
+             with syntax highlighting, or choose a different type name."
+        );
+    }
+    if coast_core::coastfile::Coastfile::is_ssg_type(Some(t)) {
+        bail!(
+            "'--type {t}' is a Shared Service Group variant; \
+             build it with 'coast ssg build' instead of 'coast build --type {t}'. \
+             SSGs are a separate build product (see coast-ssg/DESIGN.md)."
+        );
+    }
+    Ok(())
+}
+
 /// Execute the `coast build` command.
 ///
 /// The project name is derived from the Coastfile, not from the `--project` flag,
 /// since the Coastfile itself defines the project name.
 pub async fn execute(args: &BuildArgs, global_working_dir: &Option<PathBuf>) -> Result<()> {
     if let Some(ref t) = args.coastfile_type {
-        if t == "default" {
-            bail!(
-                "'--type default' is not allowed. \
-                 The base 'Coastfile' is the default type. \
-                 Run 'coast build' without --type."
-            );
-        }
-        if t == "toml" {
-            bail!(
-                "'--type toml' is not allowed. \
-                 'toml' is a reserved name. Use 'Coastfile.toml' for the default type \
-                 with syntax highlighting, or choose a different type name."
-            );
-        }
+        validate_coastfile_type_arg(t.as_str())?;
     }
 
     let has_inline_flags = args.project_name.is_some()
@@ -757,6 +780,46 @@ mod tests {
     fn test_build_args_long_file() {
         let cli = TestCli::try_parse_from(["test", "--file", "my/Coastfile"]).unwrap();
         assert_eq!(cli.args.coastfile_path, PathBuf::from("my/Coastfile"));
+    }
+
+    // -------------------------------------------------------------------
+    // validate_coastfile_type_arg tests
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn test_validate_coastfile_type_arg_rejects_default() {
+        let err = validate_coastfile_type_arg("default").unwrap_err();
+        assert!(err.to_string().contains("'--type default' is not allowed"));
+    }
+
+    #[test]
+    fn test_validate_coastfile_type_arg_rejects_toml() {
+        let err = validate_coastfile_type_arg("toml").unwrap_err();
+        assert!(err.to_string().contains("'--type toml' is not allowed"));
+    }
+
+    #[test]
+    fn test_validate_coastfile_type_arg_rejects_shared_service_groups() {
+        let err = validate_coastfile_type_arg("shared_service_groups").unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("Shared Service Group"),
+            "expected SSG mention, got: {msg}"
+        );
+        assert!(
+            msg.contains("coast ssg build"),
+            "expected pointer to 'coast ssg build', got: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_validate_coastfile_type_arg_accepts_user_variants() {
+        assert!(validate_coastfile_type_arg("light").is_ok());
+        assert!(validate_coastfile_type_arg("e2e").is_ok());
+        // Remote variants pass through `validate_coastfile_type_arg` —
+        // they're handled downstream by the remote-build pipeline.
+        assert!(validate_coastfile_type_arg("remote").is_ok());
+        assert!(validate_coastfile_type_arg("remote.light").is_ok());
     }
 
     // -------------------------------------------------------------------

@@ -52,6 +52,19 @@ export const qk = {
     ['buildsCompose', project, buildId] as const,
   buildsCoastfile: (project: string, buildId?: string) =>
     ['buildsCoastfile', project, buildId] as const,
+  ssgBuildsLs: (project: string) => ['ssgBuildsLs', project] as const,
+  ssgBuildInspect: (project: string, buildId: string) =>
+    ['ssgBuildInspect', project, buildId] as const,
+  ssgState: (project: string) => ['ssgState', project] as const,
+  ssgImages: (project: string) => ['ssgImages', project] as const,
+  ssgImageInspect: (project: string, image: string) =>
+    ['ssgImageInspect', project, image] as const,
+  ssgVolumes: (project: string) => ['ssgVolumes', project] as const,
+  ssgVolumeInspect: (project: string, volume: string) =>
+    ['ssgVolumeInspect', project, volume] as const,
+  ssgServiceInspect: (project: string, service: string) =>
+    ['ssgServiceInspect', project, service] as const,
+  ssgSecrets: (project: string) => ['ssgSecrets', project] as const,
   mcpServers: (project: string, name: string) =>
     ['mcpServers', project, name] as const,
   mcpTools: (project: string, name: string, server: string, tool?: string) =>
@@ -421,6 +434,58 @@ export function useServiceRmMutation() {
   });
 }
 
+// --- SSG inner-service mutations ---
+//
+// One-arg-shape (`{ project, service }`) variants used by the
+// SSG → Services tab toolbar. Each mutation invalidates the
+// project's `ssgState` query so the row's status pill flips
+// immediately after the action completes.
+
+interface SsgServiceMutationVars {
+  readonly project: string;
+  readonly service: string;
+}
+
+export function useSsgServiceStopMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ project, service }: SsgServiceMutationVars) =>
+      api.ssgServiceStop(project, service),
+    onSuccess: (_, { project }) =>
+      void qc.invalidateQueries({ queryKey: ['ssgState', project] }),
+  });
+}
+
+export function useSsgServiceStartMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ project, service }: SsgServiceMutationVars) =>
+      api.ssgServiceStart(project, service),
+    onSuccess: (_, { project }) =>
+      void qc.invalidateQueries({ queryKey: ['ssgState', project] }),
+  });
+}
+
+export function useSsgServiceRestartMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ project, service }: SsgServiceMutationVars) =>
+      api.ssgServiceRestart(project, service),
+    onSuccess: (_, { project }) =>
+      void qc.invalidateQueries({ queryKey: ['ssgState', project] }),
+  });
+}
+
+export function useSsgServiceRmMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ project, service }: SsgServiceMutationVars) =>
+      api.ssgServiceRm(project, service),
+    onSuccess: (_, { project }) =>
+      void qc.invalidateQueries({ queryKey: ['ssgState', project] }),
+  });
+}
+
 // --- Builds ---
 
 export function useBuildsLs(project?: string) {
@@ -435,6 +500,97 @@ export function useBuildsInspect(project: string, buildId?: string) {
     queryKey: qk.buildsInspect(project, buildId),
     queryFn: () => api.buildsInspect(project, buildId),
     enabled: project.length > 0,
+  });
+}
+
+export function useSsgBuildsLs(project: string) {
+  return useQuery({
+    queryKey: qk.ssgBuildsLs(project),
+    queryFn: () => api.ssgBuildsLs(project),
+    enabled: project.length > 0,
+  });
+}
+
+export function useSsgBuildInspect(project: string, buildId: string) {
+  return useQuery({
+    queryKey: qk.ssgBuildInspect(project, buildId),
+    queryFn: () => api.ssgBuildInspect(project, buildId),
+    enabled: project.length > 0 && buildId.length > 0,
+  });
+}
+
+export function useSsgState(project: string) {
+  return useQuery({
+    queryKey: qk.ssgState(project),
+    queryFn: () => api.ssgState(project),
+    enabled: project.length > 0,
+  });
+}
+
+/**
+ * Phase 33: list every secret known to the SSG keystore for
+ * `project` (base + overrides, merged). Backs the SsgSecretsTab.
+ */
+export function useSsgSecrets(project: string) {
+  return useQuery({
+    queryKey: qk.ssgSecrets(project),
+    queryFn: () => api.ssgListSecrets(project),
+    enabled: project.length > 0,
+  });
+}
+
+export function useSsgImages(project: string) {
+  return useQuery({
+    queryKey: qk.ssgImages(project),
+    queryFn: () => api.ssgImages(project),
+    enabled: project.length > 0,
+  });
+}
+
+/**
+ * Inspect a single image inside the SSG outer DinD. Same response
+ * shape as {@link useImageInspect}; powers the SSG flavor of
+ * `ImageDetailPage`.
+ */
+export function useSsgImageInspect(project: string, image: string) {
+  return useQuery({
+    queryKey: qk.ssgImageInspect(project, image),
+    queryFn: () => api.ssgImageInspect(project, image),
+    enabled: project.length > 0 && image.length > 0,
+  });
+}
+
+export function useSsgVolumes(project: string) {
+  return useQuery({
+    queryKey: qk.ssgVolumes(project),
+    queryFn: () => api.ssgVolumes(project),
+    enabled: project.length > 0,
+  });
+}
+
+/**
+ * Inspect a single named volume inside the SSG outer DinD. Same
+ * response shape as {@link useVolumeInspect}; powers the SSG
+ * flavor of `VolumeDetailPage`.
+ */
+export function useSsgVolumeInspect(project: string, volume: string) {
+  return useQuery({
+    queryKey: qk.ssgVolumeInspect(project, volume),
+    queryFn: () => api.ssgVolumeInspect(project, volume),
+    enabled: project.length > 0 && volume.length > 0,
+  });
+}
+
+/**
+ * Inspect a single inner compose service inside the SSG outer
+ * DinD. Same response shape as {@link useServiceInspect}; powers
+ * the SSG flavor of `ServiceDetailPage`.
+ */
+export function useSsgServiceInspect(project: string, service: string) {
+  return useQuery({
+    queryKey: qk.ssgServiceInspect(project, service),
+    queryFn: () => api.ssgServiceInspect(project, service),
+    enabled: project.length > 0 && service.length > 0,
   });
 }
 

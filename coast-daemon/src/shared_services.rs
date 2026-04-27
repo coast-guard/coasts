@@ -7,10 +7,12 @@
 /// Shared service data outlives instance deletion -- `coast rm` never touches
 /// shared service data. Only `coast shared-services rm` does.
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use tracing::debug;
 
-use coast_core::types::SharedServiceConfig;
+use coast_core::error::{CoastError, Result};
+use coast_core::types::{InjectType, SharedServiceConfig};
 
 /// Label key for identifying coast-managed shared service containers.
 pub const COAST_SHARED_LABEL: &str = "coast.shared-service";
@@ -65,21 +67,22 @@ pub fn database_name(instance: &str, db_name: &str) -> String {
 pub fn create_db_command(db_type: &str, db_name: &str) -> Vec<String> {
     match db_type.to_lowercase().as_str() {
         "postgres" | "postgresql" => {
-            // PostgreSQL does not support CREATE DATABASE IF NOT EXISTS.
-            // Use the psql \gexec trick: SELECT the CREATE DATABASE statement
-            // conditionally, then execute it. This avoids requiring the dblink
-            // extension.
-            let sql = format!(
-                "SELECT 'CREATE DATABASE \"{db_name}\"' WHERE NOT EXISTS \
-                 (SELECT FROM pg_database WHERE datname = '{db_name}')\\gexec"
+            // PostgreSQL does not support CREATE DATABASE IF NOT EXISTS,
+            // and psql's `\gexec` meta-command is rejected by `-c` mode.
+            // Emulate "CREATE IF NOT EXISTS" with a shell conditional:
+            // first query `pg_database`, then create only if the row is
+            // absent. `sh -c` is available in both postgres:*-alpine
+            // and postgres:*-bookworm images.
+            //
+            // Container-quoting note: this command travels through
+            // `docker exec ... sh -c "<shell>"` (for inline) and
+            // `docker compose exec -T postgres sh -c "<shell>"` (for
+            // SSG). Each intermediate hop passes argv elements as
+            // separate strings — no extra escaping needed.
+            let shell = format!(
+                r#"if [ -z "$(psql -U postgres -tAc "SELECT 1 FROM pg_database WHERE datname = '{db_name}'")" ]; then psql -U postgres -c 'CREATE DATABASE "{db_name}"'; fi"#
             );
-            vec![
-                "psql".to_string(),
-                "-U".to_string(),
-                "postgres".to_string(),
-                "-c".to_string(),
-                sql,
-            ]
+            vec!["sh".to_string(), "-c".to_string(), shell]
         }
         "mysql" | "mariadb" => {
             let sql = format!("CREATE DATABASE IF NOT EXISTS `{db_name}`;");
@@ -170,7 +173,7 @@ pub fn build_shared_container_config(
     let ports: Vec<String> = config
         .ports
         .iter()
-        .map(|port| format!("{}:{}", port.host_port, port.container_port))
+        .map(|port| format!("{}:{}", port.forwarding_port, port.container_port))
         .collect();
 
     let mut labels = HashMap::new();
@@ -215,6 +218,150 @@ pub fn auto_create_db_names(instances: &[&str], base_db_name: &str) -> Vec<Strin
         .iter()
         .map(|instance| database_name(instance, base_db_name))
         .collect()
+}
+
+/// Infer the database engine kind from a Docker image reference.
+///
+/// Returns the string accepted by [`create_db_command`] (`"postgres"`,
+/// `"mysql"`) or `None` when the image is not a recognized DB engine —
+/// non-DB services should skip `auto_create_db` rather than error.
+///
+/// See `coast-ssg/DESIGN.md §13`.
+pub fn infer_db_type(image: &str) -> Option<&'static str> {
+    let lower = image.to_lowercase();
+    if lower.contains("postgres") || lower.contains("postgis") {
+        Some("postgres")
+    } else if lower.contains("mariadb") || lower.contains("mysql") {
+        Some("mysql")
+    } else {
+        None
+    }
+}
+
+/// Per-instance database name for a consumer coast: `{instance}_{project}`.
+///
+/// This convention is shared by `auto_create_db` (the DB we create
+/// inside the shared service) and `inject` (the DB name embedded in
+/// the connection URL). Keeping them identical means the consumer's
+/// env var always points at the DB we actually created. See
+/// `coast-ssg/DESIGN.md §13` and the matching URL builder in
+/// [`coast-docker/src/compose.rs::build_connection_url`].
+pub fn consumer_db_name(instance: &str, project: &str) -> String {
+    format!("{instance}_{project}")
+}
+
+/// Compute the env vars to inject into a consumer coast for every
+/// shared service with `inject = Some(InjectType::Env(name))`.
+///
+/// Resolution rules (DESIGN.md §14):
+/// - Host: the service name (DNS-routable inside the coast via the
+///   socat-alias network).
+/// - Port: the canonical container port (first declared entry).
+///   Explicitly NOT the dynamic host port.
+/// - DB name: [`consumer_db_name`].
+///
+/// Services with `inject = Some(InjectType::File(_))` are handled by
+/// the sibling function [`shared_service_inject_file_writes`] — this
+/// function only covers the `env:` variant. Services without a
+/// declared port fall back to the image's default (postgres 5432,
+/// mysql 3306, redis 6379) via
+/// [`coast_docker::compose::build_connection_url`].
+pub fn shared_service_inject_env_vars(
+    services: &[SharedServiceConfig],
+    project: &str,
+    instance: &str,
+) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    let db_name = consumer_db_name(instance, project);
+
+    for svc in services {
+        let Some(inject) = &svc.inject else { continue };
+        let var_name = match inject {
+            InjectType::Env(name) => name,
+            // File injects produce file bodies, not env vars. The
+            // runtime path for those is
+            // `shared_service_inject_file_writes`.
+            InjectType::File(_) => continue,
+        };
+        let url = build_inject_url(svc, &db_name);
+        out.insert(var_name.clone(), url);
+    }
+    out
+}
+
+/// Compute the file writes to inject into a consumer coast for every
+/// shared service with `inject = Some(InjectType::File(path))`.
+///
+/// Each entry pairs the inner container path declared by the
+/// consumer with the connection URL that would be written into the
+/// file. The URL is byte-identical to what
+/// [`shared_service_inject_env_vars`] would set for the same
+/// service, so either inject variant lands the consumer at the same
+/// database.
+///
+/// Errors when any `inject = "file:<path>"` is relative. Docker bind
+/// mounts require absolute paths and the parser (intentionally)
+/// accepts any string after `file:`; validating here keeps the error
+/// close to the user's Coastfile rather than surfacing as a
+/// late-stage Docker mount failure.
+pub fn shared_service_inject_file_writes(
+    services: &[SharedServiceConfig],
+    project: &str,
+    instance: &str,
+) -> Result<Vec<(PathBuf, Vec<u8>)>> {
+    let mut out = Vec::new();
+    let db_name = consumer_db_name(instance, project);
+
+    for svc in services {
+        let Some(inject) = &svc.inject else { continue };
+        let container_path = match inject {
+            InjectType::File(path) => path,
+            // Env injects are handled by the sibling function.
+            InjectType::Env(_) => continue,
+        };
+        if !container_path.is_absolute() {
+            return Err(CoastError::coastfile(format!(
+                "shared service '{service}' declares `inject = \"file:{path}\"` but the path must \
+                 be absolute (Docker bind mounts cannot target relative paths). Use e.g. \
+                 `file:/run/secrets/{service}_url`.",
+                service = svc.name,
+                path = container_path.display(),
+            )));
+        }
+        let url = build_inject_url(svc, &db_name);
+        out.push((container_path.clone(), url.into_bytes()));
+    }
+    Ok(out)
+}
+
+/// Canonical inject connection URL for a shared service + consumer
+/// (instance, project). Shared by the env and file inject paths so
+/// both variants produce byte-identical bodies. See DESIGN.md §14.
+fn build_inject_url(svc: &SharedServiceConfig, db_name: &str) -> String {
+    let host = svc.name.as_str();
+    let port = svc
+        .ports
+        .first()
+        .map(|p| p.container_port)
+        .unwrap_or_else(|| default_port_for_image(&svc.image));
+    coast_docker::compose::build_connection_url(&svc.image, host, port, db_name)
+}
+
+/// Canonical port fallback when a shared service declares no
+/// `ports = [...]` list. Matches the image-kind heuristics in
+/// [`coast_docker::compose::build_connection_url`] so the fallback and
+/// URL-shape stay consistent.
+fn default_port_for_image(image: &str) -> u16 {
+    let lower = image.to_lowercase();
+    if lower.contains("postgres") {
+        5432
+    } else if lower.contains("mysql") || lower.contains("mariadb") {
+        3306
+    } else if lower.contains("redis") {
+        6379
+    } else {
+        0
+    }
 }
 
 #[cfg(test)]
@@ -347,26 +494,31 @@ mod tests {
     #[test]
     fn test_create_db_command_postgres() {
         let cmd = create_db_command("postgres", "mydb");
-        assert_eq!(cmd[0], "psql");
-        assert_eq!(cmd[1], "-U");
-        assert_eq!(cmd[2], "postgres");
-        assert_eq!(cmd[3], "-c");
-        assert!(cmd[4].contains("mydb"));
-        assert!(cmd[4].contains("CREATE DATABASE"));
-        assert!(cmd[4].contains("NOT EXISTS"));
+        // Uses sh -c for the "create-if-not-exists" emulation; see
+        // create_db_command doc for why \gexec can't be used with -c.
+        assert_eq!(cmd[0], "sh");
+        assert_eq!(cmd[1], "-c");
+        let shell = &cmd[2];
+        assert!(shell.contains("mydb"));
+        assert!(shell.contains("CREATE DATABASE"));
+        assert!(shell.contains("pg_database"));
+        assert!(
+            !shell.contains("\\gexec"),
+            "shell command must not use \\gexec (broken with psql -c)"
+        );
     }
 
     #[test]
     fn test_create_db_command_postgresql() {
         let cmd = create_db_command("postgresql", "testdb");
-        assert_eq!(cmd[0], "psql");
-        assert!(cmd[4].contains("testdb"));
+        assert_eq!(cmd[0], "sh");
+        assert!(cmd[2].contains("testdb"));
     }
 
     #[test]
     fn test_create_db_command_postgres_case_insensitive() {
         let cmd = create_db_command("POSTGRES", "mydb");
-        assert_eq!(cmd[0], "psql");
+        assert_eq!(cmd[0], "sh");
     }
 
     #[test]
@@ -398,7 +550,7 @@ mod tests {
     #[test]
     fn test_create_db_command_postgres_special_chars_in_name() {
         let cmd = create_db_command("postgres", "feature-oauth_dev");
-        assert!(cmd[4].contains("feature-oauth_dev"));
+        assert!(cmd[2].contains("feature-oauth_dev"));
     }
 
     // -----------------------------------------------------------
@@ -614,5 +766,275 @@ mod tests {
     #[test]
     fn test_coast_shared_label() {
         assert_eq!(COAST_SHARED_LABEL, "coast.shared-service");
+    }
+
+    // -----------------------------------------------------------
+    // infer_db_type tests (Phase 5)
+    // -----------------------------------------------------------
+
+    #[test]
+    fn test_infer_db_type_postgres() {
+        assert_eq!(infer_db_type("postgres:16"), Some("postgres"));
+        assert_eq!(infer_db_type("postgres:16-alpine"), Some("postgres"));
+        assert_eq!(
+            infer_db_type("ghcr.io/baosystems/postgis:12-3.3"),
+            Some("postgres")
+        );
+    }
+
+    #[test]
+    fn test_infer_db_type_mysql_and_mariadb() {
+        assert_eq!(infer_db_type("mysql:8"), Some("mysql"));
+        assert_eq!(infer_db_type("MYSQL:latest"), Some("mysql"));
+        assert_eq!(infer_db_type("mariadb:11"), Some("mysql"));
+    }
+
+    #[test]
+    fn test_infer_db_type_non_db_images() {
+        assert_eq!(infer_db_type("redis:7"), None);
+        assert_eq!(infer_db_type("nginx:1.25"), None);
+        assert_eq!(infer_db_type("rabbitmq:3-management"), None);
+    }
+
+    // -----------------------------------------------------------
+    // consumer_db_name tests (Phase 5)
+    // -----------------------------------------------------------
+
+    #[test]
+    fn test_consumer_db_name_basic() {
+        assert_eq!(consumer_db_name("dev-1", "my-app"), "dev-1_my-app");
+    }
+
+    #[test]
+    fn test_consumer_db_name_with_underscores_preserved() {
+        assert_eq!(
+            consumer_db_name("feature_x", "web_app"),
+            "feature_x_web_app"
+        );
+    }
+
+    // -----------------------------------------------------------
+    // shared_service_inject_env_vars tests (Phase 5)
+    // -----------------------------------------------------------
+
+    fn postgres_cfg_with_inject(inject: Option<InjectType>) -> SharedServiceConfig {
+        SharedServiceConfig {
+            name: "postgres".to_string(),
+            image: "postgres:16".to_string(),
+            ports: vec![SharedServicePort::same(5432)],
+            volumes: vec![],
+            env: HashMap::new(),
+            auto_create_db: false,
+            inject,
+        }
+    }
+
+    #[test]
+    fn test_inject_env_vars_postgres_builds_connection_url() {
+        let svc = postgres_cfg_with_inject(Some(InjectType::Env("DATABASE_URL".to_string())));
+        let vars = shared_service_inject_env_vars(&[svc], "my-app", "dev-1");
+        assert_eq!(vars.len(), 1);
+        assert_eq!(
+            vars.get("DATABASE_URL").unwrap(),
+            "postgres://postgres:dev@postgres:5432/dev-1_my-app"
+        );
+    }
+
+    #[test]
+    fn test_inject_env_vars_skips_services_without_inject() {
+        let svc = postgres_cfg_with_inject(None);
+        let vars = shared_service_inject_env_vars(&[svc], "my-app", "dev-1");
+        assert!(vars.is_empty());
+    }
+
+    #[test]
+    fn test_inject_env_vars_skips_file_inject() {
+        let svc = postgres_cfg_with_inject(Some(InjectType::File(std::path::PathBuf::from(
+            "/run/secrets/db",
+        ))));
+        let vars = shared_service_inject_env_vars(&[svc], "my-app", "dev-1");
+        assert!(vars.is_empty());
+    }
+
+    #[test]
+    fn test_inject_env_vars_multiple_services_produce_one_var_each() {
+        let pg = SharedServiceConfig {
+            name: "postgres".to_string(),
+            image: "postgres:16".to_string(),
+            ports: vec![SharedServicePort::same(5432)],
+            volumes: vec![],
+            env: HashMap::new(),
+            auto_create_db: false,
+            inject: Some(InjectType::Env("DATABASE_URL".to_string())),
+        };
+        let redis = SharedServiceConfig {
+            name: "redis".to_string(),
+            image: "redis:7".to_string(),
+            ports: vec![SharedServicePort::same(6379)],
+            volumes: vec![],
+            env: HashMap::new(),
+            auto_create_db: false,
+            inject: Some(InjectType::Env("REDIS_URL".to_string())),
+        };
+        let vars = shared_service_inject_env_vars(&[pg, redis], "my-app", "dev-1");
+        assert_eq!(vars.len(), 2);
+        assert!(vars.get("DATABASE_URL").unwrap().contains("postgres://"));
+        assert_eq!(vars.get("REDIS_URL").unwrap(), "redis://redis:6379");
+    }
+
+    #[test]
+    fn test_inject_env_vars_falls_back_to_default_port_when_ports_empty() {
+        let svc = SharedServiceConfig {
+            name: "postgres".to_string(),
+            image: "postgres:16".to_string(),
+            ports: vec![],
+            volumes: vec![],
+            env: HashMap::new(),
+            auto_create_db: false,
+            inject: Some(InjectType::Env("DATABASE_URL".to_string())),
+        };
+        let vars = shared_service_inject_env_vars(&[svc], "my-app", "dev-1");
+        // Falls back to 5432 (default postgres port) rather than 0.
+        assert_eq!(
+            vars.get("DATABASE_URL").unwrap(),
+            "postgres://postgres:dev@postgres:5432/dev-1_my-app"
+        );
+    }
+
+    #[test]
+    fn test_inject_env_vars_uses_canonical_port_not_dynamic() {
+        // DESIGN.md §14: port must be the canonical container port,
+        // never the dynamic host-published port. The URL builder takes
+        // whatever we give it, so we must pass container_port, not
+        // host_port.
+        let svc = SharedServiceConfig {
+            name: "postgres".to_string(),
+            image: "postgres:16".to_string(),
+            ports: vec![SharedServicePort {
+                forwarding_port: 61234,
+                container_port: 5432,
+            }],
+            volumes: vec![],
+            env: HashMap::new(),
+            auto_create_db: false,
+            inject: Some(InjectType::Env("DATABASE_URL".to_string())),
+        };
+        let vars = shared_service_inject_env_vars(&[svc], "my-app", "dev-1");
+        let url = vars.get("DATABASE_URL").unwrap();
+        assert!(url.contains(":5432/"), "expected canonical 5432, got {url}");
+        assert!(
+            !url.contains("61234"),
+            "must not embed dynamic host port, got {url}"
+        );
+    }
+
+    // -----------------------------------------------------------
+    // shared_service_inject_file_writes tests (Phase 13)
+    // -----------------------------------------------------------
+
+    #[test]
+    fn test_inject_file_writes_env_only_produces_no_file_writes() {
+        let svc = postgres_cfg_with_inject(Some(InjectType::Env("DATABASE_URL".to_string())));
+        let writes = shared_service_inject_file_writes(&[svc], "my-app", "dev-1").unwrap();
+        assert!(writes.is_empty());
+    }
+
+    #[test]
+    fn test_inject_file_writes_file_only_produces_one_write() {
+        let svc = postgres_cfg_with_inject(Some(InjectType::File(std::path::PathBuf::from(
+            "/run/secrets/db_url",
+        ))));
+        let writes = shared_service_inject_file_writes(&[svc], "my-app", "dev-1").unwrap();
+        assert_eq!(writes.len(), 1);
+        let (path, bytes) = &writes[0];
+        assert_eq!(path, &std::path::PathBuf::from("/run/secrets/db_url"));
+        assert_eq!(
+            std::str::from_utf8(bytes).unwrap(),
+            "postgres://postgres:dev@postgres:5432/dev-1_my-app"
+        );
+    }
+
+    #[test]
+    fn test_inject_file_writes_mixed_partitions_env_and_file() {
+        let pg = postgres_cfg_with_inject(Some(InjectType::File(std::path::PathBuf::from(
+            "/run/secrets/db_url",
+        ))));
+        let redis = SharedServiceConfig {
+            name: "redis".to_string(),
+            image: "redis:7".to_string(),
+            ports: vec![SharedServicePort::same(6379)],
+            volumes: vec![],
+            env: HashMap::new(),
+            auto_create_db: false,
+            inject: Some(InjectType::Env("REDIS_URL".to_string())),
+        };
+        let file_writes =
+            shared_service_inject_file_writes(&[pg.clone(), redis.clone()], "my-app", "dev-1")
+                .unwrap();
+        assert_eq!(file_writes.len(), 1);
+        assert_eq!(
+            file_writes[0].0,
+            std::path::PathBuf::from("/run/secrets/db_url")
+        );
+
+        let env_vars = shared_service_inject_env_vars(&[pg, redis], "my-app", "dev-1");
+        assert_eq!(env_vars.len(), 1);
+        assert!(env_vars.contains_key("REDIS_URL"));
+    }
+
+    #[test]
+    fn test_inject_file_writes_url_bytes_match_env_inject_bytes() {
+        // The file body must be byte-identical to the env var value
+        // for the same service + consumer so switching inject types
+        // doesn't surprise users.
+        let svc_env = postgres_cfg_with_inject(Some(InjectType::Env("DATABASE_URL".to_string())));
+        let svc_file = postgres_cfg_with_inject(Some(InjectType::File(std::path::PathBuf::from(
+            "/run/secrets/db_url",
+        ))));
+        let env_url = shared_service_inject_env_vars(&[svc_env], "my-app", "dev-1");
+        let file_url = shared_service_inject_file_writes(&[svc_file], "my-app", "dev-1").unwrap();
+
+        let env_bytes = env_url.get("DATABASE_URL").unwrap().as_bytes().to_vec();
+        let file_bytes = file_url[0].1.clone();
+        assert_eq!(env_bytes, file_bytes);
+    }
+
+    #[test]
+    fn test_inject_file_writes_rejects_relative_path() {
+        let svc = postgres_cfg_with_inject(Some(InjectType::File(std::path::PathBuf::from(
+            "run/secrets/db_url",
+        ))));
+        let err = shared_service_inject_file_writes(&[svc], "my-app", "dev-1").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("must be absolute"), "got: {msg}");
+        assert!(msg.contains("postgres"), "mentions service name: {msg}");
+    }
+
+    #[test]
+    fn test_inject_file_writes_skips_services_without_inject() {
+        let svc = postgres_cfg_with_inject(None);
+        let writes = shared_service_inject_file_writes(&[svc], "my-app", "dev-1").unwrap();
+        assert!(writes.is_empty());
+    }
+
+    #[test]
+    fn test_inject_file_writes_falls_back_to_default_port_when_ports_empty() {
+        let svc = SharedServiceConfig {
+            name: "postgres".to_string(),
+            image: "postgres:16".to_string(),
+            ports: vec![],
+            volumes: vec![],
+            env: HashMap::new(),
+            auto_create_db: false,
+            inject: Some(InjectType::File(std::path::PathBuf::from(
+                "/run/secrets/db_url",
+            ))),
+        };
+        let writes = shared_service_inject_file_writes(&[svc], "my-app", "dev-1").unwrap();
+        let body = std::str::from_utf8(&writes[0].1).unwrap();
+        assert!(
+            body.contains(":5432/"),
+            "expected canonical 5432, got {body}"
+        );
     }
 }

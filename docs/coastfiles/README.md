@@ -204,7 +204,8 @@ mount = "/data/db"
 | [Worktree Directories](WORKTREE_DIR.md) | `worktree_dir`, `default_worktree_dir` | Local and external worktree dirs, tilde paths, Codex/Claude integration |
 | [Ports](PORTS.md) | `[ports]`, `[egress]` | Port forwarding, egress declarations, primary port |
 | [Volumes](VOLUMES.md) | `[volumes.*]` | Isolated, shared, and snapshot-seeded volume strategies |
-| [Shared Services](SHARED_SERVICES.md) | `[shared_services.*]` | Host-level databases and infrastructure services |
+| [Shared Services](SHARED_SERVICES.md) | `[shared_services.*]` | Host-level databases and infrastructure services (`from_group = true` opts into a [Shared Service Group](../shared_service_groups/README.md)) |
+| [Shared Service Groups](SHARED_SERVICE_GROUPS.md) | `Coastfile.shared_service_groups` | The typed Coastfile for the singleton SSG that hosts infrastructure services across multiple projects |
 | [Secrets](SECRETS.md) | `[secrets.*]`, `[inject]` | Secret extraction, injection, and host env/file forwarding |
 | [Variables](VARIABLES.md) | `${VAR}`, `${VAR:-default}` | Environment variable interpolation in Coastfile values |
 | [Bare Services](SERVICES.md) | `[services.*]` | Running processes directly without Docker Compose |

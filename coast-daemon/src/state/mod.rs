@@ -17,8 +17,12 @@ mod ports;
 pub(crate) use ports::PortAllocationRecord;
 pub mod remotes;
 mod settings;
+mod shared_service_forwards;
 mod shared_services;
+mod ssg;
 mod user_config;
+
+pub use shared_service_forwards::SharedServiceForwardRecord;
 
 use std::path::Path;
 
@@ -160,6 +164,58 @@ impl StateDb {
                     sync_strategy TEXT NOT NULL DEFAULT 'rsync',
                     created_at TEXT NOT NULL
                 );
+
+                -- Shared Service Groups (SSG). Per-project (see coast-ssg/DESIGN.md §23).
+                -- `build_id`: the build the running container was started on
+                -- (set by `ssg run`/`start`; NULL before first run).
+                -- `latest_build_id`: the most recent `ssg build` output for
+                -- this project (set by `ssg build`). Consumers route via
+                -- pin > latest_build_id > hard-error — no global fallback.
+                CREATE TABLE IF NOT EXISTS ssg (
+                    project           TEXT PRIMARY KEY,
+                    container_id      TEXT,
+                    status            TEXT NOT NULL,
+                    build_id          TEXT,
+                    latest_build_id   TEXT,
+                    created_at        TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS ssg_services (
+                    project             TEXT NOT NULL,
+                    service_name        TEXT NOT NULL,
+                    container_port      INTEGER NOT NULL,
+                    dynamic_host_port   INTEGER NOT NULL,
+                    status              TEXT NOT NULL,
+                    PRIMARY KEY (project, service_name)
+                );
+
+                CREATE TABLE IF NOT EXISTS ssg_port_checkouts (
+                    project         TEXT NOT NULL,
+                    canonical_port  INTEGER NOT NULL,
+                    service_name    TEXT NOT NULL,
+                    socat_pid       INTEGER,
+                    created_at      TEXT NOT NULL,
+                    PRIMARY KEY (project, canonical_port)
+                );
+
+                CREATE TABLE IF NOT EXISTS ssg_consumer_pins (
+                    project     TEXT PRIMARY KEY,
+                    build_id    TEXT NOT NULL,
+                    created_at  TEXT NOT NULL
+                );
+
+                -- Phase 18: per-forward reverse-tunnel state for remote coasts.
+                -- See coast-ssg/DESIGN.md §20.
+                CREATE TABLE IF NOT EXISTS shared_service_forwards (
+                    project      TEXT NOT NULL,
+                    instance     TEXT NOT NULL,
+                    service_name TEXT NOT NULL,
+                    port         INTEGER NOT NULL,
+                    local_port   INTEGER NOT NULL,
+                    remote_port  INTEGER NOT NULL,
+                    PRIMARY KEY (project, instance, service_name, port),
+                    FOREIGN KEY (project, instance) REFERENCES instances(project, name) ON DELETE CASCADE
+                );
                 ",
             )
             .map_err(|e| CoastError::State {
@@ -175,7 +231,171 @@ impl StateDb {
         self.migrate_add_remote_host()?;
         self.migrate_add_remote_dynamic_port()?;
         self.migrate_add_remote_arch()?;
+        self.migrate_ssg_per_project()?;
+        self.migrate_add_ssg_latest_build_id()?;
+        self.migrate_add_ssg_virtual_ports_table()?;
+        self.migrate_add_ssg_shared_tunnels_table()?;
 
+        Ok(())
+    }
+
+    /// Migration: create the `ssg_shared_tunnels` table that tracks
+    /// the per-`(project, remote_host, service_name, container_port)`
+    /// reverse SSH tunnel shared by all consumer instances of a
+    /// project running on the same remote VM. See
+    /// `coast-ssg/DESIGN.md §24` (Phase 30).
+    ///
+    /// Phase 30 changed the remote-side reverse tunnel from "one ssh
+    /// -R per (instance, forward)" to "one ssh -R per (project,
+    /// remote_host) shared across instances". This row holds the
+    /// virtual port both sides of the `ssh -R` bind to, plus the
+    /// pid of the live ssh child so daemon restart can detect a
+    /// dead tunnel and respawn it.
+    ///
+    /// Kept separate from `shared_service_forwards` because the
+    /// latter is per-`(project, instance)` — Phase 30's coalescing
+    /// across instances of the same project is exactly what makes
+    /// this table necessary.
+    fn migrate_add_ssg_shared_tunnels_table(&self) -> Result<()> {
+        self.conn
+            .execute_batch(
+                "CREATE TABLE IF NOT EXISTS ssg_shared_tunnels (
+                    project        TEXT    NOT NULL,
+                    remote_host    TEXT    NOT NULL,
+                    service_name   TEXT    NOT NULL,
+                    container_port INTEGER NOT NULL,
+                    virtual_port   INTEGER NOT NULL,
+                    ssh_pid        INTEGER,
+                    created_at     TEXT    NOT NULL,
+                    PRIMARY KEY (project, remote_host, service_name, container_port)
+                );",
+            )
+            .map_err(|e| CoastError::State {
+                message: format!("failed to create ssg_shared_tunnels table: {e}"),
+                source: Some(Box::new(e)),
+            })?;
+        Ok(())
+    }
+
+    /// Migration: create the `ssg_virtual_ports` table that holds
+    /// the host-owned, stable-per-`(project, service_name, container_port)`
+    /// virtual port the consumer socat forwards to. See
+    /// `coast-ssg/DESIGN.md §24.5` for the allocation contract.
+    ///
+    /// Phase 28: PK is per `(project, service_name, container_port)`
+    /// — one virtual port per `ssg_services` row — so multi-port
+    /// shared services (e.g. minio's 9000+9001) route correctly.
+    /// Phase 26 used `(project, service_name)` and is incompatible
+    /// with multi-port services; the migration drops and recreates
+    /// because no production daemon ever wrote to the old shape
+    /// (`host_socat` was never wired).
+    ///
+    /// Kept separate from `ssg_services` because the latter is
+    /// wiped-and-reinserted on every `ssg run`
+    /// (`lifecycle.rs::apply_to_state_and_response`); virtual ports
+    /// are identity-scoped state and must survive lifecycle writes.
+    /// Same design as `ssg_consumer_pins` vs. `ssg`.
+    fn migrate_add_ssg_virtual_ports_table(&self) -> Result<()> {
+        // Phase 28: drop the Phase 26 shape if it exists so the
+        // recreate below installs the per-port PK. No production
+        // data is at stake — `host_socat::spawn_or_update` never ran
+        // before Phase 28, so the table is empty in every real
+        // daemon. This keeps developer DBs current without
+        // requiring a manual `coast-dev nuke`.
+        self.conn
+            .execute_batch("DROP TABLE IF EXISTS ssg_virtual_ports;")
+            .map_err(|e| CoastError::State {
+                message: format!("failed to drop legacy ssg_virtual_ports table: {e}"),
+                source: Some(Box::new(e)),
+            })?;
+        self.conn
+            .execute_batch(
+                "CREATE TABLE IF NOT EXISTS ssg_virtual_ports (
+                    project        TEXT    NOT NULL,
+                    service_name   TEXT    NOT NULL,
+                    container_port INTEGER NOT NULL,
+                    port           INTEGER NOT NULL,
+                    created_at     TEXT    NOT NULL,
+                    PRIMARY KEY (project, service_name, container_port)
+                );",
+            )
+            .map_err(|e| CoastError::State {
+                message: format!("failed to create ssg_virtual_ports table: {e}"),
+                source: Some(Box::new(e)),
+            })?;
+        Ok(())
+    }
+
+    /// Migration: add `latest_build_id TEXT` column to `ssg` for
+    /// per-project build tracking (coast-ssg/DESIGN.md §23, Phase 23).
+    /// Populated by `coast ssg build`; read by the consumer resolver
+    /// instead of the global `~/.coast/ssg/latest` symlink.
+    fn migrate_add_ssg_latest_build_id(&self) -> Result<()> {
+        let has_column = self
+            .conn
+            .prepare("SELECT latest_build_id FROM ssg LIMIT 0")
+            .is_ok();
+        if !has_column {
+            self.conn
+                .execute_batch("ALTER TABLE ssg ADD COLUMN latest_build_id TEXT;")
+                .map_err(|e| CoastError::State {
+                    message: format!("failed to add ssg.latest_build_id column: {e}"),
+                    source: Some(Box::new(e)),
+                })?;
+        }
+        Ok(())
+    }
+
+    /// Migration: flip the SSG tables from the singleton-per-host schema
+    /// (`ssg.id INTEGER PRIMARY KEY CHECK (id = 1)`) to the per-project
+    /// schema (`ssg.project TEXT PRIMARY KEY`). See
+    /// `coast-ssg/DESIGN.md §23` for the full correction narrative.
+    ///
+    /// Pre-launch, so existing singleton rows are dropped wholesale;
+    /// running coasts that referenced the old SSG must be stopped and
+    /// restarted after upgrade. The runbook in Phase 18.5 handles the
+    /// one-shot cleanup.
+    fn migrate_ssg_per_project(&self) -> Result<()> {
+        // `SELECT id FROM ssg LIMIT 0` succeeds iff the old schema is
+        // in place. The new schema uses `project` instead.
+        let has_old_id = self.conn.prepare("SELECT id FROM ssg LIMIT 0").is_ok();
+        if has_old_id {
+            self.conn
+                .execute_batch(
+                    "DROP TABLE IF EXISTS ssg;
+                     DROP TABLE IF EXISTS ssg_services;
+                     DROP TABLE IF EXISTS ssg_port_checkouts;
+                     CREATE TABLE ssg (
+                         project           TEXT PRIMARY KEY,
+                         container_id      TEXT,
+                         status            TEXT NOT NULL,
+                         build_id          TEXT,
+                         latest_build_id   TEXT,
+                         created_at        TEXT NOT NULL
+                     );
+                     CREATE TABLE ssg_services (
+                         project             TEXT NOT NULL,
+                         service_name        TEXT NOT NULL,
+                         container_port      INTEGER NOT NULL,
+                         dynamic_host_port   INTEGER NOT NULL,
+                         status              TEXT NOT NULL,
+                         PRIMARY KEY (project, service_name)
+                     );
+                     CREATE TABLE ssg_port_checkouts (
+                         project         TEXT NOT NULL,
+                         canonical_port  INTEGER NOT NULL,
+                         service_name    TEXT NOT NULL,
+                         socat_pid       INTEGER,
+                         created_at      TEXT NOT NULL,
+                         PRIMARY KEY (project, canonical_port)
+                     );",
+                )
+                .map_err(|e| CoastError::State {
+                    message: format!("failed to migrate ssg tables to per-project schema: {e}"),
+                    source: Some(Box::new(e)),
+                })?;
+            debug!("migrated ssg tables from singleton to per-project schema (pre-launch wipe)");
+        }
         Ok(())
     }
 

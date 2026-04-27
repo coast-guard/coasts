@@ -52,6 +52,10 @@ pub struct DindConfigParams<'a> {
     /// When true, mount code_path directly at /workspace instead of /host-project.
     /// Used for remote coasts where the workspace is synced via rsync/mutagen.
     pub mount_workspace_directly: bool,
+    /// Optional explicit container name. When `Some`, used verbatim instead
+    /// of the default `{project}-coasts-{instance_name}`. Used for the SSG
+    /// singleton (`coast-ssg`). Other callers should leave this `None`.
+    pub container_name_override: Option<String>,
 }
 
 impl<'a> DindConfigParams<'a> {
@@ -71,6 +75,7 @@ impl<'a> DindConfigParams<'a> {
             override_dir: None,
             extra_hosts: Vec::new(),
             mount_workspace_directly: false,
+            container_name_override: None,
         }
     }
 }
@@ -616,6 +621,7 @@ pub fn build_dind_config(params: DindConfigParams<'_>) -> ContainerConfig {
     config.volume_mounts = params.volume_mounts;
     config.tmpfs_mounts = params.tmpfs_mounts;
     config.extra_hosts = params.extra_hosts;
+    config.container_name_override = params.container_name_override;
 
     let workspace_mount_target = if params.mount_workspace_directly {
         "/workspace"
@@ -1384,5 +1390,43 @@ mod tests {
             parse_image_ref("registry.io:5000/ns/img:v1"),
             ("registry.io:5000/ns/img".to_string(), "v1".to_string())
         );
+    }
+
+    #[test]
+    fn test_container_name_default_convention() {
+        let config = ContainerConfig::new("my-app", "feature-oauth", DIND_IMAGE);
+        assert_eq!(config.container_name(), "my-app-coasts-feature-oauth");
+    }
+
+    #[test]
+    fn test_container_name_override_bypasses_default() {
+        let mut config = ContainerConfig::new("my-app", "feature-oauth", DIND_IMAGE);
+        config.container_name_override = Some("coast-ssg".to_string());
+        assert_eq!(config.container_name(), "coast-ssg");
+    }
+
+    #[test]
+    fn test_build_container_config_uses_override_name() {
+        let mut config = ContainerConfig::new("my-app", "feature-oauth", DIND_IMAGE);
+        config.container_name_override = Some("coast-ssg".to_string());
+        let params = DindRuntime::build_container_config(&config);
+        assert_eq!(params.name, "coast-ssg");
+    }
+
+    #[test]
+    fn test_build_dind_config_plumbs_container_name_override() {
+        let code_path = PathBuf::from("/home/user/project");
+        let config = build_dind_config(DindConfigParams {
+            container_name_override: Some("coast-ssg".to_string()),
+            ..DindConfigParams::new("coast", "ssg", &code_path)
+        });
+        assert_eq!(config.container_name(), "coast-ssg");
+    }
+
+    #[test]
+    fn test_build_dind_config_no_override_uses_default() {
+        let code_path = PathBuf::from("/home/user/project");
+        let config = build_dind_config(DindConfigParams::new("my-app", "test", &code_path));
+        assert_eq!(config.container_name(), "my-app-coasts-test");
     }
 }

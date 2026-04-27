@@ -6,8 +6,8 @@ use crate::error::{CoastError, Result};
 use crate::types::{
     AssignAction, AssignConfig, BareServiceConfig, InjectType, McpClientConnectorConfig,
     McpClientFormat, McpProxyMode, McpServerConfig, RemoteConfig, RestartPolicy, SecretConfig,
-    SetupFileConfig, SharedServiceConfig, SharedServicePort, SyncStrategy, VolumeConfig,
-    VolumeStrategy,
+    SetupFileConfig, SharedServiceConfig, SharedServiceGroupRef, SharedServicePort, SyncStrategy,
+    VolumeConfig, VolumeStrategy,
 };
 
 use super::raw_types::*;
@@ -133,40 +133,127 @@ impl Coastfile {
         Ok(volumes)
     }
 
+    /// Parse the `[shared_services.*]` map, dispatching each entry on
+    /// the `from_group` flag into one of two buckets:
+    ///
+    /// - Inline entries (`from_group = false`, the default) produce
+    ///   `SharedServiceConfig` and end up in `Coastfile.shared_services`.
+    ///   These are spawned on the host Docker daemon at `coast run`.
+    /// - Group-reference entries (`from_group = true`) produce
+    ///   `SharedServiceGroupRef` and end up in
+    ///   `Coastfile.shared_service_group_refs`. These do not spawn
+    ///   anything at `coast run`; they consume the SSG (`coast-ssg`)
+    ///   singleton's published port. See `coast-ssg/DESIGN.md §6`.
     pub(super) fn parse_shared_services(
         raw_services: HashMap<String, RawSharedServiceConfig>,
-    ) -> Result<Vec<SharedServiceConfig>> {
-        let mut services = Vec::new();
+    ) -> Result<(Vec<SharedServiceConfig>, Vec<SharedServiceGroupRef>)> {
+        let mut inline = Vec::new();
+        let mut refs = Vec::new();
 
         for (name, raw) in raw_services {
-            let inject = match raw.inject {
-                Some(inject_str) => {
-                    let parsed = InjectType::parse(&inject_str).map_err(|e| {
-                        CoastError::coastfile(format!("shared_service '{name}': {e}"))
-                    })?;
-                    Some(parsed)
-                }
-                None => None,
-            };
-
-            let ports = raw
-                .ports
-                .into_iter()
-                .map(|port| Self::parse_shared_service_port(&name, port))
-                .collect::<Result<Vec<_>>>()?;
-
-            services.push(SharedServiceConfig {
-                name,
-                image: raw.image,
-                ports,
-                volumes: raw.volumes,
-                env: raw.env,
-                auto_create_db: raw.auto_create_db,
-                inject,
-            });
+            if raw.from_group {
+                refs.push(Self::parse_shared_service_group_ref(&name, raw)?);
+            } else {
+                inline.push(Self::parse_inline_shared_service(&name, raw)?);
+            }
         }
 
-        Ok(services)
+        Ok((inline, refs))
+    }
+
+    fn parse_inline_shared_service(
+        name: &str,
+        raw: RawSharedServiceConfig,
+    ) -> Result<SharedServiceConfig> {
+        let image = raw.image.ok_or_else(|| {
+            CoastError::coastfile(format!(
+                "shared_services.{name}: image is required (or set from_group = true to reference a service defined in the Shared Service Group)"
+            ))
+        })?;
+
+        let inject = match raw.inject {
+            Some(inject_str) => {
+                let parsed = InjectType::parse(&inject_str)
+                    .map_err(|e| CoastError::coastfile(format!("shared_service '{name}': {e}")))?;
+                Some(parsed)
+            }
+            None => None,
+        };
+
+        let ports = raw
+            .ports
+            .into_iter()
+            .map(|port| Self::parse_shared_service_port(name, port))
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(SharedServiceConfig {
+            name: name.to_string(),
+            image,
+            ports,
+            volumes: raw.volumes,
+            env: raw.env,
+            // Inline services have no upstream to inherit from, so
+            // `None` is equivalent to `Some(false)` (disabled).
+            auto_create_db: raw.auto_create_db.unwrap_or(false),
+            inject,
+        })
+    }
+
+    /// Validate and build a `SharedServiceGroupRef` from a
+    /// `from_group = true` entry.
+    ///
+    /// Forbidden fields (`image`, `ports`, `volumes`, `env`) are rejected
+    /// with a single error listing every forbidden field that was set.
+    /// Allowed fields are `auto_create_db` (treated as an optional
+    /// enable override) and `inject` (per-project env/file injection).
+    fn parse_shared_service_group_ref(
+        name: &str,
+        raw: RawSharedServiceConfig,
+    ) -> Result<SharedServiceGroupRef> {
+        let mut forbidden: Vec<&'static str> = Vec::new();
+        if raw.image.is_some() {
+            forbidden.push("image");
+        }
+        if !raw.ports.is_empty() {
+            forbidden.push("ports");
+        }
+        if !raw.volumes.is_empty() {
+            forbidden.push("volumes");
+        }
+        if !raw.env.is_empty() {
+            forbidden.push("env");
+        }
+
+        if !forbidden.is_empty() {
+            return Err(CoastError::coastfile(format!(
+                "shared_services.{name}: from_group = true forbids the following fields: {}",
+                forbidden.join(", ")
+            )));
+        }
+
+        // DESIGN.md §6 requires three-valued override semantics:
+        //   - None         -> inherit the SSG service's default
+        //   - Some(true)   -> force enable even if SSG disables it
+        //   - Some(false)  -> force disable even if SSG enables it
+        // `raw.auto_create_db` is `Option<bool>` so all three states
+        // round-trip through TOML cleanly.
+        let auto_create_db = raw.auto_create_db;
+
+        let inject = match raw.inject {
+            Some(inject_str) => {
+                let parsed = InjectType::parse(&inject_str).map_err(|e| {
+                    CoastError::coastfile(format!("shared_services.{name}.inject: {e}"))
+                })?;
+                Some(parsed)
+            }
+            None => None,
+        };
+
+        Ok(SharedServiceGroupRef {
+            name: name.to_string(),
+            auto_create_db,
+            inject,
+        })
     }
 
     fn parse_shared_service_port(

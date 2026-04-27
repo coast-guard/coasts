@@ -6,13 +6,39 @@ use ts_rs::TS;
 use crate::types::{AssignAction, PortMapping};
 
 /// A shared service port that should be forwarded to the remote DinD container.
+///
+/// Phase 18 symmetric-routing invariant: every forward carries both the
+/// canonical port the consumer app dials (`port`) AND a `remote_port` the
+/// daemon has chosen for the remote-side bind. sshd binds the reverse
+/// tunnel on `remote_port`; socat inside the remote DinD forwards
+/// canonical `port` traffic (bound to a docker0 alias IP) to
+/// `host.docker.internal:remote_port`. See
+/// [`coast-ssg/DESIGN.md §20`](../../coast-ssg/DESIGN.md) for the full flow.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct SharedServicePortForward {
     /// Shared service name (e.g. "postgres", "redis").
     pub name: String,
-    /// Container port to forward (e.g. 5432, 6379).
+    /// Canonical container port the consumer app dials (e.g. 5432, 6379).
     pub port: u16,
+    /// Port on the remote VM where sshd binds the reverse tunnel.
+    ///
+    /// Phase 18 (inline shared services): a dynamic port allocated by the
+    /// daemon via `port_manager::allocate_dynamic_port` once per forward,
+    /// independent per coast so concurrent consumer coasts on one remote
+    /// cannot collide.
+    ///
+    /// Phase 30 (SSG-backed shared services, `from_group = true`): the
+    /// project's stable virtual port from `ssg_virtual_ports` —
+    /// **shared** across every consumer instance of the project on the
+    /// same remote VM. The daemon coalesces tunnels per
+    /// `(project, remote_host, service, container_port)` so only the
+    /// first instance spawns the `ssh -R`; subsequent instances reuse
+    /// it (see `ssg_shared_tunnels`). Both sides of `ssh -R` use the
+    /// same value, and the local endpoint terminates at the Phase 28
+    /// host socat for that virtual port. See
+    /// [`coast-ssg/DESIGN.md §24`](../../coast-ssg/DESIGN.md).
+    pub remote_port: u16,
 }
 
 /// Request to create and start a new coast instance.
@@ -335,5 +361,37 @@ mod tests {
         let json = r#"{"name":"x","project":"p","branch":null,"force_remove_dangling":false}"#;
         let req: RunRequest = serde_json::from_str(json).unwrap();
         assert!(!req.force_remove_dangling);
+    }
+
+    #[test]
+    fn test_shared_service_port_forward_round_trip_preserves_remote_port() {
+        // Phase 18 invariant: the wire protocol carries all three
+        // fields (name, port, remote_port). Ensure serde doesn't drop
+        // `remote_port` on round-trip so coast-service receives the
+        // exact port coast-daemon allocated.
+        let fwd = SharedServicePortForward {
+            name: "postgres".to_string(),
+            port: 5432,
+            remote_port: 61034,
+        };
+        let json = serde_json::to_string(&fwd).unwrap();
+        assert!(json.contains("\"remote_port\":61034"));
+        let deserialized: SharedServicePortForward = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.name, "postgres");
+        assert_eq!(deserialized.port, 5432);
+        assert_eq!(deserialized.remote_port, 61034);
+    }
+
+    #[test]
+    fn test_shared_service_port_forward_missing_remote_port_is_rejected() {
+        // Hard cutover: no serde default. A payload that omits
+        // `remote_port` fails deserialization so stale clients/servers
+        // from before Phase 18 are rejected loudly.
+        let json = r#"{"name":"postgres","port":5432}"#;
+        let result: serde_json::Result<SharedServicePortForward> = serde_json::from_str(json);
+        assert!(
+            result.is_err(),
+            "missing remote_port should fail deserialization, got: {result:?}"
+        );
     }
 }

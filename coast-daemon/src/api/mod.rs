@@ -16,6 +16,11 @@ pub mod ws_remote_logs;
 pub mod ws_remote_stats;
 pub mod ws_service_exec;
 pub mod ws_service_stats;
+pub mod ws_ssg_logs;
+pub mod ws_ssg_service_exec;
+pub mod ws_ssg_service_stats;
+pub mod ws_ssg_stats;
+pub mod ws_ssg_terminal;
 pub mod ws_stats;
 
 use std::path::PathBuf;
@@ -73,7 +78,12 @@ pub fn api_router(state: Arc<AppState>) -> Router {
         .merge(ws_lsp::router())
         .merge(ws_remote_exec::router())
         .merge(ws_remote_stats::router())
-        .merge(ws_remote_logs::router());
+        .merge(ws_remote_logs::router())
+        .merge(ws_ssg_terminal::router())
+        .merge(ws_ssg_logs::router())
+        .merge(ws_ssg_service_exec::router())
+        .merge(ws_ssg_service_stats::router())
+        .merge(ws_ssg_stats::router());
 
     let mut router = Router::new()
         .nest("/api/v1", api_v1)

@@ -10,7 +10,7 @@
 /// traffic from host ports to coast container ports.
 use std::collections::{HashMap, HashSet};
 use std::hash::Hasher;
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::net::{SocketAddr, TcpStream};
 use std::os::unix::process::CommandExt;
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -20,15 +20,9 @@ use nix::unistd::Pid;
 use tracing::{debug, info, warn};
 
 use coast_core::error::{CoastError, Result};
+use coast_core::port as core_port;
 
-/// The lower bound of the ephemeral/dynamic port range (inclusive).
-const PORT_RANGE_START: u16 = 49152;
-
-/// The upper bound of the ephemeral/dynamic port range (inclusive).
-const PORT_RANGE_END: u16 = 65535;
-
-/// Maximum number of attempts to find a free port before giving up.
-const MAX_ALLOCATION_ATTEMPTS: u32 = 1000;
+pub use core_port::PortBindStatus;
 
 const CHECKOUT_BRIDGE_IMAGE: &str = "alpine/socat:latest";
 const CHECKOUT_BRIDGE_LABEL: &str = "coast.role=checkout-bridge";
@@ -253,91 +247,30 @@ impl Default for PortForwarder {
 
 /// Allocate a dynamic port by finding an unused port in the ephemeral range.
 ///
-/// Tries to bind a TCP listener on successive ports starting from a random
-/// offset within the ephemeral range. Returns the first port that successfully
-/// binds.
-///
-/// # Errors
-///
-/// Returns `CoastError::Port` if no free port can be found after
-/// `MAX_ALLOCATION_ATTEMPTS` attempts.
+/// Delegates to [`coast_core::port::allocate_dynamic_port`].
 pub fn allocate_dynamic_port() -> Result<u16> {
-    allocate_dynamic_port_excluding(&HashSet::new())
+    core_port::allocate_dynamic_port()
 }
 
 /// Allocate a dynamic port while excluding a known set of unusable ports.
 ///
-/// This is used by provisioning retries so we don't immediately hand back a
-/// host port that Docker has already rejected.
+/// Delegates to [`coast_core::port::allocate_dynamic_port_excluding`].
 pub fn allocate_dynamic_port_excluding(excluded_ports: &HashSet<u16>) -> Result<u16> {
-    // Start from a pseudo-random offset to reduce collisions when multiple
-    // allocations happen in quick succession.
-    let range_size = (PORT_RANGE_END - PORT_RANGE_START + 1) as u32;
-    let start_offset = (std::process::id() ^ (timestamp_nanos() as u32)) % range_size;
-
-    let mut inspected_candidates = 0u32;
-    for i in 0..range_size {
-        let offset = (start_offset + i) % range_size;
-        let port = PORT_RANGE_START + offset as u16;
-
-        if excluded_ports.contains(&port) {
-            continue;
-        }
-
-        inspected_candidates += 1;
-        if inspected_candidates > MAX_ALLOCATION_ATTEMPTS {
-            break;
-        }
-
-        if is_port_available(port) {
-            debug!(port = port, "Allocated dynamic port");
-            return Ok(port);
-        }
-    }
-
-    Err(CoastError::port(format!(
-        "Could not find an available port after {MAX_ALLOCATION_ATTEMPTS} attempts \
-         in range {PORT_RANGE_START}-{PORT_RANGE_END}. Too many ports may be in use. \
-         Try stopping some coast instances with `coast stop <name>` to free ports."
-    )))
+    core_port::allocate_dynamic_port_excluding(excluded_ports)
 }
 
 /// Check whether a port is available by attempting to bind a TCP listener on it.
 ///
-/// Returns `true` if the port is free (bind succeeds), `false` otherwise.
+/// Delegates to [`coast_core::port::is_port_available`].
 pub fn is_port_available(port: u16) -> bool {
-    matches!(inspect_port_binding(port), PortBindStatus::Available)
+    core_port::is_port_available(port)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PortBindStatus {
-    Available,
-    InUse,
-    PermissionDenied,
-    UnexpectedError(String),
-}
-
-fn can_connect_to_port(port: u16) -> bool {
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    TcpStream::connect_timeout(&addr, Duration::from_millis(50)).is_ok()
-}
-
+/// Probe a port to determine its binding status.
+///
+/// Delegates to [`coast_core::port::inspect_port_binding`].
 pub fn inspect_port_binding(port: u16) -> PortBindStatus {
-    match TcpListener::bind(("127.0.0.1", port)) {
-        Ok(listener) => {
-            drop(listener);
-            PortBindStatus::Available
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => PortBindStatus::InUse,
-        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
-            if can_connect_to_port(port) {
-                PortBindStatus::InUse
-            } else {
-                PortBindStatus::PermissionDenied
-            }
-        }
-        Err(error) => PortBindStatus::UnexpectedError(error.to_string()),
-    }
+    core_port::inspect_port_binding(port)
 }
 
 pub fn running_in_wsl() -> bool {
@@ -828,23 +761,93 @@ pub fn kill_socat(pid: u32) -> Result<()> {
 /// Detection: uses `pkill` to kill socat processes matching our command pattern
 /// (`fork,reuseaddr` in the arguments — unique to coast's socat usage).
 pub fn cleanup_orphaned_socat() {
-    // Use pkill to kill all matching socat processes in one shot.
-    // The pattern "fork,reuseaddr" is specific to coast's socat forwarding commands.
-    match Command::new("pkill")
+    // Coast spawns two distinct kinds of long-lived socat:
+    //
+    //   1) Per-instance dynamic/canonical port forwarders (managed
+    //      by `port_manager`). When the daemon restarts they are
+    //      genuinely orphaned because their pids live only in
+    //      memory + state.db rows that point at dead pids — a
+    //      blanket pkill is the correct cleanup.
+    //
+    //   2) Per-(project, service, container_port) **host SSG
+    //      socats** (managed by `handlers::ssg::host_socat`). Their
+    //      pids are persisted to `~/.coast/socats/*.pid` files and
+    //      the daemon EXPECTS to find them alive across a restart
+    //      so consumers' shared-service routing keeps working. If
+    //      we kill them indiscriminately, every consumer in-DinD
+    //      socat sees ECONNREFUSED on its virtual-port upstream
+    //      until the next `ssg run/start` lifecycle event.
+    //
+    // Approach: enumerate the managed pidfiles first, build a
+    // skip-set, then walk `pgrep` output and only kill pids that
+    // are NOT in the skip-set. Falls back to the old broad pkill
+    // when `pgrep` is unavailable (matches existing best-effort
+    // behaviour).
+    let skip_pids = read_managed_host_socat_pids();
+
+    let Ok(pgrep_out) = Command::new("pgrep")
         .args(["-f", "socat TCP-LISTEN.*fork,reuseaddr"])
         .output()
-    {
-        Ok(output) => {
-            if output.status.success() {
-                info!("Cleaned up orphaned socat processes from previous session");
-            } else {
-                debug!("No orphaned socat processes found");
-            }
+    else {
+        debug!("pgrep not available, skipping orphaned socat cleanup");
+        return;
+    };
+    if !pgrep_out.status.success() && pgrep_out.stdout.is_empty() {
+        debug!("No orphaned socat processes found");
+        return;
+    }
+
+    let mut killed = 0usize;
+    let mut skipped = 0usize;
+    for line in String::from_utf8_lossy(&pgrep_out.stdout).lines() {
+        let Ok(pid) = line.trim().parse::<i32>() else {
+            continue;
+        };
+        if skip_pids.contains(&pid) {
+            skipped += 1;
+            continue;
         }
-        Err(_) => {
-            debug!("pkill not available, skipping orphaned socat cleanup");
+        // Best-effort SIGTERM. We don't bother escalating to SIGKILL
+        // because the cleanup runs before the new daemon is
+        // dispatching requests and a stuck socat will get killed
+        // by the next reconcile via `host_socat::spawn_or_update`.
+        unsafe {
+            let _ = libc::kill(pid as libc::pid_t, libc::SIGTERM);
+        }
+        killed += 1;
+    }
+    if killed > 0 || skipped > 0 {
+        info!(
+            killed = killed,
+            skipped_managed = skipped,
+            "cleaned up orphaned socat processes from previous session"
+        );
+    }
+}
+
+/// Walk `~/.coast/socats/` and return the pids that the daemon's
+/// host-socat supervisor is currently managing. These pids must
+/// be exempted from `cleanup_orphaned_socat`'s broad pkill so that
+/// SSG shared-service routing survives a daemon restart.
+fn read_managed_host_socat_pids() -> std::collections::HashSet<i32> {
+    let dir = crate::handlers::run::paths::host_socats_dir();
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return std::collections::HashSet::new();
+    };
+    let mut pids = std::collections::HashSet::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("pid") {
+            continue;
+        }
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        if let Ok(pid) = content.trim().parse::<i32>() {
+            pids.insert(pid);
         }
     }
+    pids
 }
 
 /// A socat command to restore during daemon startup.
@@ -898,18 +901,17 @@ pub fn restoration_commands(
     cmds
 }
 
-/// Get a nanosecond timestamp for pseudo-random seed mixing.
-/// Falls back to 0 if the system clock is unavailable.
-fn timestamp_nanos() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64)
-        .unwrap_or(0)
+/// Connect probe used by `spawn_socat_verified` to confirm a port is bound.
+fn can_connect_to_port(port: u16) -> bool {
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    TcpStream::connect_timeout(&addr, Duration::from_millis(50)).is_ok()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use coast_core::port::{PORT_RANGE_END, PORT_RANGE_START};
+    use std::net::TcpListener;
     use std::sync::{Mutex, OnceLock};
 
     fn env_lock() -> &'static Mutex<()> {

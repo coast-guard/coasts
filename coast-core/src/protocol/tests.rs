@@ -1302,6 +1302,34 @@ fn test_shared_service_error_event_serialization() {
     ));
 }
 
+#[test]
+fn test_ssg_starting_event_serialization() {
+    let event = CoastEvent::SsgStarting {
+        project: "my-app".to_string(),
+        build_id: "abcdef_20260420010203".to_string(),
+    };
+    let json = serde_json::to_value(&event).unwrap();
+    assert_eq!(json["event"], "ssg.starting");
+    assert_eq!(json["project"], "my-app");
+    assert_eq!(json["build_id"], "abcdef_20260420010203");
+    let deserialized: CoastEvent = serde_json::from_value(json).unwrap();
+    assert!(matches!(deserialized, CoastEvent::SsgStarting { .. }));
+}
+
+#[test]
+fn test_ssg_started_event_serialization() {
+    let event = CoastEvent::SsgStarted {
+        project: "my-app".to_string(),
+        build_id: "abcdef_20260420010203".to_string(),
+    };
+    let json = serde_json::to_value(&event).unwrap();
+    assert_eq!(json["event"], "ssg.started");
+    assert_eq!(json["project"], "my-app");
+    assert_eq!(json["build_id"], "abcdef_20260420010203");
+    let deserialized: CoastEvent = serde_json::from_value(json).unwrap();
+    assert!(matches!(deserialized, CoastEvent::SsgStarted { .. }));
+}
+
 // --- Lookup ---
 
 #[test]
@@ -1456,4 +1484,508 @@ fn test_port_health_changed_event_serialization() {
     assert_eq!(json["project"], "my-app");
     let deserialized: CoastEvent = serde_json::from_value(json).unwrap();
     assert!(matches!(deserialized, CoastEvent::PortHealthChanged { .. }));
+}
+
+// =========================================================================
+// SSG protocol round-trip tests. See coast-ssg/DESIGN.md §7.
+// =========================================================================
+
+fn ssg_req(action: SsgAction) -> SsgRequest {
+    SsgRequest {
+        project: "test-proj".to_string(),
+        action,
+    }
+}
+
+#[test]
+fn test_ssg_request_build_roundtrip() {
+    roundtrip_request(Request::Ssg(ssg_req(SsgAction::Build {
+        file: Some(PathBuf::from("/home/user/Coastfile.shared_service_groups")),
+        working_dir: Some(PathBuf::from("/home/user/project")),
+        config: Some("[shared_services.pg]\nimage = \"postgres:16\"\n".to_string()),
+    })));
+
+    // Also round-trip the all-None variant since each field is Option.
+    roundtrip_request(Request::Ssg(ssg_req(SsgAction::Build {
+        file: None,
+        working_dir: None,
+        config: None,
+    })));
+}
+
+#[test]
+fn test_ssg_request_simple_variants_roundtrip() {
+    for action in [
+        SsgAction::Run,
+        SsgAction::Start,
+        SsgAction::Restart,
+        SsgAction::Ps,
+        SsgAction::Ports,
+    ] {
+        roundtrip_request(Request::Ssg(ssg_req(action)));
+    }
+}
+
+#[test]
+fn test_ssg_request_stop_roundtrip() {
+    roundtrip_request(Request::Ssg(ssg_req(SsgAction::Stop { force: false })));
+    roundtrip_request(Request::Ssg(ssg_req(SsgAction::Stop { force: true })));
+}
+
+#[test]
+fn test_ssg_request_rm_roundtrip() {
+    roundtrip_request(Request::Ssg(ssg_req(SsgAction::Rm {
+        with_data: false,
+        force: false,
+    })));
+    roundtrip_request(Request::Ssg(ssg_req(SsgAction::Rm {
+        with_data: true,
+        force: false,
+    })));
+    roundtrip_request(Request::Ssg(ssg_req(SsgAction::Rm {
+        with_data: false,
+        force: true,
+    })));
+    roundtrip_request(Request::Ssg(ssg_req(SsgAction::Rm {
+        with_data: true,
+        force: true,
+    })));
+}
+
+#[test]
+fn test_ssg_request_stop_force_default_when_absent_in_json() {
+    // Older CLIs may send the Stop action without a `force` field.
+    // serde(default) must deserialize it as force=false.
+    let json = r#"{"type":"Ssg","project":"p","action":{"action":"Stop"}}"#;
+    let req: Request = serde_json::from_str(json).expect("stop without force should parse");
+    match req {
+        Request::Ssg(SsgRequest {
+            action: SsgAction::Stop { force },
+            ..
+        }) => assert!(!force),
+        other => panic!("expected Ssg::Stop, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_ssg_request_rm_force_default_when_absent_in_json() {
+    let json = r#"{"type":"Ssg","project":"p","action":{"action":"Rm","with_data":true}}"#;
+    let req: Request = serde_json::from_str(json).expect("rm without force should parse");
+    match req {
+        Request::Ssg(SsgRequest {
+            action: SsgAction::Rm { with_data, force },
+            ..
+        }) => {
+            assert!(with_data);
+            assert!(!force);
+        }
+        other => panic!("expected Ssg::Rm, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_ssg_request_logs_and_exec_roundtrip() {
+    roundtrip_request(Request::Ssg(ssg_req(SsgAction::Logs {
+        service: Some("postgres".to_string()),
+        tail: Some(100),
+        follow: true,
+    })));
+    roundtrip_request(Request::Ssg(ssg_req(SsgAction::Logs {
+        service: None,
+        tail: None,
+        follow: false,
+    })));
+
+    roundtrip_request(Request::Ssg(ssg_req(SsgAction::Exec {
+        service: Some("postgres".to_string()),
+        command: vec!["psql".to_string(), "-U".to_string(), "coast".to_string()],
+    })));
+    roundtrip_request(Request::Ssg(ssg_req(SsgAction::Exec {
+        service: None,
+        command: vec!["sh".to_string()],
+    })));
+}
+
+#[test]
+fn test_ssg_request_checkout_uncheckout_roundtrip() {
+    roundtrip_request(Request::Ssg(ssg_req(SsgAction::Checkout {
+        service: Some("postgres".to_string()),
+        all: false,
+    })));
+    roundtrip_request(Request::Ssg(ssg_req(SsgAction::Checkout {
+        service: None,
+        all: true,
+    })));
+    roundtrip_request(Request::Ssg(ssg_req(SsgAction::Uncheckout {
+        service: Some("redis".to_string()),
+        all: false,
+    })));
+    roundtrip_request(Request::Ssg(ssg_req(SsgAction::Uncheckout {
+        service: None,
+        all: true,
+    })));
+}
+
+#[test]
+fn test_ssg_progress_response_roundtrip() {
+    roundtrip_response(Response::SsgProgress(BuildProgressEvent::started(
+        "Pull postgres:16",
+        4,
+        7,
+    )));
+    roundtrip_response(Response::SsgProgress(BuildProgressEvent::done(
+        "Pull postgres:16",
+        "ok",
+    )));
+}
+
+#[test]
+fn test_ssg_log_chunk_response_roundtrip() {
+    roundtrip_response(Response::SsgLogChunk(SsgLogChunk {
+        chunk: String::new(),
+    }));
+    roundtrip_response(Response::SsgLogChunk(SsgLogChunk {
+        chunk: "postgres | ready".to_string(),
+    }));
+    roundtrip_response(Response::SsgLogChunk(SsgLogChunk {
+        chunk: "line one\nline two\nline three".to_string(),
+    }));
+}
+
+#[test]
+fn test_ssg_log_chunk_multiline_with_unicode() {
+    // Phase 9 coverage: multiline chunks with non-ASCII characters
+    // must round-trip cleanly. JSON encoding of control chars
+    // (\r, \n, \t) and multi-byte UTF-8 is the most likely place
+    // for a subtle encoder regression.
+    let payloads = [
+        "",
+        "\n",
+        "\r\n",
+        "a\nb\nc\n",
+        "トマト | 準備完了",
+        "λ = 3.14\n \u{1F680} launched",
+        "ANSI \x1b[31mred\x1b[0m middle\n",
+    ];
+    for p in payloads {
+        roundtrip_response(Response::SsgLogChunk(SsgLogChunk {
+            chunk: p.to_string(),
+        }));
+    }
+}
+
+#[test]
+fn test_ssg_log_chunk_large_payload_roundtrip() {
+    // Regression for buffer-sizing bugs in the envelope. A single
+    // 64 KB chunk (above most default read buffer sizes) must
+    // serialize and deserialize without truncation.
+    let big = "x".repeat(65_536);
+    roundtrip_response(Response::SsgLogChunk(SsgLogChunk { chunk: big }));
+}
+
+#[test]
+fn test_ssg_response_roundtrip() {
+    roundtrip_response(Response::Ssg(SsgResponse {
+        message: "SSG is running with 2 services".to_string(),
+        status: Some("running".to_string()),
+        services: vec![
+            SsgServiceInfo {
+                name: "postgres".to_string(),
+                image: "postgres:16".to_string(),
+                inner_port: 5432,
+                dynamic_host_port: 54201,
+                container_id: Some("abc123def456".to_string()),
+                status: "running".to_string(),
+            },
+            SsgServiceInfo {
+                name: "redis".to_string(),
+                image: "redis:7".to_string(),
+                inner_port: 6379,
+                dynamic_host_port: 54202,
+                container_id: None,
+                status: "running".to_string(),
+            },
+        ],
+        ports: vec![
+            SsgPortInfo {
+                service: "postgres".to_string(),
+                canonical_port: 5432,
+                dynamic_host_port: 54201,
+                virtual_port: Some(42001),
+                checked_out: true,
+            },
+            SsgPortInfo {
+                service: "redis".to_string(),
+                canonical_port: 6379,
+                dynamic_host_port: 54202,
+                virtual_port: None,
+                checked_out: false,
+            },
+        ],
+        findings: vec![],
+        listings: vec![],
+        builds: vec![],
+    }));
+
+    // Minimal response (only message set) — defaulted fields must round-trip.
+    roundtrip_response(Response::Ssg(SsgResponse {
+        message: "ok".to_string(),
+        status: None,
+        services: vec![],
+        ports: vec![],
+        findings: vec![],
+        listings: vec![],
+        builds: vec![],
+    }));
+}
+
+#[test]
+fn test_ssg_request_doctor_roundtrip() {
+    roundtrip_request(Request::Ssg(ssg_req(SsgAction::Doctor)));
+}
+
+// --- Phase 22: SsgAction::Ls + SsgListing ---
+
+#[test]
+fn test_ssg_request_ls_roundtrip() {
+    // `Ls` is cross-project — the enclosing request carries an
+    // empty-string project that the daemon handler ignores.
+    roundtrip_request(Request::Ssg(SsgRequest {
+        project: String::new(),
+        action: SsgAction::Ls,
+    }));
+}
+
+#[test]
+fn test_ssg_listings_response_roundtrip() {
+    roundtrip_response(Response::Ssg(SsgResponse {
+        message: "2 SSG(s) across 2 project(s).".to_string(),
+        listings: vec![
+            SsgListing {
+                project: "cg".to_string(),
+                status: "running".to_string(),
+                build_id: Some("abc_20260423225356".to_string()),
+                container_id: Some("cid-cg".to_string()),
+                service_count: 2,
+                created_at: "2026-04-23T22:53:56+00:00".to_string(),
+            },
+            SsgListing {
+                project: "filemap".to_string(),
+                status: "stopped".to_string(),
+                build_id: Some("def_20260422051132".to_string()),
+                container_id: None,
+                service_count: 1,
+                created_at: "2026-04-22T05:11:32+00:00".to_string(),
+            },
+        ],
+        ..Default::default()
+    }));
+
+    // Round-trip the empty-listings case.
+    roundtrip_response(Response::Ssg(SsgResponse {
+        message: "No SSGs running.".to_string(),
+        listings: vec![],
+        ..Default::default()
+    }));
+}
+
+#[test]
+fn test_ssg_response_listings_default_when_absent_in_json() {
+    // Older daemons won't serialize `listings`; `#[serde(default)]`
+    // must deserialize an empty vec so new clients stay forward-compat.
+    let json = r#"{"type":"Ssg","message":"ok"}"#;
+    let resp: Response = serde_json::from_str(json).expect("legacy SsgResponse should parse");
+    match resp {
+        Response::Ssg(r) => {
+            assert_eq!(r.message, "ok");
+            assert!(r.listings.is_empty());
+        }
+        other => panic!("expected Response::Ssg, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_ssg_doctor_findings_response_roundtrip() {
+    roundtrip_response(Response::Ssg(SsgResponse {
+        message: "2 warning(s)".to_string(),
+        status: None,
+        services: vec![],
+        ports: vec![],
+        findings: vec![
+            SsgDoctorFinding {
+                service: "postgres".to_string(),
+                path: "/var/coast-data/postgres".to_string(),
+                severity: "warn".to_string(),
+                message: "Owner 0:0 but postgres expects 999:999".to_string(),
+            },
+            SsgDoctorFinding {
+                service: "redis".to_string(),
+                path: "/var/coast-data/redis".to_string(),
+                severity: "ok".to_string(),
+                message: "Owner matches 999:999.".to_string(),
+            },
+        ],
+        listings: vec![],
+        builds: vec![],
+    }));
+}
+
+#[test]
+fn test_ssg_response_findings_default_when_absent_in_json() {
+    // Older daemons serialize `SsgResponse` without a `findings` field.
+    // `#[serde(default)]` must deserialize an empty vec so new clients
+    // stay forward-compatible.
+    let json = r#"{"type":"Ssg","message":"ok"}"#;
+    let resp: Response = serde_json::from_str(json).expect("legacy SsgResponse should parse");
+    match resp {
+        Response::Ssg(r) => {
+            assert_eq!(r.message, "ok");
+            assert!(r.findings.is_empty());
+        }
+        other => panic!("expected Response::Ssg, got {other:?}"),
+    }
+}
+
+// --- SsgAction::BuildsLs + SsgBuildEntry (SHARED SERVICE GROUPS panel) ---
+
+#[test]
+fn test_ssg_request_builds_ls_roundtrip() {
+    // `BuildsLs` is project-scoped, unlike `Ls` — the enclosing
+    // request's `project` field MUST round-trip.
+    roundtrip_request(Request::Ssg(SsgRequest {
+        project: "cg".to_string(),
+        action: SsgAction::BuildsLs,
+    }));
+}
+
+#[test]
+fn test_ssg_builds_response_roundtrip_full() {
+    roundtrip_response(Response::Ssg(SsgResponse {
+        message: "2 SSG build(s) for cg.".to_string(),
+        builds: vec![
+            SsgBuildEntry {
+                build_id: "abc_20260423225356".to_string(),
+                project: "cg".to_string(),
+                created_at_unix: 1_745_457_236,
+                services: vec!["postgres".to_string(), "redis".to_string()],
+                services_count: 2,
+                pinned: false,
+                latest: true,
+            },
+            SsgBuildEntry {
+                build_id: "def_20260422051132".to_string(),
+                project: "cg".to_string(),
+                created_at_unix: 1_745_293_892,
+                services: vec!["postgres".to_string()],
+                services_count: 1,
+                pinned: true,
+                latest: false,
+            },
+        ],
+        ..Default::default()
+    }));
+}
+
+#[test]
+fn test_ssg_builds_response_roundtrip_empty() {
+    roundtrip_response(Response::Ssg(SsgResponse {
+        message: "No SSG builds for cg.".to_string(),
+        builds: vec![],
+        ..Default::default()
+    }));
+}
+
+#[test]
+fn test_ssg_response_builds_default_when_absent_in_json() {
+    // Older daemons won't serialize `builds`; `#[serde(default)]`
+    // must deserialize an empty vec so new clients stay forward-compat.
+    let json = r#"{"type":"Ssg","message":"ok"}"#;
+    let resp: Response = serde_json::from_str(json).expect("legacy SsgResponse should parse");
+    match resp {
+        Response::Ssg(r) => {
+            assert_eq!(r.message, "ok");
+            assert!(r.builds.is_empty());
+        }
+        other => panic!("expected Response::Ssg, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_ssg_build_entry_optional_flags_default_when_absent() {
+    // Forward-compat: a daemon that omits `pinned` / `latest` /
+    // `services` should still deserialize cleanly into the
+    // standard defaults (`false` / `false` / empty vec).
+    let json = r#"{
+        "build_id": "abc_20260423225356",
+        "project": "cg",
+        "created_at_unix": 1745457236,
+        "services_count": 0
+    }"#;
+    let entry: SsgBuildEntry =
+        serde_json::from_str(json).expect("partial SsgBuildEntry should parse");
+    assert_eq!(entry.build_id, "abc_20260423225356");
+    assert_eq!(entry.project, "cg");
+    assert!(!entry.pinned);
+    assert!(!entry.latest);
+    assert!(entry.services.is_empty());
+}
+
+// --- Phase 16: SsgRequest::CheckoutBuild / UncheckoutBuild / ShowPin ---
+
+#[test]
+fn test_ssg_request_checkout_build_roundtrip() {
+    roundtrip_request(Request::Ssg(SsgRequest {
+        project: "my-consumer".to_string(),
+        action: SsgAction::CheckoutBuild {
+            build_id: "df5bddb5b7a39b11_20260422051132".to_string(),
+        },
+    }));
+}
+
+#[test]
+fn test_ssg_request_uncheckout_build_roundtrip() {
+    roundtrip_request(Request::Ssg(SsgRequest {
+        project: "my-consumer".to_string(),
+        action: SsgAction::UncheckoutBuild,
+    }));
+}
+
+#[test]
+fn test_ssg_request_show_pin_roundtrip() {
+    roundtrip_request(Request::Ssg(SsgRequest {
+        project: "my-consumer".to_string(),
+        action: SsgAction::ShowPin,
+    }));
+}
+
+// --- Phase 15: SsgAction::ImportHostVolume ---
+
+#[test]
+fn test_ssg_request_import_host_volume_minimal_roundtrip() {
+    // Snippet mode (no --apply, no Coastfile discovery overrides).
+    roundtrip_request(Request::Ssg(ssg_req(SsgAction::ImportHostVolume {
+        volume: "infra_pg_data".to_string(),
+        service: "postgres".to_string(),
+        mount: std::path::PathBuf::from("/var/lib/postgresql/data"),
+        file: None,
+        working_dir: None,
+        config: None,
+        apply: false,
+    })));
+}
+
+#[test]
+fn test_ssg_request_import_host_volume_all_fields_roundtrip() {
+    // Apply mode with every discovery field populated.
+    roundtrip_request(Request::Ssg(ssg_req(SsgAction::ImportHostVolume {
+        volume: "legacy-pg".to_string(),
+        service: "postgres".to_string(),
+        mount: std::path::PathBuf::from("/var/lib/postgresql/data"),
+        file: Some(std::path::PathBuf::from(
+            "/proj/Coastfile.shared_service_groups",
+        )),
+        working_dir: Some(std::path::PathBuf::from("/proj")),
+        config: Some("[ssg]\nruntime = \"dind\"\n".to_string()),
+        apply: true,
+    })));
 }

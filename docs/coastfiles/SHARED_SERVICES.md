@@ -1,12 +1,19 @@
 # Shared Services
 
-The `[shared_services.*]` sections define infrastructure services — databases, caches, message brokers — that run on the host Docker daemon rather than inside individual Coast containers. Multiple Coast instances connect to the same shared service over a bridge network.
+The `[shared_services.*]` sections define infrastructure services -- databases, caches, message brokers -- that a Coast project consumes. There are two flavors:
 
-For how shared services work at runtime, lifecycle management, and troubleshooting, see [Shared Services](../concepts_and_terminology/SHARED_SERVICES.md).
+- **Inline** -- declare `image`, `ports`, `env`, `volumes` directly in the consumer Coastfile. Coast starts a host-side container and routes the consumer's app traffic to it. Best for solo projects with one consumer instance, or for very lightweight services.
+- **From a Shared Service Group (`from_group = true`)** -- the service lives in the project's [Shared Service Group](../shared_service_groups/README.md) (a separate DinD container declared in `Coastfile.shared_service_groups`). The consumer Coastfile only opts in. Best when you want secret extraction, host-side checkout to canonical ports, or you run multiple Coast projects on this host that each need the same canonical port (an SSG keeps Postgres on inner `:5432` without binding host 5432, so two projects can coexist).
 
-## Defining a shared service
+The two halves of this page document each flavor in turn.
 
-Each shared service is a named TOML section under `[shared_services]`. The `image` field is required; everything else is optional.
+For how shared services work at runtime, lifecycle management, and troubleshooting, see [Shared Services (concept)](../concepts_and_terminology/SHARED_SERVICES.md).
+
+---
+
+## Inline shared services
+
+Each inline service is a named TOML section under `[shared_services]`. The `image` field is required; everything else is optional.
 
 ```toml
 [shared_services.postgres]
@@ -88,19 +95,15 @@ env = { POSTGRES_PASSWORD = "dev" }
 inject = "env:DATABASE_URL"
 ```
 
-## Lifecycle
+### Lifecycle
 
-Shared services start automatically when the first Coast instance that references them runs. They keep running across `coast stop` and `coast rm` — removing an instance does not affect shared service data. Only `coast shared rm` stops and removes a shared service.
+Inline shared services start automatically when the first Coast instance that references them runs. They keep running across `coast stop` and `coast rm` -- removing an instance does not affect shared service data. Only `coast shared rm` stops and removes the service.
 
 Per-instance databases created by `auto_create_db` also survive instance deletion. Use `coast shared-services rm` to remove the service and its data entirely.
 
-## When to use shared services vs volumes
+### Inline examples
 
-Use shared services when multiple Coast instances need to talk to the same database server (e.g. a shared Postgres where each instance gets its own database). Use [volume strategies](VOLUMES.md) when you want to control how a compose-internal service's data is shared or isolated.
-
-## Examples
-
-### Postgres, Redis, and MongoDB
+#### Postgres, Redis, and MongoDB
 
 ```toml
 [shared_services.postgres]
@@ -121,7 +124,7 @@ volumes = ["infra_mongodb_data:/data/db"]
 env = { MONGO_INITDB_ROOT_USERNAME = "myapp", MONGO_INITDB_ROOT_PASSWORD = "myapp_pass" }
 ```
 
-### Minimal shared Postgres
+#### Minimal shared Postgres
 
 ```toml
 [shared_services.postgres]
@@ -130,7 +133,7 @@ ports = [5432]
 env = { POSTGRES_USER = "coast", POSTGRES_PASSWORD = "coast", POSTGRES_DB = "coast_demo" }
 ```
 
-### Host/container mapped shared Postgres
+#### Host/container mapped Postgres
 
 ```toml
 [shared_services.postgres]
@@ -139,7 +142,7 @@ ports = ["5433:5432"]
 env = { POSTGRES_USER = "coast", POSTGRES_PASSWORD = "coast", POSTGRES_DB = "coast_demo" }
 ```
 
-### Shared services with auto-created databases
+#### Auto-created databases
 
 ```toml
 [shared_services.db]
@@ -148,3 +151,70 @@ ports = [5432]
 env = { POSTGRES_USER = "coast", POSTGRES_PASSWORD = "coast" }
 auto_create_db = true
 ```
+
+---
+
+## Shared services from a Shared Service Group
+
+For projects that want a structured shared-infra setup -- multiple worktrees, host-side checkout, SSG-native secrets, virtual ports across SSG rebuilds -- declare the services once in a [`Coastfile.shared_service_groups`](SHARED_SERVICE_GROUPS.md) and reference them from the consumer Coastfile with `from_group = true`:
+
+```toml
+[shared_services.postgres]
+from_group = true
+
+# Optional per-consumer overrides:
+inject = "env:DATABASE_URL"
+# auto_create_db = false    # overrides the SSG service's default
+```
+
+The TOML key (`postgres` in this example) must match a service declared in the project's `Coastfile.shared_service_groups`. The SSG referenced here is **always the consumer project's own SSG** (named `<project>-ssg`, where `<project>` is the consumer's `[coast].name`).
+
+### Forbidden fields with `from_group = true`
+
+The following fields are rejected at parse time because the SSG is the single source of truth:
+
+- `image`
+- `ports`
+- `env`
+- `volumes`
+
+Any of these alongside `from_group = true` produces:
+
+```text
+error: shared service 'postgres' has from_group = true; the following fields are forbidden: image, ports, env, volumes.
+```
+
+### Allowed per-consumer overrides
+
+- `inject` -- the env-var or file path through which the connection string is exposed. Different consumer Coastfiles may expose the same SSG Postgres under different env-var names.
+- `auto_create_db` -- whether Coast should create a per-instance database inside this service at `coast run` time. Overrides the SSG service's own `auto_create_db` value.
+
+### Missing-service error
+
+If you reference a name that isn't declared in the project's `Coastfile.shared_service_groups`, `coast build` fails:
+
+```text
+error: shared service 'postgres' has from_group = true but no service named 'postgres' is declared in Coastfile.shared_service_groups for project 'my-app'.
+```
+
+### When to choose `from_group` over inline
+
+| Need | Inline | `from_group` |
+|---|---|---|
+| Single Coast project on this host, no secrets | Either works; inline is simpler | OK |
+| Multiple worktrees / consumer instances of the **same** project sharing one Postgres | Works (siblings share one host container) | Works |
+| **Two different Coast projects** on this host that each declare the same canonical port (e.g. both want Postgres on 5432) | Collides on host port; cannot run both concurrently | Required (each project's SSG owns its own inner Postgres without binding host 5432) |
+| Want host-side `psql localhost:5432` via `coast ssg checkout` | -- | Required |
+| Need build-time secret extraction for the service (`POSTGRES_PASSWORD` from a keychain, etc.) | -- | Required (see [SSG Secrets](../shared_service_groups/SECRETS.md)) |
+| Stable consumer routing across rebuilds (virtual ports) | -- | Required (see [SSG Routing](../shared_service_groups/ROUTING.md)) |
+
+For the full SSG architecture, see [Shared Service Groups](../shared_service_groups/README.md). For the consumer-side experience including auto-start, drift detection, and remote consumers, see [Consuming](../shared_service_groups/CONSUMING.md).
+
+---
+
+## See Also
+
+- [Shared Services (concept)](../concepts_and_terminology/SHARED_SERVICES.md) -- runtime architecture for both flavors
+- [Shared Service Groups](../shared_service_groups/README.md) -- the SSG concept overview
+- [Coastfile: Shared Service Groups](SHARED_SERVICE_GROUPS.md) -- the SSG-side Coastfile schema
+- [Consuming an SSG](../shared_service_groups/CONSUMING.md) -- detailed walkthrough of `from_group = true` semantics

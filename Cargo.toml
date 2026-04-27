@@ -4,6 +4,7 @@ members = [
     "coast-i18n",
     "coast-secrets",
     "coast-docker",
+    "coast-ssg",
     "coast-daemon",
     "coast-cli",
     "coast-update",

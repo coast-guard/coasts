@@ -2,11 +2,13 @@
 
 A seção `[coast]` é a única seção obrigatória em um Coastfile. Ela identifica o projeto e configura como o contêiner Coast é criado. A subseção opcional `[coast.setup]` permite instalar pacotes e executar comandos dentro do contêiner em tempo de build.
 
+Todos os valores de string no Coastfile suportam [interpolação de variáveis de ambiente](VARIABLES.md) usando a sintaxe `${VAR}` e `${VAR:-default}`.
+
 ## `[coast]`
 
 ### `name` (obrigatório)
 
-Um identificador único para o projeto. Usado em nomes de contêineres, nomes de volumes, rastreamento de estado e saída da CLI.
+Um identificador único para o projeto. Usado em nomes de contêineres, nomes de volumes, rastreamento de estado e saída da CLI. Também pode ser fornecido pela flag de CLI `--name` ao fazer build sem um Coastfile.
 
 ```toml
 [coast]
@@ -15,7 +17,7 @@ name = "my-app"
 
 ### `compose`
 
-Caminho para um arquivo Docker Compose. Caminhos relativos são resolvidos em relação à raiz do projeto (o diretório que contém o Coastfile, ou `root` se definido).
+Caminho para um arquivo Docker Compose. Caminhos relativos são resolvidos em relação à raiz do projeto (o diretório que contém o Coastfile, ou `root` se definido). Também pode ser fornecido pela flag de CLI `--compose`.
 
 ```toml
 [coast]

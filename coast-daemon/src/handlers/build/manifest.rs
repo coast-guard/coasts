@@ -26,7 +26,15 @@ pub(super) struct ManifestInput<'a> {
 pub(super) async fn write_manifest_and_finalize(input: ManifestInput<'_>) -> Result<()> {
     emit(input.progress, input.plan.started("Writing manifest"));
 
-    let manifest = serde_json::json!({
+    // Phase 7: when the consumer Coastfile references SSG services,
+    // snapshot the active SSG's build_id + image refs so `coast run`
+    // can detect drift. See `coast-ssg/DESIGN.md §6.1`. DESIGN.md §6
+    // requires a hard error here when refs exist but no SSG build
+    // does — otherwise the consumer's manifest would lack the `ssg`
+    // block and drift detection would silently pass.
+    let ssg_block = build_ssg_manifest_block(input.coastfile, input.state).await?;
+
+    let mut manifest = serde_json::json!({
         "build_id": &input.artifact.build_id,
         "project": &input.coastfile.name,
         "coastfile_type": &input.coastfile.coastfile_type,
@@ -89,6 +97,9 @@ pub(super) async fn write_manifest_and_finalize(input: ManifestInput<'_>) -> Res
         }),
         "primary_port": &input.coastfile.primary_port,
     });
+    if let Some(block) = ssg_block {
+        manifest["ssg"] = block;
+    }
     let manifest_path = input.artifact.artifact_path.join("manifest.json");
     let manifest_json = serde_json::to_string_pretty(&manifest)
         .map_err(|error| CoastError::protocol(format!("failed to serialize manifest: {error}")))?;
@@ -147,6 +158,333 @@ fn update_latest_symlink(input: &ManifestInput<'_>) -> Result<()> {
         })?;
     }
     Ok(())
+}
+
+/// Compute the Phase 7 `ssg` manifest block for this coast build.
+///
+/// Returns:
+/// - `Ok(None)` when the Coastfile has no `from_group = true`
+///   references (non-consumer build; nothing to record).
+/// - `Err(CoastError::coastfile(...))` when the Coastfile DOES
+///   reference SSG services but no active SSG build exists. DESIGN.md
+///   §6 requires this to fail early so the consumer's manifest
+///   never lacks the `ssg` block silently.
+/// - `Ok(Some(block))` recording only the services the consumer
+///   actually references — keeps the snapshot minimal and makes
+///   "service missing" a clean check at `coast run` time.
+async fn build_ssg_manifest_block(
+    coastfile: &Coastfile,
+    state: &AppState,
+) -> Result<Option<serde_json::Value>> {
+    if coastfile.shared_service_group_refs.is_empty() {
+        return Ok(None);
+    }
+
+    let referenced: Vec<String> = coastfile
+        .shared_service_group_refs
+        .iter()
+        .map(|r| r.name.clone())
+        .collect();
+
+    // Phase 23: resolve the consumer's SSG build from state
+    // (`ssg_consumer_pins.build_id` > `ssg.latest_build_id`) — no
+    // global `~/.coast/ssg/latest` fallback. This is what makes
+    // cross-project SSG builds invisible to this consumer's manifest
+    // snapshot.
+    let build_id = {
+        use coast_ssg::state::SsgStateExt;
+        let db = state.db.lock().await;
+        let pin = db.get_ssg_consumer_pin(&coastfile.name)?;
+        let latest = db.get_ssg(&coastfile.name)?.and_then(|r| r.latest_build_id);
+        pin.map(|p| p.build_id).or(latest)
+    }
+    .ok_or_else(|| {
+        CoastError::coastfile(format!(
+            "Coastfile references the Shared Service Group via from_group = true for \
+             service(s) [{services}] in project '{project}', but no SSG build exists for \
+             project '{project}'. Run `coast ssg build` in the directory containing \
+             the project's Coastfile.shared_service_groups first.",
+            services = referenced.join(", "),
+            project = coastfile.name,
+        ))
+    })?;
+    let build_dir = coast_ssg::paths::ssg_build_dir(&build_id).map_err(|e| {
+        CoastError::coastfile(format!(
+            "Failed to resolve SSG build '{build_id}' directory while building \
+             consumer manifest: {e}"
+        ))
+    })?;
+    let manifest_path = build_dir.join("manifest.json");
+    let manifest_contents =
+        std::fs::read_to_string(&manifest_path).map_err(|e| CoastError::Io {
+            message: format!(
+                "Failed to read SSG manifest '{}' while building consumer manifest: {e}",
+                manifest_path.display()
+            ),
+            path: manifest_path.clone(),
+            source: Some(e),
+        })?;
+    let active: coast_ssg::build::artifact::SsgManifest = serde_json::from_str(&manifest_contents)
+        .map_err(|e| {
+            CoastError::coastfile(format!(
+                "Failed to parse SSG manifest '{}' while building consumer manifest: {e}",
+                manifest_path.display()
+            ))
+        })?;
+
+    // Phase 29: this is the "cheap typo catcher" that replaces the
+    // deleted runtime drift audit. A consumer Coastfile that names
+    // an SSG service the group does not publish is a build-time
+    // error — we don't want to wait until `coast run` or until the
+    // service socket returns ECONNREFUSED to tell the user.
+    let active_by_name: std::collections::HashMap<
+        &str,
+        &coast_ssg::build::artifact::SsgManifestService,
+    > = active
+        .services
+        .iter()
+        .map(|s| (s.name.as_str(), s))
+        .collect();
+    let mut images = std::collections::BTreeMap::new();
+    for name in &referenced {
+        let Some(svc) = active_by_name.get(name.as_str()) else {
+            let known = if active.services.is_empty() {
+                "(none)".to_string()
+            } else {
+                active
+                    .services
+                    .iter()
+                    .map(|s| s.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
+            return Err(CoastError::coastfile(format!(
+                "Coastfile in project '{project}' references SSG service '{name}' via \
+                 `from_group = true`, but the project's Coastfile.shared_service_groups \
+                 does not declare a service by that name. Known services: [{known}].",
+                project = coastfile.name,
+            )));
+        };
+        images.insert(name.clone(), svc.image.clone());
+    }
+
+    Ok(Some(serde_json::json!({
+        "build_id": active.build_id,
+        "services": referenced,
+        "images": images,
+    })))
+}
+
+#[cfg(test)]
+mod ssg_block_tests {
+    use super::*;
+    use std::path::Path;
+
+    fn with_coast_home<F: FnOnce(&Path)>(f: F) {
+        // Use the crate-wide shared lock so mutations here cannot
+        // race with COAST_HOME reads in tests living in other files.
+        let guard = crate::test_support::coast_home_env_lock();
+        let tmp = tempfile::tempdir().unwrap();
+        let prev = std::env::var_os("COAST_HOME");
+        unsafe {
+            std::env::set_var("COAST_HOME", tmp.path());
+        }
+        f(tmp.path());
+        unsafe {
+            match prev {
+                Some(v) => std::env::set_var("COAST_HOME", v),
+                None => std::env::remove_var("COAST_HOME"),
+            }
+        }
+        drop(guard);
+    }
+
+    fn consumer_coastfile(with_ssg_ref: bool) -> Coastfile {
+        let body = if with_ssg_ref {
+            r#"
+[coast]
+name = "consumer"
+compose = "./docker-compose.yml"
+
+[shared_services.postgres]
+from_group = true
+"#
+        } else {
+            r#"
+[coast]
+name = "non-consumer"
+compose = "./docker-compose.yml"
+"#
+        };
+        Coastfile::parse(body, Path::new("/tmp/phase7-manifest-test")).unwrap()
+    }
+
+    fn fresh_state() -> AppState {
+        let db = crate::state::StateDb::open_in_memory().unwrap();
+        AppState::new_for_testing(db)
+    }
+
+    /// Build a single-threaded tokio runtime for exercising the async
+    /// `build_ssg_manifest_block` from a sync test. We use sync
+    /// `#[test]` rather than `#[tokio::test]` so the `ENV_LOCK`
+    /// guard-and-env-mutation pattern stays on one thread end-to-end —
+    /// `tokio::test`'s multi-threaded scheduler otherwise lets other
+    /// tests race on `COAST_HOME` while this one is awaiting.
+    fn block_on<F: std::future::Future>(fut: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(fut)
+    }
+
+    #[test]
+    fn block_is_none_without_ssg_refs() {
+        with_coast_home(|_home| {
+            let cf = consumer_coastfile(false);
+            let state = fresh_state();
+            let out = block_on(build_ssg_manifest_block(&cf, &state)).unwrap();
+            assert!(out.is_none());
+        });
+    }
+
+    #[test]
+    fn block_hard_errors_when_project_has_no_ssg_build() {
+        // Phase 23: state has no row for "consumer" (no `ssg build`
+        // was ever run for this project). Even with a stale global
+        // `latest` symlink on disk, the consumer must hard-error
+        // rather than pick up another project's build.
+        with_coast_home(|_home| {
+            let cf = consumer_coastfile(true);
+            let state = fresh_state();
+            let err = block_on(build_ssg_manifest_block(&cf, &state))
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains("no SSG build exists"),
+                "error must mention missing SSG build; got: {err}"
+            );
+            assert!(
+                err.contains("coast ssg build"),
+                "error must direct user to `coast ssg build`; got: {err}"
+            );
+            assert!(
+                err.contains("postgres"),
+                "error must name the referenced service; got: {err}"
+            );
+            assert!(
+                err.contains("consumer"),
+                "error must name the project; got: {err}"
+            );
+        });
+    }
+
+    #[test]
+    fn block_hard_errors_when_referenced_service_missing_from_ssg() {
+        // Phase 29: consumer references `postgres` via `from_group =
+        // true`, but the SSG manifest on disk only publishes
+        // `redis`. This must fail at build time with a clear error
+        // naming the missing service and listing the known services.
+        with_coast_home(|home| {
+            let build_id = "phase29-missing_20260424000000";
+            let ssg_home = home.join("ssg");
+            let build_dir = ssg_home.join("builds").join(build_id);
+            std::fs::create_dir_all(&build_dir).unwrap();
+            let manifest = serde_json::json!({
+                "build_id": build_id,
+                "built_at": "2026-04-24T00:00:00Z",
+                "coastfile_hash": "phase29-missing",
+                "services": [{
+                    "name": "redis",
+                    "image": "redis:7-alpine",
+                    "ports": [6379],
+                    "env_keys": [],
+                    "volumes": [],
+                    "auto_create_db": false,
+                }],
+            });
+            std::fs::write(
+                build_dir.join("manifest.json"),
+                serde_json::to_string_pretty(&manifest).unwrap(),
+            )
+            .unwrap();
+
+            let state = fresh_state();
+            {
+                use coast_ssg::state::SsgStateExt;
+                let db = block_on(state.db.lock());
+                db.set_latest_build_id("consumer", build_id).unwrap();
+            }
+
+            let cf = consumer_coastfile(true);
+            let err = block_on(build_ssg_manifest_block(&cf, &state))
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains("references SSG service 'postgres'"),
+                "error must name the missing service; got: {err}"
+            );
+            assert!(
+                err.contains("Coastfile.shared_service_groups"),
+                "error must point at the SSG Coastfile; got: {err}"
+            );
+            assert!(
+                err.contains("Known services: [redis]"),
+                "error must list known services; got: {err}"
+            );
+            assert!(
+                err.contains("project 'consumer'"),
+                "error must name the consumer project; got: {err}"
+            );
+        });
+    }
+
+    #[test]
+    fn block_populated_from_project_latest_build_id() {
+        // Phase 23: the consumer's project has a row with
+        // `latest_build_id` set. The on-disk manifest is read via
+        // `ssg/builds/{bid}/manifest.json`. No global
+        // `~/.coast/ssg/latest` symlink involved.
+        with_coast_home(|home| {
+            let build_id = "fake-hash_20260101010101";
+            let ssg_home = home.join("ssg");
+            let build_dir = ssg_home.join("builds").join(build_id);
+            std::fs::create_dir_all(&build_dir).unwrap();
+            let manifest = serde_json::json!({
+                "build_id": build_id,
+                "built_at": "2026-04-20T00:00:00Z",
+                "coastfile_hash": "fake-hash",
+                "services": [{
+                    "name": "postgres",
+                    "image": "postgres:16-alpine",
+                    "ports": [5432],
+                    "env_keys": ["POSTGRES_PASSWORD"],
+                    "volumes": [],
+                    "auto_create_db": false,
+                }],
+            });
+            std::fs::write(
+                build_dir.join("manifest.json"),
+                serde_json::to_string_pretty(&manifest).unwrap(),
+            )
+            .unwrap();
+
+            let state = fresh_state();
+            {
+                use coast_ssg::state::SsgStateExt;
+                let db = block_on(state.db.lock());
+                db.set_latest_build_id("consumer", build_id).unwrap();
+            }
+
+            let cf = consumer_coastfile(true);
+            let block = block_on(build_ssg_manifest_block(&cf, &state))
+                .unwrap()
+                .expect("expected block");
+            assert_eq!(block["build_id"], build_id);
+            assert_eq!(block["services"][0], "postgres");
+            assert_eq!(block["images"]["postgres"], "postgres:16-alpine");
+        });
+    }
 }
 
 async fn prune_old_builds(input: &ManifestInput<'_>) {

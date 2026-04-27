@@ -3,6 +3,7 @@
 /// Creates a new coast instance: records it in the state DB,
 /// creates the coast container with project root bind-mounted,
 /// loads cached images, starts the inner compose stack, and allocates ports.
+mod auto_create_db;
 mod compose_rewrite;
 mod finalize;
 mod host_builds;
@@ -13,6 +14,7 @@ mod provision;
 mod secrets;
 mod service_start;
 mod shared_services_setup;
+pub(crate) mod ssg_integration;
 mod validate;
 
 pub(crate) use service_start::compose_ps_output_is_ready;
@@ -536,6 +538,63 @@ async fn trigger_remote_build(
     super::remote::forward::forward_build(client, &build_req).await
 }
 
+/// Phase 7: compute the `ssg` drift block for a just-downloaded
+/// remote artifact. Reads the artifact's `coastfile.toml`, and if it
+/// has `shared_service_group_refs`, snapshots that PROJECT's LOCAL
+/// SSG build + image refs.
+///
+/// Returns `None` when the artifact has no coastfile, the coastfile
+/// has no SSG refs, or the consumer's project has no local SSG build
+/// in state. All three are non-errors — the run-side drift check
+/// handles each gracefully.
+///
+/// Phase 23: resolves the SSG build id from per-project state
+/// (`ssg_consumer_pins` > `ssg.latest_build_id`). Callers thread the
+/// id in via `project_ssg_build_id` so this helper stays synchronous
+/// and state-free. The global `~/.coast/ssg/latest` symlink is no
+/// longer consulted — it leaked across projects.
+///
+/// `coast-service` never writes this block (it's SSG-agnostic); this
+/// helper is the local seam that injects it after download. See
+/// `coast-ssg/DESIGN.md §17-24`.
+fn phase7_ssg_block_for_artifact(
+    artifact_dir: &std::path::Path,
+    project_ssg_build_id: Option<&str>,
+) -> Option<serde_json::Value> {
+    let coastfile_path = artifact_dir.join("coastfile.toml");
+    if !coastfile_path.exists() {
+        return None;
+    }
+    let coastfile = coast_core::coastfile::Coastfile::from_file(&coastfile_path).ok()?;
+    if coastfile.shared_service_group_refs.is_empty() {
+        return None;
+    }
+
+    let build_id = project_ssg_build_id?;
+    let build_dir = coast_ssg::paths::ssg_build_dir(build_id).ok()?;
+    let manifest_contents = std::fs::read_to_string(build_dir.join("manifest.json")).ok()?;
+    let active: coast_ssg::build::artifact::SsgManifest =
+        serde_json::from_str(&manifest_contents).ok()?;
+
+    let referenced: Vec<String> = coastfile
+        .shared_service_group_refs
+        .iter()
+        .map(|r| r.name.clone())
+        .collect();
+    let mut images = std::collections::BTreeMap::new();
+    for name in &referenced {
+        if let Some(svc) = active.services.iter().find(|s| s.name == *name) {
+            images.insert(name.clone(), svc.image.clone());
+        }
+    }
+
+    Some(serde_json::json!({
+        "build_id": active.build_id,
+        "services": referenced,
+        "images": images,
+    }))
+}
+
 pub(crate) async fn download_remote_artifact(
     build_response: &coast_core::protocol::BuildResponse,
     project: &str,
@@ -543,6 +602,11 @@ pub(crate) async fn download_remote_artifact(
     remote_config: &coast_core::types::RemoteConnection,
     local_project_root: &std::path::Path,
     has_sudo: bool,
+    // Phase 23: the consumer's per-project SSG build id resolved by
+    // the caller. Pass `None` when the consumer has no SSG build yet
+    // or references no SSG services — the drift block is then
+    // omitted from the manifest, which is a non-error.
+    project_ssg_build_id: Option<&str>,
 ) -> Result<String> {
     let remote_artifact_path = build_response.artifact_path.display().to_string();
     let build_id = build_response
@@ -567,6 +631,15 @@ pub(crate) async fn download_remote_artifact(
             if let Ok(mut manifest) = serde_json::from_str::<serde_json::Value>(&content) {
                 manifest["project_root"] =
                     serde_json::Value::String(local_project_root.display().to_string());
+                // Phase 7: `coast-service` is SSG-agnostic and cannot
+                // write the `ssg` drift block. Inject it locally so
+                // `coast run --type remote` sees the same drift shape
+                // as local builds. See `coast-ssg/DESIGN.md §17-24`.
+                if let Some(block) =
+                    phase7_ssg_block_for_artifact(&local_artifact_dir, project_ssg_build_id)
+                {
+                    manifest["ssg"] = block;
+                }
                 let _ = std::fs::write(
                     &manifest_path,
                     serde_json::to_string_pretty(&manifest).unwrap_or_default(),
@@ -753,15 +826,43 @@ async fn setup_port_tunnels(
     local_port_mappings
 }
 
+/// Phase 30 helper: probe whether `pid` is currently a live process.
+/// Sends signal 0 (no-op) via `kill(2)`; returns true if the process
+/// exists and we have permission to signal it. Mirrors the same idea
+/// as `host_socat::pidfile::is_alive` so daemon-managed ssh children
+/// and host socats use the same liveness primitive.
+pub(crate) fn is_pid_alive(pid: i32) -> bool {
+    if pid <= 1 {
+        return false;
+    }
+    // Safety: signal 0 with kill(2) is purely a permission/existence
+    // probe — it never delivers a signal to the target.
+    unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+}
+
 /// Start shared services locally and set up SSH reverse tunnels so the
 /// remote DinD container can reach them.
+///
+/// Phase 30: the SSG-backed half of the forward list is now coalesced
+/// across instances of the same project on the same remote VM. Each
+/// `(project, remote_host, service, container_port)` tuple owns ONE
+/// shared `ssh -N -R <vport>:localhost:<vport>` process recorded in
+/// `ssg_shared_tunnels`. Subsequent instance runs reuse the live
+/// process; only the LAST instance's removal tears it down (see
+/// `teardown_ssg_shared_tunnels_if_last_instance`). Inline
+/// shared-service tunnels remain per-instance.
 async fn setup_shared_service_tunnels(
     cf: &coast_core::coastfile::Coastfile,
     req: &RunRequest,
     state: &AppState,
     remote_config: &coast_core::types::RemoteConnection,
 ) -> Result<Vec<coast_core::protocol::SharedServicePortForward>> {
-    if cf.shared_services.is_empty() {
+    // Phase 4.5: there are now two sources of forwards:
+    //   1. Inline `[shared_services.*]` entries (pre-existing).
+    //   2. Consumer `[shared_services.*] from_group = true` refs,
+    //      synthesized from the active SSG build + dynamic ports.
+    // If both are empty, nothing to tunnel.
+    if cf.shared_services.is_empty() && cf.shared_service_group_refs.is_empty() {
         return Ok(Vec::new());
     }
 
@@ -769,15 +870,18 @@ async fn setup_shared_service_tunnels(
         return Ok(Vec::new());
     };
 
-    let _result = shared_services_setup::start_shared_services(
-        &req.project,
-        &cf.shared_services,
-        &docker,
-        state,
-    )
-    .await?;
+    if !cf.shared_services.is_empty() {
+        let _result = shared_services_setup::start_shared_services(
+            &req.project,
+            &cf.shared_services,
+            &docker,
+            state,
+        )
+        .await?;
+    }
 
-    let forwards: Vec<coast_core::protocol::SharedServicePortForward> = cf
+    // Inline shared-service forwards (host-daemon containers).
+    let mut inline_forwards: Vec<coast_core::protocol::SharedServicePortForward> = cf
         .shared_services
         .iter()
         .flat_map(|svc| {
@@ -786,31 +890,328 @@ async fn setup_shared_service_tunnels(
                 .map(|p| coast_core::protocol::SharedServicePortForward {
                     name: svc.name.clone(),
                     port: p.container_port,
+                    remote_port: 0, // filled in after allocation, below
                 })
         })
         .collect();
 
-    if !forwards.is_empty() {
-        let reverse_pairs: Vec<(u16, u16)> =
-            forwards.iter().map(|fwd| (fwd.port, fwd.port)).collect();
-        match super::remote::tunnel::reverse_forward_ports(remote_config, &reverse_pairs).await {
+    // SSG-backed forwards (synthesized from the active SSG build).
+    // `ensure_ready_for_consumer` ran earlier in `handle_remote_run`,
+    // so the SSG is guaranteed to be up with `ssg_services` populated
+    // and Phase 28's host_socat::reconcile_project has already
+    // allocated `ssg_virtual_ports` rows.
+    let (mut ssg_forwards, ssg_services) = synthesize_ssg_forwards(cf, state).await?;
+
+    if inline_forwards.is_empty() && ssg_forwards.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Phase 18 (inline): allocate a unique dynamic `remote_port` per
+    // inline forward so concurrent consumer coasts on one remote VM
+    // never collide on a canonical port. See `coast-ssg/DESIGN.md §20.2`.
+    let mut allocated: std::collections::HashSet<u16> = std::collections::HashSet::new();
+    for fwd in &mut inline_forwards {
+        let port =
+            crate::port_manager::allocate_dynamic_port_excluding(&allocated).map_err(|e| {
+                coast_core::error::CoastError::port(format!(
+                    "failed to allocate remote_port for shared service '{}' port {}: {e}",
+                    fwd.name, fwd.port
+                ))
+            })?;
+        allocated.insert(port);
+        fwd.remote_port = port;
+    }
+
+    // Phase 30 (SSG): stamp each SSG forward's `remote_port` with the
+    // project's stable virtual port from `ssg_virtual_ports`. The
+    // virtual port is shared by all instances of `req.project` on
+    // `remote_config.host` — which is the whole point of Phase 30's
+    // tunnel coalescing. Hard-error if a virtual port is missing
+    // (means the SSG hasn't fully come up; the user should re-run
+    // `coast ssg run` first).
+    {
+        use coast_ssg::state::SsgStateExt;
+        let db = state.db.lock().await;
+        for fwd in &mut ssg_forwards {
+            let vport = db
+                .get_ssg_virtual_port(&req.project, &fwd.name, fwd.port)?
+                .ok_or_else(|| {
+                    coast_core::error::CoastError::port(format!(
+                        "SSG service '{name}' container port {port} has no virtual port \
+                         allocated for project '{project}'. Run `coast ssg run` in the \
+                         project to bring its host socat supervisor up first.",
+                        name = fwd.name,
+                        port = fwd.port,
+                        project = req.project,
+                    ))
+                })?;
+            fwd.remote_port = vport;
+        }
+    }
+
+    // Combined view for `rewrite_reverse_tunnel_pairs` and per-instance
+    // bookkeeping. `ssg_services` drives the per-pair branch inside
+    // the rewriter so we don't need to remember which forwards came
+    // from which list here.
+    let mut all_forwards = inline_forwards.clone();
+    all_forwards.extend(ssg_forwards.iter().cloned());
+    let reverse_pairs =
+        coast_ssg::remote_tunnel::rewrite_reverse_tunnel_pairs(&all_forwards, &ssg_services);
+
+    // Persist `shared_service_forwards` rows BEFORE spawning ssh so
+    // daemon-restart recovery (§20.5) can replay even if we crash
+    // mid-spawn. Both inline and SSG forwards persist here.
+    {
+        let db = state.db.lock().await;
+        for (fwd, (remote_port, local_port)) in all_forwards.iter().zip(reverse_pairs.iter()) {
+            db.upsert_shared_service_forward(&crate::state::SharedServiceForwardRecord {
+                project: req.project.clone(),
+                instance: req.name.clone(),
+                service_name: fwd.name.clone(),
+                port: fwd.port,
+                local_port: *local_port,
+                remote_port: *remote_port,
+            })?;
+        }
+    }
+
+    let inline_count = inline_forwards.len();
+    let inline_pairs: Vec<(u16, u16)> = reverse_pairs.iter().take(inline_count).copied().collect();
+    let ssg_pairs: Vec<(u16, u16)> = reverse_pairs.iter().skip(inline_count).copied().collect();
+
+    // --- Inline path: per-instance ssh -R, unchanged from Phase 18 ---
+    if !inline_pairs.is_empty() {
+        match super::remote::tunnel::reverse_forward_ports(remote_config, &inline_pairs).await {
             Ok(pids) => {
                 info!(
                     host = %remote_config.host,
                     tunnels = pids.len(),
-                    "shared service reverse tunnels created"
+                    "inline shared-service reverse tunnels created"
                 );
+                if !pids.is_empty() {
+                    let mut map = state.shared_service_tunnel_pids.lock().await;
+                    map.entry((req.project.clone(), req.name.clone()))
+                        .or_default()
+                        .extend(pids);
+                }
             }
-            Err(_) => {
+            Err(e) => {
+                // Phase 18: per-pair retry already logs specifics; we
+                // log+continue here so a single bad inline forward
+                // doesn't fail the whole run.
                 info!(
                     host = %remote_config.host,
-                    "shared service tunnels already bound (reusing existing)"
+                    error = %e,
+                    "some inline shared-service reverse tunnels failed; see earlier warnings"
                 );
             }
         }
     }
 
-    Ok(forwards)
+    // --- SSG path: shared per (project, remote_host, service, container_port) ---
+    //
+    // For each SSG forward, decide whether to spawn or reuse:
+    //   - existing `ssg_shared_tunnels` row with a live PID → reuse
+    //     (no spawn, no per-instance pid bookkeeping — the tunnel
+    //     belongs to the project, not this specific instance).
+    //   - row missing OR PID dead → spawn `ssh -R` and persist the
+    //     fresh pid for the next sibling instance to reuse.
+    if !ssg_forwards.is_empty() {
+        spawn_or_reuse_ssg_shared_tunnels(req, state, remote_config, &ssg_forwards, &ssg_pairs)
+            .await?;
+    }
+
+    Ok(all_forwards)
+}
+
+/// Phase 30: for each SSG forward, either reuse the project's
+/// existing live ssh -R or spawn a new one and record its pid in
+/// `ssg_shared_tunnels`. Per-instance pid bookkeeping stays out of
+/// this path — the tunnel is owned by the project.
+async fn spawn_or_reuse_ssg_shared_tunnels(
+    req: &RunRequest,
+    state: &AppState,
+    remote_config: &coast_core::types::RemoteConnection,
+    ssg_forwards: &[coast_core::protocol::SharedServicePortForward],
+    ssg_pairs: &[(u16, u16)],
+) -> Result<()> {
+    debug_assert_eq!(ssg_forwards.len(), ssg_pairs.len());
+
+    let (to_spawn, reused) =
+        partition_ssg_tunnels_to_spawn(req, state, remote_config, ssg_forwards, ssg_pairs).await?;
+
+    if reused > 0 {
+        info!(
+            project = %req.project,
+            remote = %remote_config.host,
+            reused,
+            "SSG shared reverse tunnel(s) reused from sibling instance"
+        );
+    }
+    if to_spawn.is_empty() {
+        return Ok(());
+    }
+
+    let pairs: Vec<(u16, u16)> = to_spawn.iter().map(|(_, p)| *p).collect();
+    let pids = match super::remote::tunnel::reverse_forward_ports(remote_config, &pairs).await {
+        Ok(pids) => pids,
+        Err(e) => {
+            info!(
+                host = %remote_config.host,
+                error = %e,
+                "SSG shared-service reverse tunnels: some failed to bind; see earlier warnings"
+            );
+            // Even on partial failure the inner per-port loop returns
+            // whatever pids it managed to spawn — but the function
+            // signature returns Err on full failure with no pids. We
+            // can't get those granular pids back, so leave the
+            // pre-recorded rows with ssh_pid=None; daemon restart
+            // (§20.5) will respawn them.
+            return Ok(());
+        }
+    };
+
+    persist_ssg_shared_tunnel_pids(req, state, remote_config, &to_spawn, &pids).await?;
+    info!(
+        project = %req.project,
+        remote = %remote_config.host,
+        spawned = pids.len(),
+        "SSG shared reverse tunnel(s) spawned"
+    );
+    Ok(())
+}
+
+/// Phase 30: split SSG forwards into a "to spawn" list (no live
+/// tunnel exists) and a count of "already alive, reused". Holds
+/// the DB lock briefly to snapshot existing rows; doesn't block on
+/// the slow ssh spawn that the caller does later.
+async fn partition_ssg_tunnels_to_spawn(
+    req: &RunRequest,
+    state: &AppState,
+    remote_config: &coast_core::types::RemoteConnection,
+    ssg_forwards: &[coast_core::protocol::SharedServicePortForward],
+    ssg_pairs: &[(u16, u16)],
+) -> Result<(
+    Vec<(coast_core::protocol::SharedServicePortForward, (u16, u16))>,
+    usize,
+)> {
+    use coast_ssg::state::SsgStateExt;
+    let db = state.db.lock().await;
+    let mut to_spawn: Vec<(coast_core::protocol::SharedServicePortForward, (u16, u16))> =
+        Vec::new();
+    let mut reused = 0usize;
+    for (fwd, pair) in ssg_forwards.iter().zip(ssg_pairs.iter()) {
+        let existing =
+            db.get_ssg_shared_tunnel(&req.project, &remote_config.host, &fwd.name, fwd.port)?;
+        let alive = existing
+            .as_ref()
+            .and_then(|r| r.ssh_pid)
+            .is_some_and(is_pid_alive);
+        if alive {
+            reused += 1;
+            continue;
+        }
+        // Pre-record the row with `ssh_pid = None` so a crash
+        // mid-spawn doesn't leave the table without an entry.
+        // The caller updates the pid after spawning.
+        db.upsert_ssg_shared_tunnel(
+            &req.project,
+            &remote_config.host,
+            &fwd.name,
+            fwd.port,
+            fwd.remote_port,
+            None,
+        )?;
+        to_spawn.push((fwd.clone(), *pair));
+    }
+    Ok((to_spawn, reused))
+}
+
+/// Phase 30: persist the freshly-spawned ssh PIDs into
+/// `ssg_shared_tunnels` so daemon-restart restore + heal both see
+/// live tunnels. PIDs correspond positionally to the input pairs
+/// returned by `reverse_forward_ports`.
+async fn persist_ssg_shared_tunnel_pids(
+    req: &RunRequest,
+    state: &AppState,
+    remote_config: &coast_core::types::RemoteConnection,
+    to_spawn: &[(coast_core::protocol::SharedServicePortForward, (u16, u16))],
+    pids: &[u32],
+) -> Result<()> {
+    use coast_ssg::state::SsgStateExt;
+    let db = state.db.lock().await;
+    for ((fwd, _), pid) in to_spawn.iter().zip(pids.iter()) {
+        db.update_ssg_shared_tunnel_pid(
+            &req.project,
+            &remote_config.host,
+            &fwd.name,
+            fwd.port,
+            Some(*pid as i32),
+        )?;
+    }
+    Ok(())
+}
+
+/// Fetch the active SSG manifest + `ssg_services` rows and ask
+/// `coast-ssg` to synthesize the consumer's reverse-tunnel forwards.
+/// Returns `(forwards, ssg_services)` — the services list is also
+/// returned because `rewrite_reverse_tunnel_pairs` needs it to
+/// decide which forwards point at the SSG vs inline.
+///
+/// Empty Vecs when the consumer has no SSG refs; errors only when
+/// the consumer references a service that doesn't exist in the
+/// active SSG build (same DESIGN-shaped error as Phase 4's local path).
+async fn synthesize_ssg_forwards(
+    cf: &coast_core::coastfile::Coastfile,
+    state: &AppState,
+) -> Result<(
+    Vec<coast_core::protocol::SharedServicePortForward>,
+    Vec<coast_ssg::state::SsgServiceRecord>,
+)> {
+    use coast_ssg::state::SsgStateExt;
+
+    if cf.shared_service_group_refs.is_empty() {
+        return Ok((Vec::new(), Vec::new()));
+    }
+
+    // Phase 23: resolve per-project (pin > ssg.latest_build_id). No
+    // global symlink fallback — that leaked builds across projects.
+    let (build_id, services) = {
+        let db = state.db.lock().await;
+        let pin = db.get_ssg_consumer_pin(&cf.name)?;
+        let latest = db.get_ssg(&cf.name)?.and_then(|r| r.latest_build_id);
+        let services = db.list_ssg_services(&cf.name)?;
+        (pin.map(|p| p.build_id).or(latest), services)
+    };
+    let Some(build_id) = build_id else {
+        // ensure_ready_for_consumer would have errored already when
+        // the project has no SSG; this is a defensive guard for
+        // tests / race conditions.
+        return Ok((Vec::new(), Vec::new()));
+    };
+    let build_dir = coast_ssg::paths::ssg_build_dir(&build_id)?;
+    let manifest_path = build_dir.join("manifest.json");
+    let manifest_contents =
+        std::fs::read_to_string(&manifest_path).map_err(|e| coast_core::error::CoastError::Io {
+            message: format!(
+                "failed to read SSG manifest '{}': {e}",
+                manifest_path.display()
+            ),
+            path: manifest_path.clone(),
+            source: Some(e),
+        })?;
+    let manifest: coast_ssg::build::artifact::SsgManifest =
+        serde_json::from_str(&manifest_contents).map_err(|e| {
+            coast_core::error::CoastError::artifact(format!(
+                "failed to parse SSG manifest '{}': {e}",
+                manifest_path.display()
+            ))
+        })?;
+
+    let forwards = coast_ssg::daemon_integration::synthesize_remote_forwards_for_consumer(
+        cf, &manifest, &services,
+    )?;
+    Ok((forwards, services))
 }
 
 /// Build, download artifact, and forward the run request to coast-service.
@@ -823,6 +1224,10 @@ async fn remote_build_and_provision(
     service_home: &str,
     progress: &tokio::sync::mpsc::Sender<BuildProgressEvent>,
     total_steps: u32,
+    // Phase 23: the consumer's per-project SSG build id, already
+    // resolved by the caller from state. Threaded through to
+    // `download_remote_artifact` for the drift-block snapshot.
+    project_ssg_build_id: Option<&str>,
 ) -> Result<(coast_core::protocol::RunResponse, String)> {
     emit(
         progress,
@@ -867,6 +1272,7 @@ async fn remote_build_and_provision(
         remote_config,
         code_path,
         client.has_sudo,
+        project_ssg_build_id,
     )
     .await?;
 
@@ -950,6 +1356,14 @@ async fn handle_remote_run(
         BuildProgressEvent::done("Creating shell coast", "ok"),
     );
 
+    // --- SSG auto-start for remote consumers (Phase 4.5) ---
+    // DESIGN.md §20.5: resolve SSG references BEFORE the reverse
+    // tunnels are set up so `ssg_services` rows are populated when
+    // `setup_shared_service_tunnels` rewrites the local side of each
+    // pair. Same helper as the local run path — `ensure_ready_for_consumer`
+    // is a no-op when the Coastfile has no `from_group` refs.
+    ssg_integration::ensure_ready_for_consumer(state, &req.project, &cf, progress).await?;
+
     // --- Step 4: Start shared services + Step 6: Reverse tunnels ---
     emit(
         progress,
@@ -1006,6 +1420,17 @@ async fn handle_remote_run(
         BuildProgressEvent::done("Syncing project source", "ok"),
     );
 
+    // Phase 23: resolve this project's SSG build id for the
+    // drift-block snapshot written into the downloaded artifact's
+    // manifest. No global `~/.coast/ssg/latest` fallback.
+    let project_ssg_build_id: Option<String> = {
+        use coast_ssg::state::SsgStateExt;
+        let db = state.db.lock().await;
+        let pin = db.get_ssg_consumer_pin(&req.project)?;
+        let latest = db.get_ssg(&req.project)?.and_then(|r| r.latest_build_id);
+        pin.map(|p| p.build_id).or(latest)
+    };
+
     // --- Steps 8-10: Build, download, provision ---
     let (remote_response, remote_build_id) = remote_build_and_provision(
         &req,
@@ -1016,6 +1441,7 @@ async fn handle_remote_run(
         &service_home,
         progress,
         total_steps,
+        project_ssg_build_id.as_deref(),
     )
     .await?;
 
@@ -1562,5 +1988,75 @@ mod tests {
     fn test_dangling_cache_volume_name() {
         let vol = coast_docker::dind::dind_cache_volume_name("my-app", "dev-1");
         assert_eq!(vol, "coast-dind--my-app--dev-1");
+    }
+
+    // --- Phase 7: phase7_ssg_block_for_artifact ---
+    //
+    // Uses the crate-wide shared COAST_HOME lock so mutations here
+    // cannot race with reads in tests living in other files.
+
+    fn with_phase7_coast_home<F: FnOnce(&std::path::Path)>(f: F) {
+        let guard = crate::test_support::coast_home_env_lock();
+        let tmp = tempfile::tempdir().unwrap();
+        let prev = std::env::var_os("COAST_HOME");
+        unsafe {
+            std::env::set_var("COAST_HOME", tmp.path());
+        }
+        f(tmp.path());
+        unsafe {
+            match prev {
+                Some(v) => std::env::set_var("COAST_HOME", v),
+                None => std::env::remove_var("COAST_HOME"),
+            }
+        }
+        drop(guard);
+    }
+
+    #[test]
+    fn phase7_block_is_none_when_artifact_has_no_coastfile() {
+        let tmp = tempfile::tempdir().unwrap();
+        // artifact_dir exists but contains no coastfile.toml.
+        assert!(phase7_ssg_block_for_artifact(tmp.path(), None).is_none());
+    }
+
+    #[test]
+    fn phase7_block_is_none_when_artifact_coastfile_has_no_ssg_refs() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("coastfile.toml"),
+            r#"
+[coast]
+name = "plain"
+compose = "./docker-compose.yml"
+"#,
+        )
+        .unwrap();
+        with_phase7_coast_home(|_home| {
+            assert!(phase7_ssg_block_for_artifact(tmp.path(), Some("irrelevant")).is_none());
+        });
+    }
+
+    #[test]
+    fn phase7_block_is_none_when_project_has_no_ssg_build() {
+        // Phase 23: no global `~/.coast/ssg/latest` fallback. When
+        // the caller passes `None` for the project's SSG build id,
+        // the block must be omitted regardless of what's in the
+        // artifact's coastfile.
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("coastfile.toml"),
+            r#"
+[coast]
+name = "consumer"
+compose = "./docker-compose.yml"
+
+[shared_services.postgres]
+from_group = true
+"#,
+        )
+        .unwrap();
+        with_phase7_coast_home(|_home| {
+            assert!(phase7_ssg_block_for_artifact(tmp.path(), None).is_none());
+        });
     }
 }

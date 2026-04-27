@@ -10,6 +10,7 @@ pub mod remotes;
 pub mod secrets;
 pub mod services;
 pub mod settings;
+pub mod ssg;
 pub mod ssh_keys;
 pub mod update;
 pub mod volumes;
@@ -48,6 +49,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .merge(services::routes())
         .merge(files::routes())
         .merge(builds::routes())
+        .merge(ssg::routes())
         .merge(remotes::routes())
         .merge(ssh_keys::routes())
         .merge(mcp::routes())

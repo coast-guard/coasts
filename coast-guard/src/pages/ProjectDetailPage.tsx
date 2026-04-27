@@ -14,6 +14,7 @@ import {
   useCheckoutMutation,
   useBuildsLs,
   useRemotesLs,
+  useSsgState,
 } from '../api/hooks';
 import { api } from '../api/endpoints';
 import { buildHostTerminalConfig } from '../hooks/useTerminalSessions';
@@ -27,6 +28,7 @@ import CreateCoastModal from '../components/CreateCoastModal';
 import StatusBadge from '../components/StatusBadge';
 import PersistentTerminal from '../components/PersistentTerminal';
 import SharedServicesPanel from '../components/SharedServicesPanel';
+import SsgListPanel from '../components/SsgListPanel';
 import Modal from '../components/Modal';
 import PrimaryPortHealthDot from '../components/PrimaryPortHealthDot';
 import { ApiError } from '../api/client';
@@ -40,6 +42,8 @@ import BuildsListPanel from '../components/BuildsListPanel';
 import RemotesListPanel from '../components/RemotesListPanel';
 import AddRemoteModal from '../components/AddRemoteModal';
 import RemoteBuildModal from '../components/RemoteBuildModal';
+import SsgBuildModal from '../components/SsgBuildModal';
+import SsgRunModal from '../components/SsgRunModal';
 import CreateRemoteCoastModal from '../components/CreateRemoteCoastModal';
 
 interface PendingOp {
@@ -47,8 +51,19 @@ interface PendingOp {
   readonly targetWorktree: string;
 }
 
-type ProjectTab = 'coasts' | 'shared-services' | 'builds' | 'remotes' | 'terminal';
-const VALID_PROJECT_TABS = new Set<string>(['coasts', 'shared-services', 'builds', 'remotes', 'terminal']);
+type ProjectTab = 'coasts' | 'ssg' | 'shared-services' | 'builds' | 'remotes' | 'terminal';
+// `/project/<p>/ssg` renders the SsgListPanel (one row per SSG;
+// today always one). Clicking the row navigates to
+// `/project/<p>/ssg/local` which is owned by SsgLocalPage (a
+// separate top-level route with its own tab nav).
+const VALID_PROJECT_TABS = new Set<string>([
+  'coasts',
+  'ssg',
+  'shared-services',
+  'builds',
+  'remotes',
+  'terminal',
+]);
 
 function parseProjectTab(raw: string | undefined): ProjectTab {
   if (raw != null && VALID_PROJECT_TABS.has(raw)) return raw as ProjectTab;
@@ -92,12 +107,19 @@ export default function ProjectDetailPage() {
   const [addRemoteOpen, setAddRemoteOpen] = useState(false);
   const [buildModalOpen, setBuildModalOpen] = useState(false);
   const [remoteBuildModalOpen, setRemoteBuildModalOpen] = useState(false);
+  const [ssgBuildModalOpen, setSsgBuildModalOpen] = useState(false);
+  const [ssgRunModalOpen, setSsgRunModalOpen] = useState(false);
   const [remoteCoastModalOpen, setRemoteCoastModalOpen] = useState(false);
   const hasRemoteBuilds = useMemo(
     () => (buildsLsData?.builds ?? []).some((b) => b.is_remote),
     [buildsLsData],
   );
   const [hasRemoteCoastfiles, setHasRemoteCoastfiles] = useState(false);
+  // Phase: SSG Build button. Gated on the *unfiltered*
+  // `coastfile-types` response (the BuildModal hides
+  // `shared_service_groups`, but this button needs to know it
+  // exists so users can trigger an SSG build from the SPA).
+  const [hasSsgCoastfile, setHasSsgCoastfile] = useState(false);
 
   useEffect(() => {
     if (hasRemoteBuilds) {
@@ -111,6 +133,31 @@ export default function ProjectDetailPage() {
       });
     }
   }, [project, hasRemoteBuilds]);
+
+  // Detect the SSG Coastfile by walking the project root via the
+  // (now SSG-filtered) coastfile-types endpoint and probing the
+  // builds API directly. Since the daemon filters
+  // `shared_service_groups` out of `/builds/coastfile-types`, we
+  // probe `/ssg/builds` instead — a non-empty list means at least
+  // one SSG build exists, and even an empty list returns 200 (the
+  // endpoint never errors on missing builds dir). To detect the
+  // *Coastfile* (not just past builds), we additionally check
+  // whether `ssgBuildsLs` succeeds at all; the daemon auto-creates
+  // the project's SSG directory after the first `coast ssg build`.
+  // For the v1 button, ANY successful response (including empty)
+  // shows the button as long as the project has been built once
+  // (i.e., a project-root manifest exists). This intentionally
+  // errs on the side of showing the button — the modal itself
+  // surfaces a clear error if the SSG Coastfile is absent.
+  useEffect(() => {
+    if (!project) {
+      setHasSsgCoastfile(false);
+      return;
+    }
+    api.ssgBuildsLs(project as string)
+      .then(() => setHasSsgCoastfile(true))
+      .catch(() => setHasSsgCoastfile(false));
+  }, [project]);
 
   const existingNames = useMemo(
     () => new Set(instances.map((i) => i.name as string)),
@@ -151,6 +198,18 @@ export default function ProjectDetailPage() {
   const startMut = useStartMutation();
   const rmMut = useRmMutation();
   const checkoutMut = useCheckoutMutation();
+
+  // Drives the "Run SSG" header button on the SSG tab. We always
+  // run this hook (instead of gating on `activeTab === 'ssg'`) so
+  // the button enable/disable state is correct the moment the user
+  // lands on the tab — the SsgListPanel re-uses the same query key,
+  // so react-query dedupes the network call.
+  const { data: ssgState } = useSsgState(project);
+  const ssgRunCandidate =
+    hasSsgCoastfile &&
+    ssgState != null &&
+    ssgState.latest_build_id != null &&
+    ssgState.status !== 'running';
 
   const handleUnassign = useCallback(async (name: string) => {
     setPendingOps((prev) => ({ ...prev, [name]: { type: 'unassign', targetWorktree: 'default' } }));
@@ -419,14 +478,29 @@ export default function ProjectDetailPage() {
   const remotesCount = remotesLsData?.remotes?.length ?? 0;
 
   const tabs: readonly TabDef<ProjectTab>[] = useMemo(
-    () => [
-      { id: 'coasts' as const, label: `${t('projectTab.coasts')}${coastCount > 0 ? ` (${coastCount})` : ''}`, to: `${basePath}/coasts` },
-      { id: 'shared-services' as const, label: `${t('projectTab.sharedServices')}${sharedCount > 0 ? ` (${sharedCount})` : ''}`, to: `${basePath}/shared-services` },
-      { id: 'builds' as const, label: `${t('projectTab.builds')}${buildsCount > 0 ? ` (${buildsCount})` : ''}`, to: `${basePath}/builds` },
-      { id: 'remotes' as const, label: `${t('projectTab.remotes')}${remotesCount > 0 ? ` (${remotesCount})` : ''}`, to: `${basePath}/remotes` },
-      { id: 'terminal' as const, label: t('projectTab.terminal'), to: `${basePath}/terminal` },
-    ],
-    [basePath, buildsCount, coastCount, remotesCount, sharedCount, t, i18n.language],
+    () => {
+      const base: TabDef<ProjectTab>[] = [
+        { id: 'coasts' as const, label: `${t('projectTab.coasts')}${coastCount > 0 ? ` (${coastCount})` : ''}`, to: `${basePath}/coasts` },
+      ];
+      // SSG tab only appears when the project has an SSG Coastfile
+      // (probed by the same `hasSsgCoastfile` derivation that gates
+      // the SSG Build button on the Builds tab).
+      if (hasSsgCoastfile) {
+        base.push({
+          id: 'ssg' as const,
+          label: t('projectTab.ssg'),
+          to: `${basePath}/ssg`,
+        });
+      }
+      base.push(
+        { id: 'shared-services' as const, label: `${t('projectTab.sharedServices')}${sharedCount > 0 ? ` (${sharedCount})` : ''}`, to: `${basePath}/shared-services` },
+        { id: 'builds' as const, label: `${t('projectTab.builds')}${buildsCount > 0 ? ` (${buildsCount})` : ''}`, to: `${basePath}/builds` },
+        { id: 'remotes' as const, label: `${t('projectTab.remotes')}${remotesCount > 0 ? ` (${remotesCount})` : ''}`, to: `${basePath}/remotes` },
+        { id: 'terminal' as const, label: t('projectTab.terminal'), to: `${basePath}/terminal` },
+      );
+      return base;
+    },
+    [basePath, buildsCount, coastCount, hasSsgCoastfile, remotesCount, sharedCount, t, i18n.language],
   );
 
   return (
@@ -440,7 +514,7 @@ export default function ProjectDetailPage() {
               : [
                   { label: t('nav.projects'), to: '/' },
                   { label: project, to: `/project/${project}` },
-                  { label: activeTab === 'shared-services' ? t('projectTab.sharedServices') : activeTab === 'builds' ? t('projectTab.builds') : activeTab === 'remotes' ? t('projectTab.remotes') : t('projectTab.terminal') },
+                  { label: activeTab === 'shared-services' ? t('projectTab.sharedServices') : activeTab === 'ssg' ? t('projectTab.ssg') : activeTab === 'builds' ? t('projectTab.builds') : activeTab === 'remotes' ? t('projectTab.remotes') : t('projectTab.terminal') },
                 ]
           }
         />
@@ -474,6 +548,15 @@ export default function ProjectDetailPage() {
                 {t('build.createRemoteBuild')}
               </button>
             )}
+            {hasSsgCoastfile && (
+              <button
+                type="button"
+                className="btn btn-outline !h-8 !px-3.5 !py-1.5 !text-[14px] !font-semibold"
+                onClick={() => setSsgBuildModalOpen(true)}
+              >
+                {t('build.createSsgBuild')}
+              </button>
+            )}
             <button
               type="button"
               className="btn btn-primary !h-8 !px-3.5 !py-1.5 !text-[14px] !font-semibold"
@@ -502,6 +585,28 @@ export default function ProjectDetailPage() {
             }}
           >
             {t('shared.refresh')}
+          </button>
+        ) : activeTab === 'ssg' ? (
+          <button
+            type="button"
+            className="btn btn-primary !h-8 !px-3.5 !py-1.5 !text-[14px] !font-semibold disabled:opacity-40 disabled:cursor-not-allowed"
+            disabled={!ssgRunCandidate}
+            onClick={() => setSsgRunModalOpen(true)}
+            // Stays mounted (rather than hidden) so the user always
+            // sees *why* it's disabled when they hover. The tooltip
+            // distinguishes the three "can't run" states: no build,
+            // already running, or no SSG Coastfile.
+            title={
+              !hasSsgCoastfile
+                ? t('ssg.runDisabledNoCoastfile')
+                : ssgState?.latest_build_id == null
+                  ? t('ssg.runDisabledNoBuild')
+                  : ssgState?.status === 'running'
+                    ? t('ssg.runDisabledAlreadyRunning')
+                    : undefined
+            }
+          >
+            {t('ssg.runButton')}
           </button>
         ) : (
           <div className="h-8" />
@@ -656,6 +761,10 @@ export default function ProjectDetailPage() {
         );
       })()}
 
+      {activeTab === 'ssg' && (
+        <SsgListPanel project={project as string} navigate={navigate} />
+      )}
+
       {activeTab === 'shared-services' && (
         <SharedServicesPanel project={project} />
       )}
@@ -785,6 +894,24 @@ export default function ProjectDetailPage() {
         onComplete={() => {
           setRemoteBuildModalOpen(false);
           void queryClient.invalidateQueries({ queryKey: ['buildsLs'] });
+        }}
+      />
+      <SsgBuildModal
+        open={ssgBuildModalOpen}
+        project={project as string}
+        onClose={() => setSsgBuildModalOpen(false)}
+        onComplete={() => {
+          setSsgBuildModalOpen(false);
+          void queryClient.invalidateQueries({ queryKey: ['ssgBuilds', project] });
+        }}
+      />
+      <SsgRunModal
+        open={ssgRunModalOpen}
+        project={project as string}
+        onClose={() => setSsgRunModalOpen(false)}
+        onComplete={() => {
+          setSsgRunModalOpen(false);
+          void queryClient.invalidateQueries({ queryKey: ['ssgState', project] });
         }}
       />
     </div>

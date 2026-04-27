@@ -38,6 +38,16 @@ coast rm-build my-project
 
 This deletes the project's artifact directory, Docker images, volumes, and containers. It asks for confirmation first. Pass `--force` to skip the prompt.
 
+## SSG Permission Mismatches
+
+If a [Shared Service Group](../shared_service_groups/README.md) Postgres (or MySQL / MariaDB / MongoDB) exits at startup with a "data directory has wrong ownership" error, the host bind-mount directory was created with the wrong UID/GID. Run:
+
+```bash
+coast ssg doctor
+```
+
+It reports one finding per `(service, host-bind-mount)` pair and includes the exact `chown` command to fix any mismatch. Doctor is read-only -- it never modifies the directory itself. See [SSG Volumes](../shared_service_groups/VOLUMES.md#coast-ssg-doctor) for the full semantics.
+
 ## Missing Shared Service Images
 
 If `coast run` fails while creating a shared service with an error like `No such image: postgres:15`, the image is missing from your host Docker daemon.

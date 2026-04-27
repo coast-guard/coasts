@@ -458,6 +458,7 @@ dependencies = [
  "coast-docker",
  "coast-i18n",
  "coast-secrets",
+ "coast-ssg",
  "coast-update",
  "dirs",
  "futures-util",
@@ -575,6 +576,31 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "coast-ssg"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bollard",
+ "chrono",
+ "coast-core",
+ "coast-docker",
+ "coast-secrets",
+ "dirs",
+ "futures-util",
+ "hex",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "toml",
+ "tracing",
 ]
 
 [[package]]

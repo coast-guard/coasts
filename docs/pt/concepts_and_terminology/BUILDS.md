@@ -17,6 +17,45 @@ Quando você executa `coast build`, o daemon executa estas etapas em ordem:
 9. Atualiza o symlink `latest` para apontar para o novo build.
 10. Remove automaticamente builds antigos além do limite de retenção.
 
+## Builds sem Coastfile
+
+Você pode fazer o build de um projeto sem um Coastfile passando a configuração diretamente como flags de CLI:
+
+```bash
+coast build --name my-project --compose ./docker-compose.yml
+```
+
+Flags obrigatórias quando não há Coastfile:
+- `--name <NAME>` -- o nome do projeto
+- `--compose <PATH>` -- caminho para um arquivo docker-compose
+
+Flags adicionais para configurações comuns:
+- `--port NAME=PORT` -- mapeamento de porta (repetível)
+- `--runtime <dind|sysbox|podman>` -- runtime de container
+- `--no-autostart` -- desabilita o início automático dos serviços compose
+- `--primary-port <NAME>` -- nome do serviço da porta primária
+
+Para configuração complexa (secrets, volumes, serviços compartilhados), use `--config` com TOML inline:
+
+```bash
+coast build --name my-project --compose ./dc.yml \
+  --port web=3000 \
+  --config '[secrets.api_key]
+extractor = "env"
+var = "MY_API_KEY"
+inject = "env:API_KEY"'
+```
+
+### Sobrescrevendo um Coastfile
+
+Quando um Coastfile existe no disco, as flags de CLI sobrescrevem seus valores. O Coastfile fornece a configuração base, e as flags têm precedência:
+
+```bash
+coast build --name custom-name --port api=9090
+```
+
+Isso lê o Coastfile existente, mas substitui `coast.name` por `custom-name` e adiciona (ou sobrescreve) a porta `api`.
+
 ## Onde os builds ficam
 
 ```text
@@ -103,6 +142,20 @@ coast build --type snap  # uses Coastfile.snap, updates "latest-snap"
 ```
 
 Podar um build `snap` nunca afeta builds `default`, e vice-versa.
+
+## Diretório de trabalho personalizado
+
+Por padrão, `coast build` registra o projeto no diretório pai do Coastfile. A flag `--working-dir` sobrescreve isso, desacoplando a raiz de projeto registrada do build da localização do Coastfile:
+
+```bash
+coast --working-dir /home/user/my-project build -f /ci/configs/Coastfile
+```
+
+Isso faz o build usando o Coastfile em `/ci/configs/Coastfile`, mas registra a raiz do projeto como `/home/user/my-project`. O `project_root` armazenado no manifesto determina onde `coast lookup` corresponde às instâncias, então executar `coast lookup` a partir de `/home/user/my-project` encontrará instâncias deste build.
+
+`--working-dir` aceita caminhos relativos ou absolutos. Caminhos relativos são resolvidos em relação ao diretório atual.
+
+Isso é útil para pipelines de CI, configurações de monorepo, ou qualquer cenário em que o Coastfile esteja em um diretório diferente do código-fonte do projeto.
 
 ## Builds remotos
 

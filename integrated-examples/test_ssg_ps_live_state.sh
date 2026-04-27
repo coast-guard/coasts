@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+#
+# Integration test: `coast ssg ps` merges live state from the state DB
+# (Phase 9 SETTLED #36, backfilled in Phase 14).
+#
+# Walks the SSG through build → run → stop and asserts that `ps`
+# reflects each state:
+#   1. After `ssg build` (no run): status shows `built`, no live
+#      port row.
+#   2. After `ssg run`: status shows `running` and the ports table
+#      shows the real dynamic host port (same value `ssg ports`
+#      reports).
+#   3. After `ssg stop`: status shows `stopped`.
+
+set -euo pipefail
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/helpers.sh"
+
+# Phase 25: per-project SSG naming (§23) -- SSG container is `{project}-ssg`.
+SSG_PROJECT="coast-ssg-minimal"
+
+register_cleanup
+
+preflight_checks
+
+echo ""
+echo "=== Setup ==="
+
+clean_slate
+
+"$HELPERS_DIR/setup.sh"
+pass "Examples initialized"
+
+rm -rf "$HOME/.coast/ssg"
+cleanup_project_ssgs "$SSG_PROJECT"
+
+start_daemon
+
+echo ""
+echo "=== Step 1: built but not run — ps shows status=built ==="
+
+# Phase 25: cd into the SSG fixture so subsequent `ssg run`/`ssg ps`
+# calls resolve the project via cwd (Phase 22 resolver).
+cd "$PROJECTS_DIR/coast-ssg-minimal"
+"$COAST" ssg build >/dev/null 2>&1
+
+PS_BUILT=$("$COAST" ssg ps 2>&1)
+echo "$PS_BUILT"
+assert_contains "$PS_BUILT" "built" "pre-run ps reports status=built"
+# Pre-run there should be no live port row, so no DYNAMIC column.
+if echo "$PS_BUILT" | grep -q "DYNAMIC"; then
+    fail "pre-run ps must not include the ports table (no live rows yet)"
+fi
+pass "pre-run ps has no live port table"
+
+echo ""
+echo "=== Step 2: coast ssg run — ps shows status=running + live dynamic port ==="
+
+"$COAST" ssg run >/dev/null 2>&1
+sleep 5
+
+PS_RUNNING=$("$COAST" ssg ps 2>&1)
+echo "$PS_RUNNING"
+assert_contains "$PS_RUNNING" "running" "post-run ps reports status=running"
+
+# Cross-reference ssg ports for the live dynamic host port value.
+PORTS_OUT=$("$COAST" ssg ports 2>&1)
+PORTS_DYN=$(echo "$PORTS_OUT" | awk '/^  postgres/ {print $3}')
+PORTS_VIRTUAL=$(echo "$PORTS_OUT" | awk '/^  postgres/ {print $4}')
+[ -n "$PORTS_DYN" ] || fail "could not read live dynamic port from ssg ports"
+pass "live dynamic host port (from ssg ports col 3): $PORTS_DYN"
+
+# That exact value must appear somewhere in the ps output.
+assert_contains "$PS_RUNNING" "$PORTS_DYN" "post-run ps includes the live dynamic host port"
+
+# Phase 31: ssg ports also exposes the per-port VIRTUAL column. After
+# Phase 28's host_socat::reconcile_project runs, every ssg_services
+# row has a matching ssg_virtual_ports row, so the virtual column
+# must be a real number — never "--" while the SSG is running.
+[ -n "$PORTS_VIRTUAL" ] && [ "$PORTS_VIRTUAL" != "--" ] \
+    || fail "expected a virtual port (col 4 of ssg ports) for a running SSG; got '$PORTS_VIRTUAL'"
+pass "live virtual port (from ssg ports col 4): $PORTS_VIRTUAL"
+
+echo ""
+echo "=== Step 3: coast ssg stop — ps shows status=stopped ==="
+
+"$COAST" ssg stop >/dev/null 2>&1
+sleep 2
+
+PS_STOPPED=$("$COAST" ssg ps 2>&1)
+echo "$PS_STOPPED"
+assert_contains "$PS_STOPPED" "stopped" "post-stop ps reports status=stopped"
+
+# Cleanup.
+"$COAST" ssg rm --with-data >/dev/null 2>&1 || true
+
+echo ""
+echo "==========================================="
+echo "  ALL SSG PS LIVE STATE TESTS PASSED"
+echo "==========================================="

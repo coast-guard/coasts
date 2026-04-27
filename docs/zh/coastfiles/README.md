@@ -2,7 +2,9 @@
 
 Coastfile 是一个 TOML 配置文件，位于你的项目根目录。它会告诉 Coast 构建和运行该项目的隔离开发环境所需了解的一切——运行哪些服务、转发哪些端口、如何处理数据，以及如何管理密钥。
 
-每个 Coast 项目都至少需要一个 Coastfile。该文件的名称始终为 `Coastfile`（大写 C，无扩展名）。如果你需要针对不同工作流的变体，可以创建带类型的 Coastfile，例如 `Coastfile.light` 或 `Coastfile.snap`，它们会[继承基础配置](INHERITANCE.md)。
+该文件的名称始终为 `Coastfile`（大写 C，无扩展名）。如果你需要针对不同工作流的变体，可以创建带类型的 Coastfile，例如 `Coastfile.light` 或 `Coastfile.snap`，它们会[继承基础配置](INHERITANCE.md)。
+
+Coastfile 是可选的。你可以通过直接向 `coast build` 传递 `--name` 和 `--compose`，完全使用 CLI 标志来构建项目。详见 [无 Coastfile 构建](../concepts_and_terminology/BUILDS.md#coastfile-less-builds)。
 
 若要更深入地理解 Coastfile 与 Coast 其他部分之间的关系，请参阅 [Coasts](../concepts_and_terminology/COASTS.md) 和 [Builds](../concepts_and_terminology/BUILDS.md)。
 
@@ -202,8 +204,10 @@ mount = "/data/db"
 | [Worktree 目录](WORKTREE_DIR.md) | `worktree_dir`, `default_worktree_dir` | 本地和外部 worktree 目录、波浪线路径、Codex/Claude 集成 |
 | [端口](PORTS.md) | `[ports]`, `[egress]` | 端口转发、出口声明、主端口 |
 | [卷](VOLUMES.md) | `[volumes.*]` | 隔离、共享和快照播种的卷策略 |
-| [共享服务](SHARED_SERVICES.md) | `[shared_services.*]` | 主机级数据库和基础设施服务 |
+| [共享服务](SHARED_SERVICES.md) | `[shared_services.*]` | 主机级数据库和基础设施服务（`from_group = true` 会选择加入一个[共享服务组](../shared_service_groups/README.md)） |
+| [共享服务组](SHARED_SERVICE_GROUPS.md) | `Coastfile.shared_service_groups` | 用于单例 SSG 的带类型 Coastfile，该 SSG 在多个项目之间托管基础设施服务 |
 | [密钥](SECRETS.md) | `[secrets.*]`, `[inject]` | 密钥提取、注入，以及主机环境/文件转发 |
+| [变量](VARIABLES.md) | `${VAR}`, `${VAR:-default}` | Coastfile 值中的环境变量插值 |
 | [裸服务](SERVICES.md) | `[services.*]` | 无需 Docker Compose 直接运行进程 |
 | [代理 Shell](AGENT_SHELL.md) | `[agent_shell]` | 容器化代理 TUI 运行时 |
 | [MCP 服务器](MCP.md) | `[mcp.*]`, `[mcp_clients.*]` | 内部和主机代理的 MCP 服务器、客户端连接器 |

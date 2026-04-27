@@ -2,7 +2,9 @@
 
 Coastfile は、プロジェクトのルートに配置される TOML 設定ファイルです。これは、そのプロジェクト用の分離された開発環境を構築して実行するために Coast が知る必要のあるすべての情報、つまり、どのサービスを実行するか、どのポートを転送するか、データをどのように扱うか、シークレットをどのように管理するかを Coast に伝えます。
 
-すべての Coast プロジェクトには、少なくとも 1 つの Coastfile が必要です。ファイル名は常に `Coastfile` です（大文字の C、拡張子なし）。異なるワークフロー向けのバリアントが必要な場合は、`Coastfile.light` や `Coastfile.snap` のような型付き Coastfile を作成し、[ベースを継承](INHERITANCE.md)します。
+ファイル名は常に `Coastfile` です（大文字の C、拡張子なし）。異なるワークフロー向けのバリアントが必要な場合は、`Coastfile.light` や `Coastfile.snap` のような型付き Coastfile を作成し、[ベースを継承](INHERITANCE.md)します。
+
+Coastfile は必須ではありません。`coast build` に `--name` と `--compose` を直接渡せば、CLI フラグだけでプロジェクトを完全にビルドできます。詳しくは [Coastfile-less Builds](../concepts_and_terminology/BUILDS.md#coastfile-less-builds) を参照してください。
 
 Coastfile が Coast の他の部分とどのように関係しているかをより深く理解するには、[Coasts](../concepts_and_terminology/COASTS.md) と [Builds](../concepts_and_terminology/BUILDS.md) を参照してください。
 
@@ -202,8 +204,10 @@ mount = "/data/db"
 | [Worktree Directories](WORKTREE_DIR.md) | `worktree_dir`, `default_worktree_dir` | ローカルおよび外部 worktree ディレクトリ、チルダパス、Codex/Claude 統合 |
 | [Ports](PORTS.md) | `[ports]`, `[egress]` | ポート転送、egress 宣言、プライマリポート |
 | [Volumes](VOLUMES.md) | `[volumes.*]` | 分離、共有、スナップショットシードのボリューム戦略 |
-| [Shared Services](SHARED_SERVICES.md) | `[shared_services.*]` | ホストレベルのデータベースおよびインフラサービス |
+| [Shared Services](SHARED_SERVICES.md) | `[shared_services.*]` | ホストレベルのデータベースおよびインフラサービス（`from_group = true` で [Shared Service Group](../shared_service_groups/README.md) に参加します） |
+| [Shared Service Groups](SHARED_SERVICE_GROUPS.md) | `Coastfile.shared_service_groups` | 複数プロジェクトにまたがってインフラサービスをホストするシングルトン SSG 用の型付き Coastfile |
 | [Secrets](SECRETS.md) | `[secrets.*]`, `[inject]` | シークレットの抽出、注入、ホスト環境/ファイル転送 |
+| [Variables](VARIABLES.md) | `${VAR}`, `${VAR:-default}` | Coastfile の値における環境変数補間 |
 | [Bare Services](SERVICES.md) | `[services.*]` | Docker Compose を使わずにプロセスを直接実行する方法 |
 | [Agent Shell](AGENT_SHELL.md) | `[agent_shell]` | コンテナ化されたエージェント TUI ランタイム |
 | [MCP Servers](MCP.md) | `[mcp.*]`, `[mcp_clients.*]` | 内部およびホストプロキシ型 MCP サーバー、クライアントコネクタ |

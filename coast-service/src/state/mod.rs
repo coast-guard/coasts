@@ -1,4 +1,5 @@
 pub mod instances;
+pub mod remote_shared_forwards;
 
 use std::path::PathBuf;
 
@@ -118,6 +119,19 @@ impl ServiceDb {
                     name TEXT PRIMARY KEY,
                     encrypted_value BLOB NOT NULL,
                     created_at TEXT NOT NULL
+                );
+
+                -- Phase 18: per-forward routing state for shared services
+                -- consumed by remote coasts. See coast-ssg/DESIGN.md §20.
+                CREATE TABLE IF NOT EXISTS remote_shared_forwards (
+                    project      TEXT NOT NULL,
+                    instance     TEXT NOT NULL,
+                    service_name TEXT NOT NULL,
+                    port         INTEGER NOT NULL,
+                    remote_port  INTEGER NOT NULL,
+                    alias_ip     TEXT NOT NULL,
+                    PRIMARY KEY (project, instance, service_name, port),
+                    FOREIGN KEY (project, instance) REFERENCES instances(project, name) ON DELETE CASCADE
                 );",
             )
             .map_err(|e| CoastError::State {
@@ -174,6 +188,36 @@ mod tests {
             .collect();
         assert!(tables.contains(&"instances".to_string()));
         assert!(tables.contains(&"secrets".to_string()));
+        assert!(
+            tables.contains(&"remote_shared_forwards".to_string()),
+            "Phase 18 migration should create remote_shared_forwards table; got {tables:?}"
+        );
+    }
+
+    #[test]
+    fn test_remote_shared_forwards_has_expected_columns() {
+        let db = ServiceDb::open_in_memory().unwrap();
+        let columns: Vec<String> = db
+            .conn
+            .prepare("PRAGMA table_info(remote_shared_forwards)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect();
+        for expected in [
+            "project",
+            "instance",
+            "service_name",
+            "port",
+            "remote_port",
+            "alias_ip",
+        ] {
+            assert!(
+                columns.contains(&expected.to_string()),
+                "remote_shared_forwards missing column '{expected}'; got {columns:?}"
+            );
+        }
     }
 
     #[test]

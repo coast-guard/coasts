@@ -68,6 +68,10 @@ Coasts は dev container ではなく、同じものではありません。
 
 Dev container は一般に、IDE を 1 つのコンテナ化された開発ワークスペースへマウントするために設計されています。Coasts はヘッドレスで、worktree と並列エージェント利用のための軽量環境として最適化されています。つまり、worktree を認識する複数の分離されたランタイム環境を並べて実行でき、素早いチェックアウト切り替えと、インスタンスごとのランタイム分離制御を提供します。
 
+## プロジェクト間でインフラを共有する
+
+複数のプロジェクトがそれぞれ同じデータベースやキャッシュを必要とする場合、それらのサービスを [Shared Service Group](shared_service_groups/README.md) と呼ばれるシングルトン DinD に一度だけ宣言し、各プロジェクトの Coastfile からそれを参照できます。これにより、プロジェクトごとのホストポート衝突を避けつつ、複数のプロジェクトでデータを共有できます。
+
 ## Demo Repo
 
 Coasts を試すための小さなサンプルプロジェクトが欲しい場合は、[`coasts-demo` repository](https://github.com/coast-guard/coasts-demo)から始めてください。

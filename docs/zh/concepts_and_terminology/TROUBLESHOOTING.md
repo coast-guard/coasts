@@ -38,6 +38,16 @@ coast rm-build my-project
 
 这会删除该项目的产物目录、Docker 镜像、卷以及容器。它会先请求确认。传入 `--force` 可跳过提示。
 
+## SSG Permission Mismatches
+
+如果某个 [Shared Service Group](../shared_service_groups/README.md) 的 Postgres（或 MySQL / MariaDB / MongoDB）在启动时因出现“data directory has wrong ownership”错误而退出，说明宿主机 bind-mount 目录是用错误的 UID/GID 创建的。请运行:
+
+```bash
+coast ssg doctor
+```
+
+它会针对每个 `(service, host-bind-mount)` 组合报告一条发现，并包含用于修复任何不匹配问题的精确 `chown` 命令。Doctor 是只读的 —— 它绝不会修改目录本身。完整语义请参见 [SSG Volumes](../shared_service_groups/VOLUMES.md#coast-ssg-doctor)。
+
 ## Missing Shared Service Images
 
 如果 `coast run` 在创建共享服务时失败，并出现类似 `No such image: postgres:15` 的错误，那么该镜像在你的宿主机 Docker 守护进程中缺失。

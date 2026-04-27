@@ -17,6 +17,45 @@
 9. 更新 `latest` 符号链接，使其指向新的构建。
 10. 自动清理超出保留数量限制的旧构建。
 
+## 无 Coastfile 构建
+
+你可以在没有 Coastfile 的情况下，直接通过 CLI 标志传入配置来构建项目:
+
+```bash
+coast build --name my-project --compose ./docker-compose.yml
+```
+
+当不存在 Coastfile 时，必需的标志有:
+- `--name <NAME>` -- 项目名称
+- `--compose <PATH>` -- docker-compose 文件路径
+
+常见设置的附加标志:
+- `--port NAME=PORT` -- 端口映射（可重复使用）
+- `--runtime <dind|sysbox|podman>` -- 容器运行时
+- `--no-autostart` -- 禁用 compose 服务自动启动
+- `--primary-port <NAME>` -- 主端口服务名称
+
+对于复杂配置（secrets、卷、共享服务），可使用带内联 TOML 的 `--config`:
+
+```bash
+coast build --name my-project --compose ./dc.yml \
+  --port web=3000 \
+  --config '[secrets.api_key]
+extractor = "env"
+var = "MY_API_KEY"
+inject = "env:API_KEY"'
+```
+
+### 覆盖 Coastfile
+
+当磁盘上存在 Coastfile 时，CLI 标志会覆盖其中的值。Coastfile 提供基础配置，而标志具有更高优先级:
+
+```bash
+coast build --name custom-name --port api=9090
+```
+
+这会读取现有的 Coastfile，但将 `coast.name` 替换为 `custom-name`，并添加（或覆盖）`api` 端口。
+
 ## 构建存储位置
 
 ```text
@@ -103,6 +142,20 @@ coast build --type snap  # uses Coastfile.snap, updates "latest-snap"
 ```
 
 清理 `snap` 构建永远不会影响 `default` 构建，反之亦然。
+
+## 自定义工作目录
+
+默认情况下，`coast build` 会将项目注册到 Coastfile 的父目录。`--working-dir` 标志会覆盖这一行为，将构建注册的项目根目录与 Coastfile 所在位置解耦:
+
+```bash
+coast --working-dir /home/user/my-project build -f /ci/configs/Coastfile
+```
+
+这会使用位于 `/ci/configs/Coastfile` 的 Coastfile 进行构建，但将项目根目录注册为 `/home/user/my-project`。manifest 中存储的 `project_root` 决定了 `coast lookup` 在哪里匹配实例，因此从 `/home/user/my-project` 运行 `coast lookup` 会找到来自此构建的实例。
+
+`--working-dir` 接受相对路径或绝对路径。相对路径会相对于当前目录进行解析。
+
+这对于 CI 流水线、monorepo 布局，或任何 Coastfile 所在目录与项目源码目录不同的场景都很有用。
 
 ## 远程构建
 

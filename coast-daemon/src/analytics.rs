@@ -287,7 +287,8 @@ pub fn request_context(req: &Request) -> (Option<&str>, Option<&str>) {
         | Request::SetAnalytics(_)
         | Request::Remote(_)
         | Request::IsSafeToUpdate(_)
-        | Request::PrepareForUpdate(_) => (None, None),
+        | Request::PrepareForUpdate(_)
+        | Request::Ssg(_) => (None, None),
         Request::Lookup(r) => (Some(&r.project), None),
         Request::RerunExtractors(r) => (Some(&r.project), None),
         Request::Run(r) => (Some(&r.project), Some(&r.name)),
@@ -505,6 +506,29 @@ pub fn request_command_name(req: &Request) -> String {
         Request::Lookup(_) => "lookup".into(),
         Request::IsSafeToUpdate(_) => "update/is_safe_to_update".into(),
         Request::PrepareForUpdate(_) => "update/prepare_for_update".into(),
+        Request::Ssg(s) => match &s.action {
+            SsgAction::Build { .. } => "ssg/build",
+            SsgAction::Run => "ssg/run",
+            SsgAction::Start => "ssg/start",
+            SsgAction::Stop { .. } => "ssg/stop",
+            SsgAction::Restart => "ssg/restart",
+            SsgAction::Rm { .. } => "ssg/rm",
+            SsgAction::Ps => "ssg/ps",
+            SsgAction::Logs { .. } => "ssg/logs",
+            SsgAction::Exec { .. } => "ssg/exec",
+            SsgAction::Ports => "ssg/ports",
+            SsgAction::Checkout { .. } => "ssg/checkout",
+            SsgAction::Uncheckout { .. } => "ssg/uncheckout",
+            SsgAction::Doctor => "ssg/doctor",
+            SsgAction::CheckoutBuild { .. } => "ssg/checkout-build",
+            SsgAction::UncheckoutBuild => "ssg/uncheckout-build",
+            SsgAction::ShowPin => "ssg/show-pin",
+            SsgAction::ImportHostVolume { .. } => "ssg/import-host-volume",
+            SsgAction::Ls => "ssg/ls",
+            SsgAction::BuildsLs => "ssg/builds-ls",
+            SsgAction::SecretsClear => "ssg/secrets-clear",
+        }
+        .into(),
     }
 }
 

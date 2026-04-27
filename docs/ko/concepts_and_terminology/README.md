@@ -16,7 +16,7 @@
 - [Checkout](CHECKOUT.md) - 표준 포트를 Coast 인스턴스에 매핑하는 것과, 그것이 필요한 경우를 설명합니다.
 - [Lookup](LOOKUP.md) - 에이전트의 현재 워크트리와 일치하는 Coast 인스턴스를 찾는 것입니다.
 - [Volume Topology](VOLUMES.md) - 공유 서비스, 공유 볼륨, 격리된 볼륨, 스냅샷을 다룹니다.
-- [Shared Services](SHARED_SERVICES.md) - 호스트에서 관리되는 인프라 서비스와 볼륨 구분을 다룹니다.
+- [Shared Services](SHARED_SERVICES.md) - 호스트에서 관리되는 인프라 서비스와 볼륨 구분을 다룹니다. 여러 프로젝트 간에 인프라를 공유하는 방법은 [Shared Service Groups](../shared_service_groups/README.md)도 참고하세요.
 - [Secrets and Extractors](SECRETS.md) - 호스트 시크릿을 추출하고 이를 Coast 컨테이너에 주입하는 방법입니다.
 - [Builds](BUILDS.md) - coast 빌드의 구조, 아티팩트가 저장되는 위치, 자동 정리, 타입 지정 빌드를 다룹니다.
 - [Coastfile Types](COASTFILE_TYPES.md) - extends, unset, omit, autostart를 갖는 조합 가능한 Coastfile 변형입니다.

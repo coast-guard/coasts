@@ -340,7 +340,7 @@ pub mod secret;
 pub mod set_analytics;
 pub mod set_language;
 pub mod shared;
-pub mod shared_service_routing;
+pub mod ssg;
 pub mod start;
 pub mod stop;
 pub mod unassign;
@@ -603,6 +603,16 @@ pub async fn handle_remote_build_with_progress(
             total,
         ))
         .await;
+    // Phase 23: resolve the consumer's own project's SSG build id for
+    // the drift-block snapshot written into the downloaded manifest.
+    // No global `~/.coast/ssg/latest` fallback.
+    let project_ssg_build_id: Option<String> = {
+        use coast_ssg::state::SsgStateExt;
+        let db = state.db.lock().await;
+        let pin = db.get_ssg_consumer_pin(&project)?;
+        let latest = db.get_ssg(&project)?.and_then(|r| r.latest_build_id);
+        pin.map(|p| p.build_id).or(latest)
+    };
     let build_id = run::download_remote_artifact(
         &build_response,
         &project,
@@ -610,6 +620,7 @@ pub async fn handle_remote_build_with_progress(
         &connection,
         &cf.project_root,
         client.has_sudo,
+        project_ssg_build_id.as_deref(),
     )
     .await?;
     let _ = progress

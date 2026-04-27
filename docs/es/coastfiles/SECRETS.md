@@ -1,8 +1,10 @@
 # Secretos e inyección
 
-Las secciones `[secrets.*]` definen credenciales que Coast extrae de tu máquina host en tiempo de build — llaveros, variables de entorno, archivos o comandos arbitrarios — e inyecta en instancias de Coast como variables de entorno o archivos. La sección separada `[inject]` reenvía valores no secretos del host a las instancias sin extracción ni cifrado.
+Las secciones `[secrets.*]` definen credenciales que Coast extrae de tu máquina host en tiempo de compilación — llaveros, variables de entorno, archivos o comandos arbitrarios — y las inyecta en instancias de Coast como variables de entorno o archivos. La sección `[inject]` separada reenvía valores no secretos del host a las instancias sin extracción ni cifrado.
 
 Para saber cómo se almacenan, cifran y gestionan los secretos en tiempo de ejecución, consulta [Secrets](../concepts_and_terminology/SECRETS.md).
+
+Los secretos son distintos de la [interpolación de variables](VARIABLES.md). Las variables (`${VAR}`) se resuelven en tiempo de análisis y sus valores aparecen en el artefacto de compilación. Los secretos se extraen en tiempo de compilación y se almacenan cifrados en el keystore -- sus valores nunca aparecen en los artefactos de compilación.
 
 ## `[secrets.*]`
 
@@ -24,14 +26,14 @@ El nombre del método de extracción. Extractores integrados:
 - **`command`** — ejecuta un comando de shell y captura stdout
 - **`keychain`** — lee del Llavero de macOS (solo macOS)
 
-También puedes usar extractores personalizados: cualquier ejecutable en tu PATH llamado `coast-extractor-{name}` está disponible como un extractor con ese nombre.
+También puedes usar extractores personalizados — cualquier ejecutable en tu PATH llamado `coast-extractor-{name}` está disponible como extractor con ese nombre.
 
 ### `inject` (obligatorio)
 
 Dónde se coloca el valor del secreto dentro de la instancia de Coast. Dos formatos:
 
-- `"env:VAR_NAME"` — se inyecta como una variable de entorno
-- `"file:/absolute/path"` — se escribe en un archivo (montado vía tmpfs)
+- `"env:VAR_NAME"` — inyectado como una variable de entorno
+- `"file:/absolute/path"` — escrito en un archivo (montado mediante tmpfs)
 
 ```toml
 # Como una variable de entorno
@@ -45,7 +47,7 @@ El valor después de `env:` o `file:` no debe estar vacío.
 
 ### `ttl`
 
-Duración de caducidad opcional. Después de este período, el secreto se considera obsoleto y Coast vuelve a ejecutar el extractor en el próximo build.
+Duración de vencimiento opcional. Después de este período, el secreto se considera obsoleto y Coast vuelve a ejecutar el extractor en la siguiente compilación.
 
 ```toml
 [secrets.api_key]
@@ -72,7 +74,7 @@ var = "DB_PASSWORD"
 inject = "env:DB_PASSWORD"
 ```
 
-Parámetro: `var` — el nombre de la variable de entorno a leer.
+Parámetro: `var` — el nombre de la variable de entorno que se debe leer.
 
 ### `file` — archivo del host
 
@@ -85,7 +87,7 @@ path = "./certs/dev.pem"
 inject = "file:/etc/ssl/certs/dev.pem"
 ```
 
-Parámetro: `path` — la ruta al archivo en el host.
+Parámetro: `path` — ruta al archivo en el host.
 
 ### `command` — comando de shell
 
@@ -105,11 +107,11 @@ run = 'python3 -c "import json; d=json.load(open(\"$HOME/.claude.json\")); print
 inject = "file:/root/.claude.json"
 ```
 
-Parámetro: `run` — el comando de shell a ejecutar.
+Parámetro: `run` — el comando de shell que se debe ejecutar.
 
 ### `keychain` — Llavero de macOS
 
-Lee una credencial del Llavero de macOS. Solo está disponible en macOS; referenciar este extractor en otras plataformas produce un error en tiempo de build.
+Lee una credencial del Llavero de macOS. Solo está disponible en macOS — hacer referencia a este extractor en otras plataformas produce un error en tiempo de compilación.
 
 ```toml
 [secrets.claude_credentials]
@@ -122,7 +124,7 @@ Parámetro: `service` — el nombre del servicio del Llavero que se debe buscar.
 
 ## `[inject]`
 
-La sección `[inject]` reenvía variables de entorno y archivos del host a instancias de Coast sin pasar por el sistema de extracción y cifrado de secretos. Usa esto para valores no sensibles que tus servicios necesiten del host.
+La sección `[inject]` reenvía variables de entorno y archivos del host a instancias de Coast sin pasar por el sistema de extracción y cifrado de secretos. Usa esto para valores no sensibles que tus servicios necesitan del host.
 
 ```toml
 [inject]
@@ -130,8 +132,8 @@ env = ["NODE_ENV", "DEBUG"]
 files = ["~/.npmrc", "~/.gitconfig"]
 ```
 
-- **`env`** — lista de nombres de variables de entorno del host que se reenviarán
-- **`files`** — lista de rutas de archivos del host que se montarán en la instancia
+- **`env`** — lista de nombres de variables de entorno del host para reenviar
+- **`files`** — lista de rutas de archivos del host para montar en la instancia
 
 ## Ejemplos
 

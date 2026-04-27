@@ -2,11 +2,13 @@
 
 `[coast]` 部分是 Coastfile 中唯一必需的部分。它用于标识项目并配置如何创建 Coast 容器。可选的 `[coast.setup]` 子部分允许你在构建时在容器内安装软件包并运行命令。
 
+Coastfile 中所有字符串值都支持使用 `${VAR}` 和 `${VAR:-default}` 语法进行[环境变量插值](VARIABLES.md)。
+
 ## `[coast]`
 
 ### `name`（必需）
 
-项目的唯一标识符。用于容器名称、卷名称、状态跟踪以及 CLI 输出。
+项目的唯一标识符。用于容器名称、卷名称、状态跟踪以及 CLI 输出。在没有 Coastfile 进行构建时，也可以通过 `--name` CLI 标志提供。
 
 ```toml
 [coast]
@@ -15,7 +17,7 @@ name = "my-app"
 
 ### `compose`
 
-Docker Compose 文件的路径。相对路径会相对于项目根目录解析（包含 Coastfile 的目录，或如果设置了 `root` 则以其为准）。
+Docker Compose 文件的路径。相对路径会相对于项目根目录解析（包含 Coastfile 的目录，或如果设置了 `root` 则以其为准）。也可以通过 `--compose` CLI 标志提供。
 
 ```toml
 [coast]

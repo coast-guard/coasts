@@ -16,7 +16,7 @@
 - [Checkout](CHECKOUT.md) - сопоставление канонических портов экземпляру Coast и случаи, когда это необходимо.
 - [Lookup](LOOKUP.md) - определение того, какие экземпляры Coast соответствуют текущему worktree агента.
 - [Volume Topology](VOLUMES.md) - общие сервисы, общие тома, изолированные тома и создание snapshot.
-- [Shared Services](SHARED_SERVICES.md) - инфраструктурные сервисы, управляемые хостом, и устранение неоднозначности томов.
+- [Shared Services](SHARED_SERVICES.md) - инфраструктурные сервисы, управляемые хостом, и устранение неоднозначности томов. См. также [Shared Service Groups](../shared_service_groups/README.md) о совместном использовании инфраструктуры между несколькими проектами.
 - [Secrets and Extractors](SECRETS.md) - извлечение секретов хоста и внедрение их в контейнеры Coast.
 - [Builds](BUILDS.md) - анатомия сборки coast, где хранятся артефакты, автоочистка и типизированные сборки.
 - [Coastfile Types](COASTFILE_TYPES.md) - компонуемые варианты Coastfile с extends, unset, omit и autostart.

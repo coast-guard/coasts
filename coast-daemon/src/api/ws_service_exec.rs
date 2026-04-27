@@ -28,9 +28,9 @@ use crate::api::ws_host_terminal::PtySession;
 use crate::handlers::compose_context;
 use crate::server::AppState;
 
-const RESIZE_PREFIX: u8 = 0x01;
-const CLEAR_PREFIX: &[u8] = b"\x02clear";
-const SCROLLBACK_CAP: usize = 512 * 1024;
+pub(crate) const RESIZE_PREFIX: u8 = 0x01;
+pub(crate) const CLEAR_PREFIX: &[u8] = b"\x02clear";
+pub(crate) const SCROLLBACK_CAP: usize = 512 * 1024;
 
 #[derive(Deserialize, Serialize, TS)]
 #[ts(export)]
@@ -237,12 +237,12 @@ async fn resolve_inner_container(
 }
 
 /// Send an error message over the WebSocket.
-async fn send_ws_error(socket: &mut WebSocket, message: impl Into<String>) {
+pub(crate) async fn send_ws_error(socket: &mut WebSocket, message: impl Into<String>) {
     let _ = socket.send(Message::Text(message.into().into())).await;
 }
 
 /// Open a PTY for a service exec session, returning the master fd and child pid.
-async fn open_pty_for_service(
+pub(crate) async fn open_pty_for_service(
     socket: &mut WebSocket,
     container_id: &str,
     inner_container: &str,
@@ -276,7 +276,7 @@ async fn push_to_scrollback(scrollback: &Mutex<VecDeque<u8>>, chunk: &[u8]) {
 }
 
 /// Spawn the background PTY reader task that pushes output into scrollback + broadcast.
-fn spawn_pty_reader(
+pub(crate) fn spawn_pty_reader(
     state: Arc<AppState>,
     sid: String,
     read_fd: i32,
@@ -536,7 +536,11 @@ async fn handle_remote_service_ws(
     );
 }
 
-async fn reconnect_session(socket: &mut WebSocket, state: &Arc<AppState>, session_id: &str) {
+pub(crate) async fn reconnect_session(
+    socket: &mut WebSocket,
+    state: &Arc<AppState>,
+    session_id: &str,
+) {
     debug!(session_id = %session_id, "reconnecting service exec session");
 
     let (scrollback_data, scrollback, output_tx, write_fd, read_fd) = {
@@ -579,7 +583,7 @@ async fn reconnect_session(socket: &mut WebSocket, state: &Arc<AppState>, sessio
     debug!(session_id = %session_id, "service exec reconnect disconnected");
 }
 
-async fn bridge_ws(
+pub(crate) async fn bridge_ws(
     socket: &mut WebSocket,
     output_tx: &broadcast::Sender<Vec<u8>>,
     write_fd: RawFd,

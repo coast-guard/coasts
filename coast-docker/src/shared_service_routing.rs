@@ -1,3 +1,31 @@
+//! Shared-service routing primitives for DinD-backed coasts.
+//!
+//! This module is shared between `coast-daemon` (local consumer path) and
+//! `coast-service` (Phase 18 symmetric remote consumer path). Both sides
+//! allocate docker0 alias IPs inside a target DinD container and spawn
+//! socat forwarders that bridge a canonical container port to
+//! `host.docker.internal:{port}`, where the `{port}` means:
+//!
+//! - **Daemon local path**: the host Docker publish of the shared-service
+//!   container (typically the canonical port).
+//! - **Daemon SSG local path**: the SSG's dynamic host port.
+//! - **Remote path (Phase 18)**: the per-forward dynamic `remote_port` that
+//!   coast-daemon allocated and told `coast-service` about via
+//!   `SharedServicePortForward.remote_port`. sshd on the remote VM binds
+//!   that `remote_port` via a reverse SSH tunnel.
+//!
+//! Callers decide what upstream port each route targets by setting
+//! `SharedServicePort.forwarding_port` on the input
+//! `SharedServiceConfig` values; the generated socat upstream is
+//! always `TCP:host.docker.internal:{forwarding_port}`. After
+//! Phase 28 the forwarding port is the daemon-managed virtual port
+//! supervised by `coast-daemon::handlers::ssg::host_socat`, so the
+//! consumer side is stable across SSG rebuilds.
+//!
+//! See [`coast-ssg/DESIGN.md §11`](../../coast-ssg/DESIGN.md) for the
+//! local topology and [`§20`](../../coast-ssg/DESIGN.md) for the Phase 18
+//! symmetric remote topology.
+
 use std::collections::HashMap;
 use std::fmt::Write;
 use std::net::Ipv4Addr;
@@ -6,25 +34,37 @@ use tracing::info;
 
 use coast_core::error::{CoastError, Result};
 use coast_core::types::{SharedServiceConfig, SharedServicePort};
-use coast_docker::runtime::Runtime;
 
-const SOCAT_UPSTREAM_HOST: &str = "host.docker.internal";
+use crate::runtime::Runtime;
 
+/// Upstream host every shared-service socat forwards to. Both the daemon
+/// (inside a consumer DinD) and coast-service (inside the remote DinD)
+/// rely on `host.docker.internal:host-gateway` being registered on the
+/// outer DinD's `extra_hosts`, which routes to "the host above me."
+pub const SOCAT_UPSTREAM_HOST: &str = "host.docker.internal";
+
+/// One shared service's routing plan: an alias IP on the DinD's docker0
+/// plus the set of (canonical, upstream) ports the socat processes will
+/// serve.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct SharedServiceRoute {
+pub struct SharedServiceRoute {
     pub service_name: String,
     pub alias_ip: Ipv4Addr,
     pub target_container: String,
     pub ports: Vec<SharedServicePort>,
 }
 
+/// Aggregate plan for all shared services targeting a single DinD.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct SharedServiceRoutingPlan {
+pub struct SharedServiceRoutingPlan {
     pub docker0_prefix_len: u8,
     pub routes: Vec<SharedServiceRoute>,
 }
 
 impl SharedServiceRoutingPlan {
+    /// Map of `service_name -> alias_ip` for compose `extra_hosts`
+    /// injection. Callers use this to rewrite `extra_hosts: postgres:{ip}`
+    /// inside the consumer's compose project.
     pub fn host_map(&self) -> HashMap<String, String> {
         self.routes
             .iter()
@@ -33,7 +73,12 @@ impl SharedServiceRoutingPlan {
     }
 }
 
-pub(crate) async fn plan_shared_service_routing(
+/// Inspect the target DinD's docker0 subnet and build a routing plan.
+///
+/// Returns an empty plan if `shared_services` is empty (no inspection
+/// performed). Errors if the DinD has no docker0 or if any referenced
+/// service is missing from `target_containers`.
+pub async fn plan_shared_service_routing(
     docker: &bollard::Docker,
     container_id: &str,
     shared_services: &[SharedServiceConfig],
@@ -55,7 +100,10 @@ pub(crate) async fn plan_shared_service_routing(
     )
 }
 
-pub(crate) async fn ensure_shared_service_proxies(
+/// Spawn (or refresh) the alias-IP + socat processes inside the target
+/// DinD for every route in `plan`. Idempotent: re-running will kill stale
+/// socats (by recorded pid file) before spawning new ones.
+pub async fn ensure_shared_service_proxies(
     docker: &bollard::Docker,
     container_id: &str,
     plan: &SharedServiceRoutingPlan,
@@ -64,7 +112,7 @@ pub(crate) async fn ensure_shared_service_proxies(
         return Ok(());
     }
 
-    let runtime = coast_docker::dind::DindRuntime::with_client(docker.clone());
+    let runtime = crate::dind::DindRuntime::with_client(docker.clone());
     let script = build_proxy_setup_script(plan);
     let result = runtime
         .exec_in_coast(container_id, &["sh", "-lc", &script])
@@ -134,7 +182,7 @@ async fn resolve_docker0_cidr(
     docker: &bollard::Docker,
     container_id: &str,
 ) -> Result<(Ipv4Addr, u8)> {
-    let runtime = coast_docker::dind::DindRuntime::with_client(docker.clone());
+    let runtime = crate::dind::DindRuntime::with_client(docker.clone());
     let result = runtime
         .exec_in_coast(container_id, &["sh", "-lc", "ip -o -4 addr show docker0"])
         .await
@@ -265,7 +313,7 @@ fn build_proxy_setup_script(plan: &SharedServiceRoutingPlan) -> String {
                 "TCP-LISTEN:{},bind={},fork,reuseaddr",
                 port.container_port, alias_ip
             );
-            let upstream_addr = format!("TCP:{}:{}", route.target_container, port.host_port);
+            let upstream_addr = format!("TCP:{}:{}", route.target_container, port.forwarding_port);
             let log_path = format!(
                 "/var/log/coast/shared-service-proxies/{}-{}.log",
                 route.service_name, port.container_port
@@ -460,6 +508,38 @@ mod tests {
                 SharedServicePort::new(5433, 5432),
                 SharedServicePort::same(6379),
             ]
+        );
+    }
+
+    #[test]
+    fn test_build_proxy_setup_script_remote_port_upstream() {
+        // Phase 18 symmetric remote-path contract: when `host_port` on
+        // the route's ports is a dynamic `remote_port` (not a canonical
+        // port), the generated script forwards to that dynamic port on
+        // `host.docker.internal`. This mirrors the test above but makes
+        // the Phase-18 intent explicit: callers construct routes where
+        // `host_port = remote_port`.
+        let plan = SharedServiceRoutingPlan {
+            docker0_prefix_len: 16,
+            routes: vec![SharedServiceRoute {
+                service_name: "postgres".to_string(),
+                alias_ip: Ipv4Addr::new(172, 17, 255, 254),
+                target_container: SOCAT_UPSTREAM_HOST.to_string(),
+                ports: vec![SharedServicePort {
+                    forwarding_port: 61034, // dynamic remote_port
+                    container_port: 5432,   // canonical
+                }],
+            }],
+        };
+
+        let script = build_proxy_setup_script(&plan);
+
+        assert!(script.contains("TCP-LISTEN:5432,bind=172.17.255.254,fork,reuseaddr"));
+        assert!(
+            script.contains("TCP:host.docker.internal:61034"),
+            "socat upstream should forward to host.docker.internal at the dynamic \
+             remote_port (passed as host_port on the route's SharedServicePort), \
+             not the canonical port"
         );
     }
 }

@@ -2,7 +2,9 @@
 
 Un Coastfile es un archivo de configuración TOML que vive en la raíz de tu proyecto. Le indica a Coast todo lo que necesita saber para construir y ejecutar entornos de desarrollo aislados para ese proyecto: qué servicios ejecutar, qué puertos reenviar, cómo manejar los datos y cómo administrar los secretos.
 
-Cada proyecto de Coast necesita al menos un Coastfile. El archivo siempre se llama `Coastfile` (C mayúscula, sin extensión). Si necesitas variantes para diferentes flujos de trabajo, creas Coastfiles tipados como `Coastfile.light` o `Coastfile.snap` que [heredan del base](INHERITANCE.md).
+El archivo siempre se llama `Coastfile` (C mayúscula, sin extensión). Si necesitas variantes para diferentes flujos de trabajo, creas Coastfiles tipados como `Coastfile.light` o `Coastfile.snap` que [heredan del base](INHERITANCE.md).
+
+Los Coastfiles son opcionales. Puedes construir un proyecto completamente a partir de flags de CLI pasando `--name` y `--compose` directamente a `coast build`. Consulta [Coastfile-less Builds](../concepts_and_terminology/BUILDS.md#coastfile-less-builds) para más detalles.
 
 Para una comprensión más profunda de cómo se relacionan los Coastfiles con el resto de Coast, consulta [Coasts](../concepts_and_terminology/COASTS.md) y [Builds](../concepts_and_terminology/BUILDS.md).
 
@@ -202,8 +204,10 @@ mount = "/data/db"
 | [Worktree Directories](WORKTREE_DIR.md) | `worktree_dir`, `default_worktree_dir` | Directorios worktree locales y externos, rutas con tilde, integración con Codex/Claude |
 | [Ports](PORTS.md) | `[ports]`, `[egress]` | Reenvío de puertos, declaraciones de egress, puerto primario |
 | [Volumes](VOLUMES.md) | `[volumes.*]` | Estrategias de volúmenes aislados, compartidos e inicializados con snapshot |
-| [Shared Services](SHARED_SERVICES.md) | `[shared_services.*]` | Bases de datos a nivel de host y servicios de infraestructura |
+| [Shared Services](SHARED_SERVICES.md) | `[shared_services.*]` | Bases de datos a nivel de host y servicios de infraestructura (`from_group = true` habilita un [Shared Service Group](../shared_service_groups/README.md)) |
+| [Shared Service Groups](SHARED_SERVICE_GROUPS.md) | `Coastfile.shared_service_groups` | El Coastfile tipado para el SSG singleton que aloja servicios de infraestructura a través de múltiples proyectos |
 | [Secrets](SECRETS.md) | `[secrets.*]`, `[inject]` | Extracción, inyección y reenvío de secretos desde env/archivo del host |
+| [Variables](VARIABLES.md) | `${VAR}`, `${VAR:-default}` | Interpolación de variables de entorno en valores del Coastfile |
 | [Bare Services](SERVICES.md) | `[services.*]` | Ejecutar procesos directamente sin Docker Compose |
 | [Agent Shell](AGENT_SHELL.md) | `[agent_shell]` | Entornos TUI de agente en contenedores |
 | [MCP Servers](MCP.md) | `[mcp.*]`, `[mcp_clients.*]` | Servidores MCP internos y proxyados desde el host, conectores de cliente |

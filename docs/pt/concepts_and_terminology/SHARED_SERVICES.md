@@ -63,3 +63,18 @@ Isso derruba e recria os contêineres de serviço compartilhado, reconectando-os
 ## Serviços Compartilhados e Coasts Remotos
 
 Ao executar [coasts remotos](REMOTES.md), os serviços compartilhados ainda são executados na sua máquina local. O daemon estabelece túneis reversos SSH (`ssh -R`) para que os contêineres DinD remotos possam alcançá-los via `host.docker.internal`. Isso mantém seu banco de dados local compartilhado com instâncias remotas. O sshd do host remoto deve ter `GatewayPorts clientspecified` habilitado para que os túneis reversos façam bind corretamente.
+
+## Veja Também: Grupos de Serviços Compartilhados
+
+Serviços compartilhados inline escalam bem dentro de um projeto (instâncias irmãs `dev-1`, `dev-2` ... compartilham o único contêiner no host ilustrado acima). O atrito aparece **entre projetos**: dois projetos Coast diferentes que declaram `[shared_services.postgres] ports = [5432]` ambos tentam fazer bind da porta 5432 no host, e o segundo falha. [Grupos de Serviços Compartilhados](../shared_service_groups/README.md) elevam a infraestrutura para um DinD por projeto (chamado `<project>-ssg`), de modo que o Postgres de cada projeto escute na `:5432` interna sem fazer bind diretamente da porta do host. Dois projetos podem ter cada um um Postgres na porta canônica 5432 porque nenhum deles faz bind da 5432 do host -- os consumidores roteiam por portas virtuais estáveis.
+
+Cada projeto recebe seu próprio SSG -- dois projetos diferentes recebem seus próprios `<p1>-ssg` e `<p2>-ssg` e nunca compartilham estado. O modelo SSG é o primo estruturado do padrão inline: mesma forma de Coastfile `[shared_services.<name>]`, mas com extração de segredos em tempo de build, portas virtuais estáveis entre rebuilds do SSG, checkout no host e verbos de ciclo de vida (`coast ssg run` / `start` / `stop` / `rm`).
+
+Quando migrar de serviços compartilhados inline para um SSG:
+
+- Você executa mais de um projeto Coast nesta máquina e eles precisam da mesma porta canônica (por exemplo, ambos querem um Postgres na 5432) -- o inline não consegue executá-los concorrentemente; o SSG consegue.
+- Você quer que ferramentas do host (`psql`, clientes GUI, MCPs) alcancem o Postgres do projeto em `localhost:5432` canônico (`coast ssg checkout`).
+- Você quer extrair credenciais de serviço de um keychain ou variável de ambiente em tempo de build (`[secrets.<name>]` no Coastfile do SSG).
+- Você quer um único lugar para declarar imagens, volumes e segredos de infraestrutura para o projeto.
+
+A migração é opcional por serviço. Blocos inline existentes `[shared_services.*]` continuam funcionando sem alterações.

@@ -11,6 +11,10 @@ type YamlMapping = serde_yaml::Mapping;
 pub(super) struct ComposeRewriteConfig<'a> {
     /// Shared services to remove and remap via extra_hosts.
     pub shared_service_hosts: &'a HashMap<String, String>,
+    /// Phase 5: env vars to inject into every non-stubbed compose
+    /// service (e.g. `DATABASE_URL=postgres://...`) so consumer apps
+    /// pick them up at runtime. See `coast-ssg/DESIGN.md §14`.
+    pub shared_service_inject_env: &'a HashMap<String, String>,
     /// Path to the coastfile (for reading omit config and volume definitions).
     pub coastfile_path: &'a Path,
     /// Per-instance image tags: (service_name, image_tag).
@@ -83,6 +87,7 @@ pub(super) fn rewrite_compose_yaml(
     needs_write |= apply_coast_managed_volume_overrides(&mut yaml, coastfile.as_ref(), config);
     needs_write |= add_service_hosts_and_mounts(&mut yaml, config);
     needs_write |= apply_hot_service_rslave_overrides(&mut yaml, config);
+    needs_write |= apply_shared_service_inject_env(&mut yaml, config, &stubbed_services);
 
     if needs_write {
         serde_yaml::to_string(&yaml).ok()
@@ -265,6 +270,99 @@ fn remove_omitted_volumes(
         }
     }
     removed_any
+}
+
+/// Add every `shared_service_inject_env` entry to the `environment:`
+/// mapping of every non-stubbed compose service. Preserves any env var
+/// the user already set on a service (no-op if the key is already
+/// there). Stubbed services (the shared-service stand-ins that have
+/// been removed from the inner compose) are skipped.
+///
+/// Phase 5. See `coast-ssg/DESIGN.md §14`.
+fn apply_shared_service_inject_env(
+    yaml: &mut serde_yaml::Value,
+    config: &ComposeRewriteConfig<'_>,
+    stubbed_services: &std::collections::HashSet<String>,
+) -> bool {
+    if config.shared_service_inject_env.is_empty() {
+        return false;
+    }
+
+    let Some(services) = yaml
+        .get_mut("services")
+        .and_then(|services| services.as_mapping_mut())
+    else {
+        return false;
+    };
+
+    let service_names: Vec<String> = services
+        .keys()
+        .filter_map(|key| key.as_str().map(String::from))
+        .collect();
+    let mut changed = false;
+
+    for service_name in &service_names {
+        if stubbed_services.contains(service_name) {
+            continue;
+        }
+        let Some(service_definition) = services
+            .get_mut(serde_yaml::Value::String(service_name.clone()))
+            .and_then(|s| s.as_mapping_mut())
+        else {
+            continue;
+        };
+        changed |=
+            merge_env_vars_into_service(service_definition, config.shared_service_inject_env);
+    }
+
+    changed
+}
+
+/// Merge the supplied map into a compose service's `environment:`
+/// entry (accepting either the mapping form or the list form).
+/// Returns true if the service was modified.
+fn merge_env_vars_into_service(
+    service_definition: &mut YamlMapping,
+    env_to_inject: &HashMap<String, String>,
+) -> bool {
+    let env_key = serde_yaml::Value::String("environment".into());
+    let existing = service_definition.get(&env_key).cloned();
+    let mut existing_map: YamlMapping = match existing {
+        None => YamlMapping::new(),
+        Some(serde_yaml::Value::Mapping(m)) => m,
+        Some(serde_yaml::Value::Sequence(seq)) => {
+            // Compose list form: ["KEY=VALUE", ...]. Convert to
+            // mapping so we can merge keys. Unparseable entries are
+            // dropped silently (matches compose's own behavior).
+            let mut m = YamlMapping::new();
+            for item in seq {
+                let Some(s) = item.as_str() else { continue };
+                if let Some((k, v)) = s.split_once('=') {
+                    m.insert(
+                        serde_yaml::Value::String(k.to_string()),
+                        serde_yaml::Value::String(v.to_string()),
+                    );
+                }
+            }
+            m
+        }
+        Some(_) => return false,
+    };
+
+    let mut changed = false;
+    for (k, v) in env_to_inject {
+        let key = serde_yaml::Value::String(k.clone());
+        if existing_map.contains_key(&key) {
+            continue;
+        }
+        existing_map.insert(key, serde_yaml::Value::String(v.clone()));
+        changed = true;
+    }
+
+    if changed {
+        service_definition.insert(env_key, serde_yaml::Value::Mapping(existing_map));
+    }
+    changed
 }
 
 fn apply_image_overrides(
@@ -656,9 +754,15 @@ mod tests {
         &EMPTY
     }
 
+    fn empty_shared_service_inject_env() -> &'static HashMap<String, String> {
+        static EMPTY: LazyLock<HashMap<String, String>> = LazyLock::new(HashMap::new);
+        &EMPTY
+    }
+
     fn base_config<'a>() -> ComposeRewriteConfig<'a> {
         ComposeRewriteConfig {
             shared_service_hosts: empty_shared_service_hosts(),
+            shared_service_inject_env: empty_shared_service_inject_env(),
             coastfile_path: Path::new("/nonexistent-coastfile"),
             per_instance_image_tags: &[],
             has_volume_mounts: false,
@@ -1312,6 +1416,175 @@ services:
         assert!(
             !result.contains("/workspace/node_modules:rslave"),
             "anonymous volume must not get rslave appended"
+        );
+    }
+
+    // --- rewrite_compose_yaml: shared-service inject env (Phase 5) ---
+
+    #[test]
+    fn test_inject_env_adds_var_to_every_service() {
+        let compose = r#"
+services:
+  app:
+    image: postgres:16-alpine
+    command: sh -c "sleep infinity"
+"#;
+        let inject = HashMap::from([(
+            "DATABASE_URL".to_string(),
+            "postgres://postgres:dev@postgres:5432/inst_proj".to_string(),
+        )]);
+        let config = ComposeRewriteConfig {
+            shared_service_inject_env: &inject,
+            ..base_config()
+        };
+        let result = rewrite_compose_yaml(compose, &config).unwrap();
+        let yaml = parse_output(&result);
+        let env = yaml
+            .get("services")
+            .and_then(|s| s.get("app"))
+            .and_then(|a| a.get("environment"))
+            .and_then(|e| e.as_mapping())
+            .expect("environment mapping");
+        assert_eq!(
+            env.get(serde_yaml::Value::String("DATABASE_URL".into())),
+            Some(&serde_yaml::Value::String(
+                "postgres://postgres:dev@postgres:5432/inst_proj".into()
+            ))
+        );
+    }
+
+    #[test]
+    fn test_inject_env_preserves_existing_user_env() {
+        let compose = r#"
+services:
+  app:
+    image: postgres:16-alpine
+    environment:
+      DATABASE_URL: "postgres://user-set@custom:1234/mydb"
+      OTHER_VAR: "keep"
+"#;
+        let inject = HashMap::from([(
+            "DATABASE_URL".to_string(),
+            "postgres://autocomputed@postgres:5432/inst_proj".to_string(),
+        )]);
+        let config = ComposeRewriteConfig {
+            shared_service_inject_env: &inject,
+            ..base_config()
+        };
+        let result = rewrite_compose_yaml(compose, &config).unwrap_or_else(|| compose.to_string());
+        let yaml = parse_output(&result);
+        let env = yaml
+            .get("services")
+            .and_then(|s| s.get("app"))
+            .and_then(|a| a.get("environment"))
+            .and_then(|e| e.as_mapping())
+            .expect("environment mapping");
+        // User-set wins (or_insert semantics).
+        assert_eq!(
+            env.get(serde_yaml::Value::String("DATABASE_URL".into())),
+            Some(&serde_yaml::Value::String(
+                "postgres://user-set@custom:1234/mydb".into()
+            ))
+        );
+        // Unrelated var untouched.
+        assert_eq!(
+            env.get(serde_yaml::Value::String("OTHER_VAR".into())),
+            Some(&serde_yaml::Value::String("keep".into()))
+        );
+    }
+
+    #[test]
+    fn test_inject_env_handles_list_form_environment() {
+        let compose = r#"
+services:
+  app:
+    image: postgres:16-alpine
+    environment:
+      - EXISTING=1
+"#;
+        let inject = HashMap::from([(
+            "DATABASE_URL".to_string(),
+            "postgres://postgres:dev@postgres:5432/x".to_string(),
+        )]);
+        let config = ComposeRewriteConfig {
+            shared_service_inject_env: &inject,
+            ..base_config()
+        };
+        let result = rewrite_compose_yaml(compose, &config).unwrap();
+        let yaml = parse_output(&result);
+        let env = yaml
+            .get("services")
+            .and_then(|s| s.get("app"))
+            .and_then(|a| a.get("environment"))
+            .and_then(|e| e.as_mapping())
+            .expect("list-form env should be normalized to mapping");
+        assert!(env
+            .get(serde_yaml::Value::String("DATABASE_URL".into()))
+            .is_some());
+        assert_eq!(
+            env.get(serde_yaml::Value::String("EXISTING".into())),
+            Some(&serde_yaml::Value::String("1".into()))
+        );
+    }
+
+    #[test]
+    fn test_inject_env_skips_stubbed_services() {
+        // A service named `postgres` appears in both `shared_service_hosts`
+        // (stubbed/removed) AND `shared_service_inject_env`. It must NOT
+        // receive the inject env because it's being removed from the
+        // inner compose anyway. Separate `app` service should get it.
+        let compose = r#"
+services:
+  app:
+    image: alpine:3
+  postgres:
+    image: postgres:16-alpine
+"#;
+        let shared = HashMap::from([("postgres".to_string(), "172.17.255.254".to_string())]);
+        let inject = HashMap::from([(
+            "DATABASE_URL".to_string(),
+            "postgres://postgres:dev@postgres:5432/x".to_string(),
+        )]);
+        let config = ComposeRewriteConfig {
+            shared_service_hosts: &shared,
+            shared_service_inject_env: &inject,
+            ..base_config()
+        };
+        let result = rewrite_compose_yaml(compose, &config).unwrap();
+        let yaml = parse_output(&result);
+        // postgres service was removed (it's stubbed).
+        assert!(yaml
+            .get("services")
+            .and_then(|s| s.get("postgres"))
+            .is_none());
+        // app got the env.
+        let app_env = yaml
+            .get("services")
+            .and_then(|s| s.get("app"))
+            .and_then(|a| a.get("environment"));
+        assert!(app_env.is_some(), "app should have environment mapping");
+    }
+
+    #[test]
+    fn test_inject_env_empty_map_does_not_add_environment() {
+        let compose = r#"
+services:
+  app:
+    image: alpine:3
+"#;
+        // `base_config()` uses an empty inject env. Even if another
+        // step rewrites the YAML for its own reasons, the `app`
+        // service must NOT gain an empty `environment:` section.
+        let config = base_config();
+        let result = rewrite_compose_yaml(compose, &config).unwrap_or_else(|| compose.to_string());
+        let yaml = parse_output(&result);
+        let env = yaml
+            .get("services")
+            .and_then(|s| s.get("app"))
+            .and_then(|a| a.get("environment"));
+        assert!(
+            env.is_none(),
+            "empty inject env must not introduce an environment section"
         );
     }
 }

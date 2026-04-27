@@ -6,7 +6,7 @@
 /// Submodules:
 /// - [`raw_types`]: Raw TOML serde deserialization structs
 mod field_parsers;
-pub(crate) mod interpolation;
+pub mod interpolation;
 mod raw_types;
 mod serializer;
 #[cfg(test)]
@@ -21,7 +21,7 @@ use crate::error::{CoastError, Result};
 use crate::types::{
     AssignConfig, BareServiceConfig, HostInjectConfig, McpClientConnectorConfig, McpServerConfig,
     OmitConfig, RemoteConfig, RuntimeType, SecretConfig, SetupConfig, SharedServiceConfig,
-    VolumeConfig,
+    SharedServiceGroupRef, VolumeConfig,
 };
 
 use raw_types::*;
@@ -48,8 +48,18 @@ pub struct Coastfile {
     pub inject: HostInjectConfig,
     /// Volume configurations.
     pub volumes: Vec<VolumeConfig>,
-    /// Shared service configurations.
+    /// Inline shared service configurations — services spawned on the
+    /// host Docker daemon at `coast run` time. A Coastfile entry
+    /// `[shared_services.<name>]` lands here when it declares its own
+    /// image / ports / env / volumes.
     pub shared_services: Vec<SharedServiceConfig>,
+    /// References to services defined in the Shared Service Group
+    /// singleton. A Coastfile entry `[shared_services.<name>]` with
+    /// `from_group = true` lands here instead of `shared_services`.
+    /// See `coast-ssg/DESIGN.md §6`. At `coast run`, these are
+    /// resolved against the active SSG build (Phase 4 wiring); they
+    /// never spawn anything on the host daemon.
+    pub shared_service_group_refs: Vec<SharedServiceGroupRef>,
     /// Coast container setup configuration.
     pub setup: SetupConfig,
     /// The directory containing the Coastfile (project root).
@@ -185,6 +195,27 @@ impl Coastfile {
         coastfile_type
             .map(|t| t == "remote" || t.starts_with("remote."))
             .unwrap_or(false)
+    }
+
+    /// Returns `true` if the given coastfile type string represents a Shared
+    /// Service Group (SSG) Coastfile (`Coastfile.shared_service_groups`).
+    ///
+    /// SSGs are a separate build product from regular coast images: they are
+    /// built via `coast ssg build`, not `coast build`. UIs that offer build
+    /// variants (the SPA build picker, the CLI's `--type` flag) must filter
+    /// SSG variants out so users don't accidentally route an SSG Coastfile
+    /// through the coast image-build pipeline.
+    pub fn is_ssg_type(coastfile_type: Option<&str>) -> bool {
+        coastfile_type
+            .map(|t| t == "shared_service_groups")
+            .unwrap_or(false)
+    }
+
+    /// Returns `true` if a Coastfile of the given type can be built via
+    /// `coast build`. Excludes both remote variants (built via remote build)
+    /// and SSG variants (built via `coast ssg build`).
+    pub fn is_buildable_via_coast_build(coastfile_type: Option<&str>) -> bool {
+        !Self::is_remote_type(coastfile_type) && !Self::is_ssg_type(coastfile_type)
     }
 
     /// Find a Coastfile on disk, trying the `.toml` variant first.
@@ -370,6 +401,7 @@ impl Coastfile {
             },
             volumes: vec![],
             shared_services: vec![],
+            shared_service_group_refs: vec![],
             setup: SetupConfig::default(),
             project_root: project_root.to_path_buf(),
             assign: AssignConfig::default(),
@@ -557,11 +589,30 @@ impl Coastfile {
             Self::merge_named_items(base.volumes, Self::parse_volumes(raw.volumes)?, |volume| {
                 volume.name.as_str()
             });
-        let shared_services = Self::merge_named_items(
-            base.shared_services,
-            Self::parse_shared_services(raw.shared_services)?,
-            |service| service.name.as_str(),
-        );
+        // Cross-bucket override semantics: a child entry with
+        // `from_group = true` invalidates a parent's inline entry of the
+        // same name, and vice versa. Record the child's intended bucket
+        // per name before parsing consumes `raw.shared_services`, then
+        // strip opposites from the merged result below.
+        let child_shared_service_buckets: HashMap<String, bool> = raw
+            .shared_services
+            .iter()
+            .map(|(k, v)| (k.clone(), v.from_group))
+            .collect();
+
+        let (layer_inline, layer_refs) = Self::parse_shared_services(raw.shared_services)?;
+        let mut shared_services =
+            Self::merge_named_items(base.shared_services, layer_inline, |service| {
+                service.name.as_str()
+            });
+        let mut shared_service_group_refs =
+            Self::merge_named_items(base.shared_service_group_refs, layer_refs, |r| {
+                r.name.as_str()
+            });
+        shared_services
+            .retain(|s| !matches!(child_shared_service_buckets.get(&s.name), Some(true)));
+        shared_service_group_refs
+            .retain(|r| !matches!(child_shared_service_buckets.get(&r.name), Some(false)));
         let setup = Self::merge_setup(base.setup, raw.coast.setup)?;
         let resolved_root = raw
             .coast
@@ -641,6 +692,7 @@ impl Coastfile {
             inject,
             volumes,
             shared_services,
+            shared_service_group_refs,
             setup,
             project_root: resolved_root,
             assign,
@@ -671,7 +723,14 @@ impl Coastfile {
             coastfile.ports.remove(name);
         }
         for name in &unset.shared_services {
+            // `shared_services` and `shared_service_group_refs` share
+            // the same logical namespace at the TOML level (both come
+            // from `[shared_services.<name>]`), so `[unset].shared_services`
+            // drops matching names from whichever bucket they ended up in.
             coastfile.shared_services.retain(|s| s.name != *name);
+            coastfile
+                .shared_service_group_refs
+                .retain(|r| r.name != *name);
         }
         for name in &unset.volumes {
             coastfile.volumes.retain(|v| v.name != *name);
@@ -901,8 +960,11 @@ impl Coastfile {
         // Parse volumes
         let volumes = Self::parse_volumes(raw.volumes)?;
 
-        // Parse shared services
-        let shared_services = Self::parse_shared_services(raw.shared_services)?;
+        // Parse shared services: dispatches on `from_group` into two
+        // buckets (inline configs vs. SSG references). See
+        // `coast-ssg/DESIGN.md §6`.
+        let (shared_services, shared_service_group_refs) =
+            Self::parse_shared_services(raw.shared_services)?;
 
         // Parse setup config
         let setup = match raw.coast.setup {
@@ -975,6 +1037,7 @@ impl Coastfile {
             inject,
             volumes,
             shared_services,
+            shared_service_group_refs,
             setup,
             project_root: resolved_root,
             assign,
@@ -1129,4 +1192,45 @@ pub struct ResolvedExternalDir {
     pub raw_pattern: String,
     /// The fully resolved absolute path on the host.
     pub resolved_path: PathBuf,
+}
+
+#[cfg(test)]
+mod tests_type_helpers {
+    use super::*;
+
+    #[test]
+    fn is_remote_type_matrix() {
+        assert!(Coastfile::is_remote_type(Some("remote")));
+        assert!(Coastfile::is_remote_type(Some("remote.light")));
+        assert!(!Coastfile::is_remote_type(Some("default")));
+        assert!(!Coastfile::is_remote_type(Some("light")));
+        assert!(!Coastfile::is_remote_type(Some("shared_service_groups")));
+        assert!(!Coastfile::is_remote_type(None));
+    }
+
+    #[test]
+    fn is_ssg_type_only_matches_shared_service_groups() {
+        assert!(Coastfile::is_ssg_type(Some("shared_service_groups")));
+        assert!(!Coastfile::is_ssg_type(Some("default")));
+        assert!(!Coastfile::is_ssg_type(Some("remote")));
+        assert!(!Coastfile::is_ssg_type(Some("remote.light")));
+        assert!(!Coastfile::is_ssg_type(Some("light")));
+        assert!(!Coastfile::is_ssg_type(None));
+    }
+
+    #[test]
+    fn is_buildable_via_coast_build_excludes_remote_and_ssg() {
+        assert!(Coastfile::is_buildable_via_coast_build(Some("default")));
+        assert!(Coastfile::is_buildable_via_coast_build(Some("light")));
+        assert!(Coastfile::is_buildable_via_coast_build(Some("e2e")));
+        assert!(Coastfile::is_buildable_via_coast_build(None));
+
+        assert!(!Coastfile::is_buildable_via_coast_build(Some("remote")));
+        assert!(!Coastfile::is_buildable_via_coast_build(Some(
+            "remote.light"
+        )));
+        assert!(!Coastfile::is_buildable_via_coast_build(Some(
+            "shared_service_groups"
+        )));
+    }
 }

@@ -16,7 +16,7 @@ This section covers the core concepts and vocabulary used throughout Coasts. If 
 - [Checkout](CHECKOUT.md) - mapping canonical ports to a Coast instance and when you need it.
 - [Lookup](LOOKUP.md) - discovering which Coast instances match the agent's current worktree.
 - [Volume Topology](VOLUMES.md) - shared services, shared volumes, isolated volumes, and snapshotting.
-- [Shared Services](SHARED_SERVICES.md) - host-managed infrastructure services and volume disambiguation.
+- [Shared Services](SHARED_SERVICES.md) - host-managed infrastructure services and volume disambiguation. See also [Shared Service Groups](../shared_service_groups/README.md) for sharing infrastructure across multiple projects.
 - [Secrets and Extractors](SECRETS.md) - extracting host secrets and injecting them into Coast containers.
 - [Builds](BUILDS.md) - the anatomy of a coast build, where artifacts live, auto-pruning, and typed builds.
 - [Coastfile Types](COASTFILE_TYPES.md) - composable Coastfile variants with extends, unset, omit, and autostart.

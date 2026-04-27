@@ -4,12 +4,14 @@
 //! `${VAR:-default}` references with their environment variable values.
 //!
 //! Syntax:
-//! - `${VAR}` -- replaced with the value of env var `VAR`
+//! - `${VAR}` -- replaced with the value of env var `VAR` if set;
+//!   otherwise **preserved as the literal text `${VAR}`** plus a
+//!   warning. Preserving-on-miss keeps shell commands like
+//!   `ARCH=$(uname -m); curl .../linux-${ARCH}.tar.gz` working because
+//!   the Dockerfile's shell expands them at build time.
 //! - `${VAR:-fallback}` -- replaced with `VAR` if set, otherwise `fallback`
-//! - `$${...}` -- escape: produces the literal text `${...}`
-//!
-//! Undefined variables without a default are replaced with an empty string
-//! and a warning is collected.
+//!   (use `${VAR:-}` to explicitly opt into empty substitution).
+//! - `$${...}` -- escape: produces the literal text `${...}` with no warning.
 
 /// Result of interpolating environment variables in a string.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,16 +96,22 @@ where
             };
 
             if i < len && bytes[i] == b'}' {
-                i += 1; // skip '}'
+                let ref_end = i + 1; // include the closing '}'
+                i = ref_end;
                 match resolver(name) {
                     Ok(value) => result.push_str(&value),
                     Err(_) => {
                         if let Some(default) = default_value {
                             result.push_str(default);
                         } else {
+                            // Preserve the literal `${VAR}` text so shell
+                            // commands that define their own variables
+                            // keep working. Warn so users with a typo'd
+                            // env var name still get a nudge.
+                            result.push_str(&input[ref_start..ref_end]);
                             warnings.push(format!(
-                                "undefined environment variable '{}' replaced with empty string",
-                                name
+                                "undefined environment variable '{name}' preserved as literal '${{{name}}}'; \
+                                 use '${{{name}:-}}' for explicit empty, or '$${{{name}}}' to escape entirely"
                             ));
                         }
                     }
@@ -210,22 +218,66 @@ mod tests {
     }
 
     #[test]
-    fn test_undefined_without_default_warns() {
+    fn test_undefined_without_default_preserves_literal_and_warns() {
         let vars: HashMap<&str, &str> = HashMap::new();
         let r = interpolate_with_resolver("key = ${MISSING}", resolver_from(&vars));
-        assert_eq!(r.content, "key = ");
+        // Preserve-on-miss: downstream shell / Dockerfile can still
+        // handle the variable if it's defined at that layer.
+        assert_eq!(r.content, "key = ${MISSING}");
         assert_eq!(r.warnings.len(), 1);
         assert!(r.warnings[0].contains("MISSING"));
+        assert!(
+            r.warnings[0].contains("preserved"),
+            "warning should explain new behavior: {}",
+            r.warnings[0]
+        );
     }
 
     #[test]
-    fn test_multiple_undefined_collect_warnings() {
+    fn test_multiple_undefined_preserved_and_warn() {
         let vars: HashMap<&str, &str> = HashMap::new();
         let r = interpolate_with_resolver("${A} and ${B}", resolver_from(&vars));
-        assert_eq!(r.content, " and ");
+        assert_eq!(r.content, "${A} and ${B}");
         assert_eq!(r.warnings.len(), 2);
         assert!(r.warnings[0].contains("'A'"));
         assert!(r.warnings[1].contains("'B'"));
+    }
+
+    #[test]
+    fn test_empty_default_opt_in_still_empties() {
+        // Users who genuinely want empty substitution can still write
+        // `${VAR:-}` — the `:-` form takes precedence over the
+        // preserve-on-miss default.
+        let vars: HashMap<&str, &str> = HashMap::new();
+        let r = interpolate_with_resolver("${X:-}", resolver_from(&vars));
+        assert_eq!(r.content, "");
+        assert!(r.warnings.is_empty());
+    }
+
+    #[test]
+    fn test_shell_defined_variable_survives_interpolation() {
+        // Regression for the coastguard-platform `${ARCH}` bug: a shell
+        // command that defines ARCH locally and then references it
+        // should reach the Dockerfile/shell verbatim without Coast
+        // eating `${ARCH}` to empty.
+        let vars: HashMap<&str, &str> = HashMap::new();
+        let cmd = "ARCH=$(uname -m) && wget https://example.com/linux-${ARCH}.tar.gz";
+        let r = interpolate_with_resolver(cmd, resolver_from(&vars));
+        assert_eq!(r.content, cmd);
+        assert_eq!(r.warnings.len(), 1);
+        assert!(r.warnings[0].contains("'ARCH'"));
+    }
+
+    #[test]
+    fn test_mixed_resolved_and_unresolved() {
+        // A var that resolves substitutes its value; one that doesn't
+        // is preserved literally. Both behaviors in one string.
+        let mut vars = HashMap::new();
+        vars.insert("KNOWN", "hello");
+        let r = interpolate_with_resolver("${KNOWN} and ${UNKNOWN}", resolver_from(&vars));
+        assert_eq!(r.content, "hello and ${UNKNOWN}");
+        assert_eq!(r.warnings.len(), 1);
+        assert!(r.warnings[0].contains("'UNKNOWN'"));
     }
 
     #[test]

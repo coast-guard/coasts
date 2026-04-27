@@ -275,10 +275,35 @@ async fn handle_remote_rm(
         let _ = docker.remove_container(&shell_container, Some(opts)).await;
     }
 
+    // Phase 18: tear down per-instance shared-service reverse tunnels
+    // (ssh -N -R) before deleting the instance row. The FK
+    // `ON DELETE CASCADE` on `shared_service_forwards.(project,
+    // instance)` drops the persisted state when we delete the
+    // instance below.
+    {
+        let mut map = state.shared_service_tunnel_pids.lock().await;
+        if let Some(pids) = map.remove(&(req.project.clone(), req.name.clone())) {
+            for pid in pids {
+                super::ssg::kill_ssh_tunnel_pid(pid);
+            }
+        }
+    }
+
     let db = state.db.lock().await;
     db.delete_port_allocations(&req.project, &req.name)?;
     db.delete_instance(&req.project, &req.name)?;
     drop(db);
+
+    // Phase 30: SSG-shared reverse tunnels (one per `(project,
+    // remote_host, service, container_port)` rather than per
+    // instance) survive a single instance removal — they're shared
+    // with sibling instances of the same project on the same remote.
+    // After deleting THIS instance, check if any siblings remain on
+    // the same remote; if not, this was the last one and we tear
+    // down the shared tunnels.
+    if let Some(remote_host) = instance.remote_host.as_deref() {
+        teardown_ssg_shared_tunnels_if_last(state, &req.project, remote_host).await;
+    }
 
     state.emit_event(CoastEvent::InstanceRemoved {
         name: req.name.clone(),
@@ -288,6 +313,110 @@ async fn handle_remote_rm(
     info!(name = %req.name, "remote instance removed");
 
     Ok(RmResponse { name: req.name })
+}
+
+/// Phase 30: when the last instance of `project` on `remote_host`
+/// has just been removed, kill every SSG shared reverse tunnel for
+/// that pair and clear the corresponding `ssg_shared_tunnels` rows.
+///
+/// Sibling instances of the same project on the same remote keep
+/// the tunnels alive — this helper short-circuits when any survive.
+/// Per-instance bookkeeping (the `shared_service_tunnel_pids` map +
+/// `shared_service_forwards` rows) is cleaned up by the caller's
+/// regular instance-deletion path; only the shared SSG tunnels
+/// require this extra last-out check.
+async fn teardown_ssg_shared_tunnels_if_last(state: &AppState, project: &str, remote_host: &str) {
+    let Some(rows) = collect_ssg_shared_tunnels_to_teardown(state, project, remote_host).await
+    else {
+        return;
+    };
+    if rows.is_empty() {
+        return;
+    }
+
+    info!(
+        project = %project,
+        remote = %remote_host,
+        count = rows.len(),
+        "phase 30 teardown: last instance removed; tearing down SSG shared tunnels"
+    );
+    for row in &rows {
+        if let Some(pid) = row.ssh_pid {
+            super::ssg::kill_ssh_tunnel_pid(pid as u32);
+        }
+    }
+    clear_ssg_shared_tunnel_rows(state, project, remote_host, &rows).await;
+}
+
+/// Phase 30 teardown helper: returns `Some(rows)` to tear down,
+/// or `None` when siblings still need the shared tunnels (or DB
+/// access failed). Decoupled from the kill+clear loop so the
+/// outer function stays under the cognitive-complexity threshold.
+async fn collect_ssg_shared_tunnels_to_teardown(
+    state: &AppState,
+    project: &str,
+    remote_host: &str,
+) -> Option<Vec<coast_ssg::state::SsgSharedTunnelRecord>> {
+    use coast_ssg::state::SsgStateExt;
+    let db = state.db.lock().await;
+    let siblings_remain = match db.list_instances_for_project(project) {
+        Ok(rows) => rows
+            .iter()
+            .any(|inst| inst.remote_host.as_deref() == Some(remote_host)),
+        Err(err) => {
+            warn!(
+                project = %project,
+                remote = %remote_host,
+                error = %err,
+                "phase 30 teardown: failed to enumerate siblings; leaving shared tunnels alone"
+            );
+            return None;
+        }
+    };
+    if siblings_remain {
+        info!(
+            project = %project,
+            remote = %remote_host,
+            "phase 30 teardown: siblings of project remain on remote — keeping shared tunnels"
+        );
+        return None;
+    }
+    match db.list_ssg_shared_tunnels_for_remote(project, remote_host) {
+        Ok(rows) => Some(rows),
+        Err(err) => {
+            warn!(
+                project = %project,
+                remote = %remote_host,
+                error = %err,
+                "phase 30 teardown: failed to list shared tunnels; leaving them alone"
+            );
+            None
+        }
+    }
+}
+
+async fn clear_ssg_shared_tunnel_rows(
+    state: &AppState,
+    project: &str,
+    remote_host: &str,
+    rows: &[coast_ssg::state::SsgSharedTunnelRecord],
+) {
+    use coast_ssg::state::SsgStateExt;
+    let db = state.db.lock().await;
+    for row in rows {
+        if let Err(err) =
+            db.clear_ssg_shared_tunnel(project, remote_host, &row.service_name, row.container_port)
+        {
+            warn!(
+                project = %project,
+                remote = %remote_host,
+                service = %row.service_name,
+                container_port = row.container_port,
+                error = %err,
+                "phase 30 teardown: failed to clear ssg_shared_tunnels row"
+            );
+        }
+    }
 }
 
 #[cfg(test)]

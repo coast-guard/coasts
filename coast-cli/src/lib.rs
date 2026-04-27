@@ -118,6 +118,9 @@ pub enum Commands {
     /// Manage shared services.
     #[command(name = "shared-services")]
     SharedServices(commands::shared::SharedArgs),
+    /// Manage the singleton Shared Service Group (SSG).
+    #[command(name = "ssg", alias = "shared-service-group")]
+    Ssg(commands::ssg::SsgArgs),
     /// Manage per-instance secret overrides.
     Secret(commands::secret::SecretArgs),
     /// Stream logs from a coast instance.
@@ -278,6 +281,15 @@ async fn dispatch(cli: Cli) -> Result<()> {
         Commands::Archive(args) => commands::archive::execute_archive(&args).await,
         Commands::Unarchive(args) => commands::archive::execute_unarchive(&args).await,
         Commands::Ls(args) => commands::ls::execute(&args, &cli.project).await,
+
+        // --- Singleton (project-less) commands ---
+        //
+        // The Shared Service Group is one-per-host. `coast ssg build`
+        // in particular mirrors `coast build`'s discovery rules and
+        // honors the global `--working-dir` flag (DESIGN.md §5). It
+        // therefore bypasses `dispatch_project_command` so the user
+        // does not need to be in a project directory at all.
+        Commands::Ssg(args) => commands::ssg::execute(&args, &cli.working_dir).await,
 
         // --- Project-context commands (require project resolution) ---
         cmd => dispatch_project_command(cmd, &cli.project).await,
@@ -581,6 +593,53 @@ mod tests {
             assert_eq!(args.project_name, Some("proj".to_string()));
         } else {
             panic!("Expected Build command");
+        }
+    }
+
+    #[test]
+    fn test_cli_global_working_dir_reaches_ssg_build() {
+        // Regression for DESIGN.md §5: `coast --working-dir <dir> ssg
+        // build` must honor the global flag. clap's `global = true`
+        // on `Cli::working_dir` propagates the value into any
+        // subcommand arg with the same name; this test pins that
+        // behavior so the global form stays working even if a future
+        // refactor breaks the clap wiring.
+        let cli = Cli::try_parse_from(["coast", "--working-dir", "/shared/coast", "ssg", "build"])
+            .unwrap();
+        assert_eq!(
+            cli.working_dir,
+            Some(std::path::PathBuf::from("/shared/coast"))
+        );
+        match cli.command {
+            Commands::Ssg(args) => match args.action {
+                commands::ssg::SsgAction::Build { working_dir, .. } => {
+                    // clap threads the global flag into the subcommand's
+                    // working_dir field. `ssg::execute` additionally
+                    // falls back to `cli.working_dir` as a belt-and-
+                    // braces safeguard (in case clap's global-propagation
+                    // behavior changes in a future version).
+                    assert_eq!(working_dir, Some(std::path::PathBuf::from("/shared/coast")));
+                }
+                other => panic!("expected Build action, got {other:?}"),
+            },
+            other => panic!("expected Ssg command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_cli_ssg_build_subcommand_working_dir_parses() {
+        // When --working-dir is passed AFTER `ssg build`, it binds to
+        // the subcommand's local working_dir (not the global flag).
+        let cli =
+            Cli::try_parse_from(["coast", "ssg", "build", "--working-dir", "/subcmd"]).unwrap();
+        match cli.command {
+            Commands::Ssg(args) => match args.action {
+                commands::ssg::SsgAction::Build { working_dir, .. } => {
+                    assert_eq!(working_dir, Some(std::path::PathBuf::from("/subcmd")));
+                }
+                other => panic!("expected Build action, got {other:?}"),
+            },
+            other => panic!("expected Ssg command, got {other:?}"),
         }
     }
 

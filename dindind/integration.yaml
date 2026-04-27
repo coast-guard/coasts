@@ -333,9 +333,20 @@ tests:
   test_remote_run_syncs_generated:
     script: integrated-examples/remote/test_remote_run_syncs_generated.sh
     timeout: 300
-  test_remote_shared_tunnel_reuse:
-    script: integrated-examples/remote/test_remote_shared_tunnel_reuse.sh
+  test_remote_multi_instance_independent_tunnels:
+    script: integrated-examples/remote/test_remote_multi_instance_independent_tunnels.sh
     timeout: 300
+  test_remote_mixed_inline_and_ssg_no_collision:
+    script: integrated-examples/remote/test_remote_mixed_inline_and_ssg_no_collision.sh
+    timeout: 300
+  test_remote_two_projects_same_canonical_port_distinct_ssg:
+    script: integrated-examples/remote/test_remote_two_projects_same_canonical_port_distinct_ssg.sh
+    timeout: 600
+    note: "Phase 24: two projects with own SSGs (pg15 vs pg16) + one shared remote; daemon-restart leg proves the `restored_hosts` host-keyed skip was correctly removed (DESIGN §23.3 item 7). Phase 30: each project's tunnel is symmetric on its own virtual port (vport:localhost:vport), and `ssh -R` argv MUST NOT contain SSG dyn ports anymore."
+  test_remote_multi_instance_same_project_shares_ssg_tunnel:
+    script: integrated-examples/remote/test_remote_multi_instance_same_project_shares_ssg_tunnel.sh
+    timeout: 600
+    note: "Phase 30: two instances of the SAME project on the SAME remote VM share ONE `ssh -R` process for SSG-backed shared services. Asserts (1) exactly one ssh -R for the project's vport regardless of instance count, (2) reuse-don't-respawn across `coast run`, (3) shared tunnel survives an intermediate `coast rm` while a sibling holds it, (4) tear-down only when the last sibling is removed (DESIGN §24, Phase 30)."
   test_remote_port_recovery_after_restart:
     script: integrated-examples/remote/test_remote_port_recovery_after_restart.sh
     timeout: 300
@@ -351,3 +362,232 @@ tests:
   test_working_dir:
     script: integrated-examples/test_working_dir.sh
     timeout: 300
+
+  # --- Shared Service Groups (coast-ssg) — Phase 2 ---
+  test_ssg_build_minimal:
+    script: integrated-examples/test_ssg_build_minimal.sh
+    timeout: 300
+    note: "coast ssg build with one service + artifact layout assertions"
+  test_ssg_build_multiple_services:
+    script: integrated-examples/test_ssg_build_multiple_services.sh
+    timeout: 300
+    note: "coast ssg build with postgres + redis, sorted manifest"
+  test_ssg_build_rebuild_prunes:
+    script: integrated-examples/test_ssg_build_rebuild_prunes.sh
+    timeout: 300
+    note: "6 consecutive coast ssg builds -> auto_prune keeps 5"
+
+  # --- Shared Service Groups (coast-ssg) — Phase 3 ---
+  test_ssg_run_lifecycle:
+    script: integrated-examples/test_ssg_run_lifecycle.sh
+    timeout: 600
+    note: "coast ssg run/stop/start/restart/rm against the singleton coast-ssg container"
+  test_ssg_bind_mount_symmetric:
+    script: integrated-examples/test_ssg_bind_mount_symmetric.sh
+    timeout: 600
+    note: "host bind source is visible with the same inode inside outer DinD and inner postgres (DESIGN.md §10.2)"
+  test_ssg_named_volume_persists:
+    script: integrated-examples/test_ssg_named_volume_persists.sh
+    timeout: 600
+    note: "inner named volume survives stop/start; rm --with-data removes it"
+
+  # --- Shared Service Groups (coast-ssg) — Phase 3.5 ---
+  test_ssg_auto_start_on_run:
+    script: integrated-examples/test_ssg_auto_start_on_run.sh
+    timeout: 600
+    note: "coast run on a from_group consumer auto-starts the SSG; missing SSG build produces DESIGN-verbatim error"
+
+  # --- Shared Service Groups (coast-ssg) — Phase 4 ---
+  test_ssg_consumer_basic:
+    script: integrated-examples/test_ssg_consumer_basic.sh
+    timeout: 600
+    note: "consumer app reaches SSG postgres via synthesized config; real psql SELECT proves end-to-end connectivity"
+  test_ssg_consumer_conflict:
+    script: integrated-examples/test_ssg_consumer_conflict.sh
+    timeout: 300
+    note: "parse-time conflicts (forbidden fields + duplicate sections) surface via coast build"
+  test_ssg_consumer_missing_service:
+    script: integrated-examples/test_ssg_consumer_missing_service.sh
+    timeout: 600
+    note: "coast run fails with clear error when consumer references a name not in the active SSG"
+
+  # --- Shared Service Groups (coast-ssg) — Phase 5 (auto_create_db + inject) ---
+  test_ssg_auto_create_db:
+    script: integrated-examples/test_ssg_auto_create_db.sh
+    timeout: 600
+    note: "per-instance {instance}_{project} DB created inside SSG postgres on consumer run"
+  test_ssg_inject_env:
+    script: integrated-examples/test_ssg_inject_env.sh
+    timeout: 600
+    note: "consumer app container receives DATABASE_URL with canonical host/port"
+  test_ssg_inject_file:
+    script: integrated-examples/test_ssg_inject_file.sh
+    timeout: 600
+    note: "consumer app container receives the canonical connection URL at inject = \"file:<path>\"; env var unset; round-trip psql lands in the per-instance DB"
+
+  # --- Phase 33: SSG-native [secrets.<name>] support ---
+  # `Coastfile.shared_service_groups` accepts the same `[secrets.*]`
+  # block as the regular Coastfile. `coast ssg build` extracts via
+  # the existing extractor registry and stores values encrypted in
+  # the keystore under `coast_image = "ssg:<project>"`.
+  # `coast ssg run` decrypts and writes a per-run
+  # `compose.override.yml` that compose layers on top of
+  # `/coast-artifact/compose.yml`. Keystore is never auto-purged —
+  # only `coast ssg secrets clear` removes entries.
+  test_ssg_secrets_env_inject:
+    script: integrated-examples/test_ssg_secrets_env_inject.sh
+    timeout: 600
+    note: "[secrets.*] with env extractor + env inject lands in the postgres container as POSTGRES_PASSWORD via compose.override.yml"
+  test_ssg_secrets_file_inject:
+    script: integrated-examples/test_ssg_secrets_file_inject.sh
+    timeout: 600
+    note: "[secrets.*] with file inject writes to host scratch dir + bind-mounts read-only into postgres at /run/secrets/jwt"
+  test_ssg_secrets_rebuild_reextracts:
+    script: integrated-examples/test_ssg_secrets_rebuild_reextracts.sh
+    timeout: 600
+    note: "rebuild after the source env var changes re-extracts the new value; old value gone from the keystore"
+  test_ssg_secrets_rm_keeps_keystore:
+    script: integrated-examples/test_ssg_secrets_rm_keeps_keystore.sh
+    timeout: 600
+    note: "ssg rm and ssg rm --with-data leave the keystore alone; only `ssg secrets clear` removes SSG keystore rows"
+  test_ssg_secrets_clear:
+    script: integrated-examples/test_ssg_secrets_clear.sh
+    timeout: 600
+    note: "explicit `ssg secrets clear` empties keystore for ssg:<project>; idempotent; doctor surfaces info finding when declared but missing"
+
+  test_shared_service_auto_create_db:
+    script: integrated-examples/test_shared_service_auto_create_db.sh
+    timeout: 600
+    note: "inline (non-SSG) shared postgres also lights up auto_create_db + inject"
+
+  # --- Shared Service Groups (coast-ssg) — Phase 6 (host-side checkout) ---
+  test_ssg_host_checkout:
+    script: integrated-examples/test_ssg_host_checkout.sh
+    timeout: 600
+    note: "coast ssg checkout binds canonical host port; stop kills socat, start re-spawns"
+  test_ssg_checkout_displaces_instance:
+    script: integrated-examples/test_ssg_checkout_displaces_instance.sh
+    timeout: 600
+    note: "ssg checkout displaces a coast holding the canonical port with a clear warning; no auto-restore on uncheckout"
+
+  # --- Shared Service Groups (coast-ssg) — Phase 7 (drift detection) ---
+  # Phase 31: test_ssg_drift_warning + test_ssg_drift_missing_service
+  # were deleted along with the runtime drift audit (Phase 29). The
+  # "consumer fails fast on missing service" contract is now covered
+  # by integrated-examples/test_ssg_consumer_fails_fast_when_service_missing.sh
+  # which exercises ECONNREFUSED at connect time rather than a
+  # build-time drift comparison.
+
+  # --- Shared Service Groups (coast-ssg) — Phase 4.5 (remote) ---
+  test_ssg_remote_reverse_tunnel:
+    script: integrated-examples/test_ssg_remote_reverse_tunnel.sh
+    timeout: 900
+    note: "remote consumer reaches local SSG postgres through rewritten reverse SSH tunnel"
+  test_ssg_stop_blocked_by_remote:
+    script: integrated-examples/test_ssg_stop_blocked_by_remote.sh
+    timeout: 900
+    note: "coast ssg stop refuses while a remote shadow consumer references the SSG"
+  test_ssg_stop_force_cleans_tunnels:
+    script: integrated-examples/test_ssg_stop_force_cleans_tunnels.sh
+    timeout: 900
+    note: "coast ssg stop --force kills reverse-tunnel ssh children before stopping the SSG"
+
+  # --- Shared Service Groups (coast-ssg) — Phase 8 (doctor) ---
+  test_ssg_doctor:
+    script: integrated-examples/test_ssg_doctor.sh
+    timeout: 600
+    note: "coast ssg doctor reports ok/warn/info findings based on host bind-mount ownership; read-only"
+
+  # --- Shared Service Groups (coast-ssg) — Phase 11 (consumer socat refresh) ---
+  test_ssg_rm_run_refreshes_consumers:
+    script: integrated-examples/test_ssg_rm_run_refreshes_consumers.sh
+    timeout: 900
+    note: "ssg rm + run reallocates dyn ports; Phase 11 hook refreshes running consumer socat forwarders so psql keeps working without rebuilding the consumer"
+
+  # --- Shared Service Groups (coast-ssg) — Phase 14 (Phase 9 test backfill) ---
+  test_ssg_build_global_working_dir:
+    script: integrated-examples/test_ssg_build_global_working_dir.sh
+    timeout: 600
+    note: "coast --working-dir <dir> ssg build succeeds from unrelated cwd; subcommand flag wins over global"
+  test_ssg_checkout_positional:
+    script: integrated-examples/test_ssg_checkout_positional.sh
+    timeout: 600
+    note: "coast ssg checkout <service> (positional) and --service equivalent; conflicts and --all+SERVICE rejected"
+  test_ssg_consumer_disables_auto_create_db:
+    script: integrated-examples/test_ssg_consumer_disables_auto_create_db.sh
+    timeout: 600
+    note: "consumer auto_create_db=false overrides SSG auto_create_db=true; per-instance DB is not created"
+  test_ssg_ps_live_state:
+    script: integrated-examples/test_ssg_ps_live_state.sh
+    timeout: 600
+    note: "coast ssg ps shows built -> running -> stopped with live dynamic_host_port from state DB"
+  test_ssg_coast_build_hard_errors_no_ssg:
+    script: integrated-examples/test_ssg_coast_build_hard_errors_no_ssg.sh
+    timeout: 600
+    note: "coast build on a from_group consumer hard-errors when no SSG build exists (DESIGN §6.1 drift)"
+
+  # --- Shared Service Groups (coast-ssg) — Phase 15 (import-host-volume) ---
+  test_ssg_import_host_volume:
+    script: integrated-examples/test_ssg_import_host_volume.sh
+    timeout: 600
+    note: "coast ssg import-host-volume snippet + --apply + .bak + duplicate mount + missing volume; ssg build succeeds on rewritten Coastfile (DESIGN §10.7)"
+
+  # --- Shared Service Groups (coast-ssg) — Phase 16 (consumer pinning) ---
+  test_ssg_pin_anchors_build:
+    script: integrated-examples/test_ssg_pin_anchors_build.sh
+    timeout: 600
+    note: "Phase 16 + 31 (post-drift removal): coast ssg checkout-build pins a consumer to a specific SSG build_id; the pinned build's directory survives auto_prune; subsequent `coast run` resolves the consumer's ssg manifest from the pinned build (recorded in manifest.json), not the project's latest_build_id (DESIGN §17-9 SETTLED #41 + §29)"
+  test_ssg_uncheckout_build_restores_latest:
+    script: integrated-examples/test_ssg_uncheckout_build_restores_latest.sh
+    timeout: 600
+    note: "Phase 16 + 31: uncheckout-build drops the pin; subsequent `coast run` resolves against the project's current latest_build_id (DESIGN §17-9). Replaces the pre-Phase-29 drift hard-error contract."
+  test_ssg_pin_missing_build_errors:
+    script: integrated-examples/test_ssg_pin_missing_build_errors.sh
+    timeout: 600
+    note: "deleting the pinned build dir + coast run -> hard-error citing uncheckout-build + coast ssg build (DESIGN §17-9 pin-pruned path)"
+
+  # --- Shared Service Groups (coast-ssg) — Phase 17 (Coastfile inheritance) ---
+  test_ssg_coastfile_inheritance:
+    script: integrated-examples/test_ssg_coastfile_inheritance.sh
+    timeout: 600
+    note: "Coastfile.shared_service_groups [ssg] extends/includes: parent merged into child, child wins on conflict, flattened artifact, [unset] removes, cycle detection hard-errors (DESIGN §17 SETTLED #42)"
+
+  # --- Shared Service Groups (coast-ssg) — Phase 22 (per-project SSG + `ssg ls`) ---
+  test_ssg_per_project_isolation:
+    script: integrated-examples/test_ssg_per_project_isolation.sh
+    timeout: 600
+    note: "two projects with their own `Coastfile.shared_service_groups` run concurrent postgres SSGs as `{project}-ssg` containers; `ssg ps` is cwd-scoped; `ssg ls` is cross-project; per-project `ssg rm` is isolated (DESIGN §23, Phase 22)"
+
+  # --- Shared Service Groups (coast-ssg) — Phase 25 (local two-projects routing proof) ---
+  test_ssg_two_projects_same_canonical_port:
+    script: integrated-examples/test_ssg_two_projects_same_canonical_port.sh
+    timeout: 600
+    note: "Phase 25 local analogue of test_remote_two_projects_same_canonical_port_distinct_ssg: two projects each own SSG (pg15 vs pg16), both consumer coasts run locally against the same canonical postgres:5432; psql SHOW server_version confirms each consumer reaches its OWN project's postgres (DESIGN §23, Phase 25)"
+
+  # --- Shared Service Groups (coast-ssg) — Phase 23 (consumer resolver + `from_group`) ---
+  test_ssg_per_project_build_isolation:
+    script: integrated-examples/test_ssg_per_project_build_isolation.sh
+    timeout: 600
+    note: "project A's `ssg build` is invisible to project B's consumer; `coast build` in B hard-errors naming project B instead of silently picking up A's build via the old global `latest` symlink (DESIGN §23, Phase 23)"
+
+  # --- Shared Service Groups (coast-ssg) — Phase 31 (host-owned virtual ports) ---
+  test_ssg_virtual_port_stable_across_rebuild:
+    script: integrated-examples/test_ssg_virtual_port_stable_across_rebuild.sh
+    timeout: 600
+    note: "Phase 31 / DESIGN §24.5: the project's virtual port survives `ssg build` + `ssg run` and `ssg stop` + `ssg run` cycles. Only `ssg rm --with-data` releases the allocation. Anchors the consumer-stability invariant for Phase 28."
+  test_ssg_host_socat_respawn_on_daemon_restart:
+    script: integrated-examples/test_ssg_host_socat_respawn_on_daemon_restart.sh
+    timeout: 600
+    note: "Phase 31 / DESIGN §24: kill the host socat directly, restart the daemon, `restore_running_state -> host_socat::reconcile_all` respawns it with the same virtual port. Validates the daemon-startup recovery path."
+  test_ssg_consumer_fails_fast_when_service_missing:
+    script: integrated-examples/test_ssg_consumer_fails_fast_when_service_missing.sh
+    timeout: 600
+    note: "Phase 31 / DESIGN §24.4: replaces the deleted Phase 29 drift-missing-service test. SSG rebuild drops a service; the still-running consumer's connection to that service fails at runtime (TCP refused) instead of via a build-time drift audit. postgres unaffected; redis unreachable."
+  test_ssg_allocator_collision_fallback:
+    script: integrated-examples/test_ssg_allocator_collision_fallback.sh
+    timeout: 600
+    note: "Phase 31 / DESIGN §24.5: pre-bind a port in the allocator's band via a host python listener; `ssg run` MUST allocate the next free port in the band, NOT the pre-bound one. Validates `virtual_port_allocator::allocate_or_reuse`'s `probe_port_free` skip."
+  test_ssg_docker_restart_outside_daemon_recovers:
+    script: integrated-examples/test_ssg_docker_restart_outside_daemon_recovers.sh
+    timeout: 600
+    note: "Phase 31 / DESIGN §24.5: `docker restart {project}-ssg` outside the daemon may shift the dynamic host port. The next `coast ssg restart` triggers `host_socat::reconcile_project` which refreshes the host socat's upstream; the consumer keeps working without a rebuild."

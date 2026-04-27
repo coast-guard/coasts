@@ -524,7 +524,7 @@ async fn handle_stats_socket(mut socket: WebSocket, state: Arc<AppState>, key: S
     debug!(key = %key, "service stats WS disconnected (collector keeps running)");
 }
 
-fn parse_docker_stats_json(output: &str) -> Option<serde_json::Value> {
+pub(crate) fn parse_docker_stats_json(output: &str) -> Option<serde_json::Value> {
     for line in output.lines() {
         let trimmed = line.trim().trim_matches('\'');
         if trimmed.is_empty() || !trimmed.starts_with('{') {

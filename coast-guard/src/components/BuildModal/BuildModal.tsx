@@ -53,7 +53,17 @@ export default function BuildModal({ open, project, onClose, onComplete }: Build
     if (open && project) {
       api.buildsCoastfileTypes(project).then((resp) => {
         const all = resp.types ?? [];
-        setCoastfileTypes(all.filter((t) => !t.startsWith('remote')));
+        // Filter out variants that belong to other build affordances:
+        // - `remote*` -> built via the "Remote Build" button.
+        // - `shared_service_groups` -> built via the "SSG Build" button.
+        // Daemon-side filtering already excludes these, but the SPA
+        // keeps belt-and-braces filtering in case a stale daemon
+        // serves an outdated list.
+        setCoastfileTypes(
+          all.filter(
+            (t) => !t.startsWith('remote') && t !== 'shared_service_groups',
+          ),
+        );
       }).catch(() => {
         setCoastfileTypes(['default']);
       });

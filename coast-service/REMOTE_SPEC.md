@@ -101,6 +101,41 @@ DinD container :3000 (canonical, where the app listens)
 This allows multiple instances of the same project on one remote machine
 without port conflicts.
 
+## Shared-Service Routing Chain (Phase 18)
+
+Shared services running on the local machine are reached from inside
+the remote DinD via a symmetric alias-IP + socat + reverse-tunnel path
+that mirrors the local Phase 4 consumer topology (see
+[`coast-ssg/DESIGN.md §20`](../coast-ssg/DESIGN.md)).
+
+Every forward carries a dynamic `remote_port` allocated by
+`coast-daemon` so two consumer coasts on one remote VM cannot collide
+on a canonical port:
+
+```
+Inner app container (inside remote DinD)
+       ↓ DNS: postgres → alias_ip (from compose extra_hosts)
+alias_ip:5432 on docker0 (inside remote DinD)
+       ↓ socat inside DinD (spawned by coast-service via
+         coast_docker::shared_service_routing)
+host.docker.internal:{remote_port} (remote VM host)
+       ↓ sshd reverse listener (ssh -N -R 0.0.0.0:{remote_port}:localhost:{local_port})
+localhost:{local_port} (local machine, coast-daemon host)
+       ↓ either inline shared-service container OR SSG DinD publish
+Local shared service (postgres, redis, ...)
+```
+
+`SharedServicePortForward` carries `{name, port, remote_port}` so
+`coast-service` can build the same `SharedServiceConfig` that the
+daemon uses on the local consumer path and reuse
+`plan_shared_service_routing` + `ensure_shared_service_proxies` from
+`coast-docker`. Coast-service stays daemon-agnostic: it never learns
+whether the local end of the reverse tunnel is inline or SSG-backed.
+
+Per-forward alias-IP + remote-port state is persisted in the
+`remote_shared_forwards` table so `coast start` can restore the
+inside-DinD routing identically to the previous run after a stop.
+
 ## Remote Management CLI
 
 Register and manage remote machines with `coast remote`:

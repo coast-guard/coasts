@@ -48,6 +48,12 @@ pub struct ContainerConfig {
     pub published_ports: Vec<PortPublish>,
     /// Extra host entries ("hostname:ip") to add to the container's /etc/hosts.
     pub extra_hosts: Vec<String>,
+    /// Explicit container name. When `Some`, this string is used verbatim as
+    /// the Docker container name, bypassing the default
+    /// `{project}-coasts-{instance_name}` convention. Used for the SSG
+    /// singleton, which must be literally named `coast-ssg` per
+    /// `coast-ssg/DESIGN.md` §4. Other callers should leave this `None`.
+    pub container_name_override: Option<String>,
 }
 
 /// A port to publish from the container to the host.
@@ -107,11 +113,18 @@ impl ExecResult {
 impl ContainerConfig {
     /// Generate the canonical container name for this coast instance.
     ///
-    /// Naming convention: `{project}-coasts-{instance_name}`
+    /// Default naming convention: `{project}-coasts-{instance_name}`.
     /// Follows Docker Compose conventions so Docker Desktop displays
     /// just the instance name within the compose project group.
+    ///
+    /// When `container_name_override` is set, that string is returned
+    /// verbatim. Used for the SSG singleton (`coast-ssg`).
     pub fn container_name(&self) -> String {
-        format!("{}-coasts-{}", self.project, self.instance_name)
+        if let Some(ref name) = self.container_name_override {
+            name.clone()
+        } else {
+            format!("{}-coasts-{}", self.project, self.instance_name)
+        }
     }
 
     /// Create a new ContainerConfig with required fields and sensible defaults.
@@ -149,6 +162,7 @@ impl ContainerConfig {
             labels,
             published_ports: Vec::new(),
             extra_hosts: Vec::new(),
+            container_name_override: None,
         }
     }
 }

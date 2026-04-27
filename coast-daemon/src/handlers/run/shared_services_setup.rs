@@ -219,7 +219,7 @@ fn build_port_bindings(
             .get_or_insert_with(Vec::new)
             .push(bollard::models::PortBinding {
                 host_ip: Some("0.0.0.0".to_string()),
-                host_port: Some(port.host_port.to_string()),
+                host_port: Some(port.forwarding_port.to_string()),
             });
     }
     port_bindings
@@ -309,7 +309,7 @@ fn humanize_port_conflict(
     let port_display = port.map(|p| p.to_string()).unwrap_or_else(|| {
         declared_ports
             .iter()
-            .map(|port| port.host_port.to_string())
+            .map(|port| port.forwarding_port.to_string())
             .collect::<Vec<_>>()
             .join(", ")
     });

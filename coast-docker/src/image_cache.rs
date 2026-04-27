@@ -92,6 +92,84 @@ pub fn cache_hit(cache_dir: &Path, image_ref: &str) -> bool {
     tarball_path(cache_dir, image_ref).exists()
 }
 
+/// Pull a Docker image and save it as a tarball in the cache directory.
+///
+/// Uses the plain `{safe_name}.tar` filename convention (as written by
+/// the historical `coast-daemon` helper) rather than the
+/// content-addressable `tarball_filename` scheme above, so existing
+/// build artifacts remain compatible.
+///
+/// Lifted from `coast-daemon/src/handlers/build/utils.rs` so both
+/// `coast-daemon` and `coast-ssg` can share a single implementation
+/// without `coast-ssg` having to depend on `coast-daemon` (which would
+/// create a cycle).
+pub async fn pull_and_cache_image(
+    docker: &bollard::Docker,
+    image: &str,
+    cache_dir: &Path,
+) -> Result<PathBuf> {
+    use bollard::image::CreateImageOptions;
+    use futures_util::StreamExt;
+
+    let (name, tag) = if let Some(pos) = image.rfind(':') {
+        (&image[..pos], &image[pos + 1..])
+    } else {
+        (image, "latest")
+    };
+
+    info!(image = %image, "pulling image for cache");
+
+    let options = CreateImageOptions {
+        from_image: name,
+        tag,
+        ..Default::default()
+    };
+
+    let mut stream = docker.create_image(Some(options), None, None);
+    while let Some(result) = stream.next().await {
+        match result {
+            Ok(info) => {
+                if let Some(status) = info.status {
+                    tracing::debug!(status = %status, "pull progress");
+                }
+            }
+            Err(error) => {
+                return Err(CoastError::docker(format!(
+                    "failed to pull image '{}': {}",
+                    image, error
+                )));
+            }
+        }
+    }
+
+    let safe_name = image.replace(['/', ':'], "_");
+    let tarball_path = cache_dir.join(format!("{safe_name}.tar"));
+
+    let mut export_stream = docker.export_image(image);
+    let mut tarball_data = Vec::new();
+    while let Some(chunk) = export_stream.next().await {
+        match chunk {
+            Ok(bytes) => tarball_data.extend_from_slice(&bytes),
+            Err(error) => {
+                return Err(CoastError::docker(format!(
+                    "failed to export image '{}': {}",
+                    image, error
+                )));
+            }
+        }
+    }
+
+    std::fs::write(&tarball_path, &tarball_data).map_err(|error| CoastError::Io {
+        message: format!("failed to write image tarball: {error}"),
+        path: tarball_path.clone(),
+        source: Some(error),
+    })?;
+
+    info!(image = %image, path = %tarball_path.display(), "image cached");
+
+    Ok(tarball_path)
+}
+
 /// Build the `docker save` command for saving an image to a tarball.
 ///
 /// Returns the command arguments as a vector of strings.

@@ -6,10 +6,10 @@ use coast_core::error::{CoastError, Result};
 use coast_core::protocol::{BuildProgressEvent, RunRequest};
 use coast_docker::runtime::Runtime;
 
-use crate::handlers::shared_service_routing::{
+use crate::server::AppState;
+use coast_docker::shared_service_routing::{
     ensure_shared_service_proxies, plan_shared_service_routing,
 };
-use crate::server::AppState;
 
 use super::paths;
 use super::service_start::{start_and_wait_for_services, StartServicesRequest};
@@ -58,7 +58,21 @@ pub(super) async fn provision_instance(
 
     let resources = load_coastfile_resources(&coastfile_path, req, state, progress).await?;
 
-    let secret_plan = secrets::load_secrets_for_instance(&coastfile_path, &req.name);
+    let mut secret_plan = secrets::load_secrets_for_instance(&coastfile_path, &req.name);
+    // Phase 13: merge `inject = "file:<path>"` entries from every
+    // shared service (inline + SSG-synthesized) into the same
+    // container_paths / files_for_exec vectors secrets use. The
+    // downstream compose-rewrite and exec-write paths iterate one
+    // merged list uniformly; we don't duplicate plumbing for the
+    // two origins. Collisions with an existing secret path are
+    // hard errors so users don't silently shadow their own secrets.
+    // See `coast-ssg/DESIGN.md §14`.
+    merge_shared_service_file_injects_into_secret_plan(
+        &mut secret_plan,
+        &resources.shared_services,
+        &req.project,
+        &req.name,
+    )?;
     let secret_container_paths = secret_plan.container_paths.clone();
     let secret_files_for_exec = secret_plan.files_for_exec.clone();
     let has_volume_mounts = !resources.volume_mounts.is_empty();
@@ -105,6 +119,20 @@ pub(super) async fn provision_instance(
 
     normalize_inner_docker_socket_permissions(docker, &container_id).await;
     setup_shared_services(&ctx).await?;
+    // Phase 5: create `{instance}_{project}` DB inside each shared
+    // service with `auto_create_db = true` before the consumer's inner
+    // compose starts. Dispatches per `shared_service_targets`:
+    // "coast-ssg" -> nested compose exec; anything else -> direct
+    // `docker exec`. See `coast-ssg/DESIGN.md §13`.
+    super::auto_create_db::run_auto_create_dbs(
+        docker,
+        state,
+        &resources.shared_services,
+        &resources.shared_service_targets,
+        &req.project,
+        &req.name,
+    )
+    .await?;
     prepare_images(&ctx).await;
     prepare_runtime(&ctx).await?;
     start_services(&ctx).await?;
@@ -169,21 +197,30 @@ async fn setup_shared_services(ctx: &InstanceConfig<'_>) -> Result<()> {
 
     let shared_service_hosts = shared_service_routing.as_ref().map_or_else(
         HashMap::new,
-        super::super::shared_service_routing::SharedServiceRoutingPlan::host_map,
+        coast_docker::shared_service_routing::SharedServiceRoutingPlan::host_map,
     );
 
-    rewrite_compose(
-        ctx.artifact_dir,
-        ctx.code_path,
-        ctx.coastfile_path,
-        &shared_service_hosts,
-        ctx.per_instance_image_tags,
-        ctx.has_volume_mounts,
-        ctx.secret_container_paths,
-        Some(paths::SHARED_CADDY_PKI_CONTAINER_PATH),
+    // Phase 5: compute inject env vars here so they go into the
+    // compose override and reach the inner compose services.
+    let shared_service_inject_env = crate::shared_services::shared_service_inject_env_vars(
+        &ctx.resources.shared_services,
         &ctx.req.project,
         &ctx.req.name,
     );
+
+    rewrite_compose(&RewriteComposeArgs {
+        artifact_dir: ctx.artifact_dir,
+        code_path: ctx.code_path,
+        coastfile_path: ctx.coastfile_path,
+        shared_service_hosts: &shared_service_hosts,
+        shared_service_inject_env: &shared_service_inject_env,
+        per_instance_image_tags: ctx.per_instance_image_tags,
+        has_volume_mounts: ctx.has_volume_mounts,
+        secret_container_paths: ctx.secret_container_paths,
+        shared_caddy_pki_container_path: Some(paths::SHARED_CADDY_PKI_CONTAINER_PATH),
+        project: &ctx.req.project,
+        instance_name: &ctx.req.name,
+    });
 
     if let Some(ref routing) = shared_service_routing {
         ensure_shared_service_proxies(ctx.docker, ctx.container_id, routing).await?;
@@ -266,6 +303,41 @@ async fn start_services(ctx: &InstanceConfig<'_>) -> Result<()> {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/// Phase 13: merge shared-service `inject = "file:<path>"` entries
+/// into an existing `SecretInjectionPlan`. Appends one
+/// `(container_path, body_bytes)` pair per file-inject to both
+/// `container_paths` (for the compose-rewrite bind-mount step) and
+/// `files_for_exec` (for the exec-write step that materializes the
+/// file inside the DinD overlay).
+///
+/// Hard-errors on a container_path collision with an existing secret
+/// so users never silently shadow their own secrets.
+fn merge_shared_service_file_injects_into_secret_plan(
+    plan: &mut secrets::SecretInjectionPlan,
+    shared_services: &[coast_core::types::SharedServiceConfig],
+    project: &str,
+    instance: &str,
+) -> Result<()> {
+    let file_writes = crate::shared_services::shared_service_inject_file_writes(
+        shared_services,
+        project,
+        instance,
+    )?;
+    for (container_path, bytes) in file_writes {
+        let path_str = container_path.to_string_lossy().to_string();
+        if plan.container_paths.iter().any(|p| p == &path_str) {
+            return Err(CoastError::coastfile(format!(
+                "shared-service file inject at '{path_str}' conflicts with a secret declared at \
+                 the same path. Pick a different path for one of them (e.g. \
+                 `inject = \"file:/run/secrets/<service>_url\"`)."
+            )));
+        }
+        plan.container_paths.push(path_str.clone());
+        plan.files_for_exec.push((path_str, bytes));
+    }
+    Ok(())
+}
+
 fn resolve_code_path(project: &str, build_id: Option<&str>) -> std::path::PathBuf {
     let project_dir = paths::project_images_dir(project);
     let manifest_path = build_id
@@ -298,6 +370,41 @@ fn resolve_artifact_dir(project: &str, build_id: Option<&str>) -> std::path::Pat
         }
     } else {
         project_images_dir.join("latest")
+    }
+}
+
+/// Read and parse the artifact's `coastfile.toml`, logging any
+/// missing-file or parse-error case. Returns `None` when the caller
+/// should fall through to the "no resources" result (missing or
+/// unparseable artifact coastfile is recoverable — the coast runs
+/// with whatever else it has). Extracted to keep
+/// `load_coastfile_resources` under the clippy
+/// cognitive-complexity threshold.
+fn load_artifact_coastfile_or_log(
+    coastfile_path: &std::path::Path,
+    req: &RunRequest,
+) -> Option<coast_core::coastfile::Coastfile> {
+    if !coastfile_path.exists() {
+        debug!(
+            project = %req.project,
+            instance = %req.name,
+            path = %coastfile_path.display(),
+            "artifact Coastfile missing while loading run resources"
+        );
+        return None;
+    }
+    match coast_core::coastfile::Coastfile::from_file(coastfile_path) {
+        Ok(cf) => Some(cf),
+        Err(error) => {
+            warn!(
+                project = %req.project,
+                instance = %req.name,
+                path = %coastfile_path.display(),
+                error = %error,
+                "failed to parse artifact Coastfile while loading run resources"
+            );
+            None
+        }
     }
 }
 
@@ -341,27 +448,8 @@ async fn load_coastfile_resources(
         shared_network: None,
     };
 
-    if !coastfile_path.exists() {
-        debug!(
-            project = %req.project,
-            instance = %req.name,
-            path = %coastfile_path.display(),
-            "artifact Coastfile missing while loading run resources"
-        );
+    let Some(coastfile) = load_artifact_coastfile_or_log(coastfile_path, req) else {
         return Ok(result);
-    }
-    let coastfile = match coast_core::coastfile::Coastfile::from_file(coastfile_path) {
-        Ok(coastfile) => coastfile,
-        Err(error) => {
-            warn!(
-                project = %req.project,
-                instance = %req.name,
-                path = %coastfile_path.display(),
-                error = %error,
-                "failed to parse artifact Coastfile while loading run resources"
-            );
-            return Ok(result);
-        }
     };
 
     debug!(
@@ -371,8 +459,16 @@ async fn load_coastfile_resources(
         port_count = coastfile.ports.len(),
         volume_count = coastfile.volumes.len(),
         shared_service_count = coastfile.shared_services.len(),
+        ssg_ref_count = coastfile.shared_service_group_refs.len(),
         "loaded artifact Coastfile for run resources"
     );
+
+    // SSG auto-start (Phase 3.5): when the consumer references SSG
+    // services via `from_group = true`, bring the singleton up before
+    // any of this project's own shared-service setup runs. No-op when
+    // the consumer has no SSG references. See `coast-ssg/DESIGN.md §11.1`.
+    super::ssg_integration::ensure_ready_for_consumer(state, &req.project, &coastfile, progress)
+        .await?;
 
     let shared_service_ports: HashSet<u16> = coastfile
         .shared_services
@@ -420,21 +516,63 @@ async fn load_coastfile_resources(
         }
     }
 
+    // SSG consumer wiring (Phase 4 + Phase 28): synthesize a
+    // `SharedServiceConfig` per `from_group = true` reference using
+    // the active SSG build's manifest + the project's stable virtual
+    // port from `ssg_virtual_ports` (Phase 28's substitution in
+    // `synthesize_shared_service_configs`), then merge into the
+    // result so the existing shared_service_routing + compose_rewrite
+    // paths route `postgres:5432` inside the consumer DinD to
+    // `host.docker.internal:<virtual_port>`. The daemon-managed host
+    // socat (Phase 27/28) sits between the virtual port and the
+    // SSG's current dynamic port, so this routing is stable across
+    // SSG rebuilds. Inline services are not affected; they started
+    // above. See `coast-ssg/DESIGN.md §11` + §24.
+    let synthesized =
+        super::ssg_integration::synthesize_configs_for_consumer(state, &coastfile).await?;
+    for cfg in &synthesized {
+        // Any non-empty placeholder satisfies `build_routing_plan`'s
+        // `target_containers.contains_key(...)` existence check; the
+        // actual socat upstream is the `SOCAT_UPSTREAM_HOST` constant
+        // (`host.docker.internal`), not this value. Use "coast-ssg"
+        // as a literal, self-documenting placeholder.
+        result
+            .shared_service_targets
+            .insert(cfg.name.clone(), "coast-ssg".to_string());
+    }
+    result.shared_services.extend(synthesized);
+
     Ok(result)
 }
 
-fn rewrite_compose(
-    artifact_dir: &std::path::Path,
-    code_path: &std::path::Path,
-    coastfile_path: &std::path::Path,
-    shared_service_hosts: &HashMap<String, String>,
-    per_instance_image_tags: &[(String, String)],
+struct RewriteComposeArgs<'a> {
+    artifact_dir: &'a std::path::Path,
+    code_path: &'a std::path::Path,
+    coastfile_path: &'a std::path::Path,
+    shared_service_hosts: &'a HashMap<String, String>,
+    shared_service_inject_env: &'a HashMap<String, String>,
+    per_instance_image_tags: &'a [(String, String)],
     has_volume_mounts: bool,
-    secret_container_paths: &[String],
-    shared_caddy_pki_container_path: Option<&str>,
-    project: &str,
-    instance_name: &str,
-) {
+    secret_container_paths: &'a [String],
+    shared_caddy_pki_container_path: Option<&'a str>,
+    project: &'a str,
+    instance_name: &'a str,
+}
+
+fn rewrite_compose(args: &RewriteComposeArgs<'_>) {
+    let &RewriteComposeArgs {
+        artifact_dir,
+        code_path,
+        coastfile_path,
+        shared_service_hosts,
+        shared_service_inject_env,
+        per_instance_image_tags,
+        has_volume_mounts,
+        secret_container_paths,
+        shared_caddy_pki_container_path,
+        project,
+        instance_name,
+    } = args;
     let compose_path = artifact_dir.join("compose.yml");
     let compose_content = if compose_path.exists() {
         std::fs::read_to_string(&compose_path).ok()
@@ -462,6 +600,7 @@ fn rewrite_compose(
         content,
         &compose_rewrite::ComposeRewriteConfig {
             shared_service_hosts,
+            shared_service_inject_env,
             coastfile_path,
             per_instance_image_tags,
             has_volume_mounts,
@@ -600,6 +739,10 @@ fn build_container_config(
 ) -> coast_docker::runtime::ContainerConfig {
     let mut env_vars = ctx.secret_plan.env_vars.clone();
     merge_dynamic_port_env_vars(&mut env_vars, pre_allocated_ports);
+    // Phase 5: shared-service `inject` env vars are applied via the
+    // compose rewriter (see `compose_rewrite::apply_shared_service_inject_env`),
+    // not on the outer DinD — otherwise they wouldn't reach the inner
+    // compose services where the consumer app actually runs.
 
     let mut config = coast_docker::dind::build_dind_config(coast_docker::dind::DindConfigParams {
         env_vars,
