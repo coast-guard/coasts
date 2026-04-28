@@ -1,5 +1,14 @@
 # Remote Coasts Specification
 
+> **THIS DOCUMENT COVERS REMOTE COASTS ONLY.** Remote SSG (Shared
+> Service Group) support on `coast-service` is documented separately
+> in [`REMOTE_SSG_SERVICE_DESIGN.md`](./REMOTE_SSG_SERVICE_DESIGN.md),
+> which in turn implements the architectural design in
+> [`../coast-ssg/REMOTE_DESIGN.md`](../coast-ssg/REMOTE_DESIGN.md).
+> The "Phase 2: Remote shared services" entry in the §Phase Roadmap
+> below is superseded by the Phase R-* tracker in
+> [`../coast-ssg/REMOTE_DESIGN.md §0`](../coast-ssg/REMOTE_DESIGN.md).
+
 > Living spec for remote coast execution. Phase 1 focuses on running ephemeral
 > services (DinD, bare services) on a remote machine while keeping the developer
 > experience identical to local coasts.
