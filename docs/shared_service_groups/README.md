@@ -103,6 +103,7 @@ Then `coast build && coast run dev-1`. The SSG auto-starts if it isn't already r
 | [Secrets](SECRETS.md) | `[secrets.<name>]` in the SSG Coastfile, the build-time extractor pipeline, run-time injection via `compose.override.yml`, and the `coast ssg secrets clear` verb |
 | [Checkout](CHECKOUT.md) | `coast ssg checkout` / `uncheckout` for binding the SSG's canonical ports on the host so anything on your host (psql, redis-cli, IDE) can reach them |
 | [CLI](CLI.md) | One-line summary of every `coast ssg` subcommand |
+| [REMOTE_DESIGN.md](../../coast-ssg/REMOTE_DESIGN.md) | Remote SSGs (per `(project, remote)`), the `coast ssg point` runtime pointer, and the importer/exporter framework. Pre-implementation; Phase R-0 through R-7. Implementation companion: [REMOTE_SSG_SERVICE_DESIGN.md](../../coast-service/REMOTE_SSG_SERVICE_DESIGN.md). |
 
 ## See Also
 

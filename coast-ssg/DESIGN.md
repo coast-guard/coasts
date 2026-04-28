@@ -1,5 +1,15 @@
 # Shared Service Groups (SSG) — Design Document
 
+> **THIS DOCUMENT IS THE LOCAL-SSG-ONLY DESIGN.** It captures phases 0
+> through 33, all of which assume the SSG is a local DinD container
+> owned by `coast-daemon`. Remote SSGs, the pointer abstraction, and
+> the importer/exporter framework are documented separately in
+> [`REMOTE_DESIGN.md`](./REMOTE_DESIGN.md), which supersedes the
+> claims listed in [§34](#34-superseded-by-remote_designmd-quick-reference)
+> below. New work belongs in `REMOTE_DESIGN.md`; this file is preserved
+> for historical legibility (same posture as §§1-22 vs §23, and §11 vs
+> §24).
+
 > Status: Phase 0 (scaffolding + design) complete. Future phases will
 > land against this document. Every section below is normative.
 
@@ -3912,3 +3922,39 @@ compose-up. We chose a different mechanism for the SSG side:
 - [`coast-cli/src/commands/ssg.rs`](../coast-cli/src/commands/ssg.rs) — `coast ssg secrets clear`
 - [`coast-guard/src/components/ssg/SsgSecretsTab.tsx`](../coast-guard/src/components/ssg/SsgSecretsTab.tsx) — UI
 - Integration tests: `integrated-examples/test_ssg_secrets_*.sh` (5 new)
+
+---
+
+## 34. Superseded by REMOTE_DESIGN.md (quick reference)
+
+[`REMOTE_DESIGN.md`](./REMOTE_DESIGN.md) introduces remote SSGs (one
+per `(project, remote)` pair), a runtime pointer abstraction, and a
+built-in importer/exporter framework. The claims below in this
+document are obsolete or scoped to "local SSG only" once
+`REMOTE_DESIGN.md` lands. Body text (sections §1 through §33) is
+intentionally not edited — this table acts as the supersede index,
+following the same pattern §23.5 and §24.7 use within this document.
+
+The coast-service-side implementation companion to `REMOTE_DESIGN.md`
+lives at
+[`../coast-service/REMOTE_SSG_SERVICE_DESIGN.md`](../coast-service/REMOTE_SSG_SERVICE_DESIGN.md).
+
+| DESIGN.md location | What it claims | What REMOTE_DESIGN.md changes |
+|---|---|---|
+| §3 Goals | "v1 is local-only" | Remote SSGs are now in scope, opt-in per project. See [REMOTE_DESIGN.md §3](./REMOTE_DESIGN.md). |
+| §3 Non-goals #2 | "Remote-resident SSG (i.e. an SSG running on a coast-service host)" | Now the design. See [REMOTE_DESIGN.md §3 + §4](./REMOTE_DESIGN.md). |
+| §4.1 Crate dependencies | "coast-service does NOT depend on coast-ssg ... deliberate constraint" | **Preserved.** Remote SSGs are now in scope but the layering is kept by lifting shared primitives (`host_socat` → `coast-docker`, `compose_synth` → `coast-docker`, `SsgManifest` → `coast-core`) in Phase R-0.5. coast-service has its own `src/ssg/` implementation. See [REMOTE_DESIGN.md Ground Rule #3 + §4.2](./REMOTE_DESIGN.md) and [REMOTE_SSG_SERVICE_DESIGN.md §2](../coast-service/REMOTE_SSG_SERVICE_DESIGN.md). |
+| §5 SSG Coastfile schema | "Only `[ssg]` and `[shared_services.*]` sections are accepted" | `[ssg]` gains `remote`; `[shared_services.<svc>]` gains `[export]` / `[import]` sub-tables. See [REMOTE_DESIGN.md §5](./REMOTE_DESIGN.md). |
+| §10 Volumes | "host bind mount" is unconditionally valid | Host bind mounts are rejected when `[ssg].remote` is set. See [REMOTE_DESIGN.md §5.1](./REMOTE_DESIGN.md). |
+| §11 Port plumbing / §24 routing | Host socat upstream is "127.0.0.1:&lt;ssg_dyn_port&gt;" | When pointer is remote, upstream is "127.0.0.1:&lt;local_tunnel_port&gt;" terminating at an `ssh -L`. See [REMOTE_DESIGN.md §11](./REMOTE_DESIGN.md). |
+| §13 / §20.4 auto_create_db | "auto_create_db is always local ... no exec ever runs on coast-service for SSG services" | Runs at the SSG's resolved location; coast-service exposes `/ssg/auto_create_db` when remote. See [REMOTE_DESIGN.md §17](./REMOTE_DESIGN.md) + [REMOTE_SSG_SERVICE_DESIGN.md §3](../coast-service/REMOTE_SSG_SERVICE_DESIGN.md). |
+| §17-6 SETTLED | "Remote SSG is an explicit non-goal for v1" | Partially promoted to a goal. Remote SSGs are now in scope, BUT the §4.1 layering rule that §17-6 cited as justification is preserved (see the row above). SETTLED entry to be marked PARTIALLY-SUPERSEDED in the same PR that lands Phase R-3. |
+| §20.7 Remote SSGs out of scope | "v1 does not support an SSG on a coast-service host" | Lifted. Phase R-3 lights up the lifecycle, R-4 the consumer routing. See [REMOTE_DESIGN.md §0](./REMOTE_DESIGN.md). |
+| §22 Terminology cheat sheet | "SSG — per-project DinD runtime, one per consumer project" | Identity is now `(project, location)`; location is `local` or a registered remote. See [REMOTE_DESIGN.md §2 + §26](./REMOTE_DESIGN.md). |
+| Migration complete sentinel (after §32) | "End-to-end success criterion: ... a consumer's in-DinD socat argv is written once at provision and never touched again" | Still true. The pointer rework leverages this invariant rather than violating it — argv stays stable; only the host-socat upstream changes. See [REMOTE_DESIGN.md §11 + §17](./REMOTE_DESIGN.md). |
+| §33 SSG-native secrets | Keystore at `~/.coast/keystore.db` | Remote SSGs ship encrypted keystore blob to coast-service; key passed in-band on `/ssg/run` RPC. See [REMOTE_DESIGN.md §13.3 + §23 open question 3](./REMOTE_DESIGN.md) and [REMOTE_SSG_SERVICE_DESIGN.md §10](../coast-service/REMOTE_SSG_SERVICE_DESIGN.md). |
+
+Each row points at a section in `REMOTE_DESIGN.md` that defines the
+new contract. When `REMOTE_DESIGN.md` itself supersedes one of its own
+claims later, the supersede happens there — this table is read-only
+after the initial commit.
