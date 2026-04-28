@@ -17,10 +17,20 @@ use tracing::info;
 use coast_core::error::{CoastError, Result};
 use coast_core::protocol::{RestartServicesRequest, RestartServicesResponse};
 use coast_core::types::InstanceStatus;
-use coast_docker::runtime::Runtime;
+use coast_docker::runtime::{ExecResult, Runtime};
 
 use crate::handlers::compose_context_for_build;
 use crate::server::AppState;
+
+trait RestartRuntime: Send + Sync {
+    async fn exec_restart(&self, container_id: &str, cmd: &[&str]) -> Result<ExecResult>;
+}
+
+impl RestartRuntime for coast_docker::dind::DindRuntime {
+    async fn exec_restart(&self, container_id: &str, cmd: &[&str]) -> Result<ExecResult> {
+        Runtime::exec_in_coast(self, container_id, cmd).await
+    }
+}
 
 /// Read coastfile flags to determine which service types exist and whether autostart is enabled.
 fn read_coastfile_flags(coastfile_path: &std::path::Path) -> (bool, bool, bool) {
@@ -44,13 +54,13 @@ fn read_coastfile_flags(coastfile_path: &std::path::Path) -> (bool, bool, bool) 
 
 /// Execute a command inside a container with consistent error handling.
 async fn exec_dind_step(
-    rt: &coast_docker::dind::DindRuntime,
+    rt: &impl RestartRuntime,
     container_id: &str,
     cmd: &[&str],
     step_name: &str,
     instance_name: &str,
 ) -> Result<()> {
-    let result = rt.exec_in_coast(container_id, cmd).await.map_err(|e| {
+    let result = rt.exec_restart(container_id, cmd).await.map_err(|e| {
         CoastError::docker(format!(
             "Failed to exec {step_name} in instance '{instance_name}': {e}"
         ))
@@ -62,6 +72,41 @@ async fn exec_dind_step(
         )));
     }
     Ok(())
+}
+
+async fn bare_stop_script_exists(rt: &impl RestartRuntime, container_id: &str) -> bool {
+    rt.exec_restart(
+        container_id,
+        &["test", "-f", "/coast-supervisor/stop-all.sh"],
+    )
+    .await
+    .map(|r| r.success())
+    .unwrap_or(false)
+}
+
+async fn ensure_bare_stop_script_exists(
+    rt: &impl RestartRuntime,
+    container_id: &str,
+    autostart: bool,
+    instance_name: &str,
+) -> Result<bool> {
+    if bare_stop_script_exists(rt, container_id).await {
+        return Ok(true);
+    }
+
+    if !autostart {
+        info!(
+            "autostart=false and no bare service supervisor initialized, skipping bare service restart"
+        );
+        return Ok(false);
+    }
+
+    Err(CoastError::docker(format!(
+        "Bare services are configured for instance '{instance_name}', \
+         but /coast-supervisor/stop-all.sh is missing. \
+         Try `coast stop {instance_name} && coast start {instance_name}`, \
+         or recreate it with `coast rm {instance_name} && coast run {instance_name}`."
+    )))
 }
 
 /// Discover the compose project name and build the base `docker compose` args.
@@ -178,11 +223,15 @@ async fn restart_compose_services(
 
 /// Restart bare services: stop-all.sh, then optionally start-all.sh.
 async fn restart_bare_services(
-    rt: &coast_docker::dind::DindRuntime,
+    rt: &impl RestartRuntime,
     container_id: &str,
     autostart: bool,
     instance_name: &str,
 ) -> Result<Option<String>> {
+    if !ensure_bare_stop_script_exists(rt, container_id, autostart, instance_name).await? {
+        return Ok(None);
+    }
+
     exec_dind_step(
         rt,
         container_id,
@@ -454,5 +503,137 @@ mod tests {
         assert!(has_compose);
         assert!(!has_services);
         assert!(autostart);
+    }
+
+    struct MockRestartRuntime {
+        results: std::sync::Mutex<std::collections::VecDeque<Result<ExecResult>>>,
+        commands: std::sync::Mutex<Vec<Vec<String>>>,
+    }
+
+    impl MockRestartRuntime {
+        fn new(results: Vec<Result<ExecResult>>) -> Self {
+            Self {
+                results: std::sync::Mutex::new(results.into()),
+                commands: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+
+        fn commands(&self) -> Vec<Vec<String>> {
+            self.commands.lock().unwrap().clone()
+        }
+    }
+
+    impl RestartRuntime for MockRestartRuntime {
+        async fn exec_restart(&self, _container_id: &str, cmd: &[&str]) -> Result<ExecResult> {
+            self.commands
+                .lock()
+                .unwrap()
+                .push(cmd.iter().map(|part| (*part).to_string()).collect());
+            self.results.lock().unwrap().pop_front().unwrap_or_else(|| {
+                Ok(ExecResult {
+                    exit_code: 0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                })
+            })
+        }
+    }
+
+    fn exec_result(exit_code: i64) -> ExecResult {
+        ExecResult {
+            exit_code,
+            stdout: String::new(),
+            stderr: String::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_restart_bare_services_autostart_false_without_supervisor_is_noop() {
+        let runtime = MockRestartRuntime::new(vec![Ok(exec_result(1))]);
+
+        let result = restart_bare_services(&runtime, "container-123", false, "dev-1")
+            .await
+            .unwrap();
+
+        assert_eq!(result, None);
+        assert_eq!(
+            runtime.commands(),
+            vec![vec![
+                "test".to_string(),
+                "-f".to_string(),
+                "/coast-supervisor/stop-all.sh".to_string()
+            ]]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_restart_bare_services_autostart_true_without_supervisor_errors() {
+        let runtime = MockRestartRuntime::new(vec![Ok(exec_result(1))]);
+
+        let err = restart_bare_services(&runtime, "container-123", true, "dev-1")
+            .await
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("/coast-supervisor/stop-all.sh is missing"));
+        assert_eq!(runtime.commands().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_restart_bare_services_autostart_false_with_supervisor_stops_only() {
+        let runtime = MockRestartRuntime::new(vec![Ok(exec_result(0)), Ok(exec_result(0))]);
+
+        let result = restart_bare_services(&runtime, "container-123", false, "dev-1")
+            .await
+            .unwrap();
+
+        assert_eq!(result, None);
+        assert_eq!(
+            runtime.commands(),
+            vec![
+                vec![
+                    "test".to_string(),
+                    "-f".to_string(),
+                    "/coast-supervisor/stop-all.sh".to_string()
+                ],
+                vec![
+                    "sh".to_string(),
+                    "/coast-supervisor/stop-all.sh".to_string()
+                ]
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_restart_bare_services_autostart_true_with_supervisor_restarts() {
+        let runtime = MockRestartRuntime::new(vec![
+            Ok(exec_result(0)),
+            Ok(exec_result(0)),
+            Ok(exec_result(0)),
+        ]);
+
+        let result = restart_bare_services(&runtime, "container-123", true, "dev-1")
+            .await
+            .unwrap();
+
+        assert_eq!(result, Some("(all bare services)".to_string()));
+        assert_eq!(
+            runtime.commands(),
+            vec![
+                vec![
+                    "test".to_string(),
+                    "-f".to_string(),
+                    "/coast-supervisor/stop-all.sh".to_string()
+                ],
+                vec![
+                    "sh".to_string(),
+                    "/coast-supervisor/stop-all.sh".to_string()
+                ],
+                vec![
+                    "sh".to_string(),
+                    "/coast-supervisor/start-all.sh".to_string()
+                ]
+            ]
+        );
     }
 }
