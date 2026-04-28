@@ -125,6 +125,10 @@ tests:
     script: integrated-examples/test_restart_services.sh
     status: pass
     cached_seconds: 176
+  test_restart_services_bare_noautostart:
+    script: integrated-examples/test_restart_services_bare_noautostart.sh
+    timeout: 300
+    note: "PR #254 regression: coast restart-services on a Running instance whose [services.*] supervisor was never initialized because of autostart=false must be a tolerated no-op, not an error"
   test_nuke:
     script: integrated-examples/test_nuke.sh
     status: pass

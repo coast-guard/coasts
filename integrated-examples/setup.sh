@@ -1363,6 +1363,69 @@ setup_coast_noautostart() {
 
 setup_coast_noautostart
 
+# --- coast-bare-noautostart ---
+# Bare-services project with autostart = false. Regression fixture
+# for PR #254: when [services.*] is combined with autostart=false,
+# `coast run` skips writing the supervisor scripts. The fix makes
+# `coast restart-services` tolerate the missing scripts on a Running
+# instance instead of erroring on `sh /coast-supervisor/stop-all.sh`.
+
+setup_coast_bare_noautostart() {
+    local dir="$PROJECTS_DIR/coast-bare-noautostart"
+    echo "Setting up coast-bare-noautostart..."
+    mkdir -p "$dir"
+
+    rm -rf "$dir/.git" "$dir/.coasts"
+
+    cat > "$dir/Coastfile" << 'COASTFILE_EOF'
+# coast-bare-noautostart: regression fixture for PR #254.
+#
+# Combines [services.*] with autostart = false. `coast run` will
+# skip the bare-service supervisor setup because of autostart=false,
+# so /coast-supervisor/start-all.sh and stop-all.sh never get written.
+# `coast restart-services` (after `coast start`) must tolerate the
+# missing scripts and treat the bare-service restart as a no-op.
+
+[coast]
+name = "coast-bare-noautostart"
+runtime = "dind"
+autostart = false
+
+[coast.setup]
+packages = ["nodejs", "npm"]
+
+[services.web]
+command = "node server.js"
+port = 40050
+restart = "on-failure"
+
+[ports]
+web = 40050
+COASTFILE_EOF
+
+    cat > "$dir/server.js" << 'SERVERJS_EOF'
+const http = require("http");
+const PORT = process.env.PORT || 40050;
+http.createServer((req, res) => {
+  res.writeHead(200, { "Content-Type": "application/json" });
+  res.end(JSON.stringify({ message: "noautostart bare service" }));
+}).listen(PORT, () => {
+  console.log(`Server listening on port ${PORT}`);
+});
+SERVERJS_EOF
+
+    cd "$dir"
+    git init -b main
+    git config user.name "Coast Dev"
+    git config user.email "dev@coasts.dev"
+    git add -A
+    git commit -m "initial commit: bare services with autostart=false"
+
+    echo "  coast-bare-noautostart ready"
+}
+
+setup_coast_bare_noautostart
+
 # --- coast-private-paths ---
 # Tests per-instance filesystem isolation via private_paths.
 # No git repo needed, no compose, no services — just a DinD container
