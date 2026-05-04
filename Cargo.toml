@@ -122,3 +122,12 @@ implicit_clone = "warn"
 [workspace.lints.rust]
 unused_imports = "warn"
 dead_code = "warn"
+
+# Keep stack traces + panic locations, drop the DWARF tables that dominate
+# `target/debug/` size. Dependencies shed all debuginfo (we never debug them).
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
