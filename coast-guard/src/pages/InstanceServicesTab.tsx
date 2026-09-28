@@ -11,6 +11,7 @@ import DataTable, { type Column } from '../components/DataTable';
 import Toolbar, { type ToolbarAction } from '../components/Toolbar';
 import Modal from '../components/Modal';
 import HealthDot from '../components/HealthDot';
+import { serviceHealth, serviceHealthColors } from '../components/healthState';
 import { serviceOpKey, useServiceOperations, isInProgress } from '../providers/ServiceOperationsProvider';
 
 interface Props {
@@ -118,7 +119,7 @@ export default function InstanceServicesTab({ project, name, checkedOut, basePat
         className: 'w-[22%]',
         render: (r) => {
           const isBare = r.kind === 'bare';
-          const isDown = !r.status.startsWith('running');
+          const isDown = serviceHealth(r.status) === 'unhealthy';
           return (
             <span className="inline-flex items-center gap-2">
               {isBare ? (
@@ -169,10 +170,11 @@ export default function InstanceServicesTab({ project, name, checkedOut, basePat
           if (op != null && op.status === 'error') {
             return <span className="text-xs text-rose-500 font-medium">{t('service.operationError')}</span>;
           }
-          const isRunning = r.status.startsWith('running');
+          const health = serviceHealth(r.status);
+          const color = serviceHealthColors[health];
           return (
-            <span className={`inline-flex items-center gap-1.5 text-xs ${isRunning ? 'text-emerald-600 dark:text-emerald-400' : 'text-subtle-ui'}`}>
-              <span className={`h-1.5 w-1.5 rounded-full ${isRunning ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+            <span className={`inline-flex items-center gap-1.5 text-xs ${color}`}>
+              <HealthDot state={health} title={r.status} />
               {r.status}
             </span>
           );
@@ -254,7 +256,7 @@ export default function InstanceServicesTab({ project, name, checkedOut, basePat
   );
 
   const downSvcs = useMemo(
-    () => services.filter((s) => !s.status.startsWith('running')),
+    () => services.filter((s) => serviceHealth(s.status) === 'unhealthy'),
     [services],
   );
 

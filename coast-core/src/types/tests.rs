@@ -792,6 +792,7 @@ fn test_port_health_status_serialization() {
         dynamic_port: 63100,
         is_primary: true,
         healthy: true,
+        service_status: Some("running (starting)".to_string()),
     };
     let json = serde_json::to_string(&status).unwrap();
     let deserialized: PortHealthStatus = serde_json::from_str(&json).unwrap();
@@ -800,6 +801,10 @@ fn test_port_health_status_serialization() {
     assert_eq!(deserialized.dynamic_port, 63100);
     assert!(deserialized.is_primary);
     assert!(deserialized.healthy);
+    assert_eq!(
+        deserialized.service_status.as_deref(),
+        Some("running (starting)")
+    );
 }
 
 #[test]
@@ -810,9 +815,19 @@ fn test_port_health_status_unhealthy() {
         dynamic_port: 63200,
         is_primary: false,
         healthy: false,
+        service_status: None,
     };
     let json = serde_json::to_string(&status).unwrap();
     let deserialized: PortHealthStatus = serde_json::from_str(&json).unwrap();
     assert!(!deserialized.healthy);
     assert!(!deserialized.is_primary);
+}
+
+#[test]
+fn test_port_health_accepts_older_probe_only_payload() {
+    let status: PortHealthStatus = serde_json::from_str(r#"{"logical_name":"web","canonical_port":3000,"dynamic_port":50000,"is_primary":true,"healthy":false}"#).unwrap();
+    assert!(status.service_status.is_none());
+    assert!(!serde_json::to_string(&status)
+        .unwrap()
+        .contains("service_status"));
 }

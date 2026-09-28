@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "dev:coast-dev": "VITE_API_PORT=31416 vite",
+    "test": "node --test tests/*.test.mjs",
     "typecheck": "tsc --noEmit",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",

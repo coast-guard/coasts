@@ -1,3 +1,5 @@
+import HealthDot from '../components/HealthDot';
+import { isServiceRunning, serviceHealth, serviceHealthColors } from '../components/healthState';
 import { useMemo, useState, useCallback, useEffect } from 'react';
 import { useParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
@@ -111,7 +113,7 @@ export default function RemoteServiceDetailPage() {
   );
 
   const vars = { project: project as string, name: name as string, service };
-  const isRunning = svcInfo != null && svcInfo.status === 'running';
+  const isRunning = svcInfo != null && isServiceRunning(svcInfo.status);
 
   const basePath = `/remote-instance/${project}/${name}/services/${encodeURIComponent(service)}`;
   const tabs: readonly TabDef<TabId>[] = useMemo(
@@ -149,14 +151,8 @@ export default function RemoteServiceDetailPage() {
           </span>
         )}
         {svcInfo != null && (
-          <span className={`inline-flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full border ${
-            !remoteReachable
-              ? 'bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/30'
-              : isRunning
-                ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
-                : 'bg-slate-500/10 text-subtle-ui border-[var(--border)]'
-          }`}>
-            <span className={`h-1.5 w-1.5 rounded-full ${!remoteReachable ? 'bg-red-500' : isRunning ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+          <span className={`inline-flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full border border-current ${serviceHealthColors[(!remoteReachable ? 'unhealthy' : serviceHealth(svcInfo.status))]}`}>
+            <HealthDot state={(!remoteReachable ? 'unhealthy' : serviceHealth(svcInfo.status))} title={svcInfo.status} />
             {!remoteReachable ? t('status.remoteDown', 'Remote Down') : svcInfo.status}
           </span>
         )}

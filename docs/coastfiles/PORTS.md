@@ -60,6 +60,23 @@ api = 8080
 
 The value must match a key in `[ports]`. See [Primary Port and DNS](../concepts_and_terminology/PRIMARY_PORT_AND_DNS.md) for details.
 
+## Health indicators in Coastguard
+
+When a port's logical name matches a Compose service name (for example, `web`),
+Coastguard also uses that service's Docker health status. `running (starting)` is
+amber while Docker performs its startup health checks; an unhealthy or stopped
+service is red. Once the service is ready, the port must also respond to its
+probe before the indicator turns green. Configure the startup grace period and
+retry policy in the service's Compose `healthcheck`.
+
+Ports without a same-name service retain probe-only indicators. If fetching
+service status fails, the indicator falls back to the port probe rather than
+keeping an old startup state. This display does not change when `coast run`
+finishes or replace application readiness checks. These are periodically sampled
+statuses, so a fast restart can remain at its previous status until the next
+sample. Failed port probes and cached non-ready states trigger a fresh service
+lookup in the background probe loop; healthy steady-state ports reuse the cache.
+
 ## `[egress]`
 
 Declares ports on the host that Coast instances need to reach. This is the reverse direction from `[ports]` — instead of forwarding a port *out* of the Coast to the host, egress makes a host port reachable *from inside* the Coast.

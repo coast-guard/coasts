@@ -406,26 +406,31 @@ async fn service_health_cache_loop(state: Arc<server::AppState>) {
                 .collect()
         };
         for (project, name) in &running {
-            let req = coast_core::protocol::PsRequest {
-                project: project.clone(),
-                name: name.clone(),
-            };
-            let key = format!("{project}:{name}");
-            match handlers::ps::handle(req, &state).await {
-                Ok(resp) => {
-                    let down = resp
-                        .services
-                        .iter()
-                        .filter(|s| !s.status.starts_with("running"))
-                        .count() as u32;
-                    state.service_health_cache.lock().await.insert(key, down);
-                }
-                Err(_) => {
-                    state.service_health_cache.lock().await.remove(&key);
-                }
-            }
+            refresh_service_health(&state, project, name).await;
         }
         tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+    }
+}
+
+/// Refresh service state before publishing a failed port probe, so a slow startup
+/// is not reported as down while the periodic service snapshot is still stale.
+async fn refresh_service_health(state: &server::AppState, project: &str, name: &str) {
+    let req = coast_core::protocol::PsRequest {
+        project: project.to_string(),
+        name: name.to_string(),
+    };
+    let key = format!("{project}:{name}");
+    match handlers::ps::handle(req, state).await {
+        Ok(resp) => {
+            state
+                .service_health_cache
+                .lock()
+                .await
+                .insert(key, resp.services);
+        }
+        Err(_) => {
+            state.service_health_cache.lock().await.remove(&key);
+        }
     }
 }
 
@@ -442,6 +447,30 @@ fn load_healthcheck_paths(project: &str) -> std::collections::HashMap<String, St
         }
     }
     std::collections::HashMap::new()
+}
+
+fn service_health_needs_refresh(
+    ports: &[coast_core::types::PortHealthStatus],
+    services: Option<&[coast_core::protocol::ServiceStatus]>,
+) -> bool {
+    ports.iter().any(|port| !port.healthy)
+        || services.is_none_or(|services| {
+            services
+                .iter()
+                .any(|service| service.status != "running" && service.status != "running (healthy)")
+        })
+}
+
+fn attach_service_status(
+    ports: &mut [coast_core::types::PortHealthStatus],
+    services: &[coast_core::protocol::ServiceStatus],
+) {
+    for port in ports {
+        port.service_status = services
+            .iter()
+            .find(|service| service.name == port.logical_name)
+            .map(|service| service.status.clone());
+    }
 }
 
 /// Background loop that probes each port's dynamic_port every 5 seconds.
@@ -524,6 +553,7 @@ async fn port_health_cache_loop(state: Arc<server::AppState>) {
                 };
 
                 statuses.push(PortHealthStatus {
+                    service_status: None,
                     logical_name: mapping.logical_name,
                     canonical_port: mapping.canonical_port,
                     dynamic_port: mapping.dynamic_port,
@@ -531,15 +561,27 @@ async fn port_health_cache_loop(state: Arc<server::AppState>) {
                     healthy,
                 });
             }
+            let needs_refresh = {
+                let cache = state.service_health_cache.lock().await;
+                service_health_needs_refresh(&statuses, cache.get(&key).map(Vec::as_slice))
+            };
+            if needs_refresh {
+                refresh_service_health(&state, project, name).await;
+            }
+            {
+                let cache = state.service_health_cache.lock().await;
+                if let Some(services) = cache.get(&key) {
+                    attach_service_status(&mut statuses, services);
+                }
+            }
             let changed = {
                 let cache = state.port_health_cache.lock().await;
                 match cache.get(&key) {
                     Some(prev) => {
                         prev.len() != statuses.len()
-                            || prev
-                                .iter()
-                                .zip(statuses.iter())
-                                .any(|(a, b)| a.healthy != b.healthy)
+                            || prev.iter().zip(statuses.iter()).any(|(a, b)| {
+                                a.healthy != b.healthy || a.service_status != b.service_status
+                            })
                     }
                     None => true,
                 }
@@ -2325,6 +2367,72 @@ async fn restore_running_state(state: &Arc<server::AppState>) {
 mod tests {
     use super::*;
     use clap::Parser;
+
+    #[test]
+    fn test_port_status_matches_service_name_without_changing_probe_result() {
+        let mut ports = vec![coast_core::types::PortHealthStatus {
+            logical_name: "web".to_string(),
+            canonical_port: 443,
+            dynamic_port: 50000,
+            is_primary: true,
+            healthy: false,
+            service_status: None,
+        }];
+        let service = coast_core::protocol::ServiceStatus {
+            name: "web".to_string(),
+            status: "running (starting)".to_string(),
+            ports: String::new(),
+            image: String::new(),
+            kind: Some("compose".to_string()),
+        };
+        assert!(service_health_needs_refresh(&ports, None));
+        ports[0].healthy = true;
+        assert!(service_health_needs_refresh(
+            &ports,
+            Some(std::slice::from_ref(&service))
+        ));
+        let ready_service = coast_core::protocol::ServiceStatus {
+            status: "running (healthy)".to_string(),
+            ..service.clone()
+        };
+        assert!(!service_health_needs_refresh(
+            &ports,
+            Some(&[ready_service])
+        ));
+        ports[0].healthy = false;
+        attach_service_status(&mut ports, std::slice::from_ref(&service));
+        assert_eq!(
+            ports[0].service_status.as_deref(),
+            Some("running (starting)")
+        );
+        assert!(!ports[0].healthy);
+        ports[0].logical_name = "unmatched".to_string();
+        attach_service_status(&mut ports, &[service]);
+        assert!(ports[0].service_status.is_none());
+        assert!(!ports[0].healthy);
+    }
+
+    #[tokio::test]
+    async fn test_failed_service_refresh_clears_stale_startup_state() {
+        let db = state::StateDb::open_in_memory().unwrap();
+        let state = server::AppState::new_for_testing(db);
+        state.service_health_cache.lock().await.insert(
+            "proj:missing".to_string(),
+            vec![coast_core::protocol::ServiceStatus {
+                name: "web".to_string(),
+                status: "running (starting)".to_string(),
+                ports: String::new(),
+                image: String::new(),
+                kind: Some("compose".to_string()),
+            }],
+        );
+        refresh_service_health(&state, "proj", "missing").await;
+        assert!(!state
+            .service_health_cache
+            .lock()
+            .await
+            .contains_key("proj:missing"));
+    }
 
     #[test]
     fn test_cli_parse_foreground() {

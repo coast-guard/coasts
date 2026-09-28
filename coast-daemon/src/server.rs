@@ -202,8 +202,9 @@ pub struct AppState {
             (tokio::time::Instant, coast_core::protocol::SharedResponse),
         >,
     >,
-    /// Cached count of non-running inner services per instance (keyed by "project:name").
-    pub service_health_cache: Mutex<std::collections::HashMap<String, u32>>,
+    /// Cached inner service statuses per instance (keyed by "project:name").
+    pub service_health_cache:
+        Mutex<std::collections::HashMap<String, Vec<coast_core::protocol::ServiceStatus>>>,
     /// Cached port health status per instance (keyed by "project:name").
     pub port_health_cache:
         Mutex<std::collections::HashMap<String, Vec<coast_core::types::PortHealthStatus>>>,

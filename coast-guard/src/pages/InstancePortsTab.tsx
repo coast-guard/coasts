@@ -4,11 +4,11 @@ import { useQueryClient } from '@tanstack/react-query';
 import { PencilSimple, Star, Globe } from '@phosphor-icons/react';
 import type { ProjectName, InstanceName } from '../types/branded';
 import type { PortMapping } from '../types/api';
-import { usePorts, usePortHealth } from '../api/hooks';
+import { usePorts } from '../api/hooks';
 import { api } from '../api/endpoints';
 import DataTable, { type Column } from '../components/DataTable';
 import Modal from '../components/Modal';
-import HealthDot from '../components/HealthDot';
+import PrimaryPortHealthDot from '../components/PrimaryPortHealthDot';
 
 interface Props {
   readonly project: ProjectName;
@@ -44,7 +44,6 @@ export default function InstancePortsTab({ project, name, checkedOut }: Props) {
   const { t, i18n } = useTranslation();
   const qc = useQueryClient();
   const { data, isLoading, error, refetch } = usePorts(project, name);
-  const { data: healthData } = usePortHealth(project as string, name as string);
   const [templates, setTemplates] = useState<Record<string, string>>({});
   const [editingService, setEditingService] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
@@ -145,7 +144,7 @@ export default function InstancePortsTab({ project, name, checkedOut }: Props) {
             >
               <Star size={12} weight={r.is_primary ? 'fill' : 'regular'} />
             </button>
-            <HealthDot healthy={healthData?.ports?.find((p) => p.logical_name === r.logical_name)?.healthy} />
+            <PrimaryPortHealthDot project={project} name={name} service={r.logical_name} />
             <span className="font-medium">{r.logical_name}</span>
             <button
               type="button"
@@ -200,7 +199,7 @@ export default function InstancePortsTab({ project, name, checkedOut }: Props) {
         },
       },
     ],
-    [t, i18n.language, getTemplate, applySubdomainRouting, openEdit, checkedOut, togglePrimary, healthData],
+    [t, i18n.language, getTemplate, applySubdomainRouting, openEdit, checkedOut, togglePrimary, project, name],
   );
 
   if (isLoading) return <p className="text-sm text-subtle-ui py-4">{t('ports.loading')}</p>;

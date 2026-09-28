@@ -67,7 +67,14 @@ pub async fn handle(req: LsRequest, state: &AppState) -> Result<LsResponse> {
             );
 
             let health_key = format!("{}:{}", row.project, row.name);
-            let down_service_count = health_cache.get(&health_key).copied().unwrap_or(0);
+            let down_service_count = health_cache.get(&health_key).map_or(0, |services| {
+                services
+                    .iter()
+                    .filter(|s| {
+                        !s.status.starts_with("running") || s.status.ends_with("(unhealthy)")
+                    })
+                    .count() as u32
+            });
 
             InstanceSummary {
                 name: row.name.clone(),

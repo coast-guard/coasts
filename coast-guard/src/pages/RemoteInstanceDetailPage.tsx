@@ -1,3 +1,4 @@
+import { serviceHealth } from '../components/healthState';
 import { useState, useMemo, useCallback } from 'react';
 import { useParams, Link } from 'react-router';
 import { useTranslation } from 'react-i18next';
@@ -16,7 +17,6 @@ import {
   useServices,
   useSecrets,
   useMcpServers,
-  usePortHealth,
   useRemotesLs,
   useImages,
   useVolumes,
@@ -24,7 +24,7 @@ import {
 import { api } from '../api/endpoints';
 import Breadcrumb from '../components/Breadcrumb';
 import StatusBadge from '../components/StatusBadge';
-import HealthDot from '../components/HealthDot';
+import PrimaryPortHealthDot from '../components/PrimaryPortHealthDot';
 import TabBar, { type TabDef } from '../components/TabBar';
 import Modal from '../components/Modal';
 import ConfirmModal from '../components/ConfirmModal';
@@ -123,7 +123,6 @@ export default function RemoteInstanceDetailPage() {
   const isTransitioning = instance != null && (instance.status === 'assigning' || instance.status === 'unassigning');
 
   const { data: portsData } = usePorts(project, name);
-  const { data: healthData } = usePortHealth(project as string, name as string);
   const { data: servicesData, error: servicesError, isLoading: servicesLoading } = useServices(project, name);
   const { data: secretsData } = useSecrets(project, name);
   const { data: mcpData } = useMcpServers(project as string, name as string);
@@ -139,7 +138,7 @@ export default function RemoteInstanceDetailPage() {
   const volumesCount = volumesData?.length ?? 0;
   const remoteWarmingUp = remoteHost != null && remoteReachable && !servicesLoading && servicesCount === 0 && instance?.status === 'running';
   const downServices = useMemo(
-    () => servicesData?.services?.filter((s) => !s.status.startsWith('running')) ?? [],
+    () => servicesData?.services?.filter((s) => serviceHealth(s.status) === 'unhealthy') ?? [],
     [servicesData],
   );
 
@@ -241,7 +240,7 @@ export default function RemoteInstanceDetailPage() {
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-1.5 px-2.5 py-0.5 text-xs font-medium rounded-full bg-[var(--primary)]/12 border border-[var(--primary)]/30 text-[var(--primary-strong)] dark:text-[var(--primary)] hover:bg-[var(--primary)]/20 transition-colors shrink-0"
               >
-                <HealthDot healthy={healthData?.ports?.find((p) => p.logical_name === (instance.primary_port_service ?? 'web'))?.healthy} size={6} />
+                <PrimaryPortHealthDot project={project} name={name} service={instance.primary_port_service} size={6} />
                 {instance.primary_port_service ?? 'web'}
                 <ArrowSquareOut size={11} />
               </a>

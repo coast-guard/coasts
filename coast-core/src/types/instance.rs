@@ -112,4 +112,8 @@ pub struct PortHealthStatus {
     pub dynamic_port: u16,
     pub is_primary: bool,
     pub healthy: bool,
+    /// Status of the same-name service, when the service cache is available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub service_status: Option<String>,
 }

@@ -66,13 +66,23 @@ pub fn format_service_table(services: &[ServiceStatus]) -> String {
 
 /// Apply color to a service status string.
 fn colorize_status(status: &str) -> String {
+    status.color(status_color(status)).to_string()
+}
+
+fn status_color(status: &str) -> colored::Color {
     let lower = status.to_lowercase();
-    if lower.contains("up") || lower.contains("running") || lower.contains("healthy") {
-        status.green().to_string()
-    } else if lower.contains("exit") || lower.contains("dead") || lower.contains("error") {
-        status.red().to_string()
+    if lower.contains("unhealthy")
+        || lower.contains("exit")
+        || lower.contains("dead")
+        || lower.contains("error")
+    {
+        colored::Color::Red
+    } else if lower.contains("starting") {
+        colored::Color::Yellow
+    } else if lower.contains("up") || lower.contains("running") || lower.contains("healthy") {
+        colored::Color::Green
     } else {
-        status.yellow().to_string()
+        colored::Color::Yellow
     }
 }
 
@@ -145,6 +155,13 @@ mod tests {
         assert!(output.contains("NAME"));
         assert!(output.contains("STATUS"));
         assert!(output.contains("PORTS"));
+    }
+
+    #[test]
+    fn test_running_health_colors() {
+        assert_eq!(status_color("running (starting)"), colored::Color::Yellow);
+        assert_eq!(status_color("running (unhealthy)"), colored::Color::Red);
+        assert_eq!(status_color("running (healthy)"), colored::Color::Green);
     }
 
     #[test]

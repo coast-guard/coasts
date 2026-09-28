@@ -84,7 +84,7 @@ fn enrich_compose_services(
 
     services.retain(|s| {
         s.kind.as_deref() != Some("compose")
-            || s.status == "running"
+            || s.status.starts_with("running")
             || port_services.contains(&s.name)
     });
 
@@ -335,12 +335,18 @@ fn parse_compose_ps_output(output: &str) -> Result<Vec<ServiceStatus>> {
                 .unwrap_or("unknown")
                 .to_string();
 
-            let status = value
+            let mut status = value
                 .get("State")
                 .or_else(|| value.get("Status"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown")
                 .to_string();
+
+            if let Some(health) = value.get("Health").and_then(|v| v.as_str()) {
+                if !health.is_empty() {
+                    status = format!("{status} ({health})");
+                }
+            }
 
             let ports = value
                 .get("Ports")
@@ -471,6 +477,33 @@ mod tests {
         assert!(services[0].kind.is_none());
         assert_eq!(services[1].name, "db");
         assert!(services[1].kind.is_none());
+    }
+
+    #[test]
+    fn test_parse_compose_health_states() {
+        for health in ["starting", "healthy", "unhealthy"] {
+            let output = format!(r#"{{"Service":"web","State":"running","Health":"{health}"}}"#);
+            let mut services = parse_compose_ps_output(&output).unwrap();
+            assert_eq!(services[0].status, format!("running ({health})"));
+            services[0].kind = Some("compose".to_string());
+            enrich_compose_services(
+                &mut services,
+                "services:\n  web:\n    network_mode: host\n",
+                &HashSet::new(),
+            );
+            assert_eq!(
+                services.len(),
+                1,
+                "host-network services must not disappear"
+            );
+        }
+    }
+
+    #[test]
+    fn test_empty_health_keeps_running_status() {
+        let services =
+            parse_compose_ps_output(r#"{"Service":"web","State":"running","Health":""}"#).unwrap();
+        assert_eq!(services[0].status, "running");
     }
 
     #[test]

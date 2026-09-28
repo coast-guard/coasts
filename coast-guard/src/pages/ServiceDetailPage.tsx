@@ -1,3 +1,5 @@
+import HealthDot from '../components/HealthDot';
+import { isServiceRunning, serviceHealth, serviceHealthColors } from '../components/healthState';
 import { useMemo, useState, useCallback, useEffect } from 'react';
 import { useParams, Link } from 'react-router';
 import { useTranslation } from 'react-i18next';
@@ -100,7 +102,7 @@ export default function ServiceDetailPage() {
   );
 
   const vars = { project: project as string, name: name as string, service };
-  const isRunning = svcInfo != null && svcInfo.status === 'running';
+  const isRunning = svcInfo != null && isServiceRunning(svcInfo.status);
 
   const basePath = `/instance/${project}/${name}/services/${encodeURIComponent(service)}`;
   const tabs: readonly TabDef<TabId>[] = useMemo(
@@ -128,12 +130,8 @@ export default function ServiceDetailPage() {
       <div className="flex items-center gap-3 mb-2">
         <h1 className="text-2xl font-bold text-main">{service}</h1>
         {svcInfo != null && (
-          <span className={`inline-flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full border ${
-            isRunning
-              ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
-              : 'bg-slate-500/10 text-subtle-ui border-[var(--border)]'
-          }`}>
-            <span className={`h-1.5 w-1.5 rounded-full ${isRunning ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+          <span className={`inline-flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full border border-current ${serviceHealthColors[serviceHealth(svcInfo.status)]}`}>
+            <HealthDot state={serviceHealth(svcInfo.status)} title={svcInfo.status} />
             {svcInfo.status}
           </span>
         )}

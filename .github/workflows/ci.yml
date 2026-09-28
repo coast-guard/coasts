@@ -123,6 +123,9 @@ jobs:
       - name: Generate docs manifest
         run: cd coast-guard && node scripts/generate-docs.mjs
 
+      - name: Test UI health states
+        run: cd coast-guard && npm test
+
       - name: Build UI
         run: cd coast-guard && npm run build
 
