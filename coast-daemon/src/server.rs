@@ -2706,7 +2706,7 @@ mod tests {
         state: Arc<AppState>,
     ) -> (tokio::sync::broadcast::Sender<()>, std::path::PathBuf) {
         let tmp = tempfile::tempdir().unwrap();
-        let socket_path = tmp.into_path().join("dispatch.sock");
+        let socket_path = tmp.keep().join("dispatch.sock");
         let (shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel(1);
         let path = socket_path.clone();
         let s = Arc::clone(&state);

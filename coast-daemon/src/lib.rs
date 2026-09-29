@@ -954,7 +954,7 @@ fn artifact_coastfile_path(project: &str, build_id: Option<&str>) -> Option<std:
 ///
 /// Iterates local (non-remote) active instances. For each, re-runs the
 /// bind script that `provision::bind_workspace` uses at run/start time.
-/// The script is effectively idempotent: `findmnt` short-circuits the
+/// The script is effectively idempotent: the mount table short-circuits the
 /// bind when /workspace is already mounted, and the private/cache mount
 /// commands handle existing mounts gracefully.
 ///
@@ -1015,7 +1015,7 @@ fn load_private_and_bare(
 /// associated private-path and cache-mount overlays.
 ///
 /// The script short-circuits if /workspace is already a distinct mount
-/// (findmnt check), so it is safe to call after a daemon restart that
+/// (mount table check), so it is safe to call after a daemon restart that
 /// did not actually lose the mount.
 fn build_workspace_mount_script(
     private_paths: &[String],
@@ -1026,7 +1026,7 @@ fn build_workspace_mount_script(
     let cache_cmds = coast_core::coastfile::Coastfile::build_cache_mount_commands(bare_services);
     format!(
         "set -e; mkdir -p /workspace; \
-         if findmnt -T /workspace >/dev/null 2>&1 && [ \"$(findmnt -n -o TARGET -T /workspace)\" = \"/workspace\" ]; then \
+         if awk '$5 == \"/workspace\" {{ found = 1 }} END {{ exit !found }}' /proc/self/mountinfo; then \
            exit 0; \
          fi; \
          mount --bind /host-project /workspace && mount --make-rshared /workspace{private_cmds}{cache_cmds}"
@@ -2325,6 +2325,28 @@ async fn restore_running_state(state: &Arc<server::AppState>) {
 mod tests {
     use super::*;
     use clap::Parser;
+
+    #[test]
+    fn test_workspace_restore_preserves_only_an_existing_workspace_mount() {
+        let fixture = tempfile::tempdir().unwrap();
+        let mountinfo = fixture.path().join("mountinfo");
+        let script = build_workspace_mount_script(&[], &[]);
+        let (check, _) = script.split_once("mount --bind /host-project").unwrap();
+        let check = check
+            .replace("mkdir -p /workspace", ":")
+            .replace("/proc/self/mountinfo", mountinfo.to_str().unwrap());
+        let script = format!("{check}exit 42");
+        for (table, expected) in [
+            ("129 117 0:82 /repo /workspace rw,relatime - virtiofs shared rw\n", 0),
+            ("129 117 0:82 /repo /workspace-other rw,relatime - virtiofs shared rw\n", 42),
+            ("129 117 0:82 /workspace /host-project rw,relatime - virtiofs shared rw\n", 42),
+            ("129 117 0:82 /repo /workspace rw - virtiofs shared rw\n130 129 0:82 /task /workspace rw - virtiofs shared rw\n", 0),
+        ] {
+            std::fs::write(&mountinfo, table).unwrap();
+            let output = std::process::Command::new("sh").args(["-c", &script]).output().unwrap();
+            assert_eq!(output.status.code(), Some(expected), "mount table: {table}");
+        }
+    }
 
     #[test]
     fn test_cli_parse_foreground() {

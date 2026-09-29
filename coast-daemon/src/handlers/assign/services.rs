@@ -2179,8 +2179,6 @@ mod tests {
 
     #[test]
     fn test_parse_porcelain_entries() {
-        let porcelain =
-            "/root\nbranch refs/heads/main\n\n/root/.worktrees/feat\nbranch refs/heads/feat\n\n";
         // Prefix "worktree " is required.
         let porcelain = "worktree /root\nbranch refs/heads/main\n\nworktree /root/.worktrees/feat\nbranch refs/heads/feat\n\n";
         let entries = parse_porcelain_entries(porcelain);

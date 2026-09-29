@@ -220,7 +220,6 @@ mod tests {
 
     #[test]
     fn summarize_ignores_unknown_severity() {
-        use coast_core::protocol::SsgDoctorFinding;
         let findings = vec![coast_core::protocol::SsgDoctorFinding {
             service: "pg".into(),
             path: "/tmp/x".into(),
